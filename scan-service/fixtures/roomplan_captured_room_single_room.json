@@ -1,0 +1,31 @@
+{
+  "_fixture_note": "Hand-built to mirror the shape of Apple's CapturedRoom JSON export (RoomPlan, iOS 16+): top-level walls/doors/windows/openings/objects/floors arrays, each surface carrying identifier/category/confidence and a polygonCorners outline in room-space meters (x,z plane, y-up). No Mac/Xcode/RoomPlan simulator was reachable on this machine to generate a real export, so this is a stand-in for the adapter boundary, not a real capture. See docs/adr/0001-scan-service-stack.md for why that's an acceptable Phase 1 substitute and what it does not prove.",
+  "story": 0,
+  "floors": [
+    {
+      "identifier": "floor-0001",
+      "category": "floor",
+      "confidence": "high",
+      "polygonCorners": [
+        [0.0, 0.0, 0.0],
+        [4.20, 0.0, 0.0],
+        [4.20, 0.0, 3.10],
+        [0.0, 0.0, 3.10]
+      ]
+    }
+  ],
+  "walls": [
+    { "identifier": "wall-0001", "category": "wall", "confidence": "high", "dimensions": [4.20, 2.60, 0.10] },
+    { "identifier": "wall-0002", "category": "wall", "confidence": "high", "dimensions": [3.10, 2.60, 0.10] },
+    { "identifier": "wall-0003", "category": "wall", "confidence": "high", "dimensions": [4.20, 2.60, 0.10] },
+    { "identifier": "wall-0004", "category": "wall", "confidence": "medium", "dimensions": [3.10, 2.60, 0.10] }
+  ],
+  "doors": [
+    { "identifier": "door-0001", "category": "door", "confidence": "high" }
+  ],
+  "windows": [
+    { "identifier": "window-0001", "category": "window", "confidence": "high" }
+  ],
+  "openings": [],
+  "objects": []
+}

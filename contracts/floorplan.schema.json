@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vuuro.internal/contracts/floorplan.schema.json",
+  "title": "FloorPlan",
+  "description": "Vendor-neutral capture result. The Scan Service never emits a provider-specific (e.g. RoomPlan) shape across this boundary — every adapter (RoomPlan, RoomPlan simulator, Android later, third-party SDKs) converts into this contract before it leaves the service. Phase 1 scope: identity binding + one room's basic dimensions, readable end to end. Phase 2 adds multi-room stitching, photos, notes as first-class, non-empty fields.",
+  "type": "object",
+  "required": [
+    "scan_session_id",
+    "property_id",
+    "unit_id",
+    "organisation_id",
+    "capture_provider",
+    "captured_at",
+    "measurement_basis",
+    "purpose",
+    "rooms",
+    "photos",
+    "notes"
+  ],
+  "properties": {
+    "scan_session_id": {
+      "type": "string",
+      "description": "Scan Service identifier for this capture session. Never null — a session without one cannot exist (hard constraint #1: identity-native captures)."
+    },
+    "property_id": {
+      "type": "string",
+      "description": "Vuuro property identifier. Required at session creation, not backfilled later."
+    },
+    "unit_id": {
+      "type": "string",
+      "description": "Vuuro unit identifier."
+    },
+    "organisation_id": {
+      "type": "string",
+      "description": "Vuuro organisation identifier."
+    },
+    "capture_provider": {
+      "type": "string",
+      "description": "Which adapter produced this result. The backend's own data model never depends on this value beyond an audit trail.",
+      "enum": ["roomplan", "roomplan_simulator", "roomplan_simulator_fixture", "android_arcore", "other"]
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "measurement_basis": {
+      "type": "string",
+      "description": "Honest measurement language (hard constraint #2). 'indicative_nen2580_inspired' is the only value any adapter in this repo may currently produce. 'certified_survey' is reserved for a future QC path that does not exist yet and must never be set by an automated adapter.",
+      "enum": ["indicative_nen2580_inspired", "certified_survey"]
+    },
+    "purpose": {
+      "type": "string",
+      "description": "Why this scan was taken. First-class per the brief's 'ops memory' principle, not an afterthought tag.",
+      "enum": ["listing", "check_in", "check_out", "renovation", "other"]
+    },
+    "rooms": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["room_id", "label", "floor_area_m2", "perimeter_m", "bounding_dimensions_m", "confidence"],
+        "properties": {
+          "room_id": { "type": "string" },
+          "label": { "type": "string" },
+          "floor_area_m2": { "type": "number", "minimum": 0 },
+          "perimeter_m": { "type": "number", "minimum": 0 },
+          "bounding_dimensions_m": {
+            "type": "object",
+            "required": ["width_m", "length_m"],
+            "properties": {
+              "width_m": { "type": "number", "minimum": 0 },
+              "length_m": { "type": "number", "minimum": 0 }
+            }
+          },
+          "confidence": { "type": "string", "enum": ["low", "medium", "high"] }
+        }
+      }
+    },
+    "photos": {
+      "type": "array",
+      "description": "Phase 2 field. Present and empty in Phase 1 so consumers can code against the final shape now."
+    },
+    "notes": {
+      "type": "array",
+      "description": "Phase 2 field. Present and empty in Phase 1."
+    }
+  }
+}

@@ -1,5 +1,8 @@
-# Kept stack-agnostic on purpose — exact stack/repo layout is an open decision
-# (see CLAUDE.md), not prescribed at kickoff. Extend once the stack is chosen.
+# Stack chosen for the Scan Service: plain PHP + SQLite (see
+# docs/adr/0001-scan-service-stack.md). Extend further if the stack changes.
+
+# Scan Service local runtime data
+scan-service/data/
 
 # OS
 .DS_Store

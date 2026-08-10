@@ -10,10 +10,20 @@ itself. The Vuuro rental codebase couples to this later, over API.
 
 ## Status
 
-Kickoff. See [`CLAUDE.md`](./CLAUDE.md) for the working direction, [`PHASES.md`](./PHASES.md)
-for the three-phase arc, and
+Phase 1 ("proof of capture") scaffold in progress on branch `phase1/proof-of-capture`,
+not merged to `main` yet. See [`CLAUDE.md`](./CLAUDE.md) for the working direction,
+[`PHASES.md`](./PHASES.md) for the three-phase arc, and
 [`docs/VUURO_SCAN_LIDAR_DIRECTION_BRIEF_JOVEN_2026-08-06.pdf`](./docs/VUURO_SCAN_LIDAR_DIRECTION_BRIEF_JOVEN_2026-08-06.pdf)
 for the full kickoff brief.
+
+- [`scan-service/`](./scan-service/) — the Scan Service API (PHP + SQLite). Run it and
+  its independent net locally: see `scan-service/README.md`.
+- [`contracts/floorplan.schema.json`](./contracts/floorplan.schema.json) — the
+  vendor-neutral `FloorPlan` contract every capture adapter converts into.
+- [`docs/adr/0001-scan-service-stack.md`](./docs/adr/0001-scan-service-stack.md) — why
+  this stack, and what Phase 1's fixture-based capture input does and doesn't prove
+  given no Mac/Xcode access on this machine.
+- [`ios-app/`](./ios-app/) — not started yet; needs Mac/Xcode access.
 
 ## What this is
 
