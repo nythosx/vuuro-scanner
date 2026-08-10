@@ -1,0 +1,32 @@
+# Kept stack-agnostic on purpose — exact stack/repo layout is an open decision
+# (see CLAUDE.md), not prescribed at kickoff. Extend once the stack is chosen.
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Env / secrets — never commit these
+.env
+.env.*
+!.env.example
+
+# Common dependency/build dirs (harmless to keep even before a stack is picked)
+node_modules/
+dist/
+build/
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Logs
+*.log
