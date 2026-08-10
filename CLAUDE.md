@@ -7,9 +7,11 @@ photos and notes, bound to Vuuro property/unit/organisation identity from day on
 is a product in its own right — not a sidecar photo tool, not a plumbing job for the
 rental app. Full context: `docs/VUURO_SCAN_LIDAR_DIRECTION_BRIEF_JOVEN_2026-08-06.pdf`
 (Mark's kickoff brief, 6 Aug 2026 — read it before doing anything else if this is a
-fresh session). This file is a working distillation of that brief plus the direction
-already agreed with Mark before his low-availability window started. **There is no
-second document drop this window** — the brief plus this file plus repo access is the
+fresh session). See `PHASES.md` for the three-phase arc (proof of capture / unit story
+/ pilot hardening) with a concrete "done means" per phase. This file is a working
+distillation of that brief plus the direction already agreed with Mark before his
+low-availability window started. **There is no second document drop this window** —
+the brief plus this file plus repo access is the
 complete kickoff package. If something is missing, decide with a short rationale, keep
 moving, and surface it in the daily update. Do not wait on more material.
 

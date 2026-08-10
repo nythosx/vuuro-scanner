@@ -10,7 +10,8 @@ itself. The Vuuro rental codebase couples to this later, over API.
 
 ## Status
 
-Kickoff. See [`CLAUDE.md`](./CLAUDE.md) for the working direction and
+Kickoff. See [`CLAUDE.md`](./CLAUDE.md) for the working direction, [`PHASES.md`](./PHASES.md)
+for the three-phase arc, and
 [`docs/VUURO_SCAN_LIDAR_DIRECTION_BRIEF_JOVEN_2026-08-06.pdf`](./docs/VUURO_SCAN_LIDAR_DIRECTION_BRIEF_JOVEN_2026-08-06.pdf)
 for the full kickoff brief.
 
