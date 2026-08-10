@@ -26,31 +26,11 @@ declare(strict_types=1);
  *   base_url defaults to http://127.0.0.1:8089
  */
 
+require_once __DIR__ . '/lib/http_client.php';
+
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';
 $failures = [];
 $checks = 0;
-
-function http(string $method, string $url, ?array $body = null): array
-{
-    $ch = curl_init($url);
-    $opts = [
-        CURLOPT_CUSTOMREQUEST => $method,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
-    ];
-    if ($body !== null) {
-        $opts[CURLOPT_POSTFIELDS] = json_encode($body, JSON_THROW_ON_ERROR);
-    }
-    curl_setopt_array($ch, $opts);
-    $raw = curl_exec($ch);
-    if ($raw === false) {
-        throw new \RuntimeException('HTTP request failed: ' . curl_error($ch) . " ($method $url)");
-    }
-    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    curl_close($ch);
-    $decoded = json_decode((string) $raw, true);
-    return [$status, is_array($decoded) ? $decoded : []];
-}
 
 /**
  * Independently-coded shoelace area. Deliberately written from scratch here
@@ -131,24 +111,26 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
     $wantPerimeter = expected_perimeter($xz);
     [$wantWidth, $wantLength] = expected_bbox($xz);
 
-    [$createStatus, $session] = http('POST', "$baseUrl/scan-sessions", [
+    [$createStatus, $session] = net_http_json('POST', "$baseUrl/scan-sessions", [
         'property_id' => 'prop-net-test',
         'unit_id' => 'unit-net-test',
         'organisation_id' => 'org-net-test',
         'purpose' => 'listing',
+        'occupied' => false,
     ]);
     check('session created (HTTP 201)', $createStatus === 201, "got HTTP $createStatus");
     check('session carries all three identity fields', isset($session['property_id'], $session['unit_id'], $session['organisation_id']));
 
     $sessionId = $session['id'] ?? null;
-    if ($sessionId === null) {
-        check('capture attempted', false, 'no session id returned, cannot continue this case');
+    $accessToken = $session['access_token'] ?? null;
+    if ($sessionId === null || $accessToken === null) {
+        check('capture attempted', false, 'no session id/access_token returned, cannot continue this case');
         return;
     }
 
-    [$captureStatus, $floorPlan] = http('POST', "$baseUrl/scan-sessions/$sessionId/capture", [
+    [$captureStatus, $floorPlan] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", [
         'raw_capture' => $fixture,
-    ]);
+    ], $accessToken);
     check('capture accepted (HTTP 200)', $captureStatus === 200, "got HTTP $captureStatus");
 
     check('measurement_basis is honest (never certified from an automated adapter)',
@@ -179,7 +161,7 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
 
     // GET must return the same result the capture call already returned —
     // catches a "write path lies about what read path serves" divergence.
-    [$getStatus, $refetched] = http('GET', "$baseUrl/scan-sessions/$sessionId");
+    [$getStatus, $refetched] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId", null, $accessToken);
     check('GET after capture returns HTTP 200', $getStatus === 200, "got HTTP $getStatus");
     check('GET result matches captured result exactly', $refetched === $floorPlan, 'refetched floor plan differs from capture response');
 
@@ -206,9 +188,10 @@ foreach (['property_id', 'unit_id', 'organisation_id'] as $missingField) {
         'unit_id' => 'unit-x',
         'organisation_id' => 'org-x',
         'purpose' => 'listing',
+        'occupied' => false,
     ];
     unset($payload[$missingField]);
-    [$status, ] = http('POST', "$baseUrl/scan-sessions", $payload);
+    [$status, ] = net_http_json('POST', "$baseUrl/scan-sessions", $payload);
     check("session creation rejected when $missingField is missing", $status === 422, "got HTTP $status");
 }
 

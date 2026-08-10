@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://vuuro.internal/contracts/floorplan.schema.json",
   "title": "FloorPlan",
-  "description": "Vendor-neutral capture result. The Scan Service never emits a provider-specific (e.g. RoomPlan) shape across this boundary — every adapter (RoomPlan, RoomPlan simulator, Android later, third-party SDKs) converts into this contract before it leaves the service. Phase 1 scope: identity binding + one room's basic dimensions, readable end to end. Phase 2 adds multi-room stitching, photos, notes as first-class, non-empty fields.",
+  "description": "Vendor-neutral capture result. The Scan Service never emits a provider-specific (e.g. RoomPlan) shape across this boundary — every adapter (RoomPlan, RoomPlan simulator, Android later, third-party SDKs) converts into this contract before it leaves the service. Multi-room sessions (Phase 2) are built from repeated POST /scan-sessions/{id}/capture calls against the same session, each contributing one guided RoomPlan capture's worth of rooms, stitched by the Scan Service into this one result. photos/notes attach to the same result via POST /scan-sessions/{id}/photos and /notes — never a separate side-channel.",
   "type": "object",
   "required": [
     "scan_session_id",
@@ -58,7 +58,7 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["room_id", "label", "floor_area_m2", "perimeter_m", "bounding_dimensions_m", "confidence"],
+        "required": ["room_id", "label", "floor_area_m2", "perimeter_m", "bounding_dimensions_m", "confidence", "outline_m", "coverage"],
         "properties": {
           "room_id": { "type": "string" },
           "label": { "type": "string" },
@@ -72,17 +72,68 @@
               "length_m": { "type": "number", "minimum": 0 }
             }
           },
-          "confidence": { "type": "string", "enum": ["low", "medium", "high"] }
+          "confidence": { "type": "string", "enum": ["low", "medium", "high"], "description": "The floor surface's own confidence only. See coverage.score for the room-wide signal across every surface." },
+          "outline_m": {
+            "type": "array",
+            "minItems": 3,
+            "description": "Room-local polygon outline in metres: [x, z] pairs, translated so the room's own bounding-box minimum corner sits at (0,0). NOT in a shared/world coordinate frame across rooms — see docs/adr/0002-export-coordinate-frame.md. Never assume two rooms' outlines share an origin or can be laid out relative to each other.",
+            "items": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": { "type": "number" }
+            }
+          },
+          "coverage": {
+            "type": "object",
+            "description": "Scan quality signal so a landlord knows a scan is usable before leaving the unit (PHASES.md Phase 3). Aggregated across every surface RoomPlan reported for the capture call that produced this room (floor, walls, doors, windows, openings) — not just the floor's own confidence.",
+            "required": ["score", "confidence_counts", "usable", "message"],
+            "properties": {
+              "score": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Mean of per-surface confidence weights (high=100, medium=60, low=20)." },
+              "confidence_counts": {
+                "type": "object",
+                "required": ["high", "medium", "low"],
+                "properties": {
+                  "high": { "type": "integer", "minimum": 0 },
+                  "medium": { "type": "integer", "minimum": 0 },
+                  "low": { "type": "integer", "minimum": 0 }
+                }
+              },
+              "usable": { "type": "boolean", "description": "score >= 70. A threshold this repo defines, not a signal RoomPlan itself provides." },
+              "message": { "type": ["string", "null"], "description": "Human-readable rescan prompt when usable is false; null when usable is true." }
+            }
+          }
         }
       }
     },
     "photos": {
       "type": "array",
-      "description": "Phase 2 field. Present and empty in Phase 1 so consumers can code against the final shape now."
+      "description": "Attached via POST /scan-sessions/{id}/capture's sibling endpoint /photos. Always present; empty until at least one photo is attached.",
+      "items": {
+        "type": "object",
+        "required": ["photo_id", "url", "caption", "room_id", "taken_at"],
+        "properties": {
+          "photo_id": { "type": "string" },
+          "url": { "type": "string", "description": "Wherever the mobile client already uploaded the image. The Scan Service does not itself receive/store image bytes in Phase 2 — that's a deliberately deferred decision, not an oversight." },
+          "caption": { "type": "string" },
+          "room_id": { "type": ["string", "null"], "description": "Which room this photo belongs to, matching a rooms[].room_id. Null means unit-level (not tied to one room)." },
+          "taken_at": { "type": "string", "format": "date-time" }
+        }
+      }
     },
     "notes": {
       "type": "array",
-      "description": "Phase 2 field. Present and empty in Phase 1."
+      "description": "Attached via POST /scan-sessions/{id}/notes. Always present; empty until at least one note is attached.",
+      "items": {
+        "type": "object",
+        "required": ["note_id", "text", "room_id", "created_at"],
+        "properties": {
+          "note_id": { "type": "string" },
+          "text": { "type": "string" },
+          "room_id": { "type": ["string", "null"], "description": "Null means unit-level, matching photos[].room_id semantics." },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      }
     }
   }
 }

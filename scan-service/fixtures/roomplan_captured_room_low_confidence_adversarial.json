@@ -1,0 +1,31 @@
+{
+  "_fixture_note": "Adversarial fixture for coverage scoring, not for area/perimeter. Purpose: the floor surface itself is high confidence (so area/perimeter math is fine), but most walls/doors/windows are low/medium confidence — a coverage score that only looks at the floor's own confidence field would report this capture as fully usable when it isn't. Same 4.20x3.10 rectangle as the single-room fixture so area/perimeter assertions can be reused if needed.",
+  "story": 0,
+  "floors": [
+    {
+      "identifier": "floor-lowconf-0001",
+      "category": "floor",
+      "confidence": "high",
+      "polygonCorners": [
+        [0.0, 0.0, 0.0],
+        [4.20, 0.0, 0.0],
+        [4.20, 0.0, 3.10],
+        [0.0, 0.0, 3.10]
+      ]
+    }
+  ],
+  "walls": [
+    { "identifier": "wall-lc-0001", "category": "wall", "confidence": "low", "dimensions": [4.20, 2.60, 0.10] },
+    { "identifier": "wall-lc-0002", "category": "wall", "confidence": "low", "dimensions": [3.10, 2.60, 0.10] },
+    { "identifier": "wall-lc-0003", "category": "wall", "confidence": "medium", "dimensions": [4.20, 2.60, 0.10] },
+    { "identifier": "wall-lc-0004", "category": "wall", "confidence": "low", "dimensions": [3.10, 2.60, 0.10] }
+  ],
+  "doors": [
+    { "identifier": "door-lc-0001", "category": "door", "confidence": "low" }
+  ],
+  "windows": [
+    { "identifier": "window-lc-0001", "category": "window", "confidence": "medium" }
+  ],
+  "openings": [],
+  "objects": []
+}

@@ -10,8 +10,11 @@ itself. The Vuuro rental codebase couples to this later, over API.
 
 ## Status
 
-Phase 1 ("proof of capture") scaffold in progress on branch `phase1/proof-of-capture`,
-not merged to `main` yet. See [`CLAUDE.md`](./CLAUDE.md) for the working direction,
+Phase 1 (proof of capture) and Phase 2 (unit story) are complete and independently
+verified. Phase 3 (pilot hardening) is underway: PNG/PDF exports, a first privacy/ACL
+pass, and per-room coverage/quality scoring are done; an optional laser spike is still
+open. All on branch `feature/vuuro-scan` — the single working branch for this whole
+build, not merged to `main` yet. See [`CLAUDE.md`](./CLAUDE.md) for the working direction,
 [`PHASES.md`](./PHASES.md) for the three-phase arc, and
 [`docs/VUURO_SCAN_LIDAR_DIRECTION_BRIEF_JOVEN_2026-08-06.pdf`](./docs/VUURO_SCAN_LIDAR_DIRECTION_BRIEF_JOVEN_2026-08-06.pdf)
 for the full kickoff brief.
@@ -23,7 +26,14 @@ for the full kickoff brief.
 - [`docs/adr/0001-scan-service-stack.md`](./docs/adr/0001-scan-service-stack.md) — why
   this stack, and what Phase 1's fixture-based capture input does and doesn't prove
   given no Mac/Xcode access on this machine.
-- [`ios-app/`](./ios-app/) — not started yet; needs Mac/Xcode access.
+- [`docs/adr/0002-export-coordinate-frame.md`](./docs/adr/0002-export-coordinate-frame.md)
+  — why floor plan exports are honest per-room tiles, not a spatially fused layout.
+- [`docs/adr/0003-privacy-acl-session-tokens.md`](./docs/adr/0003-privacy-acl-session-tokens.md)
+  — the per-session access-token/consent/audit-log model closing hard constraint #3's
+  gap, and what it deliberately doesn't solve yet.
+- [`ios-app/`](./ios-app/) — RoomPlan capture flow **written, not compiled or run** (no
+  Mac/Xcode access on this machine); see `ios-app/README.md` for the verification
+  checklist for whoever opens it in Xcode first.
 
 ## What this is
 

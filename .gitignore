@@ -33,3 +33,6 @@ venv/
 
 # Logs
 *.log
+
+# Local-only planning notes — scratch, not project artifacts, never pushed
+WEB_VIEWER_PLAN.md

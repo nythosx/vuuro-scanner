@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Vuuro Scan — Scan Service viewer</title>
+<style>
+  :root { color-scheme: light; }
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { font-size: 1.3rem; margin-bottom: 0.25rem; }
+  .subtitle { color: #666; font-size: 0.85rem; margin-bottom: 1.5rem; }
+  fieldset { border: 1px solid #ddd; border-radius: 8px; margin-bottom: 1.25rem; padding: 1rem; }
+  legend { font-weight: 600; padding: 0 0.4rem; }
+  label { display: block; font-size: 0.8rem; color: #444; margin-top: 0.6rem; }
+  input[type=text], select { width: 100%; box-sizing: border-box; padding: 0.4rem; font-size: 0.9rem; margin-top: 0.15rem; }
+  .row { display: flex; gap: 0.75rem; }
+  .row > div { flex: 1; }
+  button { margin-top: 0.75rem; padding: 0.45rem 0.9rem; font-size: 0.85rem; cursor: pointer; }
+  table { border-collapse: collapse; width: 100%; margin-top: 0.5rem; font-size: 0.85rem; }
+  th, td { border: 1px solid #ddd; padding: 0.4rem 0.5rem; text-align: left; }
+  th { background: #f5f5f5; }
+  .badge { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 10px; font-size: 0.75rem; }
+  .badge.usable { background: #e0f4e0; color: #1a6b1a; }
+  .badge.not-usable { background: #fbe6d0; color: #8a4b00; }
+  .badge.granted { background: #e0f4e0; color: #1a6b1a; }
+  .badge.denied { background: #fbdcdc; color: #a11; }
+  .error { color: #a11; font-size: 0.85rem; margin-top: 0.5rem; white-space: pre-wrap; }
+  .muted { color: #777; font-size: 0.8rem; }
+  #floorplan-png { max-width: 100%; border: 1px solid #ddd; border-radius: 6px; margin-top: 0.5rem; }
+  code { background: #f2f2f2; padding: 0.1rem 0.3rem; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<h1>Vuuro Scan — Scan Service viewer</h1>
+<p class="subtitle">
+  Local dev tool only — not a product surface. Drives the Scan Service using nothing
+  but its public HTTP API (see <code>../WEB_VIEWER_PLAN.md</code>), so if this page can
+  see it, a real client could too.
+</p>
+
+<fieldset>
+  <legend>Connection</legend>
+  <label for="base-url">Scan Service base URL</label>
+  <input type="text" id="base-url" value="http://127.0.0.1:8089" />
+</fieldset>
+
+<fieldset>
+  <legend>Create a test session</legend>
+  <p class="muted">
+    Convenience form — posts straight to <code>POST /scan-sessions</code>, no different
+    from a real client. Auto-fills the fields below on success.
+  </p>
+  <div class="row">
+    <div>
+      <label for="c-property">property_id</label>
+      <input type="text" id="c-property" value="prop-viewer-test" />
+    </div>
+    <div>
+      <label for="c-unit">unit_id</label>
+      <input type="text" id="c-unit" value="unit-viewer-test" />
+    </div>
+    <div>
+      <label for="c-org">organisation_id</label>
+      <input type="text" id="c-org" value="org-viewer-test" />
+    </div>
+  </div>
+  <div class="row">
+    <div>
+      <label for="c-purpose">purpose</label>
+      <select id="c-purpose">
+        <option value="listing">listing</option>
+        <option value="check_in">check_in</option>
+        <option value="check_out">check_out</option>
+        <option value="renovation">renovation</option>
+        <option value="other">other</option>
+      </select>
+    </div>
+    <div>
+      <label><input type="checkbox" id="c-occupied" /> occupied</label>
+      <label><input type="checkbox" id="c-consent" /> consent_obtained</label>
+    </div>
+  </div>
+  <button id="create-session-btn">Create session</button>
+  <div id="create-error" class="error"></div>
+</fieldset>
+
+<fieldset>
+  <legend>Load a session</legend>
+  <p class="muted">
+    A session id alone is not enough (privacy/ACL, see
+    <code>docs/adr/0003-privacy-acl-session-tokens.md</code>) — the matching access
+    token is required too.
+  </p>
+  <div class="row">
+    <div>
+      <label for="session-id">scan_session_id</label>
+      <input type="text" id="session-id" />
+    </div>
+    <div>
+      <label for="access-token">access_token</label>
+      <input type="text" id="access-token" />
+    </div>
+  </div>
+  <button id="load-session-btn">Load session</button>
+  <button id="load-access-log-btn">View access log</button>
+  <div id="load-error" class="error"></div>
+</fieldset>
+
+<div id="results"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  // Persist connection details across reloads — this is a local dev tool,
+  // localStorage is fine, nothing sensitive that isn't already sitting in
+  // plaintext form fields.
+  for (const key of ['base-url', 'session-id', 'access-token']) {
+    const saved = localStorage.getItem(key);
+    if (saved) $(key).value = saved;
+    $(key).addEventListener('change', () => localStorage.setItem(key, $(key).value));
+  }
+
+  function baseUrl() {
+    return $('base-url').value.replace(/\/+$/, '');
+  }
+
+  async function apiFetch(path, { method = 'GET', body, token, raw = false } = {}) {
+    const headers = {};
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (token) headers['X-Scan-Access-Token'] = token;
+
+    const response = await fetch(baseUrl() + path, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+
+    if (raw) {
+      if (!response.ok) throw new Error(`HTTP ${response.status} on ${path}`);
+      return response.blob();
+    }
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} on ${path}: ${JSON.stringify(data)}`);
+    }
+    return data;
+  }
+
+  function el(tag, attrs = {}, children = []) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === 'text') node.textContent = v;
+      else node.setAttribute(k, v);
+    }
+    for (const child of children) node.appendChild(child);
+    return node;
+  }
+
+  $('create-session-btn').addEventListener('click', async () => {
+    $('create-error').textContent = '';
+    try {
+      const occupied = $('c-occupied').checked;
+      const payload = {
+        property_id: $('c-property').value,
+        unit_id: $('c-unit').value,
+        organisation_id: $('c-org').value,
+        purpose: $('c-purpose').value,
+        occupied,
+      };
+      if (occupied) payload.consent_obtained = $('c-consent').checked;
+
+      const session = await apiFetch('/scan-sessions', { method: 'POST', body: payload });
+      $('session-id').value = session.id;
+      $('access-token').value = session.access_token;
+      localStorage.setItem('session-id', session.id);
+      localStorage.setItem('access-token', session.access_token);
+    } catch (err) {
+      $('create-error').textContent = err.message;
+    }
+  });
+
+  // Shared by both buttons below — found duplicated verbatim between them
+  // by a code-quality pass (see PR/commit history). Returns null and shows
+  // the shared error message if either field is missing; otherwise
+  // {sessionId, token}, and clears any previous load-error.
+  function requireSessionIdAndToken() {
+    $('load-error').textContent = '';
+    const sessionId = $('session-id').value.trim();
+    const token = $('access-token').value.trim();
+    if (!sessionId || !token) {
+      $('load-error').textContent = 'Both session id and access token are required.';
+      return null;
+    }
+    return { sessionId, token };
+  }
+
+  $('load-session-btn').addEventListener('click', async () => {
+    const creds = requireSessionIdAndToken();
+    if (!creds) return;
+    $('results').innerHTML = '';
+    try {
+      const data = await apiFetch(`/scan-sessions/${creds.sessionId}`, { token: creds.token });
+      renderSession(creds.sessionId, creds.token, data);
+    } catch (err) {
+      $('load-error').textContent = err.message;
+    }
+  });
+
+  $('load-access-log-btn').addEventListener('click', async () => {
+    const creds = requireSessionIdAndToken();
+    if (!creds) return;
+    try {
+      const data = await apiFetch(`/scan-sessions/${creds.sessionId}/access-log`, { token: creds.token });
+      renderAccessLog(data);
+    } catch (err) {
+      $('load-error').textContent = err.message;
+    }
+  });
+
+  function renderSession(sessionId, token, data) {
+    const results = $('results');
+    results.innerHTML = '';
+
+    if (data.floor_plan === null) {
+      results.appendChild(el('p', { text: `Session ${sessionId} exists (status: ${data.status}) but has no capture yet.` }));
+      return;
+    }
+
+    const fp = data; // GET returns the FloorPlan contract directly once captured
+
+    results.appendChild(el('h2', { text: 'Session' }));
+    const meta = el('table');
+    meta.appendChild(el('tr', {}, [el('th', { text: 'property_id' }), el('td', { text: fp.property_id })]));
+    meta.appendChild(el('tr', {}, [el('th', { text: 'unit_id' }), el('td', { text: fp.unit_id })]));
+    meta.appendChild(el('tr', {}, [el('th', { text: 'organisation_id' }), el('td', { text: fp.organisation_id })]));
+    meta.appendChild(el('tr', {}, [el('th', { text: 'purpose' }), el('td', { text: fp.purpose })]));
+    meta.appendChild(el('tr', {}, [el('th', { text: 'capture_provider' }), el('td', { text: fp.capture_provider })]));
+    meta.appendChild(el('tr', {}, [el('th', { text: 'measurement_basis' }), el('td', { text: fp.measurement_basis })]));
+    meta.appendChild(el('tr', {}, [el('th', { text: 'captured_at' }), el('td', { text: fp.captured_at })]));
+    results.appendChild(meta);
+
+    results.appendChild(el('h2', { text: `Rooms (${fp.rooms.length})` }));
+    const roomTable = el('table');
+    roomTable.appendChild(el('tr', {}, [
+      el('th', { text: 'Label' }), el('th', { text: 'Area (m²)' }), el('th', { text: 'Perimeter (m)' }),
+      el('th', { text: 'Bounding (w×l m)' }), el('th', { text: 'Floor confidence' }), el('th', { text: 'Coverage' }),
+    ]));
+    for (const room of fp.rooms) {
+      const badgeClass = room.coverage.usable ? 'usable' : 'not-usable';
+      const coverageCell = el('td', {}, [
+        el('span', { class: `badge ${badgeClass}`, text: `${room.coverage.score}/100` }),
+      ]);
+      if (!room.coverage.usable && room.coverage.message) {
+        coverageCell.appendChild(el('div', { class: 'muted', text: room.coverage.message }));
+      }
+      roomTable.appendChild(el('tr', {}, [
+        el('td', { text: room.label }),
+        el('td', { text: room.floor_area_m2.toFixed(2) }),
+        el('td', { text: room.perimeter_m.toFixed(2) }),
+        el('td', { text: `${room.bounding_dimensions_m.width_m.toFixed(2)} × ${room.bounding_dimensions_m.length_m.toFixed(2)}` }),
+        el('td', { text: room.confidence }),
+        coverageCell,
+      ]));
+    }
+    results.appendChild(roomTable);
+
+    results.appendChild(el('h2', { text: `Photos (${fp.photos.length}) / Notes (${fp.notes.length})` }));
+    if (fp.photos.length === 0 && fp.notes.length === 0) {
+      results.appendChild(el('p', { class: 'muted', text: 'None attached yet.' }));
+    } else {
+      const attachTable = el('table');
+      attachTable.appendChild(el('tr', {}, [el('th', { text: 'Type' }), el('th', { text: 'Content' }), el('th', { text: 'Room' }), el('th', { text: 'When' })]));
+      for (const p of fp.photos) {
+        attachTable.appendChild(el('tr', {}, [el('td', { text: 'photo' }), el('td', { text: p.url }), el('td', { text: p.room_id ?? '(unit-level)' }), el('td', { text: p.taken_at })]));
+      }
+      for (const n of fp.notes) {
+        attachTable.appendChild(el('tr', {}, [el('td', { text: 'note' }), el('td', { text: n.text }), el('td', { text: n.room_id ?? '(unit-level)' }), el('td', { text: n.created_at })]));
+      }
+      results.appendChild(attachTable);
+    }
+
+    results.appendChild(el('h2', { text: 'Exports' }));
+    const exportRow = el('div');
+    const pngBtn = el('button', { text: 'Load PNG floor plan sheet' });
+    const pdfBtn = el('button', { text: 'Download PDF metrics' });
+    exportRow.appendChild(pngBtn);
+    exportRow.appendChild(pdfBtn);
+    results.appendChild(exportRow);
+
+    const pngHolder = el('div');
+    results.appendChild(pngHolder);
+
+    pngBtn.addEventListener('click', async () => {
+      pngHolder.innerHTML = 'Loading…';
+      try {
+        const blob = await apiFetch(`/scan-sessions/${sessionId}/export/floorplan.png`, { token, raw: true });
+        const img = el('img', { id: 'floorplan-png', src: URL.createObjectURL(blob) });
+        pngHolder.innerHTML = '';
+        pngHolder.appendChild(img);
+      } catch (err) {
+        pngHolder.textContent = err.message;
+      }
+    });
+
+    pdfBtn.addEventListener('click', async () => {
+      try {
+        const blob = await apiFetch(`/scan-sessions/${sessionId}/export/floorplan.pdf`, { token, raw: true });
+        const a = el('a', { href: URL.createObjectURL(blob), download: `${sessionId}-floorplan.pdf` });
+        a.click();
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+  }
+
+  function renderAccessLog(data) {
+    const results = $('results');
+    results.innerHTML = '';
+    results.appendChild(el('h2', { text: `Access log — ${data.scan_session_id}` }));
+    if (data.access_log.length === 0) {
+      results.appendChild(el('p', { class: 'muted', text: 'No access attempts recorded yet.' }));
+      return;
+    }
+    const table = el('table');
+    table.appendChild(el('tr', {}, [el('th', { text: 'Action' }), el('th', { text: 'Outcome' }), el('th', { text: 'When (UTC)' })]));
+    for (const entry of data.access_log) {
+      const badgeClass = entry.outcome === 'granted' ? 'granted' : 'denied';
+      table.appendChild(el('tr', {}, [
+        el('td', { text: entry.action }),
+        el('td', {}, [el('span', { class: `badge ${badgeClass}`, text: entry.outcome })]),
+        el('td', { text: entry.occurred_at }),
+      ]));
+    }
+    results.appendChild(table);
+  }
+})();
+</script>
+
+</body>
+</html>
