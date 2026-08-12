@@ -193,6 +193,42 @@ $largeButValid = $adapter->adapt(['floors' => [['identifier' => 'f', 'polygonCor
 t_check('a large but plausible room (20m x 15m) is still accepted', $largeButValid['rooms'][0]['floor_area_m2'] === 300.0);
 echo "\n";
 
+// --- Adjacent case: honest measurement means rejecting degenerate geometry,
+// not just oversized/non-finite geometry -------------------------------
+// Found by deliberately probing past the security checks above for the case
+// they don't cover: collinear or duplicate polygonCorners produce a
+// perfectly finite, in-bounds outline whose shoelace area is ~0. Before
+// MIN_POLYGON_AREA_M2 existed, this adapted into a real "Room 1" with
+// floor_area_m2: 0, confidence: high, coverage.usable: true — a landlord-
+// facing lie of omission, not a crash. Hard constraint #2 (honest
+// measurement language) is about exactly this, not just the certified-vs-
+// indicative label.
+echo "== Adjacent case: degenerate (collinear-corner) outline is rejected, not silently zero-area ==\n";
+$degenerate = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_degenerate_adversarial.json'), true, 512, JSON_THROW_ON_ERROR);
+try {
+    $adapter->adapt($degenerate, $identity);
+    t_check('adapt() rejects a collinear-corner (0 m2) outline', false, 'no exception was thrown -- this used to silently produce a "usable" 0 m2 room');
+} catch (\InvalidArgumentException) {
+    t_check('adapt() rejects a collinear-corner (0 m2) outline', true);
+}
+
+// Same failure mode from a different shape: a self-intersecting ("bowtie")
+// quad whose shoelace terms happen to cancel to ~0 must be caught by the
+// same area-floor check, not just the straight-line case above.
+try {
+    $bowtie = ['floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 4], [4, 0, 0], [0, 0, 4]]]]];
+    $adapter->adapt($bowtie, $identity);
+    t_check('adapt() rejects a self-intersecting outline whose area cancels to ~0', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    t_check('adapt() rejects a self-intersecting outline whose area cancels to ~0', true);
+}
+
+// A small-but-real room (a closet, e.g. 0.8m x 0.8m = 0.64 m2) must NOT be
+// caught by the same floor — this rejects degenerate junk, not small rooms.
+$smallButReal = $adapter->adapt(['floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [0.8, 0, 0], [0.8, 0, 0.8], [0, 0, 0.8]]]]], $identity);
+t_check('a small but real room (0.64 m2 closet) is still accepted, not rejected as degenerate', t_approx($smallButReal['rooms'][0]['floor_area_m2'], 0.64));
+echo "\n";
+
 echo count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

@@ -34,6 +34,26 @@ final class RoomPlanSimulatorAdapter
     private const MAX_POLYGON_POINTS = 1000;
     private const MAX_COORDINATE_METERS = 1000.0;
 
+    // Found by deliberately probing for the adjacent case to the security
+    // bounds above: those catch corners that are too big/too many/non-finite,
+    // but nothing rejected corners that are simply degenerate — collinear
+    // points, or a self-intersecting outline whose shoelace sum happens to
+    // cancel out. Both currently sail through as a "Room 1" with
+    // floor_area_m2: 0, confidence: high, coverage.usable: true — presented
+    // to a landlord as a real, fully-usable room. That is exactly what hard
+    // constraint #2 (honest measurement language) forbids: this is
+    // undetected junk, not a small room. 0.25 m2 (50cm x 50cm) is far below
+    // any real habitable space, so this rejects degenerate geometry without
+    // touching legitimate small rooms (closets, etc).
+    //
+    // Known accepted limitation, not fixed here: a self-intersecting
+    // ("bowtie") outline whose shoelace area does NOT cancel to ~0 will
+    // still pass this check with a wrong-but-plausible-looking area. Solving
+    // that needs a simple-polygon (non-self-intersecting) check, a separate
+    // and larger piece of work — tracked as a gap, not silently pinned as
+    // correct behaviour.
+    private const MIN_POLYGON_AREA_M2 = 0.25;
+
     /**
      * @param int $roomIndexOffset How many rooms already exist in this scan
      *     session before this capture call. A "unit story" (Phase 2) session
@@ -75,6 +95,14 @@ final class RoomPlanSimulatorAdapter
             $area = self::polygonArea($points2d);
             $perimeter = self::polygonPerimeter($points2d);
             [$width, $length] = self::boundingDimensions($points2d);
+
+            if ($area < self::MIN_POLYGON_AREA_M2) {
+                throw new \InvalidArgumentException(sprintf(
+                    'floors[%d] resolves to a %.4f m2 outline — too small/degenerate (duplicate or collinear polygonCorners?) to be a real room capture.',
+                    $index,
+                    $area
+                ));
+            }
 
             $globalIndex = $roomIndexOffset + $index;
             $rooms[] = [

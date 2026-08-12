@@ -30,6 +30,21 @@ final class Database
         $schema = __DIR__ . '/../../migrations/schema.sql';
         $pdo->exec((string) file_get_contents($schema));
 
+        // CREATE TABLE IF NOT EXISTS in schema.sql only creates scan_sessions
+        // on a fresh database — it does nothing to a scan_sessions table that
+        // already existed before the expires_at column was added. SQLite has
+        // no "ADD COLUMN IF NOT EXISTS", so this is the idempotent equivalent:
+        // try the ALTER TABLE, swallow the "duplicate column" failure on
+        // every run after the first. Safe for this local-dev-only SQLite file
+        // (scan-service/data/, gitignored) — a real migration tool would
+        // replace this the moment there's a shared/deployed database to
+        // migrate carefully instead of just re-running schema.sql.
+        try {
+            $pdo->exec("ALTER TABLE scan_sessions ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''");
+        } catch (\PDOException $e) {
+            // Expected on every run after the first — the column already exists.
+        }
+
         return $pdo;
     }
 }

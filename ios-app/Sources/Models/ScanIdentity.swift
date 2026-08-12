@@ -40,7 +40,7 @@ struct ScanIdentity: Codable, Equatable {
 /// Matches the Scan Service's `purpose` enum exactly
 /// (contracts/floorplan.schema.json) — "ops memory" is first-class, not an
 /// afterthought tag, so this must not silently default to "listing".
-enum ScanPurpose: String, Codable, CaseIterable, Identifiable {
+enum ScanPurpose: String, Codable, CaseIterable, Identifiable, Hashable {
     case listing
     case checkIn = "check_in"
     case checkOut = "check_out"

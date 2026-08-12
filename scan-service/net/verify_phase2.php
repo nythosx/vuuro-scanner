@@ -117,6 +117,47 @@ check('note attach returns HTTP 201', $noteStatus === 201, "got HTTP $noteStatus
 check('note is appended, rooms and the earlier photo both survive',
     count($withNote['notes'] ?? []) === 1 && count($withNote['photos'] ?? []) === 1 && count($withNote['rooms'] ?? []) === 2);
 
+// Found by deliberately probing the adjacent case to "must attach to a real
+// captured unit" above: nothing stopped a photo/note's room_id from naming a
+// room that doesn't exist on this session at all. Silently accepted before
+// this fix — quietly wrong data (an orphaned/typo'd room reference), not a
+// crash, so nothing else here would have caught it.
+echo "\n== Adjacent case: room_id on a photo/note must reference a real room in THIS session ==\n";
+
+$realRoomId = $afterSecond['rooms'][0]['room_id'] ?? null;
+check('setup: a real room_id exists to test against', $realRoomId !== null);
+
+[$bogusRoomIdStatus, $bogusRoomIdBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/notes", [
+    'text' => 'net test: bogus room_id',
+    'room_id' => 'room-that-does-not-exist',
+], $accessToken);
+check('a note with a room_id that matches no room in this session is rejected (HTTP 422)', $bogusRoomIdStatus === 422, "got HTTP $bogusRoomIdStatus");
+check('the rejection names the specific error, not a generic one', ($bogusRoomIdBody['error'] ?? null) === 'unknown_room_id', 'got ' . ($bogusRoomIdBody['error'] ?? 'null'));
+
+if ($realRoomId !== null) {
+    [$realRoomIdStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/notes", [
+        'text' => 'net test: real room_id',
+        'room_id' => $realRoomId,
+    ], $accessToken);
+    check('a note with a room_id that DOES match a real room in this session still succeeds (HTTP 201)', $realRoomIdStatus === 201, "got HTTP $realRoomIdStatus");
+}
+
+// The other adjacent case, the opposite direction: room_id must stay
+// OPTIONAL — this fix must reject bad references, not newly require one.
+[$noRoomIdStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/notes", [
+    'text' => 'net test: no room_id at all',
+], $accessToken);
+check('a note with NO room_id at all still succeeds (HTTP 201) — this fix must not make room_id required', $noRoomIdStatus === 201, "got HTTP $noRoomIdStatus");
+
+// Same check on the photos route — the validation lives in shared repository
+// code, but that's an implementation detail this black-box net doesn't get
+// to assume; prove it against both routes independently.
+[$bogusRoomIdPhotoStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", [
+    'url' => 'https://example.invalid/net-test-bogus-room.jpg',
+    'room_id' => 'room-that-does-not-exist',
+], $accessToken);
+check('a photo with a bogus room_id is ALSO rejected (HTTP 422), not just notes', $bogusRoomIdPhotoStatus === 422, "got HTTP $bogusRoomIdPhotoStatus");
+
 echo "\n== Adversarial: photos/notes must not attach before any capture exists ==\n";
 
 [$emptyCreateStatus, $emptySession] = net_http_json('POST', "$baseUrl/scan-sessions", [

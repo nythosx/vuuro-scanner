@@ -24,7 +24,14 @@ error_reporting(E_ALL);
 set_exception_handler(static function (\Throwable $e): void {
     http_response_code(500);
     header('Content-Type: application/json');
-    echo json_encode(['error' => 'internal_error'], JSON_PRETTY_PRINT);
+    // UX note: friendly wording, but deliberately generic — no exception
+    // message, class name, or file path, matching the security rationale
+    // above. A helpful-sounding 500 and a safe one aren't in tension here;
+    // the fix is phrasing, not detail.
+    echo json_encode([
+        'error' => 'internal_error',
+        'message' => "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.",
+    ], JSON_PRETTY_PRINT);
 });
 
 // Cheap standard hardening: stop a browser from MIME-sniffing a response
@@ -41,7 +48,14 @@ $corsOrigin = 'http://127.0.0.1:8090';
 if (($_SERVER['HTTP_ORIGIN'] ?? null) === $corsOrigin) {
     header("Access-Control-Allow-Origin: $corsOrigin");
     header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, X-Scan-Access-Token');
+    // Idempotency-Key added for the enterprise-hardening pass's idempotent
+    // capture retries — found missing here by actually driving a capture
+    // through the web-viewer in a browser: without it, the preflight
+    // OPTIONS request for any POST /capture call carrying that header gets
+    // rejected before the real request ever fires, surfacing to the page
+    // only as a generic "Failed to fetch" with no server-side trace at all
+    // (no 4xx logged, nothing — the browser blocks it before it leaves).
+    header('Access-Control-Allow-Headers: Content-Type, X-Scan-Access-Token, Idempotency-Key');
 }
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
@@ -49,6 +63,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 header('Content-Type: application/json');
+
+// GET /health — enterprise ops requirement (load balancer / uptime monitor
+// target). Deliberately unauthenticated and touches nothing but the DB
+// connection itself, so it reflects "is this process up and can it reach its
+// database" and nothing about any particular session.
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && rtrim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/') === '/health') {
+    try {
+        Database::connect();
+        respond(200, ['status' => 'ok', 'time' => gmdate('c')]);
+    } catch (\Throwable $e) {
+        respond(503, ['status' => 'unavailable', 'message' => 'The Scan Service cannot reach its database right now.']);
+    }
+    return;
+}
+
+/**
+ * Manual review finding (enterprise hardening pass): request bodies were
+ * read and json_decode()'d with no size limit anywhere before reaching any
+ * of RoomPlanSimulatorAdapter's own MAX_* geometry limits — a client could
+ * still make the server allocate an arbitrarily large string/array for a
+ * single request before any of those per-field checks ever run. Capped well
+ * above any real capture payload (RoomPlan's own limits keep genuine
+ * captures well under this) but far below a resource-exhaustion attempt.
+ */
+const MAX_REQUEST_BODY_BYTES = 8 * 1024 * 1024;
 
 function json_body(): array
 {
@@ -60,10 +99,81 @@ function json_body(): array
     return is_array($decoded) ? $decoded : [];
 }
 
+/**
+ * Fixed-window rate limiter shared by every route that calls it. `$bucket`
+ * should combine the caller's IP with the route so unrelated endpoints don't
+ * share a budget. Sends 429 + Retry-After and returns true if the caller is
+ * over budget (callers just check the return value and `return;`); records
+ * this call as an event either way, since even a rejected attempt counts
+ * against the window (otherwise a caller sitting exactly at the limit could
+ * hammer the endpoint forever without ever advancing the window).
+ */
+function rateLimited(ScanSessionRepository $repo, string $bucket, int $max, int $windowSeconds): bool
+{
+    $repo->recordEvent($bucket);
+    $count = $repo->countRecentEvents($bucket, $windowSeconds);
+    if ($count > $max) {
+        header("Retry-After: $windowSeconds");
+        $windowMinutes = max(1, (int) round($windowSeconds / 60));
+        respondError(429, 'rate_limited', "You're making requests faster than we can safely process (limit: $max per $windowMinutes minute(s)). Please slow down and try again shortly.", ['limit' => $max, 'window_seconds' => $windowSeconds]);
+        return true;
+    }
+    return false;
+}
+
+// Bounded wait for a concurrent request that already won the idempotency
+// claim to finish. 20 x 50ms = 1s max — generous next to a single in-process
+// adapt()+save() (milliseconds), tiny next to a real client's own HTTP
+// timeout. If it never resolves in that window, the caller gets a clean 409
+// (see the capture route) rather than this looping forever or, worse, giving
+// up and running the capture itself.
+function pollForIdempotentResponse(ScanSessionRepository $repo, string $sessionId, string $idempotencyKey): ?array
+{
+    for ($attempt = 0; $attempt < 20; $attempt++) {
+        usleep(50_000);
+        $result = $repo->findIdempotentResponse($sessionId, $idempotencyKey);
+        if ($result !== null) {
+            return $result;
+        }
+    }
+    return null;
+}
+
+function clientIp(): string
+{
+    // No reverse proxy / load balancer in front of this local-dev service
+    // today, so REMOTE_ADDR is trustworthy — deliberately NOT trusting
+    // X-Forwarded-For here, since that header is caller-supplied and would
+    // let anyone claim any IP and reset their own rate-limit bucket at will.
+    // Revisit if/when this ever sits behind a real reverse proxy that sets
+    // X-Forwarded-For itself.
+    return $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+}
+
 function respond(int $status, array $body): void
 {
     http_response_code($status);
     echo json_encode($body, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR);
+}
+
+/**
+ * UX hardening: every error response goes through here so `message` is
+ * never missing. Found by manual review that roughly half of this file's
+ * error responses had an `error` machine code but no human-readable
+ * `message` (`invalid_purpose`, `occupied_must_be_boolean`,
+ * `field_too_long`, the bare 404/500 fallbacks, ...) — fine for a developer
+ * reading the code, not fine for a mobile app or the web-viewer trying to
+ * show the person holding the phone something better than the raw error
+ * code. `error` stays the stable, documented machine-readable code for
+ * client-side branching (net/verify_*.php and the iOS client both key off
+ * it); `message` is the sentence a UI can put directly in front of a user
+ * without translating the code itself. `$extra` carries any additional
+ * structured detail (allowed values, field name, limits) a client may still
+ * want programmatically.
+ */
+function respondError(int $status, string $errorCode, string $message, array $extra = []): void
+{
+    respond($status, ['error' => $errorCode, 'message' => $message, ...$extra]);
 }
 
 function require_fields(array $body, array $fields): ?array
@@ -79,14 +189,26 @@ function require_fields(array $body, array $fields): ?array
  * session, and (for identity fields) embedded unbounded into PDF export
  * text. Same class of resource-exhaustion risk as the capture-geometry
  * limits in RoomPlanSimulatorAdapter, applied here to free-text fields.
- * Returns the first field name that's too long, or null if all are fine.
+ * Returns [field, max] for the first field that's too long, or null if all
+ * are fine — the max is returned too so the error message can actually tell
+ * the caller the limit instead of just which field tripped it.
  */
-function first_too_long(array $body, array $maxLengths): ?string
+function first_too_long(array $body, array $maxLengths): ?array
 {
     foreach ($maxLengths as $field => $max) {
         $value = $body[$field] ?? null;
-        if (is_string($value) && strlen($value) > $max) {
-            return $field;
+        // Found by deliberately checking a promise this codebase makes
+        // elsewhere: every caller of this function tells the client the
+        // limit is in "characters" (see the field_too_long messages in this
+        // file). strlen() counts BYTES, so a note/property_id written in
+        // Japanese, Arabic, or with accented Latin characters (3-4 bytes
+        // each in UTF-8) used to hit the byte cap at a fraction of the
+        // promised character count — e.g. a 5000-byte cap silently allowed
+        // only ~1,250 real Japanese characters, not 5000. json_body()
+        // already guarantees valid UTF-8 (invalid encoding fails json_decode
+        // upstream), so mb_strlen() is safe here without extra validation.
+        if (is_string($value) && mb_strlen($value, 'UTF-8') > $max) {
+            return [$field, $max];
         }
     }
     return null;
@@ -146,7 +268,35 @@ function authorizeSession(ScanSessionRepository $repo, string $sessionId, string
     }
 
     if (!$granted) {
-        respond(401, ['error' => 'invalid_or_missing_access_token']);
+        respondError(401, 'invalid_or_missing_access_token', 'This request needs a valid access token. Include the X-Scan-Access-Token header you were given when the session was created.');
+        return null;
+    }
+
+    // Enterprise hardening: token expiry (docs/adr/0003's "no token
+    // rotation/expiry" known limit). Checked only after the token has
+    // already matched, so a caller who doesn't hold the right token learns
+    // nothing new here — this can't become a second enumeration oracle on
+    // top of the one authorizeSession's 401-for-both-cases already closes.
+    if ($repo->isTokenExpired($session)) {
+        // Closes the permanent-lockout gap: rotate-token itself used to be
+        // blocked by this same check, so an expired token had no recovery
+        // path at all. Scoped narrowly — ONLY the rotate_token action gets
+        // this exception, and only within ROTATE_GRACE_PERIOD_SECONDS of
+        // the original expiry. Every other action is unaffected: still
+        // hard-blocked the instant the token expires, exactly as before.
+        if ($action === 'rotate_token' && !$repo->isBeyondRotateGracePeriod($session)) {
+            $repo->logAccess($session['id'], $action, 'granted_grace_rotation');
+            return $session;
+        }
+        $repo->logAccess($session['id'], $action, 'expired');
+        $graceDays = (int) round(ScanSessionRepository::ROTATE_GRACE_PERIOD_SECONDS / 86400);
+        respondError(
+            401,
+            'token_expired',
+            $action === 'rotate_token'
+                ? "This token expired more than {$graceDays} days ago, past the rotation grace period. There is no recovery path once that window closes — a new session is needed."
+                : "Your access token has expired. Call POST /scan-sessions/{id}/rotate-token with your current token within {$graceDays} days of expiry to get a new one."
+        );
         return null;
     }
 
@@ -159,41 +309,86 @@ $repo = new ScanSessionRepository($db);
 $method = $_SERVER['REQUEST_METHOD'];
 $path = rtrim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
 
+if ($method === 'POST') {
+    $contentLength = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+    if ($contentLength > MAX_REQUEST_BODY_BYTES) {
+        $maxMb = round(MAX_REQUEST_BODY_BYTES / (1024 * 1024), 1);
+        respondError(413, 'payload_too_large', "This request is larger than the {$maxMb}MB limit. If this is a real capture, check for an unexpectedly large field rather than retrying as-is.", ['max_bytes' => MAX_REQUEST_BODY_BYTES]);
+        return;
+    }
+}
+
 // POST /scan-sessions
 if ($method === 'POST' && $path === '/scan-sessions') {
+    // Enterprise hardening: session creation is the one endpoint with no
+    // token to gate it (there isn't one yet), which is exactly why
+    // scan-service/README.md's "Known limits" flagged unlimited session
+    // creation as an accepted-for-now risk. Bounded per caller IP.
+    //
+    // Overridable via env (a real pilot deployment behind one shared IP
+    // range may want this much tighter than local dev/CI needs it to be).
+    // The default is deliberately generous rather than tuned to a realistic
+    // single guided-capture pace: this repo's own merge-gate net suite
+    // (net/verify_*.php) creates ~20 sessions from localhost every time it
+    // runs end to end, and re-running it more than once inside the same
+    // window must not start failing unrelated checks with spurious 429s —
+    // see the adjacent-case note in net/verify_enterprise_hardening.php.
+    $createSessionMax = (int) (getenv('SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX') ?: 60);
+    $createSessionWindowSeconds = (int) (getenv('SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_WINDOW_SECONDS') ?: 600);
+    if (rateLimited($repo, clientIp() . ':create_session', $createSessionMax, $createSessionWindowSeconds)) {
+        return;
+    }
+
     $body = json_body();
     // Hard constraint #1: identity-native captures. A session cannot be
     // created without property/unit/organisation — no orphan captures by
     // construction, not by convention.
     $missing = require_fields($body, ['property_id', 'unit_id', 'organisation_id', 'purpose', 'occupied']);
     if ($missing !== null) {
-        respond(422, ['error' => 'missing_required_fields', 'fields' => $missing]);
+        $fieldList = implode(', ', $missing);
+        respondError(422, 'missing_required_fields', "Please provide the following before starting a scan: $fieldList.", ['fields' => $missing]);
         return;
     }
-    $tooLongField = first_too_long($body, ['property_id' => 200, 'unit_id' => 200, 'organisation_id' => 200]);
-    if ($tooLongField !== null) {
-        respond(422, ['error' => 'field_too_long', 'field' => $tooLongField]);
+    $tooLong = first_too_long($body, ['property_id' => 200, 'unit_id' => 200, 'organisation_id' => 200]);
+    if ($tooLong !== null) {
+        [$tooLongField, $tooLongMax] = $tooLong;
+        respondError(422, 'field_too_long', "'$tooLongField' is too long — please keep it to $tooLongMax characters or fewer.", ['field' => $tooLongField, 'max_length' => $tooLongMax]);
         return;
     }
     $validPurposes = ['listing', 'check_in', 'check_out', 'renovation', 'other'];
     if (!in_array($body['purpose'], $validPurposes, true)) {
-        respond(422, ['error' => 'invalid_purpose', 'allowed' => $validPurposes]);
+        respondError(422, 'invalid_purpose', 'Please choose a valid purpose for this scan: listing, check_in, check_out, renovation, or other.', ['allowed' => $validPurposes]);
         return;
     }
     if (!is_bool($body['occupied'])) {
-        respond(422, ['error' => 'occupied_must_be_boolean']);
+        respondError(422, 'occupied_must_be_boolean', "Please specify whether the unit is currently occupied (true or false) — 'occupied' isn't optional, so a scan can't accidentally skip the consent check that depends on it.");
         return;
     }
     $consentObtained = $body['consent_obtained'] ?? false;
     if (!is_bool($consentObtained)) {
-        respond(422, ['error' => 'consent_obtained_must_be_boolean']);
+        respondError(422, 'consent_obtained_must_be_boolean', "Please specify 'consent_obtained' as true or false.");
         return;
     }
     // Hard constraint #3: an occupied unit cannot be scanned without
     // recorded consent — this is checked at the earliest possible point
     // (session creation), not left for capture time or later cleanup.
     if ($body['occupied'] === true && $consentObtained !== true) {
-        respond(403, ['error' => 'consent_required', 'message' => 'occupied units require consent_obtained: true before a session can be created']);
+        respondError(403, 'consent_required', 'This unit is marked occupied, so tenant consent must be recorded (consent_obtained: true) before a scan session can be created.');
+        return;
+    }
+
+    // Enterprise hardening: caller-adjustable token TTL, bounded server-side.
+    // Lets a pilot deployment tighten this for a highly sensitive occupied
+    // unit, or loosen it for a long-running renovation project, without
+    // needing a code change on either side.
+    $tokenTtlSeconds = $body['access_token_ttl_seconds'] ?? ScanSessionRepository::DEFAULT_TOKEN_TTL_SECONDS;
+    if (!is_int($tokenTtlSeconds) || $tokenTtlSeconds < ScanSessionRepository::MIN_TOKEN_TTL_SECONDS || $tokenTtlSeconds > ScanSessionRepository::MAX_TOKEN_TTL_SECONDS) {
+        respondError(
+            422,
+            'invalid_access_token_ttl_seconds',
+            'access_token_ttl_seconds must be between ' . ScanSessionRepository::MIN_TOKEN_TTL_SECONDS . ' and ' . ScanSessionRepository::MAX_TOKEN_TTL_SECONDS . ' seconds — omit it entirely to use the default.',
+            ['min' => ScanSessionRepository::MIN_TOKEN_TTL_SECONDS, 'max' => ScanSessionRepository::MAX_TOKEN_TTL_SECONDS]
+        );
         return;
     }
 
@@ -203,7 +398,8 @@ if ($method === 'POST' && $path === '/scan-sessions') {
         $body['organisation_id'],
         $body['purpose'],
         $body['occupied'],
-        $consentObtained
+        $consentObtained,
+        $tokenTtlSeconds
     );
     // access_token is returned here and only here — the one moment a client
     // is expected to learn it. Every later call must present it explicitly.
@@ -215,6 +411,36 @@ if ($method === 'POST' && $path === '/scan-sessions') {
     return;
 }
 
+// POST /scan-sessions/{id}/rotate-token
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rotate-token$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'rotate_token');
+    if ($session === null) {
+        return;
+    }
+
+    $body = json_body();
+    $tokenTtlSeconds = $body['access_token_ttl_seconds'] ?? ScanSessionRepository::DEFAULT_TOKEN_TTL_SECONDS;
+    if (!is_int($tokenTtlSeconds) || $tokenTtlSeconds < ScanSessionRepository::MIN_TOKEN_TTL_SECONDS || $tokenTtlSeconds > ScanSessionRepository::MAX_TOKEN_TTL_SECONDS) {
+        respondError(
+            422,
+            'invalid_access_token_ttl_seconds',
+            'access_token_ttl_seconds must be between ' . ScanSessionRepository::MIN_TOKEN_TTL_SECONDS . ' and ' . ScanSessionRepository::MAX_TOKEN_TTL_SECONDS . ' seconds — omit it entirely to use the default.',
+            ['min' => ScanSessionRepository::MIN_TOKEN_TTL_SECONDS, 'max' => ScanSessionRepository::MAX_TOKEN_TTL_SECONDS]
+        );
+        return;
+    }
+
+    $updated = $repo->rotateToken($session['id'], $tokenTtlSeconds);
+    // The OLD token presented on this very request is now invalid — this
+    // response is the only place the client learns the new one.
+    respond(200, [
+        'id' => $updated['id'],
+        'access_token' => $updated['access_token'],
+        'expires_at' => $updated['expires_at'],
+    ]);
+    return;
+}
+
 // POST /scan-sessions/{id}/capture
 if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'capture');
@@ -222,9 +448,52 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         return;
     }
 
+    // Enterprise hardening: 60 capture calls per 5-minute window per session
+    // is far above any real guided multi-room pace, but bounds a runaway
+    // client (or a compromised token) from hammering the adapter/renderer
+    // pipeline indefinitely.
+    if (rateLimited($repo, $session['id'] . ':capture', 60, 300)) {
+        return;
+    }
+
+    // Enterprise reliability hardening: idempotent retry support. A client
+    // resubmitting the exact same capture after a dropped response (see
+    // ScanSessionRepository::findIdempotentResponse's doc comment) gets back
+    // the stored result instead of appending the room a second time.
+    $idempotencyKey = $_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? null;
+    $holdsIdempotencyClaim = false;
+    if (is_string($idempotencyKey) && $idempotencyKey !== '') {
+        $cached = $repo->findIdempotentResponse($session['id'], $idempotencyKey);
+        if ($cached !== null) {
+            respond(200, $cached);
+            return;
+        }
+
+        // Adjacent case to the retry above: two requests with the SAME key
+        // can both reach this point with $cached === null if they arrive
+        // close enough together (a real risk under PHP-FPM/production, even
+        // though this dev server serializes requests and can't reproduce
+        // it). Only the request that wins this atomic claim may actually
+        // run the capture below — see ScanSessionRepository::claimIdempotencyKey.
+        $holdsIdempotencyClaim = $repo->claimIdempotencyKey($session['id'], $idempotencyKey);
+        if (!$holdsIdempotencyClaim) {
+            $result = pollForIdempotentResponse($repo, $session['id'], $idempotencyKey);
+            if ($result !== null) {
+                respond(200, $result);
+            } else {
+                respondError(
+                    409,
+                    'capture_in_progress',
+                    'Another request with this Idempotency-Key is still being processed for this session. Please retry shortly.'
+                );
+            }
+            return;
+        }
+    }
+
     $body = json_body();
     if (empty($body['raw_capture']) || !is_array($body['raw_capture'])) {
-        respond(422, ['error' => 'missing_raw_capture', 'hint' => 'body must include raw_capture: <RoomPlan-shaped capture JSON>']);
+        respondError(422, 'missing_raw_capture', "Please include a 'raw_capture' field with the RoomPlan capture data for this room.");
         return;
     }
 
@@ -244,12 +513,15 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
             'capture_provider' => $body['capture_provider'] ?? 'roomplan_simulator_fixture',
         ], $roomIndexOffset);
     } catch (\InvalidArgumentException $e) {
-        respond(422, ['error' => 'unprocessable_capture', 'message' => $e->getMessage()]);
+        respondError(422, 'unprocessable_capture', "This capture couldn't be processed: " . $e->getMessage() . ' Please rescan this room.');
         return;
     }
 
     $floorPlan = $repo->appendCapture($session['id'], $capturedFloorPlan);
     $repo->markCaptured($session['id']);
+    if ($holdsIdempotencyClaim) {
+        $repo->completeIdempotencyKey($session['id'], $idempotencyKey, $floorPlan);
+    }
     respond(200, $floorPlan);
     return;
 }
@@ -265,16 +537,17 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
     $body = json_body();
     $missing = require_fields($body, ['url']);
     if ($missing !== null) {
-        respond(422, ['error' => 'missing_required_fields', 'fields' => $missing]);
+        respondError(422, 'missing_required_fields', "Please include a 'url' pointing to the uploaded photo.", ['fields' => $missing]);
         return;
     }
     if (!is_http_url($body['url'])) {
-        respond(422, ['error' => 'invalid_url_scheme', 'message' => 'url must start with http:// or https://']);
+        respondError(422, 'invalid_url_scheme', "The photo 'url' must start with http:// or https://.");
         return;
     }
-    $tooLongField = first_too_long($body, ['url' => 2000, 'caption' => 2000]);
-    if ($tooLongField !== null) {
-        respond(422, ['error' => 'field_too_long', 'field' => $tooLongField]);
+    $tooLong = first_too_long($body, ['url' => 2000, 'caption' => 2000]);
+    if ($tooLong !== null) {
+        [$tooLongField, $tooLongMax] = $tooLong;
+        respondError(422, 'field_too_long', "'$tooLongField' is too long — please keep it to $tooLongMax characters or fewer.", ['field' => $tooLongField, 'max_length' => $tooLongMax]);
         return;
     }
 
@@ -291,7 +564,10 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
     } catch (\RuntimeException $e) {
         // Photos/notes attach to the same unit package, not a side-channel
         // (PHASES.md Phase 2) — there must be a captured FloorPlan first.
-        respond(409, ['error' => 'no_floor_plan_yet', 'message' => $e->getMessage()]);
+        respondError(409, 'no_floor_plan_yet', 'Please capture at least one room in this session before attaching photos.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unknown_room_id', $e->getMessage() . ' Omit room_id to attach this photo to the session generally, or check it against a room_id already returned by a capture call.');
         return;
     }
 
@@ -310,12 +586,13 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, 
     $body = json_body();
     $missing = require_fields($body, ['text']);
     if ($missing !== null) {
-        respond(422, ['error' => 'missing_required_fields', 'fields' => $missing]);
+        respondError(422, 'missing_required_fields', "Please include a 'text' field with the note's content.", ['fields' => $missing]);
         return;
     }
-    $tooLongField = first_too_long($body, ['text' => 5000]);
-    if ($tooLongField !== null) {
-        respond(422, ['error' => 'field_too_long', 'field' => $tooLongField]);
+    $tooLong = first_too_long($body, ['text' => 5000]);
+    if ($tooLong !== null) {
+        [$tooLongField, $tooLongMax] = $tooLong;
+        respondError(422, 'field_too_long', "'$tooLongField' is too long — please keep it to $tooLongMax characters or fewer.", ['field' => $tooLongField, 'max_length' => $tooLongMax]);
         return;
     }
 
@@ -329,7 +606,10 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, 
     try {
         $floorPlan = $repo->appendNote($sessionId, $note);
     } catch (\RuntimeException $e) {
-        respond(409, ['error' => 'no_floor_plan_yet', 'message' => $e->getMessage()]);
+        respondError(409, 'no_floor_plan_yet', 'Please capture at least one room in this session before attaching notes.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unknown_room_id', $e->getMessage() . ' Omit room_id to attach this note to the session generally, or check it against a room_id already returned by a capture call.');
         return;
     }
 
@@ -345,14 +625,14 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     }
     $floorPlan = $repo->findFloorPlan($session['id']);
     if ($floorPlan === null) {
-        respond(404, ['error' => 'no_floor_plan_yet']);
+        respondError(404, 'no_floor_plan_yet', 'This session doesn\'t have a captured floor plan yet — capture at least one room before exporting.');
         return;
     }
 
     try {
         $png = (new FloorPlanImageRenderer())->render($floorPlan);
     } catch (\InvalidArgumentException $e) {
-        respond(422, ['error' => 'unrenderable_floor_plan', 'message' => $e->getMessage()]);
+        respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;
     }
     header('Content-Type: image/png');
@@ -368,12 +648,37 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     }
     $floorPlan = $repo->findFloorPlan($session['id']);
     if ($floorPlan === null) {
-        respond(404, ['error' => 'no_floor_plan_yet']);
+        respondError(404, 'no_floor_plan_yet', 'This session doesn\'t have a captured floor plan yet — capture at least one room before exporting.');
         return;
     }
 
+    // Found by deliberately probing the adjacent case to the PNG route right
+    // above: FloorPlanPdfRenderer::render() throws InvalidArgumentException
+    // when a session's room count would need more than MAX_PAGES (200) PDF
+    // pages, but — unlike PNG — nothing here caught it. The exception fell
+    // through to the generic 500 handler: a landlord who ran a very large
+    // multi-room session got "something went wrong on our end," masking a
+    // legitimate, actionable client-side condition (too many rooms for one
+    // export) behind a message that says the opposite of the truth.
+    // Verified manually (not by an automated net): direct-injected a 9000-room
+    // FloorPlan and hit this route before this catch existed — got a raw 500
+    // "internal_error" with no actionable cause. Same injected data after
+    // adding the catch — a clean 422 naming the real reason. Not automated
+    // as a permanent net check because nets in this project are HTTP-only by
+    // hard rule (never touch the PHP classes/SQLite directly — see any
+    // net/verify_*.php header comment), and reproducing 205 real PDF pages
+    // needs ~8,800 rooms, which the 60-calls/5-minute per-session capture
+    // rate limit makes impractical to drive over real HTTP without weakening
+    // that limit just to satisfy a test. Documented here and in README's
+    // "Known limits" rather than silently left unverified.
+    try {
+        $pdf = (new FloorPlanPdfRenderer())->render($floorPlan);
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
+        return;
+    }
     header('Content-Type: application/pdf');
-    echo (new FloorPlanPdfRenderer())->render($floorPlan);
+    echo $pdf;
     return;
 }
 
@@ -405,4 +710,4 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)$#', $path, $m)) {
     return;
 }
 
-respond(404, ['error' => 'not_found']);
+respondError(404, 'not_found', "This endpoint doesn't exist. Check the path and HTTP method against scan-service/README.md's API section.");

@@ -12,9 +12,14 @@ itself. The Vuuro rental codebase couples to this later, over API.
 
 Phase 1 (proof of capture) and Phase 2 (unit story) are complete and independently
 verified. Phase 3 (pilot hardening) is underway: PNG/PDF exports, a first privacy/ACL
-pass, and per-room coverage/quality scoring are done; an optional laser spike is still
-open. All on branch `feature/vuuro-scan` — the single working branch for this whole
-build, not merged to `main` yet. See [`CLAUDE.md`](./CLAUDE.md) for the working direction,
+pass, and per-room coverage/quality scoring are done; an optional laser spike is
+deferred with a written rationale (`docs/adr/0004-laser-pairing-spike.md`). On top of
+that, an enterprise-hardening pass adds access-token expiry/rotation, per-caller-IP and
+per-session rate limiting, idempotent capture retries, a request body size cap, and a
+`GET /health` endpoint — see `scan-service/README.md`'s "Known limits" for exactly what
+each does and doesn't solve. All on branch `feature/vuuro-scan` — the single working
+branch for this whole build, not merged to `main` yet. See [`CLAUDE.md`](./CLAUDE.md) for
+the working direction,
 [`PHASES.md`](./PHASES.md) for the three-phase arc, and
 [`docs/VUURO_SCAN_LIDAR_DIRECTION_BRIEF_JOVEN_2026-08-06.pdf`](./docs/VUURO_SCAN_LIDAR_DIRECTION_BRIEF_JOVEN_2026-08-06.pdf)
 for the full kickoff brief.
@@ -31,6 +36,9 @@ for the full kickoff brief.
 - [`docs/adr/0003-privacy-acl-session-tokens.md`](./docs/adr/0003-privacy-acl-session-tokens.md)
   — the per-session access-token/consent/audit-log model closing hard constraint #3's
   gap, and what it deliberately doesn't solve yet.
+- [`docs/adr/0004-laser-pairing-spike.md`](./docs/adr/0004-laser-pairing-spike.md) — why
+  Phase 3's optional laser-pairing spike is deferred for now, and the integration sketch
+  to start from if a pilot ever asks for it.
 - [`ios-app/`](./ios-app/) — RoomPlan capture flow **written, not compiled or run** (no
   Mac/Xcode access on this machine); see `ios-app/README.md` for the verification
   checklist for whoever opens it in Xcode first.

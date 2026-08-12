@@ -18,6 +18,36 @@ enum ScanServiceError: Error {
     case transport(Error)
 }
 
+/// UX hardening: without this, `error.localizedDescription` anywhere in the
+/// app (every `ErrorView` in VuuroScanApp.swift uses it) would fall back to
+/// Swift's generic "The operation couldn't be completed" for a plain enum
+/// error — never the Scan Service's own human-readable `message` field
+/// (scan-service/README.md's "Error shape"), even though the server went to
+/// the trouble of sending one. Parses `body` as `{"error", "message", ...}`
+/// and surfaces `message` directly; only falls back to a generic sentence
+/// when the body isn't in that shape (e.g. a raw HTML error from something
+/// other than this app's own backend).
+extension ScanServiceError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .unexpectedStatus(let status, let body):
+            if let data = body.data(using: .utf8),
+               let decoded = try? JSONDecoder().decode(ScanServiceErrorBody.self, from: data),
+               !decoded.message.isEmpty {
+                return decoded.message
+            }
+            return "The Scan Service returned an unexpected response (HTTP \(status))."
+        case .transport(let underlying):
+            return "Couldn't reach the Scan Service: \(underlying.localizedDescription)"
+        }
+    }
+}
+
+private struct ScanServiceErrorBody: Decodable {
+    let error: String?
+    let message: String
+}
+
 struct ScanServiceClient {
     /// Local dev default matches `scan-service/README.md`'s
     /// `php -S 127.0.0.1:8089 public/index.php`. Point this at the
@@ -49,6 +79,39 @@ struct ScanServiceClient {
 
     func fetchSession(sessionId: String, accessToken: String) async throws -> FloorPlan {
         try await get(path: "/scan-sessions/\(sessionId)", accessToken: accessToken)
+    }
+
+    /// `url` must already be reachable over http(s) — the Scan Service does
+    /// not accept or store image bytes itself yet (see
+    /// scan-service/README.md "Known limits"). There is no image upload
+    /// target on the client side either, so this is wired for whenever one
+    /// exists; it is not exercised by the manual smoke-test flow today.
+    func addPhoto(sessionId: String, accessToken: String, url: String, caption: String? = nil, roomId: String? = nil) async throws -> FloorPlan {
+        struct Body: Encodable {
+            let url: String
+            let caption: String?
+            let roomId: String?
+
+            enum CodingKeys: String, CodingKey {
+                case url
+                case caption
+                case roomId = "room_id"
+            }
+        }
+        return try await post(path: "/scan-sessions/\(sessionId)/photos", body: Body(url: url, caption: caption, roomId: roomId), accessToken: accessToken)
+    }
+
+    func addNote(sessionId: String, accessToken: String, text: String, roomId: String? = nil) async throws -> FloorPlan {
+        struct Body: Encodable {
+            let text: String
+            let roomId: String?
+
+            enum CodingKeys: String, CodingKey {
+                case text
+                case roomId = "room_id"
+            }
+        }
+        return try await post(path: "/scan-sessions/\(sessionId)/notes", body: Body(text: text, roomId: roomId), accessToken: accessToken)
     }
 
     private func post<Body: Encodable, Response: Decodable>(path: String, body: Body, accessToken: String?) async throws -> Response {

@@ -1,0 +1,24 @@
+{
+  "_fixture_note": "Deliberately degenerate: all four polygonCorners are collinear (they lie on the line z=0), so the shoelace formula resolves this to a 0 m2 outline. Real RoomPlan output would not produce this, but a corrupted or malicious capture payload could — this fixture exists to prove the adapter rejects it instead of silently returning a 'Room 1' with floor_area_m2: 0 and coverage.usable: true, which is what happened before RoomPlanSimulatorAdapter::MIN_POLYGON_AREA_M2 was added. See RoomPlanSimulatorAdapter.php doc comment.",
+  "story": 0,
+  "floors": [
+    {
+      "identifier": "floor-degenerate",
+      "category": "floor",
+      "confidence": "high",
+      "polygonCorners": [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [2.0, 0.0, 0.0],
+        [3.0, 0.0, 0.0]
+      ]
+    }
+  ],
+  "walls": [
+    { "identifier": "wall-0001", "category": "wall", "confidence": "high", "dimensions": [3.0, 2.60, 0.10] }
+  ],
+  "doors": [],
+  "windows": [],
+  "openings": [],
+  "objects": []
+}

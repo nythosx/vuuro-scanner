@@ -5,29 +5,89 @@ declare(strict_types=1);
 namespace VuuroScan\Export;
 
 /**
- * Renders a FloorPlan contract array to a minimal, hand-built single-page
- * PDF: identity, honest-measurement disclaimer, and a per-room metrics
- * table. No external PDF library — the PDF spec's object/xref/trailer
- * structure is simple enough for one text-only page that pulling in a
- * dependency for it isn't worth it. Does not attempt any spatial layout;
- * see docs/adr/0002-export-coordinate-frame.md for why FloorPlanImageRenderer
- * doesn't either.
+ * Renders a FloorPlan contract array to a minimal, hand-built PDF: identity,
+ * honest-measurement disclaimer, and a per-room metrics table, paginated
+ * across as many pages as the room count needs. No external PDF library —
+ * the PDF spec's object/xref/trailer structure is simple enough for
+ * text-only pages that pulling in a dependency for it isn't worth it. Does
+ * not attempt any spatial layout; see docs/adr/0002-export-coordinate-frame.md
+ * for why FloorPlanImageRenderer doesn't either.
+ *
+ * Bug found by manual review, not by a report: this used to hardcode a
+ * single fixed-size page and step a text cursor down 16px per line with no
+ * bottom-of-page check. A session with more than ~30 rooms (nothing stops a
+ * "unit story" session from having that many — no per-session room cap
+ * exists) would silently place trailing rows below the visible page: no
+ * crash, no error, the PDF still opened fine — the data was just gone from
+ * what anyone actually looking at it would see. Real pagination below,
+ * matching the honesty standard the rest of this codebase holds itself to:
+ * a limitation gets fixed or explicitly documented, never silently eaten.
  */
 final class FloorPlanPdfRenderer
 {
+    private const PAGE_TOP_Y = 740;
+    private const PAGE_BOTTOM_MARGIN_Y = 50;
+    private const LINE_HEIGHT = 16;
+    // Defense-in-depth, same spirit as FloorPlanImageRenderer's
+    // MAX_CANVAS_DIMENSION_PX: a session with an absurd room count (nothing
+    // upstream caps total rooms per session, only per-capture-call surface
+    // counts) shouldn't make this renderer build an unbounded number of PDF
+    // pages/objects. Generous — thousands of rooms is not a real unit.
+    private const MAX_PAGES = 200;
+
     public function render(array $floorPlan): string
     {
         $lines = $this->buildTextLines($floorPlan);
-        $contentStream = $this->buildContentStream($lines);
+        $pages = $this->paginate($lines);
+
+        if (count($pages) > self::MAX_PAGES) {
+            throw new \InvalidArgumentException(sprintf(
+                'This floor plan would need %d PDF pages, exceeding the %d page sanity bound — refusing to render it.',
+                count($pages),
+                self::MAX_PAGES
+            ));
+        }
 
         $objects = [];
+        $objects[1] = null; // filled in below once page object numbers are known
+        $fontObjNum = 3;
+        $objects[$fontObjNum] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+
+        $pageObjNums = [];
+        $nextObjNum = $fontObjNum + 1;
+        foreach ($pages as $pageLines) {
+            $pageObjNum = $nextObjNum++;
+            $contentObjNum = $nextObjNum++;
+            $pageObjNums[] = $pageObjNum;
+
+            $contentStream = $this->buildContentStream($pageLines);
+            $objects[$pageObjNum] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                . "/Resources << /Font << /F1 {$fontObjNum} 0 R >> >> /Contents {$contentObjNum} 0 R >>";
+            $objects[$contentObjNum] = "<< /Length " . strlen($contentStream) . " >>\nstream\n" . $contentStream . "\nendstream";
+        }
+
+        $kids = implode(' ', array_map(static fn (int $n) => "{$n} 0 R", $pageObjNums));
         $objects[1] = "<< /Type /Catalog /Pages 2 0 R >>";
-        $objects[2] = "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
-        $objects[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>";
-        $objects[4] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
-        $objects[5] = "<< /Length " . strlen($contentStream) . " >>\nstream\n" . $contentStream . "\nendstream";
+        $objects[2] = "<< /Type /Pages /Kids [{$kids}] /Count " . count($pageObjNums) . ' >>';
+        ksort($objects);
 
         return $this->assemblePdf($objects);
+    }
+
+    /**
+     * Splits lines across pages so every line lands within the visible
+     * MediaBox — the fix for the bug documented in this class's doc comment.
+     * Always returns at least one page, even for zero lines, so a session
+     * with rooms but otherwise-empty text still gets a real (if sparse) PDF.
+     *
+     * @param string[] $lines
+     * @return array<int, string[]>
+     */
+    private function paginate(array $lines): array
+    {
+        $maxLinesPerPage = intdiv(self::PAGE_TOP_Y - self::PAGE_BOTTOM_MARGIN_Y, self::LINE_HEIGHT) + 1;
+        $pages = array_chunk($lines, max($maxLinesPerPage, 1));
+        return $pages === [] ? [[]] : $pages;
     }
 
     /** @return string[] */

@@ -25,12 +25,15 @@ function net_http_raw(string $method, string $url, ?array $body = null, ?string 
  * containing a token like `1e400` that's valid JSON syntax on the wire but
  * overflows to PHP float INF only once decoded server-side.
  */
-function net_http_raw_literal(string $method, string $url, ?string $literalBody = null, ?string $accessToken = null): array
+function net_http_raw_literal(string $method, string $url, ?string $literalBody = null, ?string $accessToken = null, array $extraHeaders = []): array
 {
     $ch = curl_init($url);
     $headers = ['Content-Type: application/json'];
     if ($accessToken !== null) {
         $headers[] = "X-Scan-Access-Token: $accessToken";
+    }
+    foreach ($extraHeaders as $name => $value) {
+        $headers[] = "$name: $value";
     }
     $opts = [
         CURLOPT_CUSTOMREQUEST => $method,
@@ -49,6 +52,21 @@ function net_http_raw_literal(string $method, string $url, ?string $literalBody 
     $contentType = (string) curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
     curl_close($ch);
     return [$status, $contentType, (string) $raw];
+}
+
+/**
+ * Like net_http_json() but supports arbitrary extra headers (e.g.
+ * Idempotency-Key) beyond X-Scan-Access-Token — needed for
+ * verify_enterprise_hardening.php's idempotency checks.
+ *
+ * @return array{0: int, 1: array, 2: string}
+ */
+function net_http_json_ex(string $method, string $url, ?array $body, ?string $accessToken, array $extraHeaders): array
+{
+    $literalBody = $body !== null ? json_encode($body, JSON_THROW_ON_ERROR) : null;
+    [$status, , $raw] = net_http_raw_literal($method, $url, $literalBody, $accessToken, $extraHeaders);
+    $decoded = json_decode($raw, true);
+    return [$status, is_array($decoded) ? $decoded : [], $raw];
 }
 
 /** @return array{0: int, 1: array, 2: string} [status, decoded JSON body (or [] if not decodable), raw bytes] */

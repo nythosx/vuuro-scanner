@@ -13,8 +13,37 @@ CREATE TABLE IF NOT EXISTS scan_sessions (
     -- that an occupied unit cannot be captured without recorded consent.
     access_token TEXT NOT NULL,
     occupied INTEGER NOT NULL DEFAULT 0,
-    consent_obtained INTEGER NOT NULL DEFAULT 0
+    consent_obtained INTEGER NOT NULL DEFAULT 0,
+    -- Enterprise hardening: token lifecycle (docs/adr/0003 flagged "no token
+    -- rotation/expiry" as a known limit). expires_at is set at creation from
+    -- either a caller-supplied access_token_ttl_seconds or a 90-day default,
+    -- and refreshed on every POST .../rotate-token call.
+    expires_at TEXT NOT NULL DEFAULT ''
 );
+
+-- Idempotency for POST .../capture (enterprise reliability hardening): a
+-- mobile client retrying an upload after a dropped response on flaky
+-- on-site connectivity must not append the same room twice. One row per
+-- (session, key) pair; a repeat key within the same session replays the
+-- stored response instead of re-running the adapter.
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    scan_session_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (scan_session_id, idempotency_key)
+);
+
+-- Fixed-window rate limiting (enterprise hardening): scan-service/README.md
+-- "Known limits" flagged unlimited session creation as accepted-for-now risk
+-- for a local-dev-only window. bucket is caller-IP + route, so different
+-- routes/callers get independent windows.
+CREATE TABLE IF NOT EXISTS rate_limit_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bucket TEXT NOT NULL,
+    occurred_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_events_bucket ON rate_limit_events(bucket, occurred_at);
 
 -- One row per session. Phase 1 is single-room; Phase 2 (multi-room stitching)
 -- is expected to still key on scan_session_id, not add a new identity axis.
