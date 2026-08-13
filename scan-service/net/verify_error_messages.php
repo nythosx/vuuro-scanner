@@ -83,6 +83,20 @@ $cases = [
     'consent required' => [[...base_payload(), 'occupied' => true], 403],
     'invalid ttl' => [[...base_payload(), 'access_token_ttl_seconds' => 5], 422],
     'property_id too long' => [[...base_payload(), 'property_id' => str_repeat('x', 500)], 422],
+    // Adjacent case found by deliberately probing the "what if the type is
+    // just wrong" angle: require_fields() only checks presence, and
+    // first_too_long() silently skips non-strings (see its own comment) —
+    // so a numeric/array identity field used to sail past every validation
+    // check and hit ScanSessionRepository::create()'s string-typed parameter
+    // under strict_types, throwing an uncaught TypeError. Caught safely by
+    // the global exception handler, but surfaced as a generic 500
+    // "something went wrong on our end" for an entirely client-side,
+    // actionable mistake — same bug shape as the export MAX_PAGES fix
+    // elsewhere in this file, reached via a type mismatch instead of a
+    // missing try/catch. Must be a clean 422, not a 500.
+    'property_id as a number, not a string' => [[...base_payload(), 'property_id' => 12345], 422],
+    'unit_id as an array, not a string' => [[...base_payload(), 'unit_id' => []], 422],
+    'organisation_id as a boolean, not a string' => [[...base_payload(), 'organisation_id' => true], 422],
 ];
 
 foreach ($cases as $label => [$payload, $expectedStatus]) {
@@ -147,6 +161,30 @@ if ($sessionId !== null && $token !== null) {
     check('invalid photo url returns HTTP 422', $badUrlStatus === 422, "got HTTP $badUrlStatus");
     [$badUrlError, $badUrlMessage] = pluck($badUrlBody);
     check('invalid-photo-url message is a real sentence', is_real_message($badUrlMessage, $badUrlError), "error=\"$badUrlError\" message=\"$badUrlMessage\"");
+
+    // Adjacent case to the property_id/unit_id/organisation_id type checks
+    // above, found by probing the same "what if the type is just wrong"
+    // angle on the photos/notes routes: is_http_url() takes a typed
+    // `string $url`, so a non-string 'url' used to throw an uncaught
+    // TypeError under this file's declare(strict_types=1) and surface as a
+    // generic 500 instead of a 422 — a real crash, not just a coverage gap.
+    // 'caption'/'text' don't crash (they never reach a typed parameter) but
+    // used to be silently stored as whatever non-string value was sent,
+    // contradicting the API's own promise that these are string fields.
+    [$nonStringUrlStatus, $nonStringUrlBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", ['url' => ['not', 'a', 'string']], $token);
+    check('a non-string photo url returns HTTP 422, not a 500 crash', $nonStringUrlStatus === 422, "got HTTP $nonStringUrlStatus");
+    [$nonStringUrlError, $nonStringUrlMessage] = pluck($nonStringUrlBody);
+    check('non-string-url message is a real sentence', is_real_message($nonStringUrlMessage, $nonStringUrlError), "error=\"$nonStringUrlError\" message=\"$nonStringUrlMessage\"");
+
+    [$nonStringCaptionStatus, $nonStringCaptionBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", ['url' => 'https://example.com/x.jpg', 'caption' => 42], $token);
+    check('a non-string photo caption returns HTTP 422, not silently stored', $nonStringCaptionStatus === 422, "got HTTP $nonStringCaptionStatus");
+    [$nonStringCaptionError, $nonStringCaptionMessage] = pluck($nonStringCaptionBody);
+    check('non-string-caption message is a real sentence', is_real_message($nonStringCaptionMessage, $nonStringCaptionError), "error=\"$nonStringCaptionError\" message=\"$nonStringCaptionMessage\"");
+
+    [$nonStringTextStatus, $nonStringTextBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/notes", ['text' => ['not', 'a', 'string']], $token);
+    check('a non-string note text returns HTTP 422, not silently stored', $nonStringTextStatus === 422, "got HTTP $nonStringTextStatus");
+    [$nonStringTextError, $nonStringTextMessage] = pluck($nonStringTextBody);
+    check('non-string-text message is a real sentence', is_real_message($nonStringTextMessage, $nonStringTextError), "error=\"$nonStringTextError\" message=\"$nonStringTextMessage\"");
 }
 
 echo "\n== Not-found and internal-error fallbacks still have real messages ==\n";

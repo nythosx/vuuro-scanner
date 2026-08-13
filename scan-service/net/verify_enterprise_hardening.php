@@ -201,6 +201,56 @@ if ($idemId !== null && $idemToken !== null) {
     );
 }
 
+echo "\n== Idempotency key REUSED with a different body must not silently replay the wrong result ==\n";
+
+$lshapedFixture = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_lshaped_adversarial.json'), true, 512, JSON_THROW_ON_ERROR);
+
+[, $collisionSession] = net_http_json('POST', "$baseUrl/scan-sessions", base_payload());
+$collisionId = $collisionSession['id'] ?? null;
+$collisionToken = $collisionSession['access_token'] ?? null;
+check('session created for the idempotency-collision test', $collisionId !== null && $collisionToken !== null);
+
+if ($collisionId !== null && $collisionToken !== null) {
+    $sharedKey = 'net-collision-key-' . bin2hex(random_bytes(8));
+
+    [$firstCollisionStatus, $firstCollisionBody] = net_http_json_ex('POST', "$baseUrl/scan-sessions/$collisionId/capture", ['raw_capture' => $fixture], $collisionToken, ['Idempotency-Key' => $sharedKey]);
+    check('first capture under the shared key succeeds (HTTP 200)', $firstCollisionStatus === 200, "got HTTP $firstCollisionStatus");
+    $firstCollisionRoomCount = count($firstCollisionBody['rooms'] ?? []);
+
+    // The bug this proves is fixed: reusing the SAME Idempotency-Key with a
+    // genuinely DIFFERENT raw_capture (a different room, here the L-shaped
+    // fixture) must be rejected, not silently answered with the first
+    // capture's stale cached response — that would make the second, real
+    // room vanish from the client's point of view while returning HTTP 200.
+    [$mismatchStatus, $mismatchBody] = net_http_json_ex('POST', "$baseUrl/scan-sessions/$collisionId/capture", ['raw_capture' => $lshapedFixture], $collisionToken, ['Idempotency-Key' => $sharedKey]);
+    check('reusing the key with a DIFFERENT body is rejected, not replayed (HTTP 409)', $mismatchStatus === 409, "got HTTP $mismatchStatus");
+    check('rejection uses the idempotency_key_reused error code', ($mismatchBody['error'] ?? null) === 'idempotency_key_reused', 'got ' . json_encode($mismatchBody));
+
+    // The room count must be exactly what the first, accepted capture
+    // produced — the rejected second attempt must not have appended
+    // anything, and the room count must not have been silently doubled by a
+    // stale-response replay either.
+    [$afterStatus, $afterBody] = net_http_json_ex('GET', "$baseUrl/scan-sessions/$collisionId", null, $collisionToken, []);
+    check('session GET succeeds after the rejected collision (HTTP 200)', $afterStatus === 200, "got HTTP $afterStatus");
+    $afterRoomCount = count($afterBody['rooms'] ?? []);
+    check(
+        'room count is untouched by the rejected collision — only the first capture landed',
+        $afterRoomCount === $firstCollisionRoomCount,
+        "expected $firstCollisionRoomCount room(s) (only the first, accepted capture), got $afterRoomCount"
+    );
+
+    // Adjacent-adjacent case: reusing the shared key with the ORIGINAL body
+    // again (a genuine retry, not a collision) must still work exactly as
+    // the retry test above proves — this key's fingerprint check must not
+    // have turned every retry into a false-positive rejection.
+    [$trueRetryStatus, $trueRetryBody] = net_http_json_ex('POST', "$baseUrl/scan-sessions/$collisionId/capture", ['raw_capture' => $fixture], $collisionToken, ['Idempotency-Key' => $sharedKey]);
+    check('a true retry (same key, same body) after a rejected collision still replays cleanly (HTTP 200)', $trueRetryStatus === 200, "got HTTP $trueRetryStatus");
+    check(
+        'the true retry still returns the original room count, unaffected by the rejected collision attempt',
+        count($trueRetryBody['rooms'] ?? []) === $firstCollisionRoomCount
+    );
+}
+
 echo "\n== Request body size cap ==\n";
 
 $oversizedPropertyId = str_repeat('a', 9 * 1024 * 1024); // 9MB, over the 8MB cap
@@ -260,6 +310,31 @@ for ($i = 0; $i < 80; $i++) {
     }
 }
 check('repeated rapid session creation eventually hits HTTP 429', $sawRateLimited, 'never saw a 429 across 80 rapid session-creation calls');
+
+echo "\n== Repeated lookups of NONEXISTENT session ids are also throttled ==\n";
+
+// Adjacent-case ACL gap found by deliberately probing what the
+// session-creation and capture rate limits above imply should exist
+// everywhere but didn't: authorizeSession()'s "session not found" branch had
+// no bound at all — confirmed manually (100 back-to-back GETs against
+// different fake session ids, all a plain 401, never throttled) before this
+// fix existed. Bound per caller IP, same shape as create_session's own
+// bucket right above, and deliberately tested here rather than in
+// net/verify_phase3_acl.php for the exact same reason create_session's rate
+// limit is tested only here: this bucket is shared across the whole suite
+// by caller IP, and exhausting it in an earlier-run script poisons
+// verify_security_fixes.php's own nonexistent-session check (found the hard
+// way — it did, turning a legitimate 401-vs-404 assertion into a false 429
+// failure until this test was moved here, last).
+$sawNotFoundThrottle = false;
+for ($i = 0; $i < 80; $i++) {
+    [$status, ] = net_http_json('GET', "$baseUrl/scan-sessions/does-not-exist-enterprise-net-$i", null, "guess-$i");
+    if ($status === 429) {
+        $sawNotFoundThrottle = true;
+        break;
+    }
+}
+check('repeated lookups of nonexistent session ids eventually hit HTTP 429', $sawNotFoundThrottle, 'never saw a 429 across 80 rapid nonexistent-session lookups');
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 

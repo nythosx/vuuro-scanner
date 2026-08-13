@@ -191,6 +191,28 @@ if ($manyRoomsSessionId !== null && $manyRoomsToken !== null) {
         }
         check('the paginated 40-room PDF still has a structurally valid xref table', $manyOffsetsValid);
     }
+
+    // Adjacent case to the PDF pagination test just above, and a genuine gap:
+    // FloorPlanImageRenderer has its own sanity bound (MAX_CANVAS_DIMENSION_PX,
+    // 4000px — see its header comment) and index.php's PNG export route does
+    // catch the resulting InvalidArgumentException and turn it into a clean
+    // 422 (verified by reading the code), but nothing had ever actually driven
+    // a real request through that path — unlike the PDF MAX_PAGES case, which
+    // was at least checked manually. The same 40-room capture used for the PDF
+    // pagination test above easily exceeds the PNG canvas width bound (40
+    // tiles at ~228px + gaps is >10,000px, well past the 4,000px cap), so it
+    // doubles as the trigger here with no extra capture calls needed.
+    [$manyPngStatus, $manyPngBody] = net_http_json('GET', "$baseUrl/scan-sessions/$manyRoomsSessionId/export/floorplan.png", null, $manyRoomsToken);
+    check(
+        'a 40-room PNG export that would exceed the canvas size bound returns a clean 422, not a 500 or a truncated image',
+        $manyPngStatus === 422,
+        "got HTTP $manyPngStatus"
+    );
+    check(
+        'the 422 uses the unrenderable_floor_plan error code, same as the PDF/MAX_PAGES case',
+        ($manyPngBody['error'] ?? null) === 'unrenderable_floor_plan',
+        'got ' . json_encode($manyPngBody)
+    );
 }
 
 // Adjacent-case gap found by deliberate probing, not by a report: nothing

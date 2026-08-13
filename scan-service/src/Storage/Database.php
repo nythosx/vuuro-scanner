@@ -26,6 +26,18 @@ final class Database
         $pdo = new PDO('sqlite:' . $path);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $pdo->exec('PRAGMA foreign_keys = ON;');
+        // Concurrency hardening (found by deliberately probing the adjacent
+        // case to the idempotency-claim race fix: what about two genuinely
+        // DIFFERENT concurrent writes to the same session, e.g. two captures
+        // with no shared Idempotency-Key, or a capture racing a photo
+        // attach?). Without this, a connection that loses a BEGIN IMMEDIATE
+        // race (see ScanSessionRepository::withWriteLock) gets an immediate
+        // SQLITE_BUSY exception instead of waiting briefly for the winner to
+        // commit — under real PHP-FPM concurrency that would turn a normal,
+        // momentary write overlap into a spurious 500 for the second caller.
+        // 5s is generous next to a single read-modify-write cycle
+        // (milliseconds) and small next to any real HTTP client timeout.
+        $pdo->exec('PRAGMA busy_timeout = 5000;');
 
         $schema = __DIR__ . '/../../migrations/schema.sql';
         $pdo->exec((string) file_get_contents($schema));
@@ -41,6 +53,11 @@ final class Database
         // migrate carefully instead of just re-running schema.sql.
         try {
             $pdo->exec("ALTER TABLE scan_sessions ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''");
+        } catch (\PDOException $e) {
+            // Expected on every run after the first — the column already exists.
+        }
+        try {
+            $pdo->exec("ALTER TABLE idempotency_keys ADD COLUMN request_fingerprint TEXT NOT NULL DEFAULT ''");
         } catch (\PDOException $e) {
             // Expected on every run after the first — the column already exists.
         }

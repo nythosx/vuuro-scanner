@@ -37,11 +37,17 @@ venv/
 # Local-only planning notes — scratch, not project artifacts, never pushed
 WEB_VIEWER_PLAN.md
 
-# Repo policy: only top-level README.md, PHASES.md, and CLAUDE.md are pushed as
-# Mark/developer-facing documentation. All other markdown (module READMEs, ADRs,
-# status notes) and the web-viewer dev tool stay local-only.
+# Repo policy: only top-level README.md is pushed as Mark/developer-facing
+# documentation. CLAUDE.md/PHASES.md removed from the repo (working notes,
+# not meant to live here). All other markdown (module READMEs, ADRs, status
+# notes) and the web-viewer dev tool stay local-only.
 docs/adr/
 docs/status/
 ios-app/README.md
 scan-service/README.md
 web-viewer/
+
+# Scratch stakeholder-demo mockups — never project artifacts, never pushed
+ios-app.html
+mockup.html
+vuuro.com.html

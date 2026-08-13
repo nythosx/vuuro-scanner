@@ -31,6 +31,14 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
     idempotency_key TEXT NOT NULL,
     response_json TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    -- Adjacent-case fix: a key reused with a genuinely different request body
+    -- (client bug, or two distinct rooms captured under the same key) used to
+    -- silently replay the FIRST cached response instead of processing the new
+    -- one — the fix that prevents double-append on a true retry was silently
+    -- dropping real capture data on a key collision. sha256 of the fields
+    -- that define "the same request", set once at claim time and compared on
+    -- every subsequent lookup under this key.
+    request_fingerprint TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (scan_session_id, idempotency_key)
 );
 

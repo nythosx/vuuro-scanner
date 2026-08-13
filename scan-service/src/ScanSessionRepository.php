@@ -186,6 +186,47 @@ final class ScanSessionRepository
         $stmt->execute(['id' => $id]);
     }
 
+    /**
+     * Closes a real lost-update race, found by deliberately probing the
+     * adjacent case to the idempotency-claim race fix: that fix only
+     * protects two requests sharing the SAME Idempotency-Key. It does
+     * nothing for two genuinely DIFFERENT concurrent writes to one session's
+     * floor_plans row — e.g. two capture calls with no shared key, or a
+     * capture racing a photo/note attach. appendCapture() and
+     * appendToContractArray() are both a plain read-then-modify-then-write:
+     * findFloorPlan() (SELECT), merge in PHP, saveFloorPlan() (INSERT ...
+     * ON CONFLICT DO UPDATE). If two callers' SELECTs both land before
+     * either's write, the second write silently overwrites the first's
+     * entire contract_json — not a double-append, a genuine loss: the first
+     * caller's room/photo/note vanishes with no error on either side.
+     * Reproduced deterministically (not by real thread timing) at the
+     * repository-test layer by manually inlining these same steps with two
+     * interleaved find-then-save sequences — see tests/repository_test.php's
+     * "concurrent capture race" section for the before/after proof.
+     *
+     * `BEGIN IMMEDIATE` (not PDO's own beginTransaction(), which issues a
+     * plain deferred `BEGIN` that doesn't take SQLite's write lock until the
+     * first actual write) forces the lock at the START of the transaction —
+     * before the read — so a second connection's own BEGIN IMMEDIATE has to
+     * wait (via Database::connect()'s busy_timeout) until the first
+     * transaction commits. That guarantees the second caller's SELECT can
+     * only ever see state that already includes the first caller's write,
+     * never a stale pre-write snapshot — the actual condition that causes
+     * the lost update.
+     */
+    private function withWriteLock(callable $fn): mixed
+    {
+        $this->db->exec('BEGIN IMMEDIATE');
+        try {
+            $result = $fn();
+            $this->db->exec('COMMIT');
+            return $result;
+        } catch (\Throwable $e) {
+            $this->db->exec('ROLLBACK');
+            throw $e;
+        }
+    }
+
     public function saveFloorPlan(string $sessionId, array $floorPlan): void
     {
         $stmt = $this->db->prepare(
@@ -239,19 +280,21 @@ final class ScanSessionRepository
      */
     public function appendCapture(string $sessionId, array $newFloorPlan): array
     {
-        $existing = $this->findFloorPlan($sessionId);
-        if ($existing === null) {
-            $this->saveFloorPlan($sessionId, $newFloorPlan);
-            return $newFloorPlan;
-        }
+        return $this->withWriteLock(function () use ($sessionId, $newFloorPlan) {
+            $existing = $this->findFloorPlan($sessionId);
+            if ($existing === null) {
+                $this->saveFloorPlan($sessionId, $newFloorPlan);
+                return $newFloorPlan;
+            }
 
-        $merged = $existing;
-        $merged['rooms'] = array_merge($existing['rooms'], $newFloorPlan['rooms']);
-        $merged['captured_at'] = $newFloorPlan['captured_at'];
-        $merged['capture_provider'] = $newFloorPlan['capture_provider'];
+            $merged = $existing;
+            $merged['rooms'] = array_merge($existing['rooms'], $newFloorPlan['rooms']);
+            $merged['captured_at'] = $newFloorPlan['captured_at'];
+            $merged['capture_provider'] = $newFloorPlan['capture_provider'];
 
-        $this->saveFloorPlan($sessionId, $merged);
-        return $merged;
+            $this->saveFloorPlan($sessionId, $merged);
+            return $merged;
+        });
     }
 
     /**
@@ -282,25 +325,27 @@ final class ScanSessionRepository
      */
     private function appendToContractArray(string $sessionId, string $field, array $item): array
     {
-        $floorPlan = $this->findFloorPlan($sessionId);
-        if ($floorPlan === null) {
-            throw new \RuntimeException(
-                "Cannot attach a $field to scan session $sessionId before it has a captured FloorPlan."
-            );
-        }
-
-        if (isset($item['room_id']) && $item['room_id'] !== null) {
-            $knownRoomIds = array_column($floorPlan['rooms'], 'room_id');
-            if (!in_array($item['room_id'], $knownRoomIds, true)) {
-                throw new \InvalidArgumentException(
-                    "room_id '{$item['room_id']}' does not match any room captured in this session."
+        return $this->withWriteLock(function () use ($sessionId, $field, $item) {
+            $floorPlan = $this->findFloorPlan($sessionId);
+            if ($floorPlan === null) {
+                throw new \RuntimeException(
+                    "Cannot attach a $field to scan session $sessionId before it has a captured FloorPlan."
                 );
             }
-        }
 
-        $floorPlan[$field][] = $item;
-        $this->saveFloorPlan($sessionId, $floorPlan);
-        return $floorPlan;
+            if (isset($item['room_id']) && $item['room_id'] !== null) {
+                $knownRoomIds = array_column($floorPlan['rooms'], 'room_id');
+                if (!in_array($item['room_id'], $knownRoomIds, true)) {
+                    throw new \InvalidArgumentException(
+                        "room_id '{$item['room_id']}' does not match any room captured in this session."
+                    );
+                }
+            }
+
+            $floorPlan[$field][] = $item;
+            $this->saveFloorPlan($sessionId, $floorPlan);
+            return $floorPlan;
+        });
     }
 
     // Sentinel stored in idempotency_keys.response_json while a claimed key's
@@ -335,6 +380,29 @@ final class ScanSessionRepository
     }
 
     /**
+     * Adjacent case to findIdempotentResponse() above: that method answers
+     * "is there a finished result to replay," but says nothing about whether
+     * THIS request is even the same request the key was originally claimed
+     * for. A key reused with a genuinely different body (client bug, or two
+     * distinct room captures accidentally sharing a key) must not silently
+     * replay the first response — that's real capture data quietly going
+     * missing, worse than the double-append this feature exists to prevent.
+     * Returns null if the key has never been seen at all (caller is free to
+     * claim it); otherwise returns the fingerprint recorded at claim time —
+     * including while still pending — so the caller can reject a mismatch
+     * before ever touching response_json.
+     */
+    public function idempotencyKeyFingerprint(string $sessionId, string $idempotencyKey): ?string
+    {
+        $stmt = $this->db->prepare(
+            'SELECT request_fingerprint FROM idempotency_keys WHERE scan_session_id = :session_id AND idempotency_key = :key'
+        );
+        $stmt->execute(['session_id' => $sessionId, 'key' => $idempotencyKey]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row === false ? null : $row['request_fingerprint'];
+    }
+
+    /**
      * Atomically claims the right to actually run a capture for this
      * (session, key) pair. Found by deliberately probing the adjacent case
      * to the retry logic above: two requests carrying the SAME
@@ -349,17 +417,18 @@ final class ScanSessionRepository
      * must now do the real work and call completeIdempotencyKey), false if
      * another request already holds it (it must not touch appendCapture).
      */
-    public function claimIdempotencyKey(string $sessionId, string $idempotencyKey): bool
+    public function claimIdempotencyKey(string $sessionId, string $idempotencyKey, string $requestFingerprint): bool
     {
         $stmt = $this->db->prepare(
-            'INSERT INTO idempotency_keys (scan_session_id, idempotency_key, response_json, created_at)
-             VALUES (:session_id, :key, :pending, :created_at)
+            'INSERT INTO idempotency_keys (scan_session_id, idempotency_key, response_json, request_fingerprint, created_at)
+             VALUES (:session_id, :key, :pending, :fingerprint, :created_at)
              ON CONFLICT(scan_session_id, idempotency_key) DO NOTHING'
         );
         $stmt->execute([
             'session_id' => $sessionId,
             'key' => $idempotencyKey,
             'pending' => self::IDEMPOTENCY_PENDING_MARKER,
+            'fingerprint' => $requestFingerprint,
             'created_at' => gmdate('c'),
         ]);
         return $stmt->rowCount() === 1;

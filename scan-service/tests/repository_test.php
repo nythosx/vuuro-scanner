@@ -49,7 +49,6 @@ function fresh_session(ScanSessionRepository $repo, int $ttlSeconds = ScanSessio
     return $repo->create('prop-unit-test', 'unit-unit-test', 'org-unit-test', 'listing', false, false, $ttlSeconds);
 }
 
-// --- Regression: token TTL is honored at creation -----------------------
 echo "== Token creation sets a real expires_at ==\n";
 $defaultSession = fresh_session($repo);
 $expectedDefaultExpiry = time() + ScanSessionRepository::DEFAULT_TOKEN_TTL_SECONDS;
@@ -65,7 +64,6 @@ r_check(
 );
 echo "\n";
 
-// --- Regression + adjacent case: token rotation -------------------------
 echo "== Token rotation replaces the token AND the expiry ==\n";
 $rotSession = fresh_session($repo);
 $oldToken = $rotSession['access_token'];
@@ -87,7 +85,6 @@ r_check('the OLD token no longer matches after rotation', !$repo->tokenMatches($
 r_check('the NEW token matches after rotation', $repo->tokenMatches($refetched, $rotated['access_token']));
 echo "\n";
 
-// --- Regression + adjacent case: token expiry logic ----------------------
 echo "== isTokenExpired() ==\n";
 $futureSession = ['expires_at' => gmdate('c', time() + 3600)];
 $pastSession = ['expires_at' => gmdate('c', time() - 3600)];
@@ -106,7 +103,6 @@ r_check(
 );
 echo "\n";
 
-// --- Regression + adjacent case: rotate-token grace period ---------------
 // Closes the permanent-lockout gap: rotate-token now accepts an expired
 // token within ScanSessionRepository::ROTATE_GRACE_PERIOD_SECONDS of the
 // original expiry. isBeyondRotateGracePeriod() is the hard cutoff even
@@ -139,7 +135,6 @@ r_check('a token that has not expired at all is NOT beyond the grace period', $r
 r_check('an empty expires_at reads as NOT beyond the grace period', $repo->isBeyondRotateGracePeriod($noExpirySession) === false);
 echo "\n";
 
-// --- Regression + adjacent case: idempotent capture responses -----------
 echo "== Idempotency key storage ==\n";
 $idemSession = fresh_session($repo);
 $otherSession = fresh_session($repo);
@@ -149,7 +144,7 @@ r_check(
     $repo->findIdempotentResponse($idemSession['id'], 'key-a') === null
 );
 
-r_check('claiming a never-seen key succeeds', $repo->claimIdempotencyKey($idemSession['id'], 'key-a') === true);
+r_check('claiming a never-seen key succeeds', $repo->claimIdempotencyKey($idemSession['id'], 'key-a', 'fp-a') === true);
 r_check(
     'a claimed-but-not-yet-completed key still returns null, not a stale/empty response',
     $repo->findIdempotentResponse($idemSession['id'], 'key-a') === null
@@ -180,7 +175,7 @@ r_check(
 // mirrors ON CONFLICT DO NOTHING in the SQL; the caller is expected to check
 // findIdempotentResponse() first (the capture route does), so reaching this
 // again means a very tight race, and losing the claim must be silent + safe.
-r_check('re-claiming an already-completed key returns false, not true', $repo->claimIdempotencyKey($idemSession['id'], 'key-a') === false);
+r_check('re-claiming an already-completed key returns false, not true', $repo->claimIdempotencyKey($idemSession['id'], 'key-a', 'fp-a') === false);
 $stillOriginal = $repo->findIdempotentResponse($idemSession['id'], 'key-a');
 r_check(
     'a failed re-claim does not disturb the already-completed response',
@@ -188,7 +183,29 @@ r_check(
 );
 echo "\n";
 
-// --- The actual race this feature exists to close ------------------------
+// Adjacent case to the whole feature: a key REUSED with a genuinely
+// different request must be distinguishable from a true retry, or the
+// second, different capture silently vanishes behind the first one's cached
+// response. idempotencyKeyFingerprint() is what public/index.php checks
+// before ever trusting a cache hit or a claim.
+echo "== Idempotency fingerprint mismatch detection ==\n";
+r_check(
+    'fingerprint for a never-seen key is null (caller may claim freely)',
+    $repo->idempotencyKeyFingerprint($idemSession['id'], 'never-seen-key') === null
+);
+r_check(
+    'fingerprint for a completed key matches what it was claimed with',
+    $repo->idempotencyKeyFingerprint($idemSession['id'], 'key-a') === 'fp-a'
+);
+
+$pendingSession = fresh_session($repo);
+$repo->claimIdempotencyKey($pendingSession['id'], 'pending-key', 'fp-pending');
+r_check(
+    'fingerprint is visible even while the key is still pending (not completed yet) — this is what lets a colliding reuse be rejected without a poll',
+    $repo->idempotencyKeyFingerprint($pendingSession['id'], 'pending-key') === 'fp-pending'
+);
+echo "\n";
+
 // Found by deliberately probing the adjacent case to the sequential-retry
 // test above: the OLD implementation (findIdempotentResponse, then later
 // recordIdempotentResponse — no claim step) let two concurrent requests for
@@ -200,8 +217,8 @@ echo "\n";
 // UNIQUE-constrained INSERT resolves the "who goes first" question for us.
 echo "== The race: only one concurrent claim for the same key can win ==\n";
 $raceSession = fresh_session($repo);
-$firstClaim = $repo->claimIdempotencyKey($raceSession['id'], 'race-key');
-$secondClaim = $repo->claimIdempotencyKey($raceSession['id'], 'race-key');
+$firstClaim = $repo->claimIdempotencyKey($raceSession['id'], 'race-key', 'fp-race');
+$secondClaim = $repo->claimIdempotencyKey($raceSession['id'], 'race-key', 'fp-race');
 r_check('the first claim for a fresh key wins (returns true)', $firstClaim === true);
 r_check(
     'a second, concurrent claim for the SAME key loses (returns false) — this is what prevents a double-append',
@@ -209,7 +226,6 @@ r_check(
 );
 echo "\n";
 
-// --- Regression + adjacent case: rate-limit event counting --------------
 echo "== Rate-limit event counting ==\n";
 r_check('an unused bucket starts at 0 events', $repo->countRecentEvents('bucket-a', 600) === 0);
 
@@ -237,7 +253,6 @@ r_check(
 );
 echo "\n";
 
-// --- Adjacent case: room_id on a photo/note must reference a real room ---
 // Found by deliberately probing past the existing "must have a captured
 // FloorPlan first" (409/RuntimeException) guard: nothing checked that a
 // caller-supplied room_id, once a FloorPlan DOES exist, actually names one

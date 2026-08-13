@@ -139,6 +139,20 @@ function pollForIdempotentResponse(ScanSessionRepository $repo, string $sessionI
     return null;
 }
 
+// Fingerprints "is this the same request" for Idempotency-Key reuse
+// detection — see ScanSessionRepository::idempotencyKeyFingerprint's doc
+// comment for why this exists. Deliberately only the fields that define a
+// distinct capture; unrelated fields (if any get added later) should not be
+// folded in here without checking whether they'd make legitimate retries
+// look like mismatches.
+function idempotencyFingerprint(array $body): string
+{
+    return hash('sha256', json_encode([
+        'raw_capture' => $body['raw_capture'] ?? null,
+        'capture_provider' => $body['capture_provider'] ?? null,
+    ], JSON_THROW_ON_ERROR));
+}
+
 function clientIp(): string
 {
     // No reverse proxy / load balancer in front of this local-dev service
@@ -193,6 +207,31 @@ function require_fields(array $body, array $fields): ?array
  * are fine — the max is returned too so the error message can actually tell
  * the caller the limit instead of just which field tripped it.
  */
+/**
+ * Adjacent-case fix, found by deliberately probing session creation the same
+ * way the PDF/PNG export MAX_PAGES/MAX_CANVAS bugs were found: a caller
+ * sending a non-string value for an identity field (e.g. a numeric
+ * property_id, or an object) passed require_fields() (present, non-empty)
+ * and first_too_long() (silently skips non-strings — see its own comment),
+ * then reached ScanSessionRepository::create()'s `string $propertyId`-typed
+ * parameter under this file's own declare(strict_types=1) and threw an
+ * uncaught TypeError. The global exception handler caught it safely (no
+ * leak), but turned an entirely client-side, actionable mistake into a
+ * generic "something went wrong on our end" 500 — exactly the same shape of
+ * bug as the export MAX_PAGES fix elsewhere in this file, just reached
+ * through a type mismatch instead of a missing try/catch. Returns the first
+ * offending field name, or null if all are strings.
+ */
+function first_not_string(array $body, array $fields): ?string
+{
+    foreach ($fields as $field) {
+        if (array_key_exists($field, $body) && !is_string($body[$field])) {
+            return $field;
+        }
+    }
+    return null;
+}
+
 function first_too_long(array $body, array $maxLengths): ?array
 {
     foreach ($maxLengths as $field => $max) {
@@ -267,6 +306,36 @@ function authorizeSession(ScanSessionRepository $repo, string $sessionId, string
         $granted = false;
     }
 
+    // Adjacent-case ACL gap, found by deliberately probing what capture's
+    // own rate limit ("bounds a runaway client... from hammering... the
+    // adapter/renderer pipeline indefinitely" — see that comment below)
+    // implies should exist everywhere, but doesn't: every OTHER
+    // session-scoped route (read, exports, photos, notes, rotate-token) had
+    // no bound at all on repeated failed-auth attempts. Confirmed directly:
+    // 100 back-to-back GETs against a real session with a wrong token each
+    // time all returned a plain 401, no throttling. access_token is a
+    // 122-bit UUID, so brute-forcing the actual value isn't practically
+    // feasible — this isn't a credential-guessing fix — but unbounded
+    // denied attempts still mean unbounded access_log INSERTs per session
+    // (storage exhaustion) and unbounded Database::find() lookups for a
+    // scanning attacker trying many session ids (the "session not found"
+    // branch). Two independent buckets, mirroring create_session's
+    // per-IP / capture's per-session split: real-session-wrong-token is
+    // bounded per session (an attacker can't fabricate a valid session id to
+    // dodge this), session-not-found is bounded per caller IP (an attacker
+    // rotating through fake ids can't dodge this either). Only DENIED
+    // attempts count — a legitimate client presenting the correct token
+    // repeatedly never touches either bucket.
+    if ($session !== null && !$granted) {
+        if (rateLimited($repo, $session['id'] . ':denied_auth', 20, 300)) {
+            return null;
+        }
+    } elseif ($session === null) {
+        if (rateLimited($repo, clientIp() . ':session_not_found', 30, 300)) {
+            return null;
+        }
+    }
+
     if (!$granted) {
         respondError(401, 'invalid_or_missing_access_token', 'This request needs a valid access token. Include the X-Scan-Access-Token header you were given when the session was created.');
         return null;
@@ -318,7 +387,6 @@ if ($method === 'POST') {
     }
 }
 
-// POST /scan-sessions
 if ($method === 'POST' && $path === '/scan-sessions') {
     // Enterprise hardening: session creation is the one endpoint with no
     // token to gate it (there isn't one yet), which is exactly why
@@ -347,6 +415,11 @@ if ($method === 'POST' && $path === '/scan-sessions') {
     if ($missing !== null) {
         $fieldList = implode(', ', $missing);
         respondError(422, 'missing_required_fields', "Please provide the following before starting a scan: $fieldList.", ['fields' => $missing]);
+        return;
+    }
+    $notString = first_not_string($body, ['property_id', 'unit_id', 'organisation_id']);
+    if ($notString !== null) {
+        respondError(422, 'field_must_be_string', "'$notString' must be a plain string.", ['field' => $notString]);
         return;
     }
     $tooLong = first_too_long($body, ['property_id' => 200, 'unit_id' => 200, 'organisation_id' => 200]);
@@ -411,7 +484,6 @@ if ($method === 'POST' && $path === '/scan-sessions') {
     return;
 }
 
-// POST /scan-sessions/{id}/rotate-token
 if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rotate-token$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'rotate_token');
     if ($session === null) {
@@ -441,7 +513,6 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rotate-token$#', 
     return;
 }
 
-// POST /scan-sessions/{id}/capture
 if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'capture');
     if ($session === null) {
@@ -459,10 +530,34 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
     // Enterprise reliability hardening: idempotent retry support. A client
     // resubmitting the exact same capture after a dropped response (see
     // ScanSessionRepository::findIdempotentResponse's doc comment) gets back
-    // the stored result instead of appending the room a second time.
+    // the stored result instead of appending the room a second time. Body is
+    // parsed here (earlier than the raw_capture validation below needs it)
+    // specifically so the fingerprint below can see it before any cache/claim
+    // decision is made.
+    $body = json_body();
     $idempotencyKey = $_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? null;
     $holdsIdempotencyClaim = false;
     if (is_string($idempotencyKey) && $idempotencyKey !== '') {
+        $fingerprint = idempotencyFingerprint($body);
+
+        // Adjacent case to the retry/replay logic below: a key reused with a
+        // DIFFERENT body (client bug, or two distinct captures accidentally
+        // sharing a key) must not silently replay a stale response for the
+        // wrong capture — that's real data quietly dropped, not just a
+        // wasted retry. Checked before either the cache read or the claim
+        // attempt, and against the fingerprint recorded at claim time even
+        // while another request's capture is still pending, so a same-key
+        // collision is rejected immediately rather than after a 1s poll.
+        $existingFingerprint = $repo->idempotencyKeyFingerprint($session['id'], $idempotencyKey);
+        if ($existingFingerprint !== null && $existingFingerprint !== $fingerprint) {
+            respondError(
+                409,
+                'idempotency_key_reused',
+                'This Idempotency-Key was already used for a different capture on this session. Idempotency-Keys must be unique per distinct request — use a new key for a new capture.'
+            );
+            return;
+        }
+
         $cached = $repo->findIdempotentResponse($session['id'], $idempotencyKey);
         if ($cached !== null) {
             respond(200, $cached);
@@ -475,7 +570,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         // though this dev server serializes requests and can't reproduce
         // it). Only the request that wins this atomic claim may actually
         // run the capture below — see ScanSessionRepository::claimIdempotencyKey.
-        $holdsIdempotencyClaim = $repo->claimIdempotencyKey($session['id'], $idempotencyKey);
+        $holdsIdempotencyClaim = $repo->claimIdempotencyKey($session['id'], $idempotencyKey, $fingerprint);
         if (!$holdsIdempotencyClaim) {
             $result = pollForIdempotentResponse($repo, $session['id'], $idempotencyKey);
             if ($result !== null) {
@@ -491,7 +586,6 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         }
     }
 
-    $body = json_body();
     if (empty($body['raw_capture']) || !is_array($body['raw_capture'])) {
         respondError(422, 'missing_raw_capture', "Please include a 'raw_capture' field with the RoomPlan capture data for this room.");
         return;
@@ -526,7 +620,6 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
     return;
 }
 
-// POST /scan-sessions/{id}/photos
 if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'attach_photo');
     if ($session === null) {
@@ -538,6 +631,22 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
     $missing = require_fields($body, ['url']);
     if ($missing !== null) {
         respondError(422, 'missing_required_fields', "Please include a 'url' pointing to the uploaded photo.", ['fields' => $missing]);
+        return;
+    }
+    // Adjacent case to the session-creation fix elsewhere in this file, same
+    // bug shape: is_http_url() takes a typed `string $url`, and a non-string
+    // 'url' (array, number, bool) used to reach it under this file's own
+    // declare(strict_types=1) and throw an uncaught TypeError — caught safely
+    // by the global exception handler but surfaced as a generic 500 for a
+    // client-side mistake that deserves a real 422. 'caption' is checked in
+    // the same pass: it doesn't crash anything (never reaches a typed
+    // parameter), but first_too_long() silently skips non-strings by design
+    // (see its own comment), so a non-string caption used to sail straight
+    // through to storage and come back out of a later GET as, say, a JSON
+    // array where every consumer of this API expects a string.
+    $notString = first_not_string($body, ['url', 'caption']);
+    if ($notString !== null) {
+        respondError(422, 'field_must_be_string', "'$notString' must be a plain string.", ['field' => $notString]);
         return;
     }
     if (!is_http_url($body['url'])) {
@@ -575,7 +684,6 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
     return;
 }
 
-// POST /scan-sessions/{id}/notes
 if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'attach_note');
     if ($session === null) {
@@ -587,6 +695,14 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, 
     $missing = require_fields($body, ['text']);
     if ($missing !== null) {
         respondError(422, 'missing_required_fields', "Please include a 'text' field with the note's content.", ['fields' => $missing]);
+        return;
+    }
+    // Same silent-acceptance gap as 'caption' on photos, found in the same
+    // pass: first_too_long() skips non-strings by design, so a non-string
+    // 'text' (e.g. a JSON array) used to be stored as-is and returned from
+    // every later GET as something no consumer of this API expects.
+    if (!is_string($body['text'])) {
+        respondError(422, 'field_must_be_string', "'text' must be a plain string.", ['field' => 'text']);
         return;
     }
     $tooLong = first_too_long($body, ['text' => 5000]);
@@ -617,7 +733,6 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, 
     return;
 }
 
-// GET /scan-sessions/{id}/export/floorplan.png
 if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.png$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'export_png');
     if ($session === null) {
@@ -640,7 +755,6 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     return;
 }
 
-// GET /scan-sessions/{id}/export/floorplan.pdf
 if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.pdf$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'export_pdf');
     if ($session === null) {
@@ -682,7 +796,6 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     return;
 }
 
-// GET /scan-sessions/{id}/access-log
 if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/access-log$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'view_access_log');
     if ($session === null) {
@@ -693,7 +806,6 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/access-log$#', $pa
     return;
 }
 
-// GET /scan-sessions/{id}
 if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'read');
     if ($session === null) {

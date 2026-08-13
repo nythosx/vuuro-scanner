@@ -46,7 +46,6 @@ $identity = [
 
 $adapter = new RoomPlanSimulatorAdapter();
 
-// --- Regression: rectangular room fixture -----------------------------
 echo "== Regression: rectangular room ==\n";
 $fixture = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_single_room.json'), true, 512, JSON_THROW_ON_ERROR);
 $result = $adapter->adapt($fixture, $identity);
@@ -76,7 +75,6 @@ t_check('coverage.confidence_counts has 6 high, 1 medium, 0 low',
     $result['rooms'][0]['coverage']['confidence_counts'] === ['high' => 6, 'medium' => 1, 'low' => 0]);
 echo "\n";
 
-// --- Adjacent case: adapter must not assume rectangles -----------------
 // Deliberately adversarial: a bounding-box-only implementation would still
 // pass every check above. This is the check that catches it.
 echo "== Adjacent case: L-shaped concave room ==\n";
@@ -92,7 +90,6 @@ t_check('L-shaped bounding width is 4.0 m (bbox, not perimeter-derived)', t_appr
 t_check('L-shaped bounding length is 3.0 m', t_approx($lRoom['bounding_dimensions_m']['length_m'], 3.00));
 echo "\n";
 
-// --- Adjacent case: coverage must not just parrot the floor's confidence ---
 // Deliberately adversarial: the floor surface itself is high confidence (so
 // area/perimeter are fine, and a coverage score that only read
 // floor.confidence would report this as fully usable), but most walls/
@@ -111,7 +108,6 @@ t_check('coverage.message is a non-empty rescan prompt when not usable', is_stri
 t_check('coverage.confidence_counts has 1 high (the floor), not 6', $lowConfCoverage['confidence_counts']['high'] === 1);
 echo "\n";
 
-// --- Multi-room stitching: room numbering continues across calls -------
 // Simulates two sequential single-room RoomPlan captures in the same
 // session (PHASES.md Phase 2 "unit story"). The Scan Service passes
 // roomCount() as roomIndexOffset for the second call — exercised directly
@@ -124,7 +120,6 @@ t_check('room_id differs between offset 0 and offset 1 calls even for the same f
     $result['rooms'][0]['room_id'] !== $secondCallResult['rooms'][0]['room_id']);
 echo "\n";
 
-// --- Error handling: honest failure, not silent wrong output -----------
 echo "== Error handling ==\n";
 try {
     $adapter->adapt(['floors' => []], $identity);
