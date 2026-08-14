@@ -185,6 +185,34 @@ if ($sessionId !== null && $token !== null) {
     check('a non-string note text returns HTTP 422, not silently stored', $nonStringTextStatus === 422, "got HTTP $nonStringTextStatus");
     [$nonStringTextError, $nonStringTextMessage] = pluck($nonStringTextBody);
     check('non-string-text message is a real sentence', is_real_message($nonStringTextMessage, $nonStringTextError), "error=\"$nonStringTextError\" message=\"$nonStringTextMessage\"");
+
+    // Full-functionality scan finding: 'taken_at' (photos) is documented in
+    // contracts/floorplan.schema.json as a required string (format:
+    // date-time), client-suppliable, but was missed when caption/text got
+    // this exact fix above — same bug shape, same fix.
+    [$nonStringTakenAtStatus, $nonStringTakenAtBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", ['url' => 'https://example.com/x.jpg', 'taken_at' => 12345], $token);
+    check('a non-string photo taken_at returns HTTP 422, not silently stored', $nonStringTakenAtStatus === 422, "got HTTP $nonStringTakenAtStatus");
+    [$nonStringTakenAtError, $nonStringTakenAtMessage] = pluck($nonStringTakenAtBody);
+    check('non-string-taken_at message is a real sentence', is_real_message($nonStringTakenAtMessage, $nonStringTakenAtError), "error=\"$nonStringTakenAtError\" message=\"$nonStringTakenAtMessage\"");
+
+    // Full-functionality scan finding: 'capture_provider' (capture) is
+    // documented as a required string, client-suppliable, and had NO type
+    // check at all — worse than the caption/text bugs above, since a
+    // non-string value there doesn't even reach a typed parameter or throw.
+    // Verified directly against PDO outside this net: binding an array
+    // value doesn't raise an exception, it silently stores the literal
+    // string "Array" with only a PHP warning — the record is just quietly
+    // wrong from then on, with nothing visible to the caller. This check
+    // proves the fix turns that into an honest 422 instead.
+    [, $captureProviderSession] = net_http_json('POST', "$baseUrl/scan-sessions", base_payload());
+    $singleRoomFixture = ['floors' => [['identifier' => 'f', 'polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]]];
+    [$nonStringProviderStatus, $nonStringProviderBody] = net_http_json('POST', "$baseUrl/scan-sessions/{$captureProviderSession['id']}/capture", [
+        'raw_capture' => $singleRoomFixture,
+        'capture_provider' => ['not', 'a', 'string'],
+    ], $captureProviderSession['access_token']);
+    check('a non-string capture_provider returns HTTP 422, not a silently corrupted record', $nonStringProviderStatus === 422, "got HTTP $nonStringProviderStatus");
+    [$nonStringProviderError, $nonStringProviderMessage] = pluck($nonStringProviderBody);
+    check('non-string-capture_provider message is a real sentence', is_real_message($nonStringProviderMessage, $nonStringProviderError), "error=\"$nonStringProviderError\" message=\"$nonStringProviderMessage\"");
 }
 
 echo "\n== Not-found and internal-error fallbacks still have real messages ==\n";

@@ -145,12 +145,34 @@ function pollForIdempotentResponse(ScanSessionRepository $repo, string $sessionI
 // distinct capture; unrelated fields (if any get added later) should not be
 // folded in here without checking whether they'd make legitimate retries
 // look like mismatches.
+//
+// Full-functionality scan finding: this runs BEFORE raw_capture ever reaches
+// RoomPlanSimulatorAdapter's own validateRawCapture() — the thing that turns
+// an overflow-to-INF/NaN coordinate (e.g. a client-sent 1e400) into a clean
+// 422 unprocessable_capture. json_encode(..., JSON_THROW_ON_ERROR) throws a
+// JsonException on INF/NaN ("Inf and NaN cannot be JSON encoded"), which
+// used to be uncaught here — a capture request carrying BOTH a malformed
+// overflow coordinate AND an Idempotency-Key header (the header this
+// project's own README recommends every real client send) got a raw 500
+// instead of the actionable 422 the identical payload gets without that
+// header. Same bug class as the original overflow-to-INF security finding
+// that MAX_COORDINATE_METERS exists to fix, just reachable through a
+// different code path that bypassed it. serialize() has no such restriction
+// (INF/NaN serialize to well-defined, if unusual, strings) and is just as
+// deterministic per distinct input for fingerprinting purposes — it doesn't
+// need to be valid JSON, only stable and collision-resistant for "is this
+// the same request."
 function idempotencyFingerprint(array $body): string
 {
-    return hash('sha256', json_encode([
+    $relevant = [
         'raw_capture' => $body['raw_capture'] ?? null,
         'capture_provider' => $body['capture_provider'] ?? null,
-    ], JSON_THROW_ON_ERROR));
+    ];
+    try {
+        return hash('sha256', json_encode($relevant, JSON_THROW_ON_ERROR));
+    } catch (\JsonException $e) {
+        return hash('sha256', serialize($relevant));
+    }
 }
 
 function clientIp(): string
@@ -591,6 +613,22 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         return;
     }
 
+    // Full-functionality scan finding: 'capture_provider' is optional but
+    // client-suppliable, required as a string by contracts/floorplan.
+    // schema.json, and had no type check at all — unlike url/caption/text/
+    // taken_at, a non-string value here doesn't even reach a typed
+    // parameter or throw. Verified directly: PDO::execute() with an array
+    // bind value doesn't throw, it just emits a PHP warning and silently
+    // stores the literal string "Array" — worse than the crash-to-500 bug
+    // class fixed elsewhere in this file, because nothing about it is
+    // visible to the caller at all. The stored record is just quietly wrong
+    // from then on (every later GET/export returns "Array" as the
+    // provider).
+    if (array_key_exists('capture_provider', $body) && !is_string($body['capture_provider'])) {
+        respondError(422, 'field_must_be_string', "'capture_provider' must be a plain string.", ['field' => 'capture_provider']);
+        return;
+    }
+
     $adapter = new RoomPlanSimulatorAdapter();
     try {
         // Offset by rooms already captured this session, so a second or
@@ -644,7 +682,15 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
     // (see its own comment), so a non-string caption used to sail straight
     // through to storage and come back out of a later GET as, say, a JSON
     // array where every consumer of this API expects a string.
-    $notString = first_not_string($body, ['url', 'caption']);
+    //
+    // 'taken_at' found later, in the full-functionality scan: contracts/
+    // floorplan.schema.json requires it as a string (format: date-time), but
+    // it was missed when caption/text got this same fix — the route only
+    // ever did `$body['taken_at'] ?? gmdate('c')` with no type check at all,
+    // so a non-string taken_at (number, array, bool) sailed straight into
+    // storage and back out of a later GET/export, contradicting the
+    // contract exactly like the caption bug did.
+    $notString = first_not_string($body, ['url', 'caption', 'taken_at']);
     if ($notString !== null) {
         respondError(422, 'field_must_be_string', "'$notString' must be a plain string.", ['field' => $notString]);
         return;
@@ -738,6 +784,23 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     if ($session === null) {
         return;
     }
+
+    // Full-functionality scan finding: every other route with meaningful
+    // per-call cost (capture, denied-auth) has a rate limit; the two export
+    // routes never did, despite rendering being the most expensive
+    // per-request work in this codebase — FloorPlanImageRenderer allocates
+    // up to a 4000x4000 truecolor canvas (MAX_CANVAS_DIMENSION_PX) per call.
+    // A valid token (or a compromised one — 100% legitimate-looking traffic
+    // by definition, since it's authorized) could hammer this indefinitely
+    // with no bound at all. Same reasoning capture's own rate-limit comment
+    // already gives ("bounds a runaway client... from hammering... the
+    // adapter/renderer pipeline indefinitely"), just never actually applied
+    // here. Bounded generously per session, well above any real workflow
+    // (nobody re-exports the same floor plan 30 times in 5 minutes).
+    if (rateLimited($repo, $session['id'] . ':export_png', 30, 300)) {
+        return;
+    }
+
     $floorPlan = $repo->findFloorPlan($session['id']);
     if ($floorPlan === null) {
         respondError(404, 'no_floor_plan_yet', 'This session doesn\'t have a captured floor plan yet — capture at least one room before exporting.');
@@ -760,6 +823,14 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     if ($session === null) {
         return;
     }
+
+    // Same finding/fix as the PNG route above — see that comment. PDF
+    // rendering can walk up to MAX_PAGES (200) pages per call, an
+    // independent and comparably expensive cost.
+    if (rateLimited($repo, $session['id'] . ':export_pdf', 30, 300)) {
+        return;
+    }
+
     $floorPlan = $repo->findFloorPlan($session['id']);
     if ($floorPlan === null) {
         respondError(404, 'no_floor_plan_yet', 'This session doesn\'t have a captured floor plan yet — capture at least one room before exporting.');

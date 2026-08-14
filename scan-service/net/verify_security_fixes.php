@@ -72,6 +72,21 @@ check('response body contains no absolute filesystem paths (no "C:\\\\" or "/var
 check('response is valid JSON (a clean error, not raw HTML from a fatal error)', json_decode($body, true) !== null || $body === '',
     'body was not valid JSON: ' . substr($body, 0, 200));
 
+// Full-functionality scan finding, adjacent to Finding 1 above: the same
+// overflow-to-INF payload, sent WITH an Idempotency-Key header (this
+// project's own README recommends every real client send one on capture),
+// used to bypass this fix entirely and crash with a raw 500 instead of the
+// clean 422 the identical payload gets without the header. Root cause:
+// public/index.php's idempotencyFingerprint() ran json_encode(...,
+// JSON_THROW_ON_ERROR) on the raw, not-yet-validated raw_capture BEFORE
+// RoomPlanSimulatorAdapter's own overflow check ever ran — JSON_THROW_ON_ERROR
+// throws an uncaught JsonException on INF/NaN ("Inf and NaN cannot be JSON
+// encoded"). Fixed by falling back to serialize() (no such restriction) only
+// when json_encode() can't represent the value. This must return the exact
+// same clean 422 as the header-less case above, not a 500.
+[$withKeyStatus, , $withKeyBody] = net_http_raw_literal('POST', "$baseUrl/scan-sessions/$sessionId/capture", $maliciousCapture, $accessToken, ['Idempotency-Key: net-overflow-with-idempotency-key']);
+check('the SAME overflow payload WITH an Idempotency-Key header ALSO returns a clean 422, not a 500', $withKeyStatus === 422, "got HTTP $withKeyStatus, body: " . substr($withKeyBody, 0, 200));
+
 echo "\n== Finding 2: session-existence enumeration oracle closed ==\n";
 
 $randomNonexistentId = '00000000-0000-4000-8000-000000000000';

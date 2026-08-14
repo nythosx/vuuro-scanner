@@ -89,8 +89,25 @@ final class RoomPlanSimulatorAdapter
                 throw new \InvalidArgumentException("floors[$index] has fewer than 3 polygonCorners — not a closed room outline.");
             }
 
+            // Full-functionality scan finding: polygonCorners is entirely
+            // client-controlled JSON, and until this check existed, nothing
+            // validated that each ENTRY is itself an array — only that the
+            // outer polygonCorners array had >=3 entries. The closure below
+            // takes a typed `array $p` parameter, so a malformed entry (e.g.
+            // `"polygonCorners": [1, 2, 3]` — three scalars instead of three
+            // [x,y,z] points) threw an uncaught TypeError under this
+            // codebase's declare(strict_types=1). Confirmed live before this
+            // fix: that exact payload returned a raw 500. Same bug shape as
+            // the top-level polygonCorners/floors checks already in this
+            // file, one level deeper.
+            foreach ($corners as $cornerIndex => $corner) {
+                if (!is_array($corner)) {
+                    throw new \InvalidArgumentException("floors[$index].polygonCorners[$cornerIndex] is not a [x, y, z] point — each corner must be an array of coordinates.");
+                }
+            }
+
             // RoomPlan's world space is y-up; a floor outline lies in the x,z plane.
-            $points2d = array_map(static fn (array $p) => [(float) $p[0], (float) $p[2]], $corners);
+            $points2d = array_map(static fn (array $p) => [(float) ($p[0] ?? 0), (float) ($p[2] ?? 0)], $corners);
 
             $area = self::polygonArea($points2d);
             $perimeter = self::polygonPerimeter($points2d);
@@ -273,7 +290,23 @@ final class RoomPlanSimulatorAdapter
         }
     }
 
-    private static function mapConfidence(?string $raw): string
+    // Full-functionality scan finding: 'confidence' on any raw_capture
+    // surface (floors/walls/doors/windows/openings) is entirely
+    // client-controlled JSON — nothing upstream constrains its type. This
+    // used to take a typed `?string $raw` parameter, so a non-string,
+    // non-null value (e.g. `"confidence": 12345`, or an array/bool) threw an
+    // uncaught TypeError under this codebase's declare(strict_types=1),
+    // caught safely by the global exception handler but surfaced as a raw
+    // 500 for a client-side mistake with an obvious, safe answer: treat an
+    // unrecognized/malformed confidence exactly like a missing one, which
+    // already falls through to 'low' below by design (see the `default`
+    // arm) — a value this codebase can't make sense of shouldn't be trusted
+    // as high/medium confidence either way. Confirmed live before this fix:
+    // a real capture request with `"confidence": 12345` on a floor returned
+    // a raw 500 "internal_error"; the identical request after this fix
+    // returns 200 with that surface counted as 'low' confidence, same as an
+    // omitted field.
+    private static function mapConfidence(mixed $raw): string
     {
         return match ($raw) {
             'high' => 'high',
@@ -293,12 +326,25 @@ final class RoomPlanSimulatorAdapter
      */
     private static function computeCoverage(array $rawCapture): array
     {
+        // Full-functionality scan finding: 'walls'/'doors'/'windows'/
+        // 'openings' are entirely client-controlled JSON and — unlike
+        // 'floors', which adapt() already requires to be an array before
+        // ever reaching here — nothing constrained their type before this
+        // ran. array_merge() (unlike, say, a typed function parameter) is
+        // strict about every argument being an array and throws an
+        // uncaught TypeError otherwise, not a warning. Confirmed live:
+        // `"walls": "not-an-array"` alongside an otherwise-valid capture
+        // returned a raw 500 before this fix. is_array() gates each group
+        // the same way validateRawCapture() already gates them for the
+        // MAX_SURFACES_PER_GROUP check just above this method — a
+        // non-array group degrades to "contributes zero surfaces," not a
+        // crash, matching how a missing group is already treated.
         $surfaces = array_merge(
             $rawCapture['floors'] ?? [],
-            $rawCapture['walls'] ?? [],
-            $rawCapture['doors'] ?? [],
-            $rawCapture['windows'] ?? [],
-            $rawCapture['openings'] ?? []
+            is_array($rawCapture['walls'] ?? null) ? $rawCapture['walls'] : [],
+            is_array($rawCapture['doors'] ?? null) ? $rawCapture['doors'] : [],
+            is_array($rawCapture['windows'] ?? null) ? $rawCapture['windows'] : [],
+            is_array($rawCapture['openings'] ?? null) ? $rawCapture['openings'] : []
         );
 
         $counts = ['high' => 0, 'medium' => 0, 'low' => 0];

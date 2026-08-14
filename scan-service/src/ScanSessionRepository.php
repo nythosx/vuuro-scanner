@@ -35,13 +35,14 @@ final class ScanSessionRepository
      * so it does not weaken the enumeration/security posture
      * authorizeSession() otherwise maintains.
      *
-     * 7 days is a conservative default, not a validated number — it is
-     * short enough that "expired" still means something (a token missing
-     * its own renewal window by more than a week is a stale/abandoned
-     * session, not an active one that just hasn't gotten around to
-     * rotating yet), while long enough to survive a landlord being on
-     * holiday for a week without permanently losing a session. Revisit with
-     * Mark if pilot usage shows this window is wrong in either direction.
+     * 7 days is a conservative default — short enough that "expired" still
+     * means something (a token missing its own renewal window by more than
+     * a week is a stale/abandoned session, not an active one that just
+     * hasn't gotten around to rotating yet), while long enough to survive a
+     * landlord being on holiday for a week without permanently losing a
+     * session. Confirmed with Mark (2026-08-14): fine as the default for
+     * this window, document it as such, tighten later if real pilot usage
+     * shows it's wrong.
      */
     public const ROTATE_GRACE_PERIOD_SECONDS = 7 * 24 * 60 * 60;
 

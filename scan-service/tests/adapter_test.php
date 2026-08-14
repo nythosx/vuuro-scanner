@@ -224,6 +224,50 @@ $smallButReal = $adapter->adapt(['floors' => [['identifier' => 'f', 'confidence'
 t_check('a small but real room (0.64 m2 closet) is still accepted, not rejected as degenerate', t_approx($smallButReal['rooms'][0]['floor_area_m2'], 0.64));
 echo "\n";
 
+// Full-functionality scan finding: 'confidence' on any raw_capture surface
+// is entirely client-controlled JSON, but mapConfidence() used to take a
+// typed `?string $raw` parameter — a non-string, non-null value (a number,
+// array, or bool) threw an uncaught TypeError under this codebase's own
+// declare(strict_types=1), confirmed live as a raw HTTP 500 before this fix.
+// The safe answer is the same one this codebase already gives an
+// unrecognized STRING value (mapConfidence's own `default => 'low'` arm):
+// treat a value it can't make sense of as 'low' confidence, not as a crash.
+echo "== Adjacent case: a non-string 'confidence' on any surface must not crash ==\n";
+$nonStringConfidence = $adapter->adapt(['floors' => [['identifier' => 'f', 'confidence' => 12345, 'polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]]], $identity);
+t_check("a numeric 'confidence' (12345) does not crash and maps to 'low', same as an unrecognized string would", $nonStringConfidence['rooms'][0]['confidence'] === 'low');
+
+$arrayConfidence = $adapter->adapt(['floors' => [['identifier' => 'f', 'confidence' => ['nested', 'array'], 'polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]]], $identity);
+t_check("an array 'confidence' does not crash and maps to 'low'", $arrayConfidence['rooms'][0]['confidence'] === 'low');
+
+// Full-functionality scan finding, one level deeper than the "fewer than 3
+// polygonCorners" check above: polygonCorners is entirely client-controlled
+// JSON, and nothing validated that each ENTRY is itself an array — only that
+// the outer array had >=3 entries. A malformed entry (three scalars instead
+// of three [x,y,z] points) used to reach a typed `array $p` closure
+// parameter and throw an uncaught TypeError, confirmed live as a raw
+// HTTP 500 before this fix.
+echo "== Adjacent case: a polygonCorners entry that isn't itself an array must not crash ==\n";
+try {
+    $adapter->adapt(['floors' => [['identifier' => 'f', 'polygonCorners' => [1, 2, 3]]]], $identity);
+    t_check('adapt() rejects scalar polygonCorners entries with a clean exception, not a crash', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    t_check('adapt() rejects scalar polygonCorners entries with a clean exception, not a crash', true);
+} catch (\TypeError $e) {
+    t_check('adapt() rejects scalar polygonCorners entries with a clean exception, not a crash', false, 'threw TypeError instead: ' . $e->getMessage());
+}
+
+// Full-functionality scan finding: 'walls'/'doors'/'windows'/'openings' are
+// client-controlled JSON, and computeCoverage()'s array_merge() (unlike a
+// typed function parameter) throws an uncaught TypeError — not a warning —
+// when given a non-array argument. A capture with an otherwise-valid floor
+// but a non-array 'walls' (e.g. a plain string) used to crash to a raw
+// HTTP 500. The fix treats a non-array group the same as an omitted one
+// (contributes zero surfaces), matching how validateRawCapture() already
+// treats these same four groups for its own MAX_SURFACES_PER_GROUP check.
+echo "== Adjacent case: a non-array walls/doors/windows/openings group must not crash ==\n";
+$nonArrayWalls = $adapter->adapt(['floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]], 'walls' => 'not-an-array'], $identity);
+t_check("a non-array 'walls' group does not crash and is treated as contributing zero surfaces", $nonArrayWalls['rooms'][0]['coverage']['confidence_counts'] === ['high' => 1, 'medium' => 0, 'low' => 0]);
+
 echo count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

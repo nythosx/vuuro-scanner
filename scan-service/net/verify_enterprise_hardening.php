@@ -288,6 +288,53 @@ check('constructed payload is exactly MAX_REQUEST_BODY_BYTES + 1', strlen($overB
 [$overByOneStatus, ] = net_http_raw_literal('POST', "$baseUrl/scan-sessions", $overByOneBody);
 check('a body of exactly MAX_REQUEST_BODY_BYTES + 1 IS rejected (HTTP 413)', $overByOneStatus === 413, "got HTTP $overByOneStatus");
 
+echo "\n== Export routes (PNG/PDF) are rate-limited per session ==\n";
+
+// Full-functionality scan finding: every other route with meaningful
+// per-call cost (session creation, capture, denied-auth) already had a rate
+// limit; the two export routes never did, despite rendering being this
+// codebase's most expensive per-request work (FloorPlanImageRenderer can
+// allocate up to a 4000x4000px canvas; FloorPlanPdfRenderer can walk up to
+// 200 pages). A valid token — including a compromised one, which looks
+// exactly like legitimate traffic since it's authorized by definition —
+// could previously hammer either route with no bound at all. Bounded per
+// session (default 30 per 5 minutes, matching capture's own per-session
+// model), checked before the "does a floor plan even exist yet" lookup, so
+// this throttles regardless of whether the session has been captured.
+//
+// Placed BEFORE the "Session-creation rate limit" section below, not after:
+// that section deliberately floods this same script's create_session budget
+// for 127.0.0.1, and this check needs its own fresh session creation to
+// succeed first — found the hard way, the same cross-section-budget lesson
+// already documented elsewhere in this file for the nonexistent-session
+// throttle check.
+[, $exportRateLimitSession] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'organisation_id' => 'org-net-export-throttle']);
+$exportRateLimitSessionId = $exportRateLimitSession['id'] ?? null;
+$exportRateLimitToken = $exportRateLimitSession['access_token'] ?? null;
+check('session created for the export rate-limit test', $exportRateLimitSessionId !== null && $exportRateLimitToken !== null);
+
+if ($exportRateLimitSessionId !== null && $exportRateLimitToken !== null) {
+    $sawPngThrottle = false;
+    for ($i = 0; $i < 35; $i++) {
+        [$status, ] = net_http_raw('GET', "$baseUrl/scan-sessions/$exportRateLimitSessionId/export/floorplan.png", null, $exportRateLimitToken);
+        if ($status === 429) {
+            $sawPngThrottle = true;
+            break;
+        }
+    }
+    check('repeated PNG export calls against one session eventually hit HTTP 429', $sawPngThrottle, 'never saw a 429 across 35 rapid PNG export calls');
+
+    $sawPdfThrottle = false;
+    for ($i = 0; $i < 35; $i++) {
+        [$status, ] = net_http_raw('GET', "$baseUrl/scan-sessions/$exportRateLimitSessionId/export/floorplan.pdf", null, $exportRateLimitToken);
+        if ($status === 429) {
+            $sawPdfThrottle = true;
+            break;
+        }
+    }
+    check('repeated PDF export calls against the SAME session ALSO eventually hit HTTP 429 (independent bucket, not shared with PNG)', $sawPdfThrottle, 'never saw a 429 across 35 rapid PDF export calls');
+}
+
 echo "\n== Session-creation rate limit ==\n";
 
 // The default limit is 60 per 10-minute window per caller IP
