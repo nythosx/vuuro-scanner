@@ -3,10 +3,8 @@
 declare(strict_types=1);
 
 /**
- * Independent net for coverage/quality scoring. Same rules as the other net
- * scripts: HTTP only, never imports RoomPlanSimulatorAdapter's
- * computeCoverage(), re-derives the expected score with its own
- * independently-written aggregation over the raw fixture's surfaces.
+ * Independent net for coverage/quality scoring. HTTP only, never imports
+ * RoomPlanSimulatorAdapter's computeCoverage().
  *
  * Usage: php net/verify_phase3_coverage.php [base_url]
  */
@@ -29,12 +27,6 @@ function check(string $label, bool $pass, string $detail = ''): void
     }
 }
 
-/**
- * Independently-written aggregation — deliberately structured differently
- * from the adapter's computeCoverage() (a single flat loop with an
- * accumulator array, no per-confidence weight table lookup) so a bug in one
- * isn't mechanically reproduced in the other.
- */
 function expected_coverage(array $rawCapture): array
 {
     $high = 0;
@@ -114,10 +106,7 @@ run_case($baseUrl, __DIR__ . '/../fixtures/roomplan_captured_room_single_room.js
 echo "\n== Adversarial: floor is high confidence but the room overall is not ==\n";
 run_case($baseUrl, __DIR__ . '/../fixtures/roomplan_captured_room_low_confidence_adversarial.json', 'low_confidence');
 
-// This is the check that would catch a "just read floor.confidence" bug:
-// that shortcut would report BOTH fixtures below as high/usable, since both
-// have high-confidence floors, but low_confidence's true aggregate is not.
-echo "\n== The specific bug this net exists to catch ==\n";
+echo "\n== Aggregate confidence differs from a single surface's confidence ==\n";
 $lowConfFixture = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_low_confidence_adversarial.json'), true, 512, JSON_THROW_ON_ERROR);
 check('low_confidence fixture\'s floor surface is itself high confidence (the trap)',
     ($lowConfFixture['floors'][0]['confidence'] ?? null) === 'high');

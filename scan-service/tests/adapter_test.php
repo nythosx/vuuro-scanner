@@ -268,6 +268,26 @@ echo "== Adjacent case: a non-array walls/doors/windows/openings group must not 
 $nonArrayWalls = $adapter->adapt(['floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]], 'walls' => 'not-an-array'], $identity);
 t_check("a non-array 'walls' group does not crash and is treated as contributing zero surfaces", $nonArrayWalls['rooms'][0]['coverage']['confidence_counts'] === ['high' => 1, 'medium' => 0, 'low' => 0]);
 
+// ACL/adapter-surface scan finding: 'identifier' is optional but
+// client-suppliable, and was cast with `(string) (...)` into room_id with no
+// type check first — same silent-corruption bug class as 'capture_provider'
+// fixed earlier (PHP's (string) cast on an array doesn't throw, it silently
+// produces the literal string "Array"). Confirmed live before this fix: a
+// capture with a non-string identifier returned a clean 200 with room_id
+// "room-01-Array" — no error anywhere, and room_id feeds every later
+// photo/note room_id match. Now rejected instead of silently coerced.
+echo "== Adjacent case: a non-string 'identifier' must not silently corrupt room_id ==\n";
+try {
+    $adapter->adapt(['floors' => [['identifier' => ['nested', 'array'], 'polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]]], $identity);
+    t_check("adapt() rejects a non-string 'identifier' with a clean exception, not silent corruption", false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    t_check("adapt() rejects a non-string 'identifier' with a clean exception, not silent corruption", true);
+}
+$omittedIdentifier = $adapter->adapt(['floors' => [['polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]]], $identity);
+t_check("omitting 'identifier' entirely still works (falls back to 'floor-N')", $omittedIdentifier['rooms'][0]['room_id'] === 'room-01-floor-0');
+$stringIdentifier = $adapter->adapt(['floors' => [['identifier' => 'my-floor', 'polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]]], $identity);
+t_check("a real string 'identifier' still works normally", $stringIdentifier['rooms'][0]['room_id'] === 'room-01-my-floor');
+
 echo count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

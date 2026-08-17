@@ -18,13 +18,7 @@ struct ScanIdentity: Codable, Equatable {
     let unitId: String
     let organisationId: String
     let purpose: ScanPurpose
-    /// Privacy by design (hard constraint #3, docs/adr/0003-privacy-acl-session-tokens.md).
-    /// Required — there is deliberately no default, so the app must force
-    /// this to be a real answer, not an assumption, before every session.
-    let occupied: Bool
-    /// Required by the Scan Service (403) whenever `occupied` is true. Must
-    /// reflect an actual recorded consent step in the app's UI, never be
-    /// hardcoded true — that would defeat the whole point of the gate.
+    let occupied: Boolss
     let consentObtained: Bool
 
     enum CodingKeys: String, CodingKey {
@@ -37,9 +31,6 @@ struct ScanIdentity: Codable, Equatable {
     }
 }
 
-/// Matches the Scan Service's `purpose` enum exactly
-/// (contracts/floorplan.schema.json) — "ops memory" is first-class, not an
-/// afterthought tag, so this must not silently default to "listing".
 enum ScanPurpose: String, Codable, CaseIterable, Identifiable, Hashable {
     case listing
     case checkIn = "check_in"

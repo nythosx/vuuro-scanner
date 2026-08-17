@@ -253,6 +253,39 @@ r_check(
 );
 echo "\n";
 
+// ACL-surface scan finding: recordEvent() inserts one row per call, on every
+// single rate-limit check across the service's lifetime, and nothing ever
+// deleted old ones — the table grows forever even though no row outside its
+// own bucket's window is ever read again. Fixed with a deterministic prune
+// (every 100th insert, keyed off SQLite's AUTOINCREMENT id, which is
+// monotonic and never reused even across deletes) rather than a
+// probabilistic one, so this test isn't itself flaky.
+echo "== Rate-limit events are pruned periodically, without disturbing live windows ==\n";
+$db->exec("INSERT INTO rate_limit_events (bucket, occurred_at) VALUES ('prune-test-old', '" . gmdate('c', time() - ScanSessionRepository::RATE_LIMIT_EVENT_RETENTION_SECONDS - 60) . "')");
+$db->exec("INSERT INTO rate_limit_events (bucket, occurred_at) VALUES ('prune-test-recent', '" . gmdate('c') . "')");
+
+$currentMaxId = (int) $db->query('SELECT COALESCE(MAX(id), 0) FROM rate_limit_events')->fetchColumn();
+$callsToNextMultipleOf100 = 100 - ($currentMaxId % 100);
+for ($i = 0; $i < $callsToNextMultipleOf100; $i++) {
+    $repo->recordEvent('prune-test-filler');
+}
+$newMaxId = (int) $db->query('SELECT COALESCE(MAX(id), 0) FROM rate_limit_events')->fetchColumn();
+r_check('enough events were recorded to cross a multiple of 100 (prune trigger)', $newMaxId % 100 === 0, "max id is $newMaxId");
+
+$oldStmt = $db->prepare("SELECT COUNT(*) FROM rate_limit_events WHERE bucket = 'prune-test-old'");
+$oldStmt->execute();
+r_check('a row older than RATE_LIMIT_EVENT_RETENTION_SECONDS is pruned away', (int) $oldStmt->fetchColumn() === 0);
+
+$recentStmt = $db->prepare("SELECT COUNT(*) FROM rate_limit_events WHERE bucket = 'prune-test-recent'");
+$recentStmt->execute();
+r_check('a recent row is NOT pruned', (int) $recentStmt->fetchColumn() === 1);
+
+r_check(
+    'pruning older buckets does not disturb an unrelated live window still being counted (bucket-a)',
+    $repo->countRecentEvents('bucket-a', 600) === 2
+);
+echo "\n";
+
 // Found by deliberately probing past the existing "must have a captured
 // FloorPlan first" (409/RuntimeException) guard: nothing checked that a
 // caller-supplied room_id, once a FloorPlan DOES exist, actually names one
@@ -292,6 +325,60 @@ r_check('appendNote() accepts a room_id that DOES match a real room', count($wit
 
 $withNullRoomId = $repo->appendNote($roomIdSession['id'], ['note_id' => 'n3', 'text' => 'x', 'room_id' => null, 'created_at' => gmdate('c')]);
 r_check('appendNote() still accepts room_id: null (session-wide note) — this fix must not make room_id required', count($withNullRoomId['notes']) === 2);
+echo "\n";
+
+// ACL-surface scan finding: every other repeatable client-supplied array in
+// this codebase has a cap (MAX_SURFACES_PER_GROUP, PDF MAX_PAGES), but
+// photos[]/notes[] never did — only a per-5-minute rate limit on the attach
+// routes, which bounds pace, not total. Not net-tested (net/ is HTTP-only by
+// hard rule, and driving 500 real HTTP calls needs far more than the
+// 60-per-5-min attach rate limit allows without weakening it just for this
+// test — same tradeoff already made and documented for the PDF MAX_PAGES
+// finding). Verified here instead, at the repository layer, well below the
+// cap and one entry over it.
+echo "== photos/notes are capped per session (MAX_PHOTOS_PER_SESSION / MAX_NOTES_PER_SESSION) ==\n";
+$capSession = fresh_session($repo);
+$repo->appendCapture($capSession['id'], [
+    'scan_session_id' => $capSession['id'],
+    'property_id' => 'p', 'unit_id' => 'u', 'organisation_id' => 'o',
+    'capture_provider' => 'test', 'captured_at' => gmdate('c'),
+    'measurement_basis' => 'indicative_nen2580_inspired', 'purpose' => 'listing',
+    'rooms' => [[
+        'room_id' => 'room-cap-1', 'label' => 'Room 1', 'floor_area_m2' => 10.0,
+        'perimeter_m' => 12.0, 'bounding_dimensions_m' => ['width_m' => 3, 'length_m' => 3],
+        'confidence' => 'high', 'outline_m' => [[0, 0], [3, 0], [3, 3], [0, 3]],
+        'coverage' => ['score' => 90, 'confidence_counts' => ['high' => 1, 'medium' => 0, 'low' => 0], 'usable' => true, 'message' => null],
+    ]],
+    'photos' => [], 'notes' => [],
+]);
+
+for ($i = 0; $i < ScanSessionRepository::MAX_NOTES_PER_SESSION; $i++) {
+    $result = $repo->appendNote($capSession['id'], ['note_id' => "cap-note-$i", 'text' => 'x', 'room_id' => null, 'created_at' => gmdate('c')]);
+}
+r_check(
+    "exactly MAX_NOTES_PER_SESSION (" . ScanSessionRepository::MAX_NOTES_PER_SESSION . ') notes attach without error',
+    count($result['notes']) === ScanSessionRepository::MAX_NOTES_PER_SESSION
+);
+try {
+    $repo->appendNote($capSession['id'], ['note_id' => 'cap-note-over', 'text' => 'x', 'room_id' => null, 'created_at' => gmdate('c')]);
+    r_check('the note ONE PAST the cap is rejected', false, 'no exception was thrown');
+} catch (\OverflowException) {
+    r_check('the note ONE PAST the cap is rejected', true);
+}
+
+for ($i = 0; $i < ScanSessionRepository::MAX_PHOTOS_PER_SESSION; $i++) {
+    $result = $repo->appendPhoto($capSession['id'], ['photo_id' => "cap-photo-$i", 'url' => 'https://example.invalid/x.jpg', 'caption' => '', 'room_id' => null, 'taken_at' => gmdate('c')]);
+}
+r_check(
+    "exactly MAX_PHOTOS_PER_SESSION (" . ScanSessionRepository::MAX_PHOTOS_PER_SESSION . ') photos attach without error',
+    count($result['photos']) === ScanSessionRepository::MAX_PHOTOS_PER_SESSION
+);
+try {
+    $repo->appendPhoto($capSession['id'], ['photo_id' => 'cap-photo-over', 'url' => 'https://example.invalid/x.jpg', 'caption' => '', 'room_id' => null, 'taken_at' => gmdate('c')]);
+    r_check('the photo ONE PAST the cap is rejected (independent budget, not shared with notes)', false, 'no exception was thrown');
+} catch (\OverflowException) {
+    r_check('the photo ONE PAST the cap is rejected (independent budget, not shared with notes)', true);
+}
 echo "\n";
 
 echo count($failures) . " failure(s) out of $checks check(s).\n";

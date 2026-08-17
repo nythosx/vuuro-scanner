@@ -11,17 +11,9 @@ namespace VuuroScan\Export;
  * the PDF spec's object/xref/trailer structure is simple enough for
  * text-only pages that pulling in a dependency for it isn't worth it. Does
  * not attempt any spatial layout; see docs/adr/0002-export-coordinate-frame.md
- * for why FloorPlanImageRenderer doesn't either.
- *
- * Bug found by manual review, not by a report: this used to hardcode a
- * single fixed-size page and step a text cursor down 16px per line with no
- * bottom-of-page check. A session with more than ~30 rooms (nothing stops a
- * "unit story" session from having that many — no per-session room cap
- * exists) would silently place trailing rows below the visible page: no
- * crash, no error, the PDF still opened fine — the data was just gone from
- * what anyone actually looking at it would see. Real pagination below,
- * matching the honesty standard the rest of this codebase holds itself to:
- * a limitation gets fixed or explicitly documented, never silently eaten.
+ * for why FloorPlanImageRenderer doesn't either. Paginates real content
+ * across as many pages as needed rather than silently clipping rows past
+ * the bottom of a single fixed-size page.
  */
 final class FloorPlanPdfRenderer
 {
@@ -29,10 +21,8 @@ final class FloorPlanPdfRenderer
     private const PAGE_BOTTOM_MARGIN_Y = 50;
     private const LINE_HEIGHT = 16;
     // Defense-in-depth, same spirit as FloorPlanImageRenderer's
-    // MAX_CANVAS_DIMENSION_PX: a session with an absurd room count (nothing
-    // upstream caps total rooms per session, only per-capture-call surface
-    // counts) shouldn't make this renderer build an unbounded number of PDF
-    // pages/objects. Generous — thousands of rooms is not a real unit.
+    // MAX_CANVAS_DIMENSION_PX — bounds how many PDF pages/objects a single
+    // render can build. Generous; thousands of rooms is not a real unit.
     private const MAX_PAGES = 200;
 
     public function render(array $floorPlan): string
@@ -76,9 +66,9 @@ final class FloorPlanPdfRenderer
 
     /**
      * Splits lines across pages so every line lands within the visible
-     * MediaBox — the fix for the bug documented in this class's doc comment.
-     * Always returns at least one page, even for zero lines, so a session
-     * with rooms but otherwise-empty text still gets a real (if sparse) PDF.
+     * MediaBox. Always returns at least one page, even for zero lines, so a
+     * session with rooms but otherwise-empty text still gets a real (if
+     * sparse) PDF.
      *
      * @param string[] $lines
      * @return array<int, string[]>

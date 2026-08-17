@@ -21,11 +21,9 @@ final class FloorPlanImageRenderer
     private const LABEL_HEIGHT = 56;
     private const TILE_GAP = 32;
     private const MARGIN = 24;
-    // Defense-in-depth (manual security review): RoomPlanSimulatorAdapter
-    // already bounds coordinate magnitude before this ever runs, but this
-    // renderer shouldn't rely solely on an upstream caller getting that
-    // right — a canvas this large (~50m per side, generous for any single
-    // room) would mean something already went wrong further up the chain.
+    // Defense-in-depth: RoomPlanSimulatorAdapter already bounds coordinate
+    // magnitude before this ever runs, but this renderer shouldn't rely
+    // solely on an upstream caller getting that right.
     private const MAX_CANVAS_DIMENSION_PX = 4000;
 
     /** @param array $floorPlan Decoded FloorPlan contract (see contracts/floorplan.schema.json) */
@@ -104,9 +102,7 @@ final class FloorPlanImageRenderer
         $labelY = $originY + self::TILE_PADDING + (int) round($room['bounding_dimensions_m']['length_m'] * self::PIXELS_PER_METER) + 8;
         imagestring($image, 4, $originX + self::TILE_PADDING, $labelY, $room['label'], $text);
         // ASCII only — GD's built-in bitmap fonts are Latin-1, so raw UTF-8
-        // (m-superscript-2, middot) renders as mojibake. Caught by actually
-        // looking at a rendered export in a browser, not by any automated
-        // check, since byte-level PNG assertions don't catch "wrong glyphs."
+        // (m-superscript-2, middot) renders as mojibake.
         $metrics = sprintf('%.2f sqm - %.2f m perimeter - %s confidence', $room['floor_area_m2'], $room['perimeter_m'], $room['confidence']);
         imagestring($image, 2, $originX + self::TILE_PADDING, $labelY + 18, $metrics, $subtext);
     }

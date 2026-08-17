@@ -3,10 +3,8 @@
 declare(strict_types=1);
 
 /**
- * Independent net for privacy/ACL (docs/adr/0003-privacy-acl-session-tokens.md).
- * Same rules as the other net scripts: HTTP only, no importing
- * ScanSessionRepository's authorize/tokenMatches logic — this treats the
- * Scan Service as a black box a real attacker or a real client would see.
+ * Independent net for privacy/ACL. HTTP only, no importing
+ * ScanSessionRepository's authorize/tokenMatches logic.
  *
  * Usage: php net/verify_phase3_acl.php [base_url]
  */
@@ -79,10 +77,7 @@ if ($sessionAId !== null) {
     [$correctTokenGet, $correctGetBody] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionAId", null, $sessionAToken);
     check('GET with the correct token succeeds (HTTP 200)', $correctTokenGet === 200, "got HTTP $correctTokenGet");
 
-    // Adjacent case: a second, unrelated session's token must not authorize
-    // access to session A. A bug where any well-formed token is accepted
-    // (rather than the specific matching one) would still pass every check
-    // above and only get caught here.
+    // A second, unrelated session's token must not authorize access to session A.
     [, $sessionB] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'organisation_id' => 'org-net-acl-b', 'occupied' => false]);
     $sessionBToken = $sessionB['access_token'] ?? null;
     if ($sessionBToken !== null) {
@@ -94,7 +89,6 @@ if ($sessionAId !== null) {
 echo "\n== Audited access: denied and granted attempts are both logged ==\n";
 
 if ($sessionAId !== null && $sessionAToken !== null) {
-    // One deliberate denied attempt, then one granted attempt, then read the log.
     net_http_json('GET', "$baseUrl/scan-sessions/$sessionAId", null, 'another-bad-token');
     net_http_json('GET', "$baseUrl/scan-sessions/$sessionAId", null, $sessionAToken);
 
@@ -119,19 +113,10 @@ if ($sessionAId !== null && $sessionAToken !== null) {
     check('access-log endpoint itself requires a token (HTTP 401 without one)', $logWithoutToken === 401, "got HTTP $logWithoutToken");
 }
 
-echo "\n== Adjacent case: repeated failed-auth attempts against a real session are throttled ==\n";
+echo "\n== Repeated failed-auth attempts against a real session are throttled ==\n";
 
-// Found by deliberately probing what capture's own rate limit (bounding a
-// runaway client from hammering the pipeline) implies should exist
-// everywhere but didn't: every other session-scoped route had NO bound on
-// repeated wrong-token attempts. Confirmed manually before this fix existed:
-// 100 back-to-back GETs against a real session with a fresh wrong token each
-// time all came back a plain 401 — no throttling at all. access_token
-// entropy (122-bit UUID) makes brute-forcing the value itself infeasible;
-// the real risk closed here is unbounded access_log growth and unbounded
-// DB lookups from a client (or attacker with a leaked session_id) that never
-// backs off. Uses its own fresh session so this doesn't share a bucket with
-// session A's few earlier denied attempts above.
+// Uses its own fresh session so this doesn't share a bucket with session A's
+// earlier denied attempts above.
 [, $throttleSession] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'organisation_id' => 'org-net-acl-throttle', 'occupied' => false]);
 $throttleSessionId = $throttleSession['id'] ?? null;
 $throttleSessionToken = $throttleSession['access_token'] ?? null;
@@ -151,27 +136,23 @@ if ($throttleSessionId !== null && $throttleSessionToken !== null) {
     check('25 rapid wrong-token attempts against one session eventually hit HTTP 429', $sawThrottle);
     check('every one of those 25 attempts was either 401 (denied) or 429 (throttled), never anything else', $allDeniedOrThrottled);
 
-    // Adjacent-adjacent case: the throttle must bound only DENIED attempts —
-    // a legitimate client that actually holds the correct token must still
-    // be able to use it right after the denied-attempt budget is exhausted.
+    // The throttle must bound only DENIED attempts — a legitimate client
+    // holding the correct token must still work right after the
+    // denied-attempt budget is exhausted.
     [$stillWorksStatus, ] = net_http_json('GET', "$baseUrl/scan-sessions/$throttleSessionId", null, $throttleSessionToken);
     check(
         'the CORRECT token still works immediately after the denied-attempt budget is exhausted',
         $stillWorksStatus === 200,
-        "got HTTP $stillWorksStatus — the throttle must not penalize a legitimate caller for someone else's (or its own earlier) failed guesses"
+        "got HTTP $stillWorksStatus"
     );
 }
 
-// The OTHER branch of authorizeSession()'s new denied-attempt throttle
-// (nonexistent session ids, bound per caller IP rather than per session) is
-// deliberately NOT tested here — that bucket is shared across the whole
-// suite by caller IP, and exhausting it here would poison
-// verify_security_fixes.php's own nonexistent-session check (found the hard
-// way: it did, turning a legitimate 401-vs-404 assertion into a false 429
-// failure). Same reasoning the create_session rate-limit test already
-// documents in README.md — see verify_enterprise_hardening.php, which is
-// deliberately the last net script run specifically so it's safe to spend
-// shared per-IP budget without poisoning anything that runs after it.
+// The nonexistent-session-id branch of the denied-attempt throttle (bound
+// per caller IP, not per session) is deliberately NOT tested here — that
+// bucket is shared across the whole suite by caller IP, and exhausting it
+// here would break verify_security_fixes.php's own nonexistent-session
+// check. See verify_enterprise_hardening.php, run last in the suite for the
+// same reason.
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 

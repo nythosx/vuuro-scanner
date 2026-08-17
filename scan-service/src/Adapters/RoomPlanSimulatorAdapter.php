@@ -19,51 +19,35 @@ namespace VuuroScan\Adapters;
  */
 final class RoomPlanSimulatorAdapter
 {
-    // Sanity bounds on an untrusted raw_capture body (found via manual
-    // security review: nothing previously capped array sizes or coordinate
-    // magnitude, so a crafted capture with e.g. a polygonCorners value of
-    // 1e400 overflowed to PHP float INF, propagated into floor_area_m2 /
-    // bounding_dimensions_m, and made json_encode() throw further downstream
-    // — confirmed exploitable, returned an uncaught fatal error as HTTP 200.
-    // Large-but-finite coordinates were a separate, related risk: they flow
-    // unbounded into FloorPlanImageRenderer's canvas size). These numbers are
-    // generous for any real room/building, not tuned to RoomPlan's actual
-    // range (which isn't verified on this machine — see docs/adr/0001).
+    // Sanity bounds on an untrusted raw_capture body. Generous for any real
+    // room/building, not tuned to RoomPlan's actual range (which isn't
+    // verified on this machine — see docs/adr/0001).
     private const MAX_FLOORS = 50;
     private const MAX_SURFACES_PER_GROUP = 500;
     private const MAX_POLYGON_POINTS = 1000;
     private const MAX_COORDINATE_METERS = 1000.0;
 
-    // Found by deliberately probing for the adjacent case to the security
-    // bounds above: those catch corners that are too big/too many/non-finite,
-    // but nothing rejected corners that are simply degenerate — collinear
-    // points, or a self-intersecting outline whose shoelace sum happens to
-    // cancel out. Both currently sail through as a "Room 1" with
-    // floor_area_m2: 0, confidence: high, coverage.usable: true — presented
-    // to a landlord as a real, fully-usable room. That is exactly what hard
-    // constraint #2 (honest measurement language) forbids: this is
-    // undetected junk, not a small room. 0.25 m2 (50cm x 50cm) is far below
-    // any real habitable space, so this rejects degenerate geometry without
-    // touching legitimate small rooms (closets, etc).
+    // Rejects degenerate geometry (collinear points, a self-intersecting
+    // outline whose shoelace sum cancels out) that would otherwise present
+    // as a real, usable room. 0.25 m2 (50cm x 50cm) is below any real
+    // habitable space, so legitimate small rooms (closets, etc) still pass.
     //
-    // Known accepted limitation, not fixed here: a self-intersecting
-    // ("bowtie") outline whose shoelace area does NOT cancel to ~0 will
-    // still pass this check with a wrong-but-plausible-looking area. Solving
-    // that needs a simple-polygon (non-self-intersecting) check, a separate
-    // and larger piece of work — tracked as a gap, not silently pinned as
-    // correct behaviour.
+    // Known accepted limitation: a self-intersecting ("bowtie") outline
+    // whose shoelace area does NOT cancel to ~0 still passes this check with
+    // a wrong-but-plausible-looking area. Solving that needs a
+    // simple-polygon (non-self-intersecting) check — separate, larger work.
     private const MIN_POLYGON_AREA_M2 = 0.25;
 
     /**
      * @param int $roomIndexOffset How many rooms already exist in this scan
-     *     session before this capture call. A "unit story" (Phase 2) session
-     *     is built from multiple sequential single-room RoomPlan captures,
-     *     not one payload with every room in it — the offset is what makes
-     *     room numbering continue ("Room 2", "Room 3", ...) across calls
-     *     instead of every call restarting at "Room 1". Also folded into
-     *     room_id so two capture calls reusing the same underlying RoomPlan
-     *     floor identifier (as the bundled fixtures deliberately do) can
-     *     never collide within one session.
+     *     session before this capture call. A multi-room session is built
+     *     from multiple sequential single-room RoomPlan captures, not one
+     *     payload with every room in it — the offset is what makes room
+     *     numbering continue ("Room 2", "Room 3", ...) across calls instead
+     *     of every call restarting at "Room 1". Also folded into room_id so
+     *     two capture calls reusing the same underlying RoomPlan floor
+     *     identifier (as the bundled fixtures deliberately do) can never
+     *     collide within one session.
      */
     public function adapt(array $rawCapture, array $identity, int $roomIndexOffset = 0): array
     {
@@ -73,13 +57,10 @@ final class RoomPlanSimulatorAdapter
 
         self::validateRawCapture($rawCapture);
 
-        // Coverage/quality (PHASES.md Phase 3: "so a landlord knows a scan
-        // is usable before they walk away"). Deliberately aggregated across
-        // every surface RoomPlan reported for this capture — floor, walls,
-        // doors, windows, openings — not just the floor's own confidence
-        // field. A room can have a confidently-detected floor outline while
-        // its walls were scanned too fast/too dark to trust; a score that
-        // only looked at the floor would miss exactly that case.
+        // Aggregated across every surface RoomPlan reported for this capture
+        // — floor, walls, doors, windows, openings — not just the floor's
+        // own confidence field. A room can have a confidently-detected floor
+        // outline while its walls were scanned too fast/too dark to trust.
         $coverage = self::computeCoverage($rawCapture);
 
         $rooms = [];
@@ -89,17 +70,10 @@ final class RoomPlanSimulatorAdapter
                 throw new \InvalidArgumentException("floors[$index] has fewer than 3 polygonCorners — not a closed room outline.");
             }
 
-            // Full-functionality scan finding: polygonCorners is entirely
-            // client-controlled JSON, and until this check existed, nothing
-            // validated that each ENTRY is itself an array — only that the
-            // outer polygonCorners array had >=3 entries. The closure below
-            // takes a typed `array $p` parameter, so a malformed entry (e.g.
-            // `"polygonCorners": [1, 2, 3]` — three scalars instead of three
-            // [x,y,z] points) threw an uncaught TypeError under this
-            // codebase's declare(strict_types=1). Confirmed live before this
-            // fix: that exact payload returned a raw 500. Same bug shape as
-            // the top-level polygonCorners/floors checks already in this
-            // file, one level deeper.
+            if (isset($floor['identifier']) && !is_string($floor['identifier'])) {
+                throw new \InvalidArgumentException("floors[$index].identifier must be a plain string.");
+            }
+
             foreach ($corners as $cornerIndex => $corner) {
                 if (!is_array($corner)) {
                     throw new \InvalidArgumentException("floors[$index].polygonCorners[$cornerIndex] is not a [x, y, z] point — each corner must be an array of coordinates.");
@@ -134,9 +108,7 @@ final class RoomPlanSimulatorAdapter
                 'confidence' => self::mapConfidence($floor['confidence'] ?? null),
                 'outline_m' => self::roomLocalOutline($points2d),
                 // Same coverage object on every room from this capture call
-                // — accurate for the supported one-room-per-call flow; see
-                // the coverage doc comment above for the multi-floor-per-call
-                // caveat.
+                // — accurate for the supported one-room-per-call flow.
                 'coverage' => $coverage,
             ];
         }
@@ -290,21 +262,7 @@ final class RoomPlanSimulatorAdapter
         }
     }
 
-    // Full-functionality scan finding: 'confidence' on any raw_capture
-    // surface (floors/walls/doors/windows/openings) is entirely
-    // client-controlled JSON — nothing upstream constrains its type. This
-    // used to take a typed `?string $raw` parameter, so a non-string,
-    // non-null value (e.g. `"confidence": 12345`, or an array/bool) threw an
-    // uncaught TypeError under this codebase's declare(strict_types=1),
-    // caught safely by the global exception handler but surfaced as a raw
-    // 500 for a client-side mistake with an obvious, safe answer: treat an
-    // unrecognized/malformed confidence exactly like a missing one, which
-    // already falls through to 'low' below by design (see the `default`
-    // arm) — a value this codebase can't make sense of shouldn't be trusted
-    // as high/medium confidence either way. Confirmed live before this fix:
-    // a real capture request with `"confidence": 12345` on a floor returned
-    // a raw 500 "internal_error"; the identical request after this fix
-    // returns 200 with that surface counted as 'low' confidence, same as an
+    // Unrecognized/malformed confidence falls through to 'low', same as an
     // omitted field.
     private static function mapConfidence(mixed $raw): string
     {
@@ -326,19 +284,8 @@ final class RoomPlanSimulatorAdapter
      */
     private static function computeCoverage(array $rawCapture): array
     {
-        // Full-functionality scan finding: 'walls'/'doors'/'windows'/
-        // 'openings' are entirely client-controlled JSON and — unlike
-        // 'floors', which adapt() already requires to be an array before
-        // ever reaching here — nothing constrained their type before this
-        // ran. array_merge() (unlike, say, a typed function parameter) is
-        // strict about every argument being an array and throws an
-        // uncaught TypeError otherwise, not a warning. Confirmed live:
-        // `"walls": "not-an-array"` alongside an otherwise-valid capture
-        // returned a raw 500 before this fix. is_array() gates each group
-        // the same way validateRawCapture() already gates them for the
-        // MAX_SURFACES_PER_GROUP check just above this method — a
-        // non-array group degrades to "contributes zero surfaces," not a
-        // crash, matching how a missing group is already treated.
+        // Non-array groups degrade to "contributes zero surfaces," not a
+        // crash — matches how a missing group is already treated.
         $surfaces = array_merge(
             $rawCapture['floors'] ?? [],
             is_array($rawCapture['walls'] ?? null) ? $rawCapture['walls'] : [],

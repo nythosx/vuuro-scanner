@@ -3,18 +3,7 @@
 //  VuuroScan
 //
 //  WRITTEN, NOT COMPILED OR RUN — see Models/ScanIdentity.swift header.
-//
-//  Not a full app shell — there's no property/unit picker, auth, or
-//  Vuuro-account wiring yet (all later, real decisions, not stubbed here).
-//  This is the smallest entry point that exercises the Phase 1-2 path end
-//  to end: identity intake (with a real occupied/consent step) -> device
-//  capability check -> one or more guided room captures, stitched onto the
-//  same session (PHASES.md Phase 2's "unit story") -> optional notes/photo
-//  URLs on the finished unit -> show the returned FloorPlan. That's what
-//  Phase 1 ("basic dimensions readable end to end") and Phase 2 ("multi-room
-//  session... photos and notes attach to the same unit package") need
-//  proven once a device/Xcode makes proving it possible.
-
+s
 import RoomPlan
 import SwiftUI
 
@@ -29,10 +18,6 @@ struct VuuroScanApp: App {
     }
 }
 
-/// Owns the whole manual-smoke-test flow: identity intake, one session
-/// created once and reused across every room capture in it (this is what
-/// makes it a "unit story" and not N unrelated single-room sessions), then
-/// an optional attachments step before showing the result.
 struct ScanFlowView: View {
     private enum Stage {
         case intake
@@ -61,11 +46,7 @@ struct ScanFlowView: View {
                 } onError: { message in
                     stage = .error(message)
                 }
-                // Forces a fresh CaptureCoordinator/RoomCaptureSession per
-                // room attempt: SwiftUI would otherwise reuse the same
-                // @StateObject across "capturing" re-entries (same case,
-                // same position in the switch) since it doesn't diff enum
-                // associated values for view identity.
+
                 .id(attempt)
             case .attachments(let session, let floorPlan):
                 AttachmentsScreen(session: session, floorPlan: floorPlan) { updated in
@@ -80,11 +61,6 @@ struct ScanFlowView: View {
     }
 }
 
-/// One room capture, uploaded onto `existingSession` if there is one, or a
-/// freshly created session otherwise. Reused for every room in a multi-room
-/// session — the caller (ScanFlowView) decides whether to loop back here for
-/// another room or move on, based on the user's choice in the completion
-/// prompt below.
 private struct RoomCaptureFlowStep: View {
     let identity: ScanIdentity
     let existingSession: ScanSessionResponse?
@@ -158,11 +134,6 @@ private struct RoomCaptureFlowStep: View {
     }
 }
 
-/// Shown right after a room upload succeeds — "one more room, or done with
-/// this unit?" — before the user leaves the property, matching PHASES.md
-/// Phase 2's multi-room "unit story" and hard constraint #7's evidence
-/// bucketing (a captured room is "implemented but not yet verified" until
-/// this screen and the next both prove it end to end).
 private struct AnotherRoomPromptView: View {
     let roomCount: Int
     let onChoice: (Bool) -> Void
@@ -181,12 +152,6 @@ private struct AnotherRoomPromptView: View {
     }
 }
 
-/// Optional last step before the summary: attach a note and/or a photo URL
-/// to the finished unit package (PHASES.md Phase 2 — "photos and notes
-/// attach to the same unit package, not a separate side-channel"). There is
-/// no image picker/upload target here yet (see ScanServiceClient.addPhoto's
-/// doc comment) — only a URL field, matching what the Scan Service actually
-/// accepts today.
 private struct AttachmentsScreen: View {
     let session: ScanSessionResponse
     let floorPlan: FloorPlan
@@ -276,9 +241,6 @@ private struct ResultSummaryView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                // PHASES.md Phase 3: the point of this signal is showing it
-                // here, before the user leaves the room — not buried in a
-                // later report they'll never open.
                 if !room.coverage.usable, let message = room.coverage.message {
                     Label(message, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)

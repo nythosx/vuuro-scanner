@@ -11,10 +11,7 @@
 import SwiftUI
 
 struct UnsupportedDeviceScreen: View {
-    /// Injected so a future non-LiDAR capture path (manual measurement
-    /// entry, photo-only capture) has somewhere to route to without
-    /// reworking this screen — not built yet, deliberately out of Phase 1
-    /// scope, but this screen shouldn't have to change shape to add it.
+  
     var onContinueWithoutScan: (() -> Void)? = nil
 
     var body: some View {

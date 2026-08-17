@@ -213,6 +213,42 @@ if ($sessionId !== null && $token !== null) {
     check('a non-string capture_provider returns HTTP 422, not a silently corrupted record', $nonStringProviderStatus === 422, "got HTTP $nonStringProviderStatus");
     [$nonStringProviderError, $nonStringProviderMessage] = pluck($nonStringProviderBody);
     check('non-string-capture_provider message is a real sentence', is_real_message($nonStringProviderMessage, $nonStringProviderError), "error=\"$nonStringProviderError\" message=\"$nonStringProviderMessage\"");
+
+    // Adapter-surface scan finding, same class as capture_provider above:
+    // floors[].identifier is optional but client-suppliable, and was cast
+    // straight into room_id with `(string) (...)` and no type check —
+    // PHP's (string) cast on an array doesn't throw, it silently produces
+    // the literal string "Array". Confirmed live before this fix: a
+    // non-string identifier returned a clean 200 with room_id
+    // "room-01-Array" — no error surfaced anywhere, and room_id feeds every
+    // later photo/note room_id match. This check proves it's now a clean
+    // 422 instead of a silently corrupted room_id.
+    [, $identifierSession] = net_http_json('POST', "$baseUrl/scan-sessions", base_payload());
+    [$nonStringIdentifierStatus, $nonStringIdentifierBody] = net_http_json('POST', "$baseUrl/scan-sessions/{$identifierSession['id']}/capture", [
+        'raw_capture' => ['floors' => [['identifier' => ['not', 'a', 'string'], 'polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]]],
+    ], $identifierSession['access_token']);
+    check('a non-string floors[].identifier returns HTTP 422, not a silently corrupted room_id', $nonStringIdentifierStatus === 422, "got HTTP $nonStringIdentifierStatus");
+    [$nonStringIdentifierError, $nonStringIdentifierMessage] = pluck($nonStringIdentifierBody);
+    check('non-string-identifier message is a real sentence', is_real_message($nonStringIdentifierMessage, $nonStringIdentifierError), "error=\"$nonStringIdentifierError\" message=\"$nonStringIdentifierMessage\"");
+
+    // ACL-surface scan finding: every other client-suppliable field in this
+    // codebase (property_id, url, caption, text, ...) has an explicit length
+    // cap — Idempotency-Key never did, despite being just as
+    // client-controlled and stored permanently (idempotency_keys never gets
+    // pruned). Confirmed live before this fix: a 16KB header value was
+    // accepted and stored with no limit at all.
+    [, $idemLengthSession] = net_http_json('POST', "$baseUrl/scan-sessions", base_payload());
+    [$tooLongKeyStatus, $tooLongKeyBody] = net_http_json_ex('POST', "$baseUrl/scan-sessions/{$idemLengthSession['id']}/capture", [
+        'raw_capture' => $singleRoomFixture,
+    ], $idemLengthSession['access_token'], ['Idempotency-Key' => str_repeat('k', 201)]);
+    check('an Idempotency-Key over 200 characters returns HTTP 422, not silently stored', $tooLongKeyStatus === 422, "got HTTP $tooLongKeyStatus");
+    [$tooLongKeyError, $tooLongKeyMessage] = pluck($tooLongKeyBody);
+    check('too-long-Idempotency-Key message is a real sentence', is_real_message($tooLongKeyMessage, $tooLongKeyError), "error=\"$tooLongKeyError\" message=\"$tooLongKeyMessage\"");
+
+    [$exactlyMaxKeyStatus, ] = net_http_json_ex('POST', "$baseUrl/scan-sessions/{$idemLengthSession['id']}/capture", [
+        'raw_capture' => $singleRoomFixture,
+    ], $idemLengthSession['access_token'], ['Idempotency-Key' => str_repeat('k', 200)]);
+    check('an Idempotency-Key of exactly 200 characters is NOT rejected', $exactlyMaxKeyStatus === 200, "got HTTP $exactlyMaxKeyStatus");
 }
 
 echo "\n== Not-found and internal-error fallbacks still have real messages ==\n";

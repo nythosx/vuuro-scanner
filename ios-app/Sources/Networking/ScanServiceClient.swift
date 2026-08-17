@@ -4,12 +4,6 @@
 //
 //  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
 //
-//  Thin HTTP client for the three Phase 1 Scan Service endpoints
-//  (scan-service/public/index.php). Deliberately no retry/offline-queue
-//  logic yet — Phase 1 proves the contract end to end on a reachable
-//  network; resilience for spotty on-site connectivity is a real concern
-//  but not one this slice needs to solve.
-//
 
 import Foundation
 
@@ -18,15 +12,6 @@ enum ScanServiceError: Error {
     case transport(Error)
 }
 
-/// UX hardening: without this, `error.localizedDescription` anywhere in the
-/// app (every `ErrorView` in VuuroScanApp.swift uses it) would fall back to
-/// Swift's generic "The operation couldn't be completed" for a plain enum
-/// error — never the Scan Service's own human-readable `message` field
-/// (scan-service/README.md's "Error shape"), even though the server went to
-/// the trouble of sending one. Parses `body` as `{"error", "message", ...}`
-/// and surfaces `message` directly; only falls back to a generic sentence
-/// when the body isn't in that shape (e.g. a raw HTML error from something
-/// other than this app's own backend).
 extension ScanServiceError: LocalizedError {
     var errorDescription: String? {
         switch self {
@@ -49,12 +34,6 @@ private struct ScanServiceErrorBody: Decodable {
 }
 
 struct ScanServiceClient {
-    /// Local dev default matches `scan-service/README.md`'s
-    /// `php -S 127.0.0.1:8089 public/index.php`. Point this at the
-    /// Dockerized service or a tunnel (ngrok/local network) when testing
-    /// from a real device, per the plan in
-    /// docs/adr/0001-scan-service-stack.md — never hardcode a production
-    /// URL here without that being a deliberate, reviewed change.
     var baseURL = URL(string: "http://127.0.0.1:8089")!
     var session: URLSession = .shared
 
@@ -81,11 +60,6 @@ struct ScanServiceClient {
         try await get(path: "/scan-sessions/\(sessionId)", accessToken: accessToken)
     }
 
-    /// `url` must already be reachable over http(s) — the Scan Service does
-    /// not accept or store image bytes itself yet (see
-    /// scan-service/README.md "Known limits"). There is no image upload
-    /// target on the client side either, so this is wired for whenever one
-    /// exists; it is not exercised by the manual smoke-test flow today.
     func addPhoto(sessionId: String, accessToken: String, url: String, caption: String? = nil, roomId: String? = nil) async throws -> FloorPlan {
         struct Body: Encodable {
             let url: String

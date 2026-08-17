@@ -4,14 +4,6 @@
 //
 //  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
 //
-//  Closes ios-app/README.md checklist item 6: VuuroScanApp used to hardcode
-//  `occupied: false` with no real consent step behind it. This is the real
-//  (if minimal) property/unit/org + occupied/consent form that produces a
-//  ScanIdentity the rest of the app can trust — not a placeholder. There is
-//  still no Vuuro account/property picker (out of scope until API coupling,
-//  per CLAUDE.md); this is manual entry, one deliberate step up from a
-//  hardcoded constant.
-//
 
 import SwiftUI
 

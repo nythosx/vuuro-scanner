@@ -56,13 +56,8 @@ check('a 1-second TTL (below the 60s floor) is rejected (HTTP 422)', $tooShortSt
 [$tooLongStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'access_token_ttl_seconds' => 999999999]);
 check('an absurdly long TTL (above the 1-year ceiling) is rejected (HTTP 422)', $tooLongStatus === 422, "got HTTP $tooLongStatus");
 
-// Adjacent case, found by deliberately probing the boundary itself rather
-// than only "clearly outside" values: the two checks above prove values far
-// past the edges are rejected, but an off-by-one in the comparison operator
-// (e.g. `<=` where `>` was meant, or vice versa) would sail through both of
-// those and only show up exactly AT 60 or AT 365 days. "Between min and max"
-// is documented (public/index.php) as inclusive, so both boundary values
-// themselves must be ACCEPTED, not rejected.
+// "Between min and max" is documented (public/index.php) as inclusive, so
+// both boundary values themselves must be ACCEPTED, not rejected.
 echo "\n== Token TTL boundary values (the edges themselves, not just clearly outside) ==\n";
 $oneYearSeconds = 365 * 24 * 60 * 60;
 
@@ -104,10 +99,7 @@ echo "\n== Token expiry is enforced, not just recorded ==\n";
 
 [, $expSession] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'access_token_ttl_seconds' => 60]);
 // 60 is the minimum allowed TTL, so this can't be shrunk further via the
-// public API to make the test fast — instead this only exercises that a
-// short-but-valid TTL is honestly accepted and still live seconds later,
-// which is the adjacent case a naive "expires_at in the past" bug could
-// break just as easily as the expired case itself.
+// public API to make the test fast.
 $expId = $expSession['id'] ?? null;
 $expToken = $expSession['access_token'] ?? null;
 if ($expId !== null && $expToken !== null) {
@@ -115,16 +107,10 @@ if ($expId !== null && $expToken !== null) {
     check('a freshly issued 60s-TTL token is still valid seconds later (HTTP 200)', $stillLiveStatus === 200, "got HTTP $stillLiveStatus");
 }
 
-// Closes the permanent-lockout gap flagged in README's "Known limits":
-// once a token actually expired, rotate-token was unreachable too, with no
-// recovery path at all. Fix: rotate-token now accepts an expired-but-correct
-// token within a 7-day grace window (ScanSessionRepository::
-// ROTATE_GRACE_PERIOD_SECONDS); every other action stays hard-blocked at the
-// instant of expiry, unchanged. Proven here over real HTTP with a real
-// 60-second-TTL token actually left to expire (the minimum allowed TTL,
-// same technique the "still valid seconds later" check above uses to stay
-// fast) — not a synthetic session array, so this exercises the real
-// authorizeSession() code path end to end.
+// rotate-token accepts an expired-but-correct token within a 7-day grace
+// window (ScanSessionRepository::ROTATE_GRACE_PERIOD_SECONDS); every other
+// action stays hard-blocked at the instant of expiry. Proven here with a
+// real 60-second-TTL token actually left to expire, over real HTTP.
 echo "\n== Token-expiry grace period: rotate-token recovers an expired token, other routes stay blocked ==\n";
 
 $graceFixture = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_single_room.json'), true, 512, JSON_THROW_ON_ERROR);
@@ -251,6 +237,54 @@ if ($collisionId !== null && $collisionToken !== null) {
     );
 }
 
+echo "\n== A failed capture releases its Idempotency-Key claim instead of poisoning it ==\n";
+
+// ACL-surface scan finding — a real correctness bug, not just table growth:
+// every 422 path after claimIdempotencyKey() succeeds (missing raw_capture,
+// non-string capture_provider, or a rejected/degenerate capture) used to
+// return its error WITHOUT ever releasing the claim, leaving the row stuck
+// at "pending" forever. Confirmed live before this fix: a client whose first
+// attempt failed validation and then retried with the SAME key got
+// permanently stuck — either a bogus "capture_in_progress" 409 (nothing was
+// actually in progress) on a same-body retry, or a false
+// "idempotency_key_reused" 409 on a corrected-body retry — with no way to
+// ever successfully use that key again.
+$degenerateCapture = ['raw_capture' => ['floors' => [['identifier' => 'f', 'polygonCorners' => [[0, 0, 0], [0.001, 0, 0], [0.001, 0, 0.001], [0, 0, 0.001]]]]]];
+
+[, $releaseSameBodySession] = net_http_json('POST', "$baseUrl/scan-sessions", base_payload());
+$releaseSameBodyId = $releaseSameBodySession['id'] ?? null;
+$releaseSameBodyToken = $releaseSameBodySession['access_token'] ?? null;
+check('session created for the same-bad-body release test', $releaseSameBodyId !== null && $releaseSameBodyToken !== null);
+if ($releaseSameBodyId !== null && $releaseSameBodyToken !== null) {
+    $key = 'net-release-samebody-' . bin2hex(random_bytes(8));
+    [$firstStatus, ] = net_http_json_ex('POST', "$baseUrl/scan-sessions/$releaseSameBodyId/capture", $degenerateCapture, $releaseSameBodyToken, ['Idempotency-Key' => $key]);
+    check('first attempt with a degenerate capture is rejected (HTTP 422)', $firstStatus === 422, "got HTTP $firstStatus");
+
+    [$retryStatus, $retryBody] = net_http_json_ex('POST', "$baseUrl/scan-sessions/$releaseSameBodyId/capture", $degenerateCapture, $releaseSameBodyToken, ['Idempotency-Key' => $key]);
+    check(
+        'retrying the SAME key with the SAME still-bad body gets the real 422 again, not a stuck capture_in_progress 409',
+        $retryStatus === 422 && ($retryBody['error'] ?? null) === 'unprocessable_capture',
+        'got HTTP ' . $retryStatus . ' error=' . ($retryBody['error'] ?? 'none')
+    );
+}
+
+[, $releaseFixedBodySession] = net_http_json('POST', "$baseUrl/scan-sessions", base_payload());
+$releaseFixedBodyId = $releaseFixedBodySession['id'] ?? null;
+$releaseFixedBodyToken = $releaseFixedBodySession['access_token'] ?? null;
+check('session created for the corrected-body release test', $releaseFixedBodyId !== null && $releaseFixedBodyToken !== null);
+if ($releaseFixedBodyId !== null && $releaseFixedBodyToken !== null) {
+    $key = 'net-release-fixedbody-' . bin2hex(random_bytes(8));
+    [$firstStatus, ] = net_http_json_ex('POST', "$baseUrl/scan-sessions/$releaseFixedBodyId/capture", $degenerateCapture, $releaseFixedBodyToken, ['Idempotency-Key' => $key]);
+    check('first attempt with a degenerate capture is rejected (HTTP 422)', $firstStatus === 422, "got HTTP $firstStatus");
+
+    [$retryStatus, ] = net_http_json_ex('POST', "$baseUrl/scan-sessions/$releaseFixedBodyId/capture", ['raw_capture' => $fixture], $releaseFixedBodyToken, ['Idempotency-Key' => $key]);
+    check(
+        'retrying the SAME key with a CORRECTED body succeeds (HTTP 200), not stuck behind idempotency_key_reused',
+        $retryStatus === 200,
+        "got HTTP $retryStatus"
+    );
+}
+
 echo "\n== Request body size cap ==\n";
 
 $oversizedPropertyId = str_repeat('a', 9 * 1024 * 1024); // 9MB, over the 8MB cap
@@ -288,26 +322,29 @@ check('constructed payload is exactly MAX_REQUEST_BODY_BYTES + 1', strlen($overB
 [$overByOneStatus, ] = net_http_raw_literal('POST', "$baseUrl/scan-sessions", $overByOneBody);
 check('a body of exactly MAX_REQUEST_BODY_BYTES + 1 IS rejected (HTTP 413)', $overByOneStatus === 413, "got HTTP $overByOneStatus");
 
+// ACL-surface scan finding: the size cap above used to only check the
+// CLIENT-DECLARED Content-Length header, which chunked Transfer-Encoding
+// omits entirely ($_SERVER['CONTENT_LENGTH'] is simply unset) — a client
+// sending the exact same oversized body chunked instead sailed straight
+// past the 413 check. Confirmed live before this fix: the identical 9MB
+// payload that correctly got 413 with a normal Content-Length got a 422
+// (reached and was fully buffered by a LATER, unrelated per-field check)
+// when sent chunked — proving the whole body was read into memory
+// unbounded, defeating the exact resource-exhaustion protection this cap
+// exists for. Fixed by bounding the ACTUAL bytes read off php://input,
+// independent of anything the client claims in a header.
+echo "\n== Request body size cap cannot be bypassed via chunked Transfer-Encoding ==\n";
+$chunkedOversizedBody = json_encode([...base_payload(), 'property_id' => $oversizedPropertyId], JSON_THROW_ON_ERROR);
+[$chunkedOversizedStatus, ] = net_http_raw_literal('POST', "$baseUrl/scan-sessions", $chunkedOversizedBody, null, ['Transfer-Encoding' => 'chunked']);
+check(
+    'the same over-the-cap body sent with chunked Transfer-Encoding (no Content-Length) is STILL rejected (HTTP 413)',
+    $chunkedOversizedStatus === 413,
+    "got HTTP $chunkedOversizedStatus"
+);
+
 echo "\n== Export routes (PNG/PDF) are rate-limited per session ==\n";
 
-// Full-functionality scan finding: every other route with meaningful
-// per-call cost (session creation, capture, denied-auth) already had a rate
-// limit; the two export routes never did, despite rendering being this
-// codebase's most expensive per-request work (FloorPlanImageRenderer can
-// allocate up to a 4000x4000px canvas; FloorPlanPdfRenderer can walk up to
-// 200 pages). A valid token — including a compromised one, which looks
-// exactly like legitimate traffic since it's authorized by definition —
-// could previously hammer either route with no bound at all. Bounded per
-// session (default 30 per 5 minutes, matching capture's own per-session
-// model), checked before the "does a floor plan even exist yet" lookup, so
-// this throttles regardless of whether the session has been captured.
-//
-// Placed BEFORE the "Session-creation rate limit" section below, not after:
-// that section deliberately floods this same script's create_session budget
-// for 127.0.0.1, and this check needs its own fresh session creation to
-// succeed first — found the hard way, the same cross-section-budget lesson
-// already documented elsewhere in this file for the nonexistent-session
-// throttle check.
+
 [, $exportRateLimitSession] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'organisation_id' => 'org-net-export-throttle']);
 $exportRateLimitSessionId = $exportRateLimitSession['id'] ?? null;
 $exportRateLimitToken = $exportRateLimitSession['access_token'] ?? null;
@@ -333,6 +370,94 @@ if ($exportRateLimitSessionId !== null && $exportRateLimitToken !== null) {
         }
     }
     check('repeated PDF export calls against the SAME session ALSO eventually hit HTTP 429 (independent bucket, not shared with PNG)', $sawPdfThrottle, 'never saw a 429 across 35 rapid PDF export calls');
+}
+
+echo "\n== Photos/notes/rotate-token routes are rate-limited per session ==\n";
+
+[, $writeRateLimitSession] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'organisation_id' => 'org-net-write-throttle']);
+$writeRateLimitSessionId = $writeRateLimitSession['id'] ?? null;
+$writeRateLimitToken = $writeRateLimitSession['access_token'] ?? null;
+check('session created for the photos/notes/rotate-token rate-limit test', $writeRateLimitSessionId !== null && $writeRateLimitToken !== null);
+
+if ($writeRateLimitSessionId !== null && $writeRateLimitToken !== null) {
+    $sawNoteThrottle = false;
+    for ($i = 0; $i < 65; $i++) {
+        [$status, ] = net_http_json('POST', "$baseUrl/scan-sessions/$writeRateLimitSessionId/notes", ['text' => "note $i"], $writeRateLimitToken);
+        if ($status === 429) {
+            $sawNoteThrottle = true;
+            break;
+        }
+    }
+    check('repeated note-attach calls against one session eventually hit HTTP 429', $sawNoteThrottle, 'never saw a 429 across 65 rapid note-attach calls');
+
+    $sawPhotoThrottle = false;
+    for ($i = 0; $i < 65; $i++) {
+        [$status, ] = net_http_json('POST', "$baseUrl/scan-sessions/$writeRateLimitSessionId/photos", ['url' => "http://example.com/p$i.jpg"], $writeRateLimitToken);
+        if ($status === 429) {
+            $sawPhotoThrottle = true;
+            break;
+        }
+    }
+    check('repeated photo-attach calls against the SAME session ALSO eventually hit HTTP 429 (independent bucket, not shared with notes)', $sawPhotoThrottle, 'never saw a 429 across 65 rapid photo-attach calls');
+
+    [, $rotateSession] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'organisation_id' => 'org-net-rotate-throttle']);
+    $rotateSessionId = $rotateSession['id'] ?? null;
+    $rotateToken = $rotateSession['access_token'] ?? null;
+    check('separate session created for the rotate-token rate-limit test', $rotateSessionId !== null && $rotateToken !== null);
+
+    if ($rotateSessionId !== null && $rotateToken !== null) {
+        $sawRotateThrottle = false;
+        $currentToken = $rotateToken;
+        for ($i = 0; $i < 15; $i++) {
+            [$status, $body] = net_http_json('POST', "$baseUrl/scan-sessions/$rotateSessionId/rotate-token", [], $currentToken);
+            if ($status === 429) {
+                $sawRotateThrottle = true;
+                break;
+            }
+            $currentToken = $body['access_token'] ?? $currentToken;
+        }
+        check('repeated rotate-token calls against one session eventually hit HTTP 429', $sawRotateThrottle, 'never saw a 429 across 15 rapid rotate-token calls');
+    }
+}
+
+echo "\n== GET routes (session read, access-log) are rate-limited per session ==\n";
+
+// ACL-surface scan finding: every mutating session-scoped route now has a
+// per-session rate limit, but the two GET routes never did. Cheaper
+// per-call than capture/export, but not free — a session's access_log grows
+// with every access attempt (including denied ones), and a session's
+// contract_json can be large (unbounded room count; up to
+// MAX_PHOTOS_PER_SESSION/MAX_NOTES_PER_SESSION each), so a valid (or
+// compromised) token could still hammer either route indefinitely before
+// this fix.
+//
+// Placed BEFORE the "Session-creation rate limit" section below, same
+// cross-section-budget reason as the export/write-route sections above.
+[, $readRateLimitSession] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'organisation_id' => 'org-net-read-throttle']);
+$readRateLimitSessionId = $readRateLimitSession['id'] ?? null;
+$readRateLimitToken = $readRateLimitSession['access_token'] ?? null;
+check('session created for the GET rate-limit test', $readRateLimitSessionId !== null && $readRateLimitToken !== null);
+
+if ($readRateLimitSessionId !== null && $readRateLimitToken !== null) {
+    $sawReadThrottle = false;
+    for ($i = 0; $i < 125; $i++) {
+        [$status, ] = net_http_raw('GET', "$baseUrl/scan-sessions/$readRateLimitSessionId", null, $readRateLimitToken);
+        if ($status === 429) {
+            $sawReadThrottle = true;
+            break;
+        }
+    }
+    check('repeated GET session calls eventually hit HTTP 429', $sawReadThrottle, 'never saw a 429 across 125 rapid GET session calls');
+
+    $sawAccessLogThrottle = false;
+    for ($i = 0; $i < 125; $i++) {
+        [$status, ] = net_http_raw('GET', "$baseUrl/scan-sessions/$readRateLimitSessionId/access-log", null, $readRateLimitToken);
+        if ($status === 429) {
+            $sawAccessLogThrottle = true;
+            break;
+        }
+    }
+    check('repeated GET access-log calls against the SAME session ALSO eventually hit HTTP 429 (independent bucket, not shared with read)', $sawAccessLogThrottle, 'never saw a 429 across 125 rapid GET access-log calls');
 }
 
 echo "\n== Session-creation rate limit ==\n";

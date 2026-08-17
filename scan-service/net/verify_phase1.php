@@ -3,24 +3,9 @@
 declare(strict_types=1);
 
 /**
- * Independent verification pass for Phase 1 ("proof of capture").
- *
- * This is the net named in CLAUDE.md hard constraint #6 / PHASES.md, not a
- * regression test suite. It is deliberately built from different
- * assumptions than src/Adapters/RoomPlanSimulatorAdapter.php:
- *
- *   - It does NOT require() or call the adapter. It re-implements its own
- *     polygon-area / perimeter math directly against the raw fixture files,
- *     independently, and compares the result to what the live HTTP API
- *     actually returned.
- *   - It talks to the Scan Service only over HTTP, the same way any real
- *     client (including the eventual Vuuro rental app) would — it never
- *     reaches into the PHP classes or the SQLite file directly.
- *   - A failure here means "the contract lied to a client", which is a
- *     stronger and different claim than "a unit test of the adapter failed".
- *
- * This script exits non-zero on any failure and is meant to gate merges —
- * see CLAUDE.md: "nothing merges past a red verdict, including my own work."
+ * Independent verification for capture: re-implements polygon-area/perimeter
+ * math from scratch (never imports the adapter) and checks it against the
+ * live HTTP API. Talks to the Scan Service only over HTTP.
  *
  * Usage: php net/verify_phase1.php [base_url]
  *   base_url defaults to http://127.0.0.1:8089
@@ -32,14 +17,7 @@ $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';
 $failures = [];
 $checks = 0;
 
-/**
- * Independently-coded shoelace area. Deliberately written from scratch here
- * rather than shared with the adapter, per CLAUDE.md's requirement that the
- * net "re-derives expected room dimensions/areas from a known fixture
- * independently rather than re-running the same reconstruction path."
- *
- * @param array<int, array{0: float, 1: float}> $xz
- */
+/** @param array<int, array{0: float, 1: float}> $xz */
 function expected_area(array $xz): float
 {
     $total = 0.0;
@@ -168,20 +146,14 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
     echo "\n";
 }
 
-// Regression case: the straightforward rectangular room this adapter was
-// built and tested against first.
 run_fixture_case($baseUrl, __DIR__ . '/../fixtures/roomplan_captured_room_single_room.json', 'Regression: single rectangular room');
 
-// Adjacent case: a non-rectangular, concave (L-shaped) room. A bounding-box
-// or width*length shortcut would pass the rectangular case above and still
-// silently return the wrong area/perimeter here. This is exactly the
-// "adjacent case beside the one being fixed" failure shape CLAUDE.md calls
-// out — constructed deliberately, not discovered after a bug report.
+// A concave (L-shaped) room: a bounding-box or width*length shortcut would
+// pass the rectangular case above and still silently return the wrong
+// area/perimeter here.
 run_fixture_case($baseUrl, __DIR__ . '/../fixtures/roomplan_captured_room_lshaped_adversarial.json', 'Adversarial: L-shaped concave room');
 
-// Identity-native capture, checked negatively: creating a session missing
-// any identity field must be rejected, not silently defaulted (hard
-// constraint #1 — "an orphan capture is a bug").
+// A session missing any identity field must be rejected, not silently defaulted.
 foreach (['property_id', 'unit_id', 'organisation_id'] as $missingField) {
     $payload = [
         'property_id' => 'prop-x',

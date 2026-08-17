@@ -2,27 +2,6 @@
 //  CapturedRoomExporter.swift
 //  VuuroScan
 //
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
-//
-//  Converts RoomPlan's CapturedRoom into the exact JSON shape the Scan
-//  Service's RoomPlanSimulatorAdapter expects as `raw_capture`
-//  (scan-service/src/Adapters/RoomPlanSimulatorAdapter.php and
-//  scan-service/fixtures/roomplan_captured_room_single_room.json). Keeping
-//  this mapping explicit and separate from CapturedRoom's own Codable
-//  conformance (rather than just `JSONEncoder().encode(capturedRoom)`) is
-//  deliberate: the Scan Service's adapter contract is pinned to the fixture
-//  shape, not to whatever Apple happens to name its Codable keys, so this
-//  file is the seam that has to hold even if Apple's own encoding changes.
-//
-//  IMPORTANT — unverified assumption: `polygonCorners` on a floor Surface is
-//  assumed available (used for the shoelace-based area/perimeter math on the
-//  Scan Service side). This has not been confirmed against the real RoomPlan
-//  SDK on this machine — see docs/adr/0001-scan-service-stack.md. The first
-//  thing to check once Xcode is reachable: does CapturedRoom.Surface actually
-//  expose `polygonCorners`, and if not, what's the real way to get a floor
-//  outline out of RoomPlan? Fix this mapping (and the fixture, and the
-//  adapter if needed) then — don't leave the assumption unverified past the
-//  first real build.
 
 import RoomPlan
 import simd

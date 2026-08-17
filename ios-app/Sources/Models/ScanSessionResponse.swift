@@ -18,10 +18,6 @@ struct ScanSessionResponse: Codable {
     let status: String
     let occupied: Bool
     let consentObtained: Bool
-    /// Returned exactly once, here. Every later call to this session must
-    /// present it via the X-Scan-Access-Token header
-    /// (docs/adr/0003-privacy-acl-session-tokens.md) — store it, don't
-    /// re-derive or assume it from `id`.
     let accessToken: String
 
     enum CodingKeys: String, CodingKey {
@@ -38,11 +34,6 @@ struct ScanSessionResponse: Codable {
     }
 }
 
-/// The vendor-neutral FloorPlan contract returned by
-/// `POST /scan-sessions/{id}/capture` and `GET /scan-sessions/{id}`.
-/// Field-for-field mirror of contracts/floorplan.schema.json — keep in sync
-/// by hand until there's a shared schema-to-Swift generation step; that's an
-/// open decision, not solved here.
 struct FloorPlan: Codable {
     let scanSessionId: String
     let propertyId: String
@@ -93,11 +84,7 @@ struct FloorPlan: Codable {
         let perimeterM: Double
         let boundingDimensionsM: BoundingDimensions
         let confidence: String
-        /// [x, z] pairs, room-local only — NOT a shared coordinate frame
-        /// across rooms. See docs/adr/0002-export-coordinate-frame.md.
         let outlineM: [[Double]]
-        /// Scan quality signal so the app can prompt a rescan before the
-        /// user leaves the room, not after (PHASES.md Phase 3).
         let coverage: Coverage
 
         enum CodingKeys: String, CodingKey {

@@ -29,7 +29,6 @@ function check(string $label, bool $pass, string $detail = ''): void
     }
 }
 
-// --- Set up a two-room session, independent of the export code under test ---
 $fixtureA = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_single_room.json'), true, 512, JSON_THROW_ON_ERROR);
 $fixtureB = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_lshaped_adversarial.json'), true, 512, JSON_THROW_ON_ERROR);
 
@@ -57,10 +56,6 @@ check('PNG export returns HTTP 200', $pngStatus === 200, "got HTTP $pngStatus");
 check('PNG export has image/png content type', str_contains($pngContentType, 'image/png'), "got $pngContentType");
 check('PNG bytes start with the PNG file signature', substr($pngBytes, 0, 8) === "\x89PNG\r\n\x1a\n", 'signature mismatch — not a valid PNG');
 
-// Independently decode via GD (still not the renderer under test — this is
-// just parsing its output the way any real client would) and sanity-check
-// dimensions scale with the underlying room geometry rather than being a
-// fixed/hardcoded canvas size regardless of content.
 $tmpPath = tempnam(sys_get_temp_dir(), 'net_png_');
 file_put_contents($tmpPath, $pngBytes);
 $info = @getimagesize($tmpPath);
@@ -79,11 +74,8 @@ check('PDF export has application/pdf content type', str_contains($pdfContentTyp
 check('PDF starts with %PDF- header', str_starts_with($pdfBytes, '%PDF-'));
 check('PDF ends with %%EOF', str_ends_with(rtrim($pdfBytes), '%%EOF'));
 
-// Structural check independent of the renderer: re-parse the xref table
-// ourselves and confirm every declared object offset actually points at
-// that object's "N 0 obj" header. A renderer bug that writes a plausible
-// but wrong offset would produce a PDF many naive checks (just "starts with
-// %PDF-") would still call valid.
+// Re-parse the xref table and confirm every declared object offset actually
+// points at that object's "N 0 obj" header.
 preg_match('/startxref\s+(\d+)\s+%%EOF/', $pdfBytes, $xrefMatch);
 $xrefOffsetValid = isset($xrefMatch[1]) && substr($pdfBytes, (int) $xrefMatch[1], 4) === 'xref';
 check('startxref points exactly at the "xref" keyword', $xrefOffsetValid);
@@ -101,9 +93,8 @@ foreach ($objMatches[1] as $i => $offsetStr) {
 check('every xref-declared object offset points at the correct "N 0 obj" header',
     $allObjectOffsetsValid && count($objMatches[1]) > 0);
 
-// Content check: the room labels and rounded areas the API already returned
-// must actually appear in the PDF's text content — the metrics table isn't
-// silently using different numbers than the API.
+// The room labels and rounded areas the API already returned must actually
+// appear in the PDF's text content.
 $room1Label = $floorPlan['rooms'][0]['label'];
 $room2Area = number_format((float) $floorPlan['rooms'][1]['floor_area_m2'], 2, '.', '');
 check("PDF content contains the first room's label ($room1Label)", str_contains($pdfBytes, $room1Label));
@@ -111,13 +102,6 @@ check("PDF content contains the second room's area ($room2Area)", str_contains($
 
 echo "\n== Adversarial: many rooms must not go missing off a fixed-size PDF page ==\n";
 
-// The specific bug this net exists to catch: FloorPlanPdfRenderer used to
-// hardcode a single fixed-size page with no bottom-of-page check, so rooms
-// past roughly #30 (and eventually the trailing summary lines) rendered
-// below the visible page — present in the bytes, invisible to anyone who
-// actually opened the file. One capture call with many floors (each floor
-// -> one room) forces that page boundary in a single request rather than 40
-// separate capture calls.
 [, $manyRoomsSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-exports-many',
     'unit_id' => 'unit-net-exports-many',
@@ -147,15 +131,8 @@ if ($manyRoomsSessionId !== null && $manyRoomsToken !== null) {
     if ($manyPdfStatus === 200) {
         check('40-room PDF spans more than one page (/Count 4 or higher, never /Count 1)', (bool) preg_match('/\/Count\s+(?!1\b)\d+/', $manyPdfBytes), 'PDF still declares a single page for 40 rooms');
 
-        // The actual regression check, and the one that matters most: a
-        // byte-presence check alone ("does the label appear anywhere in the
-        // file") would NOT catch the original bug — the old renderer still
-        // wrote every line's text into the content stream, just positioned
-        // at a Y coordinate below the visible page. Independently parse
-        // every `Tm` text-positioning operator this renderer emits
-        // (`1 0 0 1 <x> <y> Tm`) and confirm every Y stays within the 792pt
-        // MediaBox — re-deriving the actual defect (off-page placement),
-        // not just re-checking that pagination objects exist.
+        // Parse every `Tm` text-positioning operator (`1 0 0 1 <x> <y> Tm`)
+        // and confirm every Y stays within the 792pt MediaBox.
         preg_match_all('/1 0 0 1 [\d.]+ (-?[\d.]+) Tm/', $manyPdfBytes, $tmMatches);
         $offPageYs = array_filter($tmMatches[1] ?? [], static fn ($y) => (float) $y < 0 || (float) $y > 792);
         check(
@@ -164,8 +141,6 @@ if ($manyRoomsSessionId !== null && $manyRoomsToken !== null) {
             count($tmMatches[1]) . ' Tm operators found, ' . count($offPageYs) . ' positioned off-page: ' . implode(', ', array_slice($offPageYs, 0, 5))
         );
 
-        // Byte-presence checks too, now that the positional check above is
-        // the one actually proving the fix — belt and suspenders.
         $missingLabels = [];
         foreach ($manyFloorPlan['rooms'] as $room) {
             if (!str_contains($manyPdfBytes, $room['label'])) {
@@ -177,8 +152,6 @@ if ($manyRoomsSessionId !== null && $manyRoomsToken !== null) {
         $totalAreaLine = sprintf('%.2f', array_sum(array_column($manyFloorPlan['rooms'], 'floor_area_m2')));
         check('the trailing "Total indicative area" line is still present, not pushed off-page', str_contains($manyPdfBytes, $totalAreaLine));
 
-        // Structural re-check, same independent xref/offset logic as above —
-        // pagination must not have produced a structurally broken PDF.
         preg_match_all('/^(\d{10}) 00000 n \s*$/m', $manyPdfBytes, $manyObjMatches);
         $manyOffsetsValid = count($manyObjMatches[1]) > 0;
         foreach ($manyObjMatches[1] as $i => $offsetStr) {
@@ -192,16 +165,8 @@ if ($manyRoomsSessionId !== null && $manyRoomsToken !== null) {
         check('the paginated 40-room PDF still has a structurally valid xref table', $manyOffsetsValid);
     }
 
-    // Adjacent case to the PDF pagination test just above, and a genuine gap:
-    // FloorPlanImageRenderer has its own sanity bound (MAX_CANVAS_DIMENSION_PX,
-    // 4000px — see its header comment) and index.php's PNG export route does
-    // catch the resulting InvalidArgumentException and turn it into a clean
-    // 422 (verified by reading the code), but nothing had ever actually driven
-    // a real request through that path — unlike the PDF MAX_PAGES case, which
-    // was at least checked manually. The same 40-room capture used for the PDF
-    // pagination test above easily exceeds the PNG canvas width bound (40
-    // tiles at ~228px + gaps is >10,000px, well past the 4,000px cap), so it
-    // doubles as the trigger here with no extra capture calls needed.
+    // The same 40-room capture also exceeds the PNG canvas width bound
+    // (MAX_CANVAS_DIMENSION_PX).
     [$manyPngStatus, $manyPngBody] = net_http_json('GET', "$baseUrl/scan-sessions/$manyRoomsSessionId/export/floorplan.png", null, $manyRoomsToken);
     check(
         'a 40-room PNG export that would exceed the canvas size bound returns a clean 422, not a 500 or a truncated image',
@@ -215,12 +180,6 @@ if ($manyRoomsSessionId !== null && $manyRoomsToken !== null) {
     );
 }
 
-// Adjacent-case gap found by deliberate probing, not by a report: nothing
-// end-to-end had ever exercised non-ASCII identity fields through the real
-// HTTP export path. FloorPlanPdfRenderer's own doc comment claims it stays
-// ASCII-safe (GD/base-14-Helvetica can't render UTF-8), but a claim in a
-// comment is not the same as a verified behaviour — this proves it against
-// the live API, not the renderer class directly (this net never imports it).
 echo "\n== Adversarial: non-ASCII property/unit/org identity through the real PDF export ==\n";
 [, $unicodeSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-café-日本-☂',
@@ -242,12 +201,8 @@ if ($unicodeSessionId === null || $unicodeSessionToken === null) {
     [$unicodePdfStatus, $unicodePdfContentType, $unicodePdfBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$unicodeSessionId/export/floorplan.pdf", null, $unicodeSessionToken);
     check('PDF export still returns HTTP 200 with a non-ASCII identity', $unicodePdfStatus === 200, "got HTTP $unicodePdfStatus");
 
-    // The real assertion: no raw multi-byte UTF-8 (any byte >= 0x80) leaked
-    // into the PDF's actual text-showing operators. A naive "just don't
-    // crash" fix could still leak raw UTF-8 bytes into a Tj string, which a
-    // real PDF viewer would then render as mojibake under base-14 Helvetica
-    // StandardEncoding — same failure class the PNG renderer's own comment
-    // warns about for m-superscript-2/middot.
+    // No raw multi-byte UTF-8 (any byte >= 0x80) should leak into the PDF's
+    // actual text-showing operators.
     preg_match_all('/\(((?:[^()\\\\]|\\\\.)*)\)\s*Tj/', $unicodePdfBytes, $tjMatches);
     $hasHighByteInText = false;
     foreach ($tjMatches[1] as $shown) {
@@ -258,16 +213,10 @@ if ($unicodeSessionId === null || $unicodeSessionToken === null) {
     }
     check('no raw high-byte (non-ASCII) bytes appear inside any PDF text-showing operator', !$hasHighByteInText);
 
-    // The other half of "honest, not silently eaten": the ASCII-safe prefix
-    // of each field must still be present, proving the fields weren't
-    // dropped/truncated entirely — only the non-ASCII characters were
-    // folded, per FloorPlanPdfRenderer's documented behaviour.
     check('the ASCII-safe prefix of property_id ("prop-caf") still appears', str_contains($unicodePdfBytes, 'prop-caf'));
     check('the ASCII-safe prefix of unit_id ("unit-Stra") still appears', str_contains($unicodePdfBytes, 'unit-Stra'));
     check('the ASCII-safe prefix of organisation_id ("org-M") still appears', str_contains($unicodePdfBytes, 'org-M'));
 
-    // Structural sanity: still a well-formed single-page PDF, not corrupted
-    // by whatever fold/replace path the non-ASCII bytes went through.
     check('PDF still starts with a valid %PDF- header', str_starts_with($unicodePdfBytes, '%PDF-'));
     check('PDF still ends with %%EOF', str_ends_with(rtrim($unicodePdfBytes), '%%EOF'));
 }

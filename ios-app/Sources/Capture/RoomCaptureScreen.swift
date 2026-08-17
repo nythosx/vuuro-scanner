@@ -8,10 +8,6 @@
 import RoomPlan
 import SwiftUI
 
-/// SwiftUI wrapper around RoomPlan's UIKit `RoomCaptureView`. RoomPlan does
-/// not ship a SwiftUI-native capture view as of this writing, so bridging
-/// via UIViewRepresentable is the documented approach — confirm this is
-/// still true once Xcode/current RoomPlan docs are reachable.
 struct RoomCaptureScreen: UIViewRepresentable {
     let coordinator: CaptureCoordinator
 

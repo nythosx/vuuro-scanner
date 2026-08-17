@@ -3,9 +3,9 @@
 declare(strict_types=1);
 
 /**
- * Independent net for Phase 2 groundwork: multi-room stitching and
- * photos/notes attachment. Same rules as net/verify_phase1.php — HTTP only,
- * no adapter/repository imports, expected values re-derived independently.
+ * Independent net for multi-room stitching and photos/notes attachment.
+ * Same rules as net/verify_phase1.php — HTTP only, no adapter/repository
+ * imports, expected values re-derived independently.
  *
  * Usage: php net/verify_phase2.php [base_url]
  */
@@ -33,9 +33,6 @@ function approx(float $a, float $b, float $tolerance = 0.01): bool
     return abs($a - $b) <= $tolerance;
 }
 
-// Independently-coded shoelace math, deliberately re-written here rather
-// than reused from net/verify_phase1.php's copy — same rationale as Phase 1:
-// the net must not share a bug with the code (or with itself) it's checking.
 function shoelace_area(array $xz): float
 {
     $total = 0.0;
@@ -88,7 +85,7 @@ check('second capture brings the session to exactly 2 rooms (stitched, not overw
 check('room 1 from the first capture is untouched by the second capture',
     ($afterSecond['rooms'][0]['room_id'] ?? null) === $firstRoomIdAfterFirstCapture
         && approx((float) ($afterSecond['rooms'][0]['floor_area_m2'] ?? -1), $wantAreaA),
-    'first room changed after a second, unrelated capture — this is exactly the adjacent-case failure shape (fixing room 2 broke room 1)');
+    'first room changed after a second, unrelated capture');
 
 check('room 2 area matches independent shoelace calc for the L-shaped fixture',
     approx((float) ($afterSecond['rooms'][1]['floor_area_m2'] ?? -1), $wantAreaB),
@@ -117,12 +114,7 @@ check('note attach returns HTTP 201', $noteStatus === 201, "got HTTP $noteStatus
 check('note is appended, rooms and the earlier photo both survive',
     count($withNote['notes'] ?? []) === 1 && count($withNote['photos'] ?? []) === 1 && count($withNote['rooms'] ?? []) === 2);
 
-// Found by deliberately probing the adjacent case to "must attach to a real
-// captured unit" above: nothing stopped a photo/note's room_id from naming a
-// room that doesn't exist on this session at all. Silently accepted before
-// this fix — quietly wrong data (an orphaned/typo'd room reference), not a
-// crash, so nothing else here would have caught it.
-echo "\n== Adjacent case: room_id on a photo/note must reference a real room in THIS session ==\n";
+echo "\n== room_id on a photo/note must reference a real room in THIS session ==\n";
 
 $realRoomId = $afterSecond['rooms'][0]['room_id'] ?? null;
 check('setup: a real room_id exists to test against', $realRoomId !== null);
@@ -142,16 +134,12 @@ if ($realRoomId !== null) {
     check('a note with a room_id that DOES match a real room in this session still succeeds (HTTP 201)', $realRoomIdStatus === 201, "got HTTP $realRoomIdStatus");
 }
 
-// The other adjacent case, the opposite direction: room_id must stay
-// OPTIONAL — this fix must reject bad references, not newly require one.
+// room_id must stay optional, not become required.
 [$noRoomIdStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/notes", [
     'text' => 'net test: no room_id at all',
 ], $accessToken);
 check('a note with NO room_id at all still succeeds (HTTP 201) — this fix must not make room_id required', $noRoomIdStatus === 201, "got HTTP $noRoomIdStatus");
 
-// Same check on the photos route — the validation lives in shared repository
-// code, but that's an implementation detail this black-box net doesn't get
-// to assume; prove it against both routes independently.
 [$bogusRoomIdPhotoStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", [
     'url' => 'https://example.invalid/net-test-bogus-room.jpg',
     'room_id' => 'room-that-does-not-exist',
