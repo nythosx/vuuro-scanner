@@ -3,7 +3,6 @@
 //  VuuroScan
 //
 //  WRITTEN, NOT COMPILED OR RUN — see Models/ScanIdentity.swift header.
-s
 import RoomPlan
 import SwiftUI
 

@@ -492,7 +492,7 @@ echo "\n== Repeated lookups of NONEXISTENT session ids are also throttled ==\n";
 // different fake session ids, all a plain 401, never throttled) before this
 // fix existed. Bound per caller IP, same shape as create_session's own
 // bucket right above, and deliberately tested here rather than in
-// net/verify_phase3_acl.php for the exact same reason create_session's rate
+// net/verify_acl.php for the exact same reason create_session's rate
 // limit is tested only here: this bucket is shared across the whole suite
 // by caller IP, and exhausting it in an earlier-run script poisons
 // verify_security_fixes.php's own nonexistent-session check (found the hard

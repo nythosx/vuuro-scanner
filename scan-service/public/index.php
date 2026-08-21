@@ -27,9 +27,13 @@ set_exception_handler(static function (\Throwable $e): void {
 // into something it decides to execute as HTML/JS.
 header('X-Content-Type-Options: nosniff');
 
-// CORS: local-dev-only, scoped to the web-viewer's own dev server, not a
-// wildcard.
-$corsOrigin = 'http://127.0.0.1:8090';
+// CORS: local-dev-only, scoped to a single origin (default: the
+// web-viewer's own dev server), not a wildcard. Override via
+// SCAN_SERVICE_CORS_ORIGIN when the Scan Service or its web-viewer runs on
+// a different host/port than the 127.0.0.1:8089/:8090 pairing this repo
+// ships with — same env-var-with-a-default pattern as SCAN_SERVICE_DB_PATH
+// in Database.php.
+$corsOrigin = getenv('SCAN_SERVICE_CORS_ORIGIN') ?: 'http://127.0.0.1:8090';
 if (($_SERVER['HTTP_ORIGIN'] ?? null) === $corsOrigin) {
     header("Access-Control-Allow-Origin: $corsOrigin");
     header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -210,7 +214,6 @@ function authorizeSession(ScanSessionRepository $repo, string $sessionId, string
 
     if ($session !== null) {
         $granted = $repo->tokenMatches($session, $token);
-        $repo->logAccess($session['id'], $action, $granted ? 'granted' : 'denied');
     } else {
         hash_equals('00000000-0000-0000-0000-000000000000', $token);
         $granted = false;
@@ -221,6 +224,19 @@ function authorizeSession(ScanSessionRepository $repo, string $sessionId, string
     // this), session-not-found is bounded per caller IP. Only DENIED
     // attempts count — a legitimate client presenting the correct token
     // repeatedly never touches either bucket.
+    //
+    // ACL-surface scan finding: this check must run BEFORE logAccess()
+    // below, not after. It used to run after, so a runaway client hammering
+    // a session with a wrong token kept writing a 'denied' row to
+    // access_log on every single request even once past the throttle —
+    // rate-limiting the HTTP responses (401 -> 429) but not the underlying
+    // audit-log growth it exists to bound. access_log has no cap and isn't
+    // pruned (unlike rate_limit_events), so that was an unbounded-growth
+    // vector through the very feature meant to stop one. Confirmed live
+    // before the fix: 60 wrong-token requests against one session produced
+    // 60 'denied' rows despite only the first 20 getting a real 401 (the
+    // other 40 got 429). granted attempts are unaffected — they never reach
+    // this branch, so they still log every single time as before.
     if ($session !== null && !$granted) {
         if (rateLimited($repo, $session['id'] . ':denied_auth', 20, 300)) {
             return null;
@@ -229,6 +245,10 @@ function authorizeSession(ScanSessionRepository $repo, string $sessionId, string
         if (rateLimited($repo, clientIp() . ':session_not_found', 30, 300)) {
             return null;
         }
+    }
+
+    if ($session !== null) {
+        $repo->logAccess($session['id'], $action, $granted ? 'granted' : 'denied');
     }
 
     if (!$granted) {
@@ -269,6 +289,25 @@ $path = rtrim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
 
 $rawRequestBody = '';
 if ($method === 'POST') {
+    // Scan finding: every route below this point rate-limits its own
+    // work, but ALL of them — including a request to a path that doesn't
+    // even match a route — pass through this same up-to-8MB
+    // file_get_contents() first, and nothing bounded how often THAT could
+    // run. Confirmed live: 10 back-to-back 1MB POSTs to a nonexistent,
+    // unauthenticated path were each fully read into memory before their
+    // 404, with zero throttling anywhere on that path — the exact
+    // resource-exhaustion shape the per-route limits below exist to
+    // prevent, just reachable one layer earlier where none of them apply
+    // yet (create_session's own rate limit doesn't even run until after
+    // this read finishes). Generic per-IP cap here, checked BEFORE the
+    // read so an over-limit caller is rejected without ever having 8MB
+    // buffered on their behalf. 500/300s is generous next to any real
+    // client's combined traffic (well above this repo's own net suite's
+    // peak burst) while still bounding sustained flooding.
+    if (rateLimited($repo, clientIp() . ':post_body_read', 500, 300)) {
+        return;
+    }
+
     // Bounds the ACTUAL bytes read off php://input (the 5th
     // file_get_contents() argument caps how many bytes are pulled from the
     // stream), independent of any client-supplied header — Content-Length
@@ -489,6 +528,26 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         return;
     }
 
+    // Exports-surface scan finding: capture_provider had a type check but no
+    // length cap, unlike every other client-suppliable string field
+    // (property_id/unit_id/organisation_id at 200, url/caption at 2000, note
+    // text at 5000, Idempotency-Key at 200). Confirmed live: a 500,000-char
+    // capture_provider was accepted (still well under the 8MB whole-request
+    // cap) and flowed straight into the stored FloorPlan, inflating a normal
+    // ~1.3KB PDF export to ~500KB on every export call — a client-controlled
+    // amplification path through storage and every later export/render,
+    // capped nowhere along the way. 200 chars matches the identity-field cap
+    // above; capture_provider is an identifier ("roomplan_simulator_fixture"
+    // etc.), not free text, so the same bound fits.
+    $tooLongCaptureProvider = first_too_long($body, ['capture_provider' => 200]);
+    if ($tooLongCaptureProvider !== null) {
+        if ($holdsIdempotencyClaim) {
+            $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+        }
+        respondError(422, 'field_too_long', "'capture_provider' is too long — please keep it to 200 characters or fewer.", ['field' => 'capture_provider', 'max_length' => 200]);
+        return;
+    }
+
     $adapter = new RoomPlanSimulatorAdapter();
     try {
         // Offset by rooms already captured this session, so a second or
@@ -511,8 +570,46 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         return;
     }
 
-    $floorPlan = $repo->appendCapture($session['id'], $capturedFloorPlan);
-    $repo->markCaptured($session['id']);
+    // Capture-surface scan finding: appendCapture() can genuinely throw
+    // (BEGIN IMMEDIATE can hit SQLite's own busy_timeout under real write
+    // contention from an overlapping request — see
+    // tests/concurrency_test.php's own doc comment on this mechanism), but
+    // this block used to run uncaught. The global exception handler still
+    // turns that into a clean 500 with no stack trace, so the HTTP response
+    // was never the problem — but with $holdsIdempotencyClaim true, nothing
+    // released the claim first, so it stayed in IDEMPOTENCY_PENDING_MARKER
+    // forever: a retry with that SAME Idempotency-Key would get
+    // capture_in_progress on every future attempt, permanently, with no
+    // visible link back to the original 500. Same silent-lockout shape as
+    // the "idempotency claims stuck on validation failure" bug fixed
+    // earlier, just triggered by a genuine transient failure instead of a
+    // 422. Reproduced live under real multi-process lock contention (the
+    // same technique tests/concurrency_test.php uses) before this fix:
+    // appendCapture() threw SQLSTATE[HY000] "database is locked" while
+    // holding a claim, and the claim was still stuck afterward.
+    // Capture-surface scan finding: appendCapture() enforces
+    // MAX_ROOMS_PER_SESSION with an \OverflowException (same cap style as
+    // photos/notes), but that used to fall into the generic \Throwable catch
+    // below and get rethrown into the global handler's raw 500 instead of a
+    // clean 422 like every other overflow response
+    // (too_many_photos/too_many_notes). Confirmed live: the 11th capture
+    // call past the cap returned a bare "internal_error" 500 with no
+    // actionable message. Caught here first, same pattern as photos/notes.
+    try {
+        $floorPlan = $repo->appendCapture($session['id'], $capturedFloorPlan);
+        $repo->markCaptured($session['id']);
+    } catch (\OverflowException $e) {
+        if ($holdsIdempotencyClaim) {
+            $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+        }
+        respondError(422, 'too_many_rooms', $e->getMessage() . ' Start a new scan session to continue capturing rooms.');
+        return;
+    } catch (\Throwable $e) {
+        if ($holdsIdempotencyClaim) {
+            $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+        }
+        throw $e;
+    }
     if ($holdsIdempotencyClaim) {
         $repo->completeIdempotencyKey($session['id'], $idempotencyKey, $floorPlan);
     }

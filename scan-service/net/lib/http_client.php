@@ -6,12 +6,11 @@ declare(strict_types=1);
  * Shared HTTP transport for the net/verify_*.php scripts.
  *
  * This is plumbing, not verification logic — extracting it does NOT
- * conflict with the "net doesn't share assumptions with the code it
- * checks" rule (CLAUDE.md hard constraint #6). Every net script still
- * independently re-derives its own expected values and never imports the
- * adapter/repository/renderer; this file only removes the six copies of
- * curl boilerplate that had drifted into near-duplicates of each other
- * (found by a manual code-quality pass — see PR/commit history).
+ * conflict with the net philosophy: each net/verify_*.php script must
+ * independently re-derive its own expected values and never import the
+ * adapter/repository/renderer under test. This file only removes the six
+ * copies of curl boilerplate that had drifted into near-duplicates of each
+ * other (found by a manual code-quality pass — see PR/commit history).
  */
 
 function net_http_raw(string $method, string $url, ?array $body = null, ?string $accessToken = null): array

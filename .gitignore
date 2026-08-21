@@ -38,9 +38,10 @@ venv/
 WEB_VIEWER_PLAN.md
 
 # Repo policy: only top-level README.md is pushed as Mark/developer-facing
-# documentation. CLAUDE.md/PHASES.md removed from the repo (working notes,
-# not meant to live here). All other markdown (module READMEs, ADRs, status
-# notes) and the web-viewer dev tool stay local-only.
+# documentation. CLAUDE.md stays local-only (untracked, working notes, not
+# meant to live in the repo); PHASES.md was an early working-notes file that
+# never made it into git either. All other markdown (module READMEs, ADRs,
+# status notes) and the web-viewer dev tool stay local-only too.
 docs/adr/
 docs/status/
 ios-app/README.md

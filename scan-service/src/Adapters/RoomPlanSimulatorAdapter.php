@@ -13,9 +13,9 @@ namespace VuuroScan\Adapters;
  * ever sees the FloorPlan contract.
  *
  * Named "Simulator" because no physical LiDAR device is available for this
- * window (see CLAUDE.md); the payload shape is the same either way, so a
- * real RoomPlan/RoomPlan-simulator export slots into the same adapter
- * without a rewrite once one is reachable.
+ * window (see docs/adr/0001-scan-service-stack.md); the payload shape is
+ * the same either way, so a real RoomPlan/RoomPlan-simulator export slots
+ * into the same adapter without a rewrite once one is reachable.
  */
 final class RoomPlanSimulatorAdapter
 {
@@ -202,6 +202,29 @@ final class RoomPlanSimulatorAdapter
     private static function validateRawCapture(array $rawCapture): void
     {
         $floors = $rawCapture['floors'];
+
+        // Capture-surface scan finding: adapt()'s room-building loop does
+        // `$roomIndexOffset + $index` on floors[]'s own array key (to build
+        // each room's global index/room_id) without ever checking that key
+        // is actually an integer. is_array() is true for BOTH a JSON array
+        // (`[...]`, decodes to sequential int keys) and a JSON object
+        // (`{...}`, decodes to string keys) — so a client sending
+        // `"floors": {"myFloor": {...}}` instead of `"floors": [...]` passed
+        // every earlier check here and then crashed with an uncaught
+        // TypeError ("Unsupported operand types: int + string") once
+        // adapt() reached that arithmetic. Confirmed live before this fix.
+        // That's a real fatal error surfacing later, exactly what this
+        // function's own docblock promises never happens — and worse, a
+        // TypeError isn't an InvalidArgumentException, so it skips the
+        // capture route's catch block entirely (including the
+        // idempotency-claim release fix), same as an uncaught exception
+        // anywhere else on this path. array_is_list() (PHP 8.1+, matches
+        // this repo's documented floor) rejects it here instead, as a clean
+        // 422 like every other malformed-shape rejection in this file.
+        if (!array_is_list($floors)) {
+            throw new \InvalidArgumentException('floors[] must be a JSON array (e.g. [...]), not an object with named keys.');
+        }
+
         if (count($floors) > self::MAX_FLOORS) {
             throw new \InvalidArgumentException(sprintf(
                 'floors[] has %d entries, exceeding the %d-per-capture-call sanity limit.',
@@ -240,8 +263,24 @@ final class RoomPlanSimulatorAdapter
                     continue;
                 }
                 foreach (array_slice($corner, 0, 3) as $value) {
-                    if (!is_int($value) && !is_float($value)) {
+                    if ($value === null) {
+                        // An absent dimension — adapt() falls back to 0 via
+                        // `?? 0` for this, same as a shorter-than-3 corner.
                         continue;
+                    }
+                    if (!is_int($value) && !is_float($value)) {
+                        // Anything else (string, bool, array, ...) used to
+                        // fall through this check unrejected, then get
+                        // silently coerced to 0/1 by adapt()'s `(float) $p[n]`
+                        // cast — same silent-corruption shape as the
+                        // capture_provider/identifier bugs fixed earlier, just
+                        // on a coordinate instead of a string field. A
+                        // non-numeric coordinate is never a real capture.
+                        throw new \InvalidArgumentException(sprintf(
+                            'floors[%d].polygonCorners contains a non-numeric coordinate (%s) — real capture geometry is always numeric.',
+                            $index,
+                            get_debug_type($value)
+                        ));
                     }
                     $value = (float) $value;
                     if (!is_finite($value)) {

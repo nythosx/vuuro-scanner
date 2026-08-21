@@ -121,6 +121,36 @@ $hugeNoteText = str_repeat('n', 5001);
 [$hugeNoteStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/notes", ['text' => $hugeNoteText], $accessToken);
 check('a 5001-character note text is rejected with 422', $hugeNoteStatus === 422, "got HTTP $hugeNoteStatus");
 
+// Exports-surface scan finding: capture_provider had a type check but no
+// length cap, unlike every other client-suppliable string field above.
+// Confirmed live before the fix: a 500,000-char capture_provider was
+// accepted and inflated a normal ~1.3KB PDF export to ~500KB — a
+// client-controlled amplification path through storage and every later
+// export, capped nowhere. Proven end to end here, not just at the capture
+// boundary: the over-cap value must be rejected AND a value actually at the
+// new 200-char cap must still flow through capture into a real PDF export
+// without inflating it.
+$hugeCaptureProviderBody = json_encode([
+    'raw_capture' => ['floors' => [['identifier' => 'f', 'polygonCorners' => [[0, 0, 0], [3, 0, 0], [3, 0, 3], [0, 0, 3]]]]],
+    'capture_provider' => str_repeat('X', 201),
+], JSON_THROW_ON_ERROR);
+[$hugeCaptureProviderStatus, ] = net_http_raw_literal('POST', "$baseUrl/scan-sessions/$sessionId/capture", $hugeCaptureProviderBody, $accessToken);
+check('a 201-character capture_provider is rejected with 422', $hugeCaptureProviderStatus === 422, "got HTTP $hugeCaptureProviderStatus");
+
+$atCapBody = json_encode([
+    'raw_capture' => ['floors' => [['identifier' => 'f', 'polygonCorners' => [[0, 0, 0], [3, 0, 0], [3, 0, 3], [0, 0, 3]]]]],
+    'capture_provider' => str_repeat('X', 200),
+], JSON_THROW_ON_ERROR);
+[$atCapStatus, ] = net_http_raw_literal('POST', "$baseUrl/scan-sessions/$sessionId/capture", $atCapBody, $accessToken);
+check('a 200-character (at the cap) capture_provider is still accepted', $atCapStatus === 200, "got HTTP $atCapStatus");
+
+[$pdfAfterCapStatus, , $pdfAfterCapBody] = net_http_raw_literal('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.pdf", null, $accessToken);
+check(
+    'the PDF export after a 200-char capture_provider stays a normal small size, not amplified',
+    $pdfAfterCapStatus === 200 && strlen($pdfAfterCapBody) < 5000,
+    "got HTTP $pdfAfterCapStatus, " . strlen($pdfAfterCapBody) . ' bytes'
+);
+
 echo "\n== photos[].url rejects non-http(s) schemes ==\n";
 
 [$jsUrlStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", ['url' => 'javascript:alert(1)'], $accessToken);
@@ -137,6 +167,46 @@ echo "\n== Defense-in-depth: X-Content-Type-Options header present ==\n";
 [, $responseHeaders] = net_http_headers('GET', "$baseUrl/scan-sessions/$sessionId", $accessToken);
 check('response includes X-Content-Type-Options: nosniff', stripos($responseHeaders, 'X-Content-Type-Options: nosniff') !== false,
     "headers were: " . trim($responseHeaders));
+
+echo "\n== CORS is scoped to a single configured origin, not a wildcard ==\n";
+// Portability finding: the allowed CORS origin used to be a bare hardcoded
+// string in public/index.php, so a web-viewer served from any port other
+// than the one baked into the code got silently blocked by the browser with
+// no config knob. Now reads SCAN_SERVICE_CORS_ORIGIN (default:
+// http://127.0.0.1:8090, unchanged for this suite's default-env server).
+// This net only exercises default-env behavior (still correctly scoped, not
+// a wildcard) — the env override itself was verified by hand by starting a
+// second server with SCAN_SERVICE_CORS_ORIGIN set and confirming the
+// allowed origin moved with it, same tradeoff as PDF MAX_PAGES: it needs a
+// differently-configured server process, not something one HTTP client can
+// drive against a fixed net server.
+function net_cors_headers_for_origin(string $url, string $origin): string
+{
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_HTTPHEADER => ["Origin: $origin"],
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HEADER => true,
+        CURLOPT_NOBODY => true,
+    ]);
+    $raw = curl_exec($ch);
+    curl_close($ch);
+    return (string) $raw;
+}
+
+$allowedOriginHeaders = net_cors_headers_for_origin("$baseUrl/health", 'http://127.0.0.1:8090');
+check(
+    'the configured origin (http://127.0.0.1:8090 by default) gets Access-Control-Allow-Origin echoed back',
+    stripos($allowedOriginHeaders, 'Access-Control-Allow-Origin: http://127.0.0.1:8090') !== false,
+    'headers were: ' . trim($allowedOriginHeaders)
+);
+
+$foreignOriginHeaders = net_cors_headers_for_origin("$baseUrl/health", 'http://evil.example');
+check(
+    'an unrecognized origin gets NO Access-Control-Allow-Origin header at all (not a wildcard)',
+    stripos($foreignOriginHeaders, 'Access-Control-Allow-Origin') === false,
+    'headers were: ' . trim($foreignOriginHeaders)
+);
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 

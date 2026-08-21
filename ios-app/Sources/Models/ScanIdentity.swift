@@ -18,7 +18,7 @@ struct ScanIdentity: Codable, Equatable {
     let unitId: String
     let organisationId: String
     let purpose: ScanPurpose
-    let occupied: Boolss
+    let occupied: Bool
     let consentObtained: Bool
 
     enum CodingKeys: String, CodingKey {

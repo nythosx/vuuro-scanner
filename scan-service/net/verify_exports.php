@@ -8,7 +8,7 @@ declare(strict_types=1);
  * FloorPlanPdfRenderer, expected structure re-derived independently from
  * the underlying FloorPlan (not from the renderer's own output format).
  *
- * Usage: php net/verify_phase3_exports.php [base_url]
+ * Usage: php net/verify_exports.php [base_url]
  */
 
 require_once __DIR__ . '/lib/http_client.php';

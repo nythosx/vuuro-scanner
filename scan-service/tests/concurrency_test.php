@@ -166,6 +166,92 @@ if ($process !== false) {
 
 @unlink($dbFile);
 
+echo "\n== A capture that fails under real lock contention must not strand its Idempotency-Key ==\n";
+// Capture-surface scan finding: public/index.php's capture route calls
+// claimIdempotencyKey() then appendCapture()+markCaptured(). appendCapture()
+// can genuinely throw under write-lock contention (BEGIN IMMEDIATE hitting
+// PRAGMA busy_timeout -- the same mechanism the room-loss test above proves
+// is real), and the route used to have no catch block around that call: an
+// uncaught Throwable there still produced a clean 500 (the global exception
+// handler in index.php catches everything), but left the idempotency claim
+// permanently stuck in its pending state, since nothing called
+// releaseIdempotencyKey(). The SAME Idempotency-Key could then never be
+// reused on that session -- every retry would get capture_in_progress
+// forever, with no visible link back to the original 500. Fixed by wrapping
+// appendCapture()/markCaptured() in a try/catch(\Throwable) that releases
+// the claim before rethrowing. This test drives the real repository methods
+// under the same genuine multi-process lock contention as the test above --
+// this is the only way to observe this class of bug in this environment
+// (see this file's own top-of-file doc comment) -- to prove the fix
+// pattern actually recovers, since the fixed logic itself lives in
+// public/index.php's router, which isn't importable/unit-testable in
+// isolation.
+$idempotencyDbFile = sys_get_temp_dir() . '/vuuro_scan_idempotency_concurrency_test_' . bin2hex(random_bytes(6)) . '.sqlite';
+@unlink($idempotencyDbFile);
+$idempotencyDb = Database::connect($idempotencyDbFile);
+$idempotencyRepo = new ScanSessionRepository($idempotencyDb);
+$idempotencySessionId = $idempotencyRepo->create('prop-concurrency-idem', 'unit-concurrency-idem', 'org-concurrency-idem', 'listing', false, false)['id'];
+
+// Worker C holds the write lock for 6s -- longer than the 5000ms
+// busy_timeout in Database.php -- so the BEGIN IMMEDIATE below genuinely
+// times out and throws, rather than just waiting it out (unlike the 2s
+// hold above, which proves serialization, not failure).
+$lockHoldingWorkerScript = <<<'PHP'
+<?php
+declare(strict_types=1);
+require $argv[1] . '/../src/autoload.php';
+use VuuroScan\ScanSessionRepository;
+use VuuroScan\Storage\Database;
+
+$db = Database::connect($argv[2]);
+$repo = new ScanSessionRepository($db);
+$lock = new ReflectionMethod(ScanSessionRepository::class, 'withWriteLock');
+$lock->setAccessible(true);
+$lock->invoke($repo, function () {
+    sleep(6);
+});
+PHP;
+$lockHoldingWorkerFile = sys_get_temp_dir() . '/vuuro_scan_idempotency_lock_worker_' . bin2hex(random_bytes(6)) . '.php';
+file_put_contents($lockHoldingWorkerFile, $lockHoldingWorkerScript);
+
+$idempotencyKey = 'concurrency-test-key';
+$claimed = $idempotencyRepo->claimIdempotencyKey($idempotencySessionId, $idempotencyKey, 'fp');
+c_check('idempotency key claimed before contention starts', $claimed);
+
+$lockProcess = proc_open([PHP_BINARY, $lockHoldingWorkerFile, __DIR__, $idempotencyDbFile], $descriptors, $lockPipes);
+if ($lockProcess !== false) {
+    fclose($lockPipes[1]);
+    fclose($lockPipes[2]);
+    usleep(300_000); // let worker C actually acquire the lock first
+
+    $threwUnderContention = false;
+    try {
+        $idempotencyRepo->appendCapture($idempotencySessionId, [
+            'scan_session_id' => $idempotencySessionId, 'capture_provider' => 'test',
+            'captured_at' => '2026-08-18T00:00:00Z', 'measurement_basis' => 'indicative_nen2580_inspired',
+            'purpose' => 'listing', 'rooms' => [['room_id' => 'room-idem', 'label' => 'Room 1']],
+            'photos' => [], 'notes' => [],
+        ]);
+    } catch (\Throwable $e) {
+        $threwUnderContention = true;
+        // The fix under test: public/index.php's capture route now does
+        // exactly this in its catch(\Throwable) block.
+        $idempotencyRepo->releaseIdempotencyKey($idempotencySessionId, $idempotencyKey);
+    }
+    c_check('appendCapture() actually threw under real lock contention (proves this test exercises the real failure, not a no-op)', $threwUnderContention);
+
+    proc_close($lockProcess);
+    @unlink($lockHoldingWorkerFile);
+
+    $reclaimable = $idempotencyRepo->claimIdempotencyKey($idempotencySessionId, $idempotencyKey, 'fp-retry');
+    c_check(
+        'after the release, the SAME Idempotency-Key can be claimed again on retry, not stuck forever',
+        $reclaimable
+    );
+}
+
+@unlink($idempotencyDbFile);
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 
 if ($failures !== []) {

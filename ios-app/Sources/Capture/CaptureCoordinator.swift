@@ -7,8 +7,10 @@
 //  Owns one RoomPlan capture session end to end and hands the finished
 //  CapturedRoom to the exporter/network layer. Deliberately holds nothing
 //  about Vuuro identity — that's threaded through by the caller — so this
-//  class stays a pure RoomPlan wrapper, matching the "scanner is a
-//  pluggable provider" principle from CLAUDE.md even on the client side.
+//  class stays a pure RoomPlan wrapper, keeping "the scanner is a
+//  pluggable provider, not the product" true on the client side too,
+//  matching the provider-neutral adapter boundary on the service side
+//  (RoomPlanSimulatorAdapter).
 //
 
 import Combine

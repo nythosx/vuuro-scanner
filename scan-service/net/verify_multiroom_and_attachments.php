@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 /**
  * Independent net for multi-room stitching and photos/notes attachment.
- * Same rules as net/verify_phase1.php — HTTP only, no adapter/repository
+ * Same rules as net/verify_capture_geometry.php — HTTP only, no adapter/repository
  * imports, expected values re-derived independently.
  *
- * Usage: php net/verify_phase2.php [base_url]
+ * Usage: php net/verify_multiroom_and_attachments.php [base_url]
  */
 
 require_once __DIR__ . '/lib/http_client.php';

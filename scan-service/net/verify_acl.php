@@ -6,7 +6,7 @@ declare(strict_types=1);
  * Independent net for privacy/ACL. HTTP only, no importing
  * ScanSessionRepository's authorize/tokenMatches logic.
  *
- * Usage: php net/verify_phase3_acl.php [base_url]
+ * Usage: php net/verify_acl.php [base_url]
  */
 
 require_once __DIR__ . '/lib/http_client.php';
@@ -145,6 +145,28 @@ if ($throttleSessionId !== null && $throttleSessionToken !== null) {
         $stillWorksStatus === 200,
         "got HTTP $stillWorksStatus"
     );
+
+    // ACL-surface scan finding: the 429 above only bounded the HTTP
+    // responses returned, not the audit-log write itself — logAccess() used
+    // to run BEFORE the rate-limit check, so all 25 wrong-token attempts
+    // wrote a 'denied' row to access_log regardless of how many got a real
+    // 401 vs a 429. access_log has no cap and isn't pruned (unlike
+    // rate_limit_events), so a runaway client could grow it without limit
+    // through the very feature meant to stop that. Fixed by moving the log
+    // write after the rate-limit check, so once a session is throttled,
+    // further denied attempts get neither a 401 nor a new log row.
+    [$throttledLogStatus, $throttledLogBody] = net_http_json('GET', "$baseUrl/scan-sessions/$throttleSessionId/access-log", null, $throttleSessionToken);
+    if ($throttledLogStatus === 200) {
+        $throttledDeniedCount = count(array_filter(
+            $throttledLogBody['access_log'] ?? [],
+            static fn (array $entry) => ($entry['outcome'] ?? null) === 'denied'
+        ));
+        check(
+            '25 wrong-token attempts (with the bucket capped at 20) produced at most 20 denied log rows, not 25',
+            $throttledDeniedCount <= 20,
+            "got $throttledDeniedCount denied rows logged"
+        );
+    }
 }
 
 // The nonexistent-session-id branch of the denied-attempt throttle (bound

@@ -18,11 +18,9 @@ that, an enterprise-hardening pass adds access-token expiry/rotation, per-caller
 per-session rate limiting, idempotent capture retries, a request body size cap, and a
 `GET /health` endpoint — see `scan-service/README.md`'s "Known limits" for exactly what
 each does and doesn't solve. All on branch `feature/vuuro-scan` — the single working
-branch for this whole build, not merged to `main` yet. See [`CLAUDE.md`](./CLAUDE.md) for
-the working direction,
-[`PHASES.md`](./PHASES.md) for the three-phase arc, and
+branch for this whole build, not merged to `main` yet. See
 [`docs/VUURO_SCAN_LIDAR_DIRECTION_BRIEF_JOVEN_2026-08-06.pdf`](./docs/VUURO_SCAN_LIDAR_DIRECTION_BRIEF_JOVEN_2026-08-06.pdf)
-for the full kickoff brief.
+for the full kickoff brief — the only source of truth for direction on this build.
 
 - [`scan-service/`](./scan-service/) — the Scan Service API (PHP + SQLite). Run it and
   its independent net locally: see `scan-service/README.md`.
@@ -69,5 +67,5 @@ identity. The Vuuro rental app consumes that contract later, as an API client.
 ## Development
 
 No LiDAR-capable device is required to develop against this repo — development targets
-Xcode's RoomPlan simulator, by explicit agreement with the product owner. See
-`CLAUDE.md` for the full context.
+Xcode's RoomPlan simulator, by explicit agreement with the product owner (see the
+direction brief linked above).

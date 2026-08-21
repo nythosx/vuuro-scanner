@@ -86,7 +86,7 @@
           },
           "coverage": {
             "type": "object",
-            "description": "Scan quality signal so a landlord knows a scan is usable before leaving the unit (PHASES.md Phase 3). Aggregated across every surface RoomPlan reported for the capture call that produced this room (floor, walls, doors, windows, openings) — not just the floor's own confidence.",
+            "description": "Scan quality signal so a landlord knows a scan is usable before leaving the unit. Aggregated across every surface RoomPlan reported for the capture call that produced this room (floor, walls, doors, windows, openings) — not just the floor's own confidence.",
             "required": ["score", "confidence_counts", "usable", "message"],
             "properties": {
               "score": { "type": "integer", "minimum": 0, "maximum": 100, "description": "Mean of per-surface confidence weights (high=100, medium=60, low=20)." },

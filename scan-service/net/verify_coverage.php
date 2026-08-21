@@ -6,7 +6,7 @@ declare(strict_types=1);
  * Independent net for coverage/quality scoring. HTTP only, never imports
  * RoomPlanSimulatorAdapter's computeCoverage().
  *
- * Usage: php net/verify_phase3_coverage.php [base_url]
+ * Usage: php net/verify_coverage.php [base_url]
  */
 
 require_once __DIR__ . '/lib/http_client.php';

@@ -1,5 +1,5 @@
 {
-  "_fixture_note": "Adversarial fixture, not a regression fixture. Purpose: a rectangular-only shoelace/bounding-box shortcut would pass the single-room fixture but silently return the wrong area/perimeter for a non-rectangular room. This is the adjacent case per CLAUDE.md's net requirements — constructed deliberately, not found after the fact. L-shaped floor: a 4.0x3.0 rectangle with a 1.5x1.2 corner notch removed from the top-right.",
+  "_fixture_note": "Adversarial fixture, not a regression fixture. Purpose: a rectangular-only shoelace/bounding-box shortcut would pass the single-room fixture but silently return the wrong area/perimeter for a non-rectangular room. This is the adjacent case the net scripts are required to cover — constructed deliberately, not found after the fact. L-shaped floor: a 4.0x3.0 rectangle with a 1.5x1.2 corner notch removed from the top-right.",
   "story": 0,
   "floors": [
     {

@@ -7,7 +7,7 @@ declare(strict_types=1);
  * math from scratch (never imports the adapter) and checks it against the
  * live HTTP API. Talks to the Scan Service only over HTTP.
  *
- * Usage: php net/verify_phase1.php [base_url]
+ * Usage: php net/verify_capture_geometry.php [base_url]
  *   base_url defaults to http://127.0.0.1:8089
  */
 

@@ -25,6 +25,14 @@ final class ScanSessionRepository
     public const MAX_PHOTOS_PER_SESSION = 500;
     public const MAX_NOTES_PER_SESSION = 500;
 
+    // Caps total rooms per session across every capture() call, same
+    // reasoning as MAX_PHOTOS_PER_SESSION/MAX_NOTES_PER_SESSION: the capture
+    // route's rate limit (60 calls/5min, each up to
+    // RoomPlanSimulatorAdapter::MAX_FLOORS=50 rooms) bounds pace, not total
+    // -- a session left running never stopped growing on its own. 500 stays
+    // well clear of any legitimate multi-room property scan.
+    public const MAX_ROOMS_PER_SESSION = 500;
+
     // Retention window for rate_limit_events pruning. Must stay comfortably
     // above every window actually passed to rateLimited() in
     // public/index.php (300s hardcoded almost everywhere, 600s default for
@@ -267,6 +275,13 @@ final class ScanSessionRepository
             if ($existing === null) {
                 $this->saveFloorPlan($sessionId, $newFloorPlan);
                 return $newFloorPlan;
+            }
+
+            $mergedRoomCount = count($existing['rooms']) + count($newFloorPlan['rooms']);
+            if ($mergedRoomCount > self::MAX_ROOMS_PER_SESSION) {
+                throw new \OverflowException(
+                    "This session already has " . count($existing['rooms']) . " of the maximum " . self::MAX_ROOMS_PER_SESSION . " rooms."
+                );
             }
 
             $merged = $existing;

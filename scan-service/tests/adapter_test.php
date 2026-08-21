@@ -5,7 +5,7 @@ declare(strict_types=1);
 /**
  * Fast in-process unit tests for RoomPlanSimulatorAdapter. These exercise
  * the adapter directly and are meant for quick dev-loop feedback — they are
- * NOT the independent net (see net/verify_phase1.php), because they share
+ * NOT the independent net (see net/verify_capture_geometry.php), because they share
  * the adapter's own assumptions by construction. Both must be run before a
  * merge; neither substitutes for the other.
  *
@@ -109,7 +109,7 @@ t_check('coverage.confidence_counts has 1 high (the floor), not 6', $lowConfCove
 echo "\n";
 
 // Simulates two sequential single-room RoomPlan captures in the same
-// session (PHASES.md Phase 2 "unit story"). The Scan Service passes
+// session, stitched into one multi-room unit package. The Scan Service passes
 // roomCount() as roomIndexOffset for the second call — exercised directly
 // here since that offset threading is the adapter's responsibility.
 echo "== Multi-room: room numbering continues across capture calls ==\n";
@@ -174,6 +174,28 @@ try {
     t_check('adapt() rejects a floor with more than 1000 polygonCorners', true);
 }
 
+// Capture-surface scan finding: is_array() is true for both a JSON array
+// ([...], decodes to sequential int keys) and a JSON object ({...}, decodes
+// to string keys) -- the earlier is_array(floors) gate let a
+// {"floors": {"myFloor": {...}}} payload straight through, and adapt()'s
+// room-building loop does `$roomIndexOffset + $index` on that key with no
+// type check. Confirmed live before this fix: that payload crashed with an
+// uncaught TypeError ("Unsupported operand types: int + string"), not the
+// clean InvalidArgumentException this class's own docblock promises --
+// and a TypeError isn't caught by the capture route's
+// catch(\InvalidArgumentException), so it also skipped the
+// idempotency-claim release fix, same as any other uncaught exception on
+// that path.
+try {
+    $floorsAsObject = json_decode('{"floors":{"myFloor":{"identifier":"f","polygonCorners":[[0,0,0],[1,0,0],[1,0,1],[0,0,1]]}}}', true);
+    $adapter->adapt($floorsAsObject, $identity);
+    t_check('adapt() rejects floors[] sent as a JSON object instead of an array, not a crash', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    t_check('adapt() rejects floors[] sent as a JSON object instead of an array, not a crash', true);
+} catch (\Throwable $e) {
+    t_check('adapt() rejects floors[] sent as a JSON object instead of an array, not a crash', false, 'threw ' . get_class($e) . ' instead of InvalidArgumentException: ' . $e->getMessage());
+}
+
 try {
     $tooManyWalls = array_fill(0, 501, ['identifier' => 'w', 'confidence' => 'high']);
     $adapter->adapt(['floors' => $fixture['floors'], 'walls' => $tooManyWalls], $identity);
@@ -186,6 +208,31 @@ try {
 // legitimate (if generous) real-world geometry.
 $largeButValid = $adapter->adapt(['floors' => [['identifier' => 'f', 'polygonCorners' => [[0, 0, 0], [20, 0, 0], [20, 0, 15], [0, 0, 15]]]]], $identity);
 t_check('a large but plausible room (20m x 15m) is still accepted', $largeButValid['rooms'][0]['floor_area_m2'] === 300.0);
+echo "\n";
+
+// Capture-surface scan finding: a non-numeric polygonCorners coordinate
+// (string/bool/array) fell straight through validateRawCapture()'s
+// is_int()/is_float() check via a bare `continue`, then got silently
+// coerced by adapt()'s `(float) ($p[0] ?? 0)` cast -- a string became 0.0,
+// a bool became 0.0/1.0, an array became 0.0/1.0 -- producing a wrong-but-
+// plausible room outline/area with zero error anywhere. Same silent-
+// corruption shape as the capture_provider/identifier bugs, just on a
+// coordinate. Confirmed live before the fix: a corner of
+// ["not_a_number", 0, 0] adapted into a clean 200 with floor_area_m2: 9,
+// no error surfaced. `null` stays accepted (adapt()'s own `?? 0` treats a
+// genuinely-absent dimension as 0, same as a corner shorter than 3 values)
+// -- only a present-but-wrong-typed value is rejected.
+echo "== Adjacent case: a non-numeric polygonCorners coordinate must not silently coerce to 0 ==\n";
+foreach (['a string' => 'not_a_number', 'a bool' => true, 'a nested array' => [1, 2]] as $label => $badCoordinate) {
+    try {
+        $adapter->adapt(['floors' => [['identifier' => 'f', 'polygonCorners' => [[$badCoordinate, 0, 0], [3, 0, 0], [3, 0, 3], [0, 0, 3]]]]], $identity);
+        t_check("adapt() rejects a polygonCorners coordinate that is $label, not silently coerced", false, 'no exception was thrown');
+    } catch (\InvalidArgumentException) {
+        t_check("adapt() rejects a polygonCorners coordinate that is $label, not silently coerced", true);
+    }
+}
+$nullCoordinate = $adapter->adapt(['floors' => [['identifier' => 'f', 'polygonCorners' => [[null, 0, 0], [3, 0, 0], [3, 0, 3], [0, 0, 3]]]]], $identity);
+t_check('a genuinely-absent (null) coordinate is still accepted, falling back to 0 as before', $nullCoordinate['rooms'][0]['outline_m'][0] === [0.0, 0.0]);
 echo "\n";
 
 // --- Adjacent case: honest measurement means rejecting degenerate geometry,

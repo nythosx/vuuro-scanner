@@ -381,6 +381,60 @@ try {
 }
 echo "\n";
 
+// Capture-surface scan finding: appendCapture()'s array_merge of rooms had
+// no session-wide cap at all -- MAX_FLOORS=50 bounds a single capture() call,
+// but nothing bounded the total across repeated calls, unlike
+// photos[]/notes[] just above. Reproduced live: 11 real HTTP capture calls
+// (50 rooms each, well inside the 60-per-5-min capture rate limit) pushed a
+// session to 550 rooms with no rejection, and the actual overflow point
+// used to surface as a raw 500 (see public/index.php's own comment on that)
+// because \OverflowException fell into the generic \Throwable catch and got
+// rethrown instead of answered with a clean 422. Verified at the repository
+// layer, same tradeoff as the photos/notes cap test above (net/ is HTTP-only
+// and 500 real capture calls needs far more volume than is worth driving
+// through a live server just for this).
+echo "== rooms are capped per session across appendCapture() calls (MAX_ROOMS_PER_SESSION) ==\n";
+$roomCapSession = fresh_session($repo);
+$roomCapFloorPlan = null;
+for ($i = 0; $i < ScanSessionRepository::MAX_ROOMS_PER_SESSION; $i++) {
+    $roomCapFloorPlan = $repo->appendCapture($roomCapSession['id'], [
+        'scan_session_id' => $roomCapSession['id'],
+        'property_id' => 'p', 'unit_id' => 'u', 'organisation_id' => 'o',
+        'capture_provider' => 'test', 'captured_at' => gmdate('c'),
+        'measurement_basis' => 'indicative_nen2580_inspired', 'purpose' => 'listing',
+        'rooms' => [[
+            'room_id' => "room-cap-$i", 'label' => "Room $i", 'floor_area_m2' => 10.0,
+            'perimeter_m' => 12.0, 'bounding_dimensions_m' => ['width_m' => 3, 'length_m' => 3],
+            'confidence' => 'high', 'outline_m' => [[0, 0], [3, 0], [3, 3], [0, 3]],
+            'coverage' => ['score' => 90, 'confidence_counts' => ['high' => 1, 'medium' => 0, 'low' => 0], 'usable' => true, 'message' => null],
+        ]],
+        'photos' => [], 'notes' => [],
+    ]);
+}
+r_check(
+    "exactly MAX_ROOMS_PER_SESSION (" . ScanSessionRepository::MAX_ROOMS_PER_SESSION . ') rooms accumulate across repeated capture() calls without error',
+    count($roomCapFloorPlan['rooms']) === ScanSessionRepository::MAX_ROOMS_PER_SESSION
+);
+try {
+    $repo->appendCapture($roomCapSession['id'], [
+        'scan_session_id' => $roomCapSession['id'],
+        'property_id' => 'p', 'unit_id' => 'u', 'organisation_id' => 'o',
+        'capture_provider' => 'test', 'captured_at' => gmdate('c'),
+        'measurement_basis' => 'indicative_nen2580_inspired', 'purpose' => 'listing',
+        'rooms' => [[
+            'room_id' => 'room-cap-over', 'label' => 'Room over', 'floor_area_m2' => 10.0,
+            'perimeter_m' => 12.0, 'bounding_dimensions_m' => ['width_m' => 3, 'length_m' => 3],
+            'confidence' => 'high', 'outline_m' => [[0, 0], [3, 0], [3, 3], [0, 3]],
+            'coverage' => ['score' => 90, 'confidence_counts' => ['high' => 1, 'medium' => 0, 'low' => 0], 'usable' => true, 'message' => null],
+        ]],
+        'photos' => [], 'notes' => [],
+    ]);
+    r_check('the capture call ONE ROOM PAST the cap is rejected with OverflowException, not silently merged', false, 'no exception was thrown');
+} catch (\OverflowException) {
+    r_check('the capture call ONE ROOM PAST the cap is rejected with OverflowException, not silently merged', true);
+}
+echo "\n";
+
 echo count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");
