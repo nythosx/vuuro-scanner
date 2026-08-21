@@ -85,9 +85,15 @@ jobs:
         env:
           IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
+          PROFILE_PATH=~/Library/MobileDevice/Provisioning\ Profiles/vuuro-scan.mobileprovision
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > \
-            ~/Library/MobileDevice/Provisioning\ Profiles/vuuro-scan.mobileprovision
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE_PATH"
+          # CODE_SIGN_STYLE=Manual (project.yml) needs the profile's UUID, not
+          # its filename, to actually pick it up — Xcode indexes installed
+          # profiles by the UUID embedded inside them. Extracted here so the
+          # archive step below doesn't have to guess or hardcode it.
+          UUID=$(security cms -D -i "$PROFILE_PATH" | /usr/libexec/PlistBuddy -c "Print :UUID" /dev/stdin)
+          echo "PROVISIONING_PROFILE_UUID=$UUID" >> "$GITHUB_ENV"
 
       - name: Archive and export ad-hoc IPA
         working-directory: ios-app
@@ -98,7 +104,10 @@ jobs:
             -project VuuroScan.xcodeproj \
             -scheme VuuroScan \
             -archivePath build/VuuroScan.xcarchive \
-            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM"
+            DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE="$PROVISIONING_PROFILE_UUID" \
+            CODE_SIGN_IDENTITY="Apple Distribution"
           xcodebuild -exportArchive \
             -archivePath build/VuuroScan.xcarchive \
             -exportPath build/export \

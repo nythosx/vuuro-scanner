@@ -26,7 +26,14 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vuuro.scan
         TARGETED_DEVICE_FAMILY: "1"
-        CODE_SIGN_STYLE: Automatic
+        # Manual, not Automatic: automatic signing needs a logged-in Apple ID
+        # session inside Xcode to resolve/create a provisioning profile, which
+        # a fresh GitHub Actions runner never has. .github/workflows/ios-build.yml's
+        # signed-archive job installs a real provisioning profile and passes its
+        # UUID explicitly at archive time — Manual is what makes that profile
+        # actually get used instead of ignored. Irrelevant to compile-check,
+        # which disables signing entirely via CODE_SIGNING_ALLOWED=NO.
+        CODE_SIGN_STYLE: Manual
         # Left blank on purpose: no Apple Developer Team ID is available on this
         # machine. Set DEVELOPMENT_TEAM as a CI secret / local override once one
         # of Mark's or the org's team IDs is on hand — see ios-app/README.md's
