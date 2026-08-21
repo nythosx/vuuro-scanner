@@ -13,7 +13,9 @@ struct RoomCaptureScreen: UIViewRepresentable {
 
     func makeUIView(context: Context) -> RoomCaptureView {
         let view = RoomCaptureView(frame: .zero)
-        view.captureSession = coordinator.captureSession
+        // RoomCaptureView.captureSession is get-only — the view creates and
+        // owns its own session, so we attach to it rather than assigning one.
+        coordinator.attach(to: view.captureSession)
         view.delegate = context.coordinator
         return view
     }

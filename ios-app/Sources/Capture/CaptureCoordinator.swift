@@ -27,21 +27,32 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     @Published private(set) var state: State = .scanning
 
     private(set) var capturedRoom: CapturedRoom?
-    let captureSession = RoomCaptureSession()
+
+    /// RoomCaptureView.captureSession is get-only — confirmed live via the
+    /// GitHub Actions simulator compile-check — so this class can't own its
+    /// own RoomCaptureSession the way this file originally assumed. Instead
+    /// RoomCaptureScreen.makeUIView hands over the view's own session here
+    /// once the view exists.
+    private var captureSession: RoomCaptureSession?
+
+    func attach(to session: RoomCaptureSession) {
+        captureSession = session
+        session.delegate = self
+    }
 
     func start() {
+        guard let captureSession else { return }
         state = .scanning
         // RoomCaptureSession.Configuration() with defaults matches Apple's
         // documented single-room guided capture. Multi-room stitching
         // (Phase 2) needs a real look at RoomCaptureSession's multi-room
         // support once Xcode access exists — not assumed here.
         let configuration = RoomCaptureSession.Configuration()
-        captureSession.delegate = self
         captureSession.run(configuration: configuration)
     }
 
     func stop() {
-        captureSession.stop()
+        captureSession?.stop()
     }
 }
 
