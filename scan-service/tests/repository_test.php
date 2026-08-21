@@ -435,6 +435,23 @@ try {
 }
 echo "\n";
 
+echo "== access_log has an index on scan_session_id, not just implicit table order ==\n";
+// Confirmed live before this fix (EXPLAIN QUERY PLAN): GET .../access-log's
+// WHERE scan_session_id = :id was a full table SCAN across every session's
+// rows, not just the requested session's, because access_log — unlike
+// rate_limit_events — had no index at all. It's also the one table that's
+// deliberately never pruned, so that scan only gets worse over the
+// service's lifetime. This check fails red if the index is ever dropped
+// from migrations/schema.sql without anyone noticing.
+$planStmt = $db->prepare("EXPLAIN QUERY PLAN SELECT action, outcome, occurred_at FROM access_log WHERE scan_session_id = :id ORDER BY id ASC");
+$planStmt->execute(['id' => 'irrelevant-for-plan-shape']);
+$planDetail = implode(' | ', array_column($planStmt->fetchAll(PDO::FETCH_ASSOC), 'detail'));
+r_check(
+    "access-log lookup by scan_session_id uses an index (SEARCH), not a full SCAN",
+    str_contains($planDetail, 'SEARCH access_log') && str_contains($planDetail, 'idx_access_log_session'),
+    "query plan was: $planDetail"
+);
+
 echo count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

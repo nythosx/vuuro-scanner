@@ -73,3 +73,12 @@ CREATE TABLE IF NOT EXISTS access_log (
     outcome TEXT NOT NULL,
     occurred_at TEXT NOT NULL
 );
+-- access_log is the busiest table in the service — every authorizeSession()
+-- call writes a row here, granted or denied, and (unlike rate_limit_events)
+-- it's never pruned or capped by design, since it's the audit trail. Without
+-- this index, GET .../access-log's WHERE scan_session_id = :id was a full
+-- table scan across every session's rows, not just the requested session's —
+-- confirmed live via EXPLAIN QUERY PLAN (SCAN access_log before, SEARCH
+-- access_log USING INDEX ... after). Composite on (scan_session_id, id) to
+-- also satisfy the query's ORDER BY id ASC directly from the index.
+CREATE INDEX IF NOT EXISTS idx_access_log_session ON access_log(scan_session_id, id);
