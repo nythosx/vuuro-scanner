@@ -42,7 +42,18 @@ jobs:
             -project VuuroScan.xcodeproj \
             -scheme VuuroScan \
             -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO
+
+      # Simulator build only — appetize.io accepts .app uploads (not .ipa),
+      # good for a manual UI smoke test, but has no camera/LiDAR access, so
+      # RoomPlan capture itself still can't be exercised there.
+      - name: Upload .app build for manual smoke-testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: VuuroScan-simulator-app
+          path: ios-app/build/Build/Products/Debug-iphonesimulator/VuuroScan.app
+          if-no-files-found: error
 
   signed-archive:
     # Only runs once an Apple Developer Team ID and a distribution
