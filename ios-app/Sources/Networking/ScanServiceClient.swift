@@ -34,7 +34,14 @@ private struct ScanServiceErrorBody: Decodable {
 }
 
 struct ScanServiceClient {
-    var baseURL = URL(string: "http://127.0.0.1:8089")!
+    var baseURL: URL = {
+        #if DEBUG
+        if let debugURL = DebugScanServiceURL.resolved {
+            return debugURL
+        }
+        #endif
+        return URL(string: "http://127.0.0.1:8089")!
+    }()
     var session: URLSession = .shared
 
     func createSession(identity: ScanIdentity) async throws -> ScanSessionResponse {
