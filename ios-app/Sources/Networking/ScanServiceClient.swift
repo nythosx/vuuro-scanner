@@ -67,6 +67,14 @@ struct ScanServiceClient {
         try await get(path: "/scan-sessions/\(sessionId)", accessToken: accessToken)
     }
 
+    func fetchFloorPlanImage(sessionId: String, accessToken: String) async throws -> Data {
+        try await getData(path: "/scan-sessions/\(sessionId)/export/floorplan.png", accessToken: accessToken)
+    }
+
+    func fetchFloorPlanPDF(sessionId: String, accessToken: String) async throws -> Data {
+        try await getData(path: "/scan-sessions/\(sessionId)/export/floorplan.pdf", accessToken: accessToken)
+    }
+
     func addPhoto(sessionId: String, accessToken: String, url: String, caption: String? = nil, roomId: String? = nil) async throws -> FloorPlan {
         struct Body: Encodable {
             let url: String
@@ -110,6 +118,28 @@ struct ScanServiceClient {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
         return try await send(request)
+    }
+
+    /// Like `get`, but for the two export routes, which return image/png or
+    /// application/pdf bytes rather than JSON — nothing here to decode.
+    private func getData(path: String, accessToken: String) async throws -> Data {
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw ScanServiceError.transport(error)
+        }
+
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw ScanServiceError.unexpectedStatus(status, body: String(data: data, encoding: .utf8) ?? "")
+        }
+
+        return data
     }
 
     private func send<Response: Decodable>(_ request: URLRequest) async throws -> Response {

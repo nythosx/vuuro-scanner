@@ -5,6 +5,7 @@
 //  WRITTEN, NOT COMPILED OR RUN — see Models/ScanIdentity.swift header.
 import RoomPlan
 import SwiftUI
+import UIKit
 
 @main
 struct VuuroScanApp: App {
@@ -22,7 +23,7 @@ struct ScanFlowView: View {
         case intake
         case capturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
         case attachments(session: ScanSessionResponse, floorPlan: FloorPlan)
-        case summary(FloorPlan)
+        case summary(session: ScanSessionResponse, floorPlan: FloorPlan)
         case error(String)
     }
 
@@ -49,10 +50,12 @@ struct ScanFlowView: View {
                 .id(attempt)
             case .attachments(let session, let floorPlan):
                 AttachmentsScreen(session: session, floorPlan: floorPlan) { updated in
-                    stage = .summary(updated)
+                    stage = .summary(session: session, floorPlan: updated)
                 }
-            case .summary(let floorPlan):
-                ResultSummaryView(floorPlan: floorPlan)
+            case .summary(let session, let floorPlan):
+                ResultSummaryView(session: session, floorPlan: floorPlan) {
+                    stage = .intake
+                }
             case .error(let message):
                 ErrorView(message: message) { stage = .intake }
             }
@@ -253,31 +256,126 @@ private struct AttachmentsScreen: View {
 }
 
 private struct ResultSummaryView: View {
+    let session: ScanSessionResponse
     let floorPlan: FloorPlan
+    let onDone: () -> Void
+
+    @State private var isFetchingImage = false
+    @State private var isFetchingPDF = false
+    @State private var floorPlanImage: UIImage?
+    @State private var floorPlanPDFURL: URL?
+    @State private var exportError: String?
+
+    private let client = ScanServiceClient()
 
     var body: some View {
-        List(floorPlan.rooms, id: \.roomId) { room in
-            VStack(alignment: .leading, spacing: 4) {
-                Text(room.label).font(.headline)
-                Text(String(format: "%.2f m²", room.floorAreaM2))
-                Text(String(format: "%.2f m perimeter", room.perimeterM))
-                Text("Indicative — NEN2580-inspired, not certified")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                if !room.coverage.usable, let message = room.coverage.message {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
+        List {
+            ForEach(floorPlan.rooms, id: \.roomId) { room in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(room.label).font(.headline)
+                    Text(String(format: "%.2f m²", room.floorAreaM2))
+                    Text(String(format: "%.2f m perimeter", room.perimeterM))
+                    Text("Indicative — NEN2580-inspired, not certified")
                         .font(.caption)
-                        .foregroundStyle(.orange)
-                        .padding(.top, 2)
-                } else {
-                    Text("Scan quality: \(room.coverage.score)/100")
-                        .font(.caption2)
                         .foregroundStyle(.secondary)
+
+                    if !room.coverage.usable, let message = room.coverage.message {
+                        Label(message, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .padding(.top, 2)
+                    } else {
+                        Text("Scan quality: \(room.coverage.score)/100")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+            }
+
+            // Vuuro Scan direction brief, "Export priority for early value":
+            // floor plan image/PDF through the Scan Service API. The server
+            // already renders both (FloorPlanImageRenderer/PdfRenderer,
+            // GET .../export/floorplan.png|.pdf) — this is what actually
+            // fetches and surfaces them client-side.
+            Section("Floor plan exports") {
+                Button {
+                    Task { await loadImage() }
+                } label: {
+                    if isFetchingImage {
+                        ProgressView()
+                    } else {
+                        Text("View floor plan image")
+                    }
+                }
+                .disabled(isFetchingImage)
+
+                if let floorPlanImage {
+                    Image(uiImage: floorPlanImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: 220)
+                }
+
+                Button {
+                    Task { await loadPDF() }
+                } label: {
+                    if isFetchingPDF {
+                        ProgressView()
+                    } else {
+                        Text("View floor plan PDF")
+                    }
+                }
+                .disabled(isFetchingPDF)
+
+                if let floorPlanPDFURL {
+                    ShareLink(item: floorPlanPDFURL) {
+                        Label("Share or open PDF", systemImage: "square.and.arrow.up")
+                    }
+                }
+
+                if let exportError {
+                    Text(exportError).foregroundStyle(.red).font(.caption)
+                }
+            }
+
+            Section {
+                Button("Done", action: onDone)
+                    .buttonStyle(.borderedProminent)
             }
         }
         .navigationTitle("Scan result")
+    }
+
+    @MainActor
+    private func loadImage() async {
+        isFetchingImage = true
+        defer { isFetchingImage = false }
+        do {
+            let data = try await client.fetchFloorPlanImage(sessionId: session.id, accessToken: session.accessToken)
+            guard let image = UIImage(data: data) else {
+                exportError = "The floor plan image couldn't be decoded."
+                return
+            }
+            floorPlanImage = image
+            exportError = nil
+        } catch {
+            exportError = "Couldn't load the floor plan image: \(error.localizedDescription)"
+        }
+    }
+
+    @MainActor
+    private func loadPDF() async {
+        isFetchingPDF = true
+        defer { isFetchingPDF = false }
+        do {
+            let data = try await client.fetchFloorPlanPDF(sessionId: session.id, accessToken: session.accessToken)
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(session.id).pdf")
+            try data.write(to: url)
+            floorPlanPDFURL = url
+            exportError = nil
+        } catch {
+            exportError = "Couldn't load the floor plan PDF: \(error.localizedDescription)"
+        }
     }
 }
 
