@@ -372,6 +372,32 @@ if ($exportRateLimitSessionId !== null && $exportRateLimitToken !== null) {
     check('repeated PDF export calls against the SAME session ALSO eventually hit HTTP 429 (independent bucket, not shared with PNG)', $sawPdfThrottle, 'never saw a 429 across 35 rapid PDF export calls');
 }
 
+echo "\n== Capture route is rate-limited per session ==\n";
+
+// Coverage gap found while auditing this suite: every other session-scoped
+// route (export PNG/PDF, photos, notes, rotate-token, GET read/access-log,
+// plus create_session and session_not_found at IP scope) has its own
+// rapid-fire test proving its rate limit actually throttles — capture
+// itself, the heaviest route in the service (adapter + repository write
+// lock), never did. public/index.php's own 60-per-300s :capture bucket
+// was flying without a regression test the whole time this file existed.
+[, $captureRateLimitSession] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'organisation_id' => 'org-net-capture-throttle']);
+$captureRateLimitSessionId = $captureRateLimitSession['id'] ?? null;
+$captureRateLimitToken = $captureRateLimitSession['access_token'] ?? null;
+check('session created for the capture rate-limit test', $captureRateLimitSessionId !== null && $captureRateLimitToken !== null);
+
+if ($captureRateLimitSessionId !== null && $captureRateLimitToken !== null) {
+    $sawCaptureThrottle = false;
+    for ($i = 0; $i < 65; $i++) {
+        [$status, ] = net_http_json('POST', "$baseUrl/scan-sessions/$captureRateLimitSessionId/capture", ['raw_capture' => $fixture], $captureRateLimitToken);
+        if ($status === 429) {
+            $sawCaptureThrottle = true;
+            break;
+        }
+    }
+    check('repeated capture calls against one session eventually hit HTTP 429', $sawCaptureThrottle, 'never saw a 429 across 65 rapid capture calls');
+}
+
 echo "\n== Photos/notes/rotate-token routes are rate-limited per session ==\n";
 
 [, $writeRateLimitSession] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'organisation_id' => 'org-net-write-throttle']);
