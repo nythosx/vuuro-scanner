@@ -16,7 +16,12 @@ struct UnsupportedDeviceScreen: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Image(systemName: "lidar.disabled")
+            // "lidar.disabled" is not a real SF Symbol name — confirmed live via
+            // appetize.io (no camera/LiDAR in that simulator, so this screen is
+            // reachable there): "No symbol named 'lidar.disabled' found in system
+            // symbol set", rendering as a blank icon. exclamationmark.triangle is
+            // a long-standing, certain-to-exist symbol (iOS 13+).
+            Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary)
 

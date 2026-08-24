@@ -72,14 +72,40 @@ private struct RoomCaptureFlowStep: View {
 
     private let client = ScanServiceClient()
 
+    private var debugFakeCaptureActive: Bool {
+        #if DEBUG
+        FakeLidarMode.isEnabled
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
         Group {
-            if !DeviceCapability.isRoomPlanSupported {
+            if !DeviceCapability.isRoomPlanSupported && !debugFakeCaptureActive {
                 UnsupportedDeviceScreen()
             } else if let justCaptured {
                 AnotherRoomPromptView(roomCount: justCaptured.floorPlan.rooms.count) { addAnother in
                     onRoomCaptured(justCaptured.session, justCaptured.floorPlan, addAnother)
                 }
+            } else if !DeviceCapability.isRoomPlanSupported {
+                // debugFakeCaptureActive must be true to reach here (see the
+                // first branch) — real hardware doesn't support RoomPlan, but
+                // the Debug fake-LiDAR override is on. RoomCaptureView/ARKit
+                // need real LiDAR and would just hang or crash on a device/
+                // simulator without one (e.g. appetize.io), so this skips
+                // straight to submitting synthetic data through the exact
+                // same upload pipeline instead.
+                #if DEBUG
+                ProgressView("Generating fake capture (Debug)…")
+                    .onAppear { Task { await submit(FakeCaptureGenerator.random()) } }
+                #else
+                // Unreachable in a Release build: debugFakeCaptureActive is
+                // always false there, so the first branch above already
+                // catches !isRoomPlanSupported. Only here so this branch
+                // still returns a View and compiles.
+                EmptyView()
+                #endif
             } else {
                 ZStack {
                     RoomCaptureScreen(coordinator: coordinator)
@@ -103,7 +129,7 @@ private struct RoomCaptureFlowStep: View {
         switch state {
         case .finished(roomAvailable: true):
             guard let room = coordinator.capturedRoom else { return }
-            Task { await submit(room) }
+            Task { await submit(CapturedRoomExporter.export(room)) }
         case .finished(roomAvailable: false):
             onError("Capture finished without a usable room.")
         case .failed(let message):
@@ -114,7 +140,7 @@ private struct RoomCaptureFlowStep: View {
     }
 
     @MainActor
-    private func submit(_ room: CapturedRoom) async {
+    private func submit(_ export: RoomPlanCaptureExport) async {
         isUploading = true
         defer { isUploading = false }
         do {
@@ -124,7 +150,6 @@ private struct RoomCaptureFlowStep: View {
             } else {
                 session = try await client.createSession(identity: identity)
             }
-            let export = CapturedRoomExporter.export(room)
             let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export)
             justCaptured = (session, floorPlan)
         } catch {
