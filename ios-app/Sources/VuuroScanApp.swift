@@ -45,8 +45,9 @@ struct ScanFlowView: View {
                     }
                 } onError: { message in
                     stage = .error(message)
+                } onGoBack: {
+                    stage = .intake
                 }
-
                 .id(attempt)
             case .attachments(let session, let floorPlan):
                 AttachmentsScreen(session: session, floorPlan: floorPlan) { updated in
@@ -68,6 +69,7 @@ private struct RoomCaptureFlowStep: View {
     let existingSession: ScanSessionResponse?
     let onRoomCaptured: (ScanSessionResponse, FloorPlan, _ addAnotherRoom: Bool) -> Void
     let onError: (String) -> Void
+    let onGoBack: () -> Void
 
     @StateObject private var coordinator = CaptureCoordinator()
     @State private var isUploading = false
@@ -86,7 +88,14 @@ private struct RoomCaptureFlowStep: View {
     var body: some View {
         Group {
             if !DeviceCapability.isRoomPlanSupported && !debugFakeCaptureActive {
-                UnsupportedDeviceScreen()
+                // Real dead-end bug found on this pass, same class as the
+                // results-screen one fixed earlier this window: this screen
+                // is hard constraint #5's required "designed fallback path"
+                // for unsupported devices, but its go-back button was never
+                // wired to anything at this call site — a user landing here
+                // had literally no way forward without force-quitting the
+                // app.
+                UnsupportedDeviceScreen(onGoBack: onGoBack)
             } else if let justCaptured {
                 AnotherRoomPromptView(roomCount: justCaptured.floorPlan.rooms.count) { addAnother in
                     onRoomCaptured(justCaptured.session, justCaptured.floorPlan, addAnother)
@@ -339,11 +348,25 @@ private struct ResultSummaryView: View {
             }
 
             Section {
-                Button("Done", action: onDone)
-                    .buttonStyle(.borderedProminent)
+                Button("Done") {
+                    cleanUpExportedPDF()
+                    onDone()
+                }
+                .buttonStyle(.borderedProminent)
             }
         }
         .navigationTitle("Scan result")
+        .onDisappear { cleanUpExportedPDF() }
+    }
+
+    // loadPDF() writes into the shared tmp directory, which iOS doesn't
+    // clear on any predictable schedule — without this, every "View floor
+    // plan PDF" tap leaves a file behind for the life of the app install.
+    @MainActor
+    private func cleanUpExportedPDF() {
+        guard let floorPlanPDFURL else { return }
+        try? FileManager.default.removeItem(at: floorPlanPDFURL)
+        self.floorPlanPDFURL = nil
     }
 
     @MainActor

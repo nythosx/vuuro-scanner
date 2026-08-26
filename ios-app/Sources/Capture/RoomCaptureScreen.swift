@@ -55,13 +55,24 @@ final class RoomCaptureScreenViewDelegate: NSObject, RoomCaptureViewDelegate {
         // No archivable state — see class-level comment.
     }
 
+    // Real bug found on this pass: this returned `true`, which tells
+    // RoomCaptureView to present Apple's own post-scan review/edit screen —
+    // but CaptureCoordinator.captureSession(_:didEndWith:error:) already
+    // builds the CapturedRoom and kicks off the upload the instant capture
+    // ends, before that review screen is even shown. A user editing walls
+    // in the review UI and tapping Done would have their edits silently
+    // discarded — the (pre-edit) upload already happened, or was already in
+    // flight, using stale data. Returning `false` here skips that
+    // never-actually-authoritative review screen entirely, so there's only
+    // ever one path to a submitted room, matching what didPresent's
+    // (now-removed) empty-stub comment already claimed was true.
     func captureView(shouldPresent roomDataForProcessing: CapturedRoomData, error: Error?) -> Bool {
-        error == nil
+        false
     }
 
+    // Still a required protocol member even though returning `false` above
+    // means RoomCaptureView should never actually call it. No state to
+    // capture if it somehow does.
     func captureView(didPresent processedResult: CapturedRoom, error: Error?) {
-        // Intentionally empty: CaptureCoordinator.captureSession(_:didEndWith:error:)
-        // is the single source of truth for the finished CapturedRoom,
-        // so this delegate method doesn't duplicate that state.
     }
 }

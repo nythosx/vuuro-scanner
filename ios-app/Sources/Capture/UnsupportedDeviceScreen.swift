@@ -12,7 +12,7 @@ import SwiftUI
 
 struct UnsupportedDeviceScreen: View {
   
-    var onContinueWithoutScan: (() -> Void)? = nil
+    var onGoBack: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 16) {
@@ -35,8 +35,8 @@ struct UnsupportedDeviceScreen: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
 
-            if let onContinueWithoutScan {
-                Button("Continue without a scan", action: onContinueWithoutScan)
+            if let onGoBack {
+                Button("Go back", action: onGoBack)
                     .buttonStyle(.borderedProminent)
                     .padding(.top, 8)
             }
