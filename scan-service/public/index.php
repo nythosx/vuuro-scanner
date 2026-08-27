@@ -677,6 +677,116 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
     return;
 }
 
+// The brief lists "photos" as a first-class listing asset, but the /photos
+// route above only ever accepted a URL to an image already hosted
+// somewhere else — this repo never actually stored image bytes (see
+// scan-service/README.md's former "Known limits" entry). These two routes
+// close that gap: upload real bytes here, get back a URL, then call
+// POST /scan-sessions/{id}/photos with that URL exactly as before — the
+// existing photos contract is unchanged, this just gives it something real
+// to point at.
+const MAX_PHOTO_UPLOAD_BYTES = 10 * 1024 * 1024;
+const PHOTO_UPLOAD_MIME_EXTENSIONS = [
+    'image/jpeg' => 'jpg',
+    'image/png' => 'png',
+    'image/heic' => 'heic',
+    'image/webp' => 'webp',
+];
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'upload_photo');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+
+    if (rateLimited($repo, $sessionId . ':upload_photo', 30, 300)) {
+        return;
+    }
+
+    // Multipart bodies bypass the generic php://input size gate near the top
+    // of this file entirely (php://input is empty for multipart/form-data —
+    // a PHP SAPI-level limitation, not something this app controls), so this
+    // route needs its own explicit size check rather than relying on that
+    // gate having already run.
+    if (!isset($_FILES['photo']) || !is_array($_FILES['photo'])) {
+        respondError(422, 'missing_photo_file', "Please include a 'photo' file field (multipart/form-data) with the image to upload.");
+        return;
+    }
+
+    $file = $_FILES['photo'];
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        $tooLarge = in_array($file['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true);
+        respondError(
+            422,
+            $tooLarge ? 'photo_too_large' : 'photo_upload_failed',
+            $tooLarge ? 'The uploaded photo is too large.' : 'The photo upload failed — please try again.'
+        );
+        return;
+    }
+
+    if ($file['size'] > MAX_PHOTO_UPLOAD_BYTES) {
+        $maxMb = round(MAX_PHOTO_UPLOAD_BYTES / (1024 * 1024), 1);
+        respondError(422, 'photo_too_large', "Photos are limited to {$maxMb}MB.", ['max_bytes' => MAX_PHOTO_UPLOAD_BYTES]);
+        return;
+    }
+
+    // Sniffs the actual bytes rather than trusting the client-supplied
+    // filename/Content-Type — same "don't trust the client's own label"
+    // principle as is_http_url()'s scheme check above.
+    $mime = (new \finfo(FILEINFO_MIME_TYPE))->file($file['tmp_name']);
+    if (!isset(PHOTO_UPLOAD_MIME_EXTENSIONS[$mime])) {
+        respondError(
+            422,
+            'unsupported_photo_type',
+            'Photos must be JPEG, PNG, HEIC, or WebP.',
+            ['allowed' => array_values(PHOTO_UPLOAD_MIME_EXTENSIONS)]
+        );
+        return;
+    }
+
+    $photoUploadId = ScanSessionRepository::uuid();
+    $filename = $photoUploadId . '.' . PHOTO_UPLOAD_MIME_EXTENSIONS[$mime];
+    $storageDir = __DIR__ . '/../data/photos/' . $sessionId;
+    if (!is_dir($storageDir) && !mkdir($storageDir, 0755, true) && !is_dir($storageDir)) {
+        respondError(500, 'internal_error', 'Could not create photo storage for this session.');
+        return;
+    }
+    if (!move_uploaded_file($file['tmp_name'], $storageDir . '/' . $filename)) {
+        respondError(500, 'internal_error', 'Could not save the uploaded photo.');
+        return;
+    }
+
+    $scheme = (($_SERVER['HTTPS'] ?? 'off') !== 'off') ? 'https' : 'http';
+    $url = "{$scheme}://{$_SERVER['HTTP_HOST']}/scan-sessions/{$sessionId}/photo-uploads/{$filename}";
+    respond(201, ['url' => $url, 'photo_upload_id' => $photoUploadId]);
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads/([a-f0-9\-]+\.(?:jpg|png|heic|webp))$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'read_photo_upload');
+    if ($session === null) {
+        return;
+    }
+
+    if (rateLimited($repo, $session['id'] . ':read_photo_upload', 120, 300)) {
+        return;
+    }
+
+    $filename = $m[2];
+    $filePath = __DIR__ . '/../data/photos/' . $session['id'] . '/' . $filename;
+    if (!is_file($filePath)) {
+        respondError(404, 'photo_not_found', 'No uploaded photo found at this URL.');
+        return;
+    }
+
+    $extension = pathinfo($filename, PATHINFO_EXTENSION);
+    $mimeByExtension = array_flip(PHOTO_UPLOAD_MIME_EXTENSIONS);
+    header('Content-Type: ' . ($mimeByExtension[$extension] ?? 'application/octet-stream'));
+    readfile($filePath);
+    return;
+}
+
 if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'attach_note');
     if ($session === null) {

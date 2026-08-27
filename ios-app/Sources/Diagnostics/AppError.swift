@@ -27,6 +27,7 @@ struct AppError {
         case captureNoRoom = "CAPTURE_NO_ROOM"
         case captureFailed = "CAPTURE_FAILED"
         case photoAdd = "PHOTO_ADD"
+        case photoUpload = "PHOTO_UPLOAD"
         case noteAdd = "NOTE_ADD"
         case resultImageLoad = "RESULT_IMAGE_LOAD"
         case resultImageDecode = "RESULT_IMAGE_DECODE"
@@ -44,6 +45,8 @@ struct AppError {
                 return "Capture finished without a usable room."
             case .resultImageDecode:
                 return "The floor plan image couldn't be decoded."
+            case .photoUpload:
+                return "Couldn't read the selected photo."
             default:
                 return "Something went wrong."
             }
