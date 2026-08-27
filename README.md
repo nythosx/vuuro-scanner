@@ -10,10 +10,11 @@ itself. The Vuuro rental codebase couples to this later, over API.
 
 ## Status
 
-Phase 1 (proof of capture) and Phase 2 (unit story) are complete and independently
-verified. Phase 3 (pilot hardening) is underway: PNG/PDF exports, a first privacy/ACL
-pass, and per-room coverage/quality scoring are done; an optional laser spike is
-deferred with a written rationale (`docs/adr/0004-laser-pairing-spike.md`). On top of
+The brief's FIRST movement (proof of capture) and THEN movement (unit story) are
+complete and independently verified. AFTER THAT (pilot hardening) is underway: PNG/PDF
+exports, a first privacy/ACL pass, and per-room coverage/quality scoring are done; an
+optional laser spike is deferred with a written rationale
+(`docs/adr/0004-laser-pairing-spike.md`). On top of
 that, an enterprise-hardening pass adds access-token expiry/rotation, per-caller-IP and
 per-session rate limiting, idempotent capture retries, a request body size cap, and a
 `GET /health` endpoint — see `scan-service/README.md`'s "Known limits" for exactly what
@@ -27,7 +28,7 @@ for the full kickoff brief — the only source of truth for direction on this bu
 - [`contracts/floorplan.schema.json`](./contracts/floorplan.schema.json) — the
   vendor-neutral `FloorPlan` contract every capture adapter converts into.
 - [`docs/adr/0001-scan-service-stack.md`](./docs/adr/0001-scan-service-stack.md) — why
-  this stack, and what Phase 1's fixture-based capture input does and doesn't prove
+  this stack, and what the FIRST movement's fixture-based capture input does and doesn't prove
   given no Mac/Xcode access on this machine.
 - [`docs/adr/0002-export-coordinate-frame.md`](./docs/adr/0002-export-coordinate-frame.md)
   — why floor plan exports are honest per-room tiles, not a spatially fused layout.
@@ -35,8 +36,8 @@ for the full kickoff brief — the only source of truth for direction on this bu
   — the per-session access-token/consent/audit-log model closing the brief's "privacy
   by design" gap, and what it deliberately doesn't solve yet.
 - [`docs/adr/0004-laser-pairing-spike.md`](./docs/adr/0004-laser-pairing-spike.md) — why
-  Phase 3's optional laser-pairing spike is deferred for now, and the integration sketch
-  to start from if a pilot ever asks for it.
+  the brief's optional laser-pairing spike is deferred for now, and the integration
+  sketch to start from if a pilot ever asks for it.
 - [`ios-app/`](./ios-app/) — RoomPlan capture flow, **CI-compiled and simulator-tested,
   not yet run on a real device** (no Mac/Xcode access on this machine, but GitHub
   Actions builds it for the iOS Simulator and it's been live-tested end to end on
@@ -74,5 +75,10 @@ identity. The Vuuro rental app consumes that contract later, as an API client.
 ## Development
 
 No LiDAR-capable device is required to develop against this repo — development targets
-Xcode's RoomPlan simulator, by explicit agreement with the product owner (see the
-direction brief linked above).
+Xcode's RoomPlan simulator. **Correction (2026-08-27): this was previously worded as "by
+explicit agreement with the product owner," implying the direction brief endorses a
+simulator path — it does not.** The word "simulator" does not appear anywhere in the
+brief; it only ever describes capture on "a capable device." Using a simulator/fixture
+here is this repo's own decision, made necessary by zero Mac/Xcode reachability on the
+dev machine (`docs/adr/0001-scan-service-stack.md`), not something the brief signs off
+on.
