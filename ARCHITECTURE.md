@@ -41,7 +41,7 @@ This document serves as a critical, living template designed to equip agents wit
 │   │                          # L-shaped/degenerate/low-confidence adversarial
 │   │                          # cases) — stand-in capture input; see
 │   │                          # docs/adr/0001 for why (no Mac/Xcode access)
-│   ├── net/                   # Independent net — CLAUDE.md hard constraint #6.
+│   ├── net/                   # Independent net — the brief's "own the net"
 │   │   │                      # HTTP-only, re-derives expected results with
 │   │   │                      # its own separate logic, never imports src/.
 │   │   │                      # This is the merge gate, not the unit tests.
@@ -62,7 +62,9 @@ This document serves as a critical, living template designed to equip agents wit
 │   │   └── concurrency_test.php  # real multi-process proc_open test — the
 │   │                             # write-lock race can't be proven any other
 │   │                             # way against php -S's single-threaded server
-│   ├── Dockerfile              # Host-independent run path (CLAUDE.md #8)
+│   ├── Dockerfile              # Host-independent run path (brief's "local
+│   │                            # plus CI... prove slices before App Store
+│   │                            # or production deploy")
 │   └── README.md               # Local-only (gitignored) — run instructions,
 │                                # API reference, "Known limits"
 ├── ios-app/                    # RoomPlan capture client — CI-compiled and
@@ -175,7 +177,7 @@ This document serves as a critical, living template designed to equip agents wit
 
 [net/verify_*.php] — talks to the live HTTP API only, re-derives expected
   geometry/structure independently, never imports src/. This is the merge
-  gate (CLAUDE.md hard constraint #6), separate from tests/*_test.php (fast
+  gate (the brief's "own the net" constraint), separate from tests/*_test.php (fast
   in-process unit tests) and from the manual appetize.io simulator loop above.
 ```
 
@@ -200,7 +202,7 @@ Description: The single backend in this repo. Plain PHP, no framework — `publi
 
 Technologies: PHP 8.1+ (`declare(strict_types=1)` throughout), PDO/SQLite, no framework, no Composer dependency (hand-rolled `autoload.php`).
 
-Deployment: `php -d post_max_size=16M -d display_errors=0 -S 127.0.0.1:8089 public/index.php` locally, or the repo's `Dockerfile` for a host-independent run (CLAUDE.md hard constraint #8: "local + CI" proof, not tied to this one Windows machine).
+Deployment: `php -d post_max_size=16M -d display_errors=0 -S 127.0.0.1:8089 public/index.php` locally, or the repo's `Dockerfile` for a host-independent run (the brief's "no silent production leap" constraint: "local plus CI... prove slices" — not tied to this one Windows machine).
 
 #### 3.2.2. Capture Adapter (`src/Adapters/RoomPlanSimulatorAdapter.php`)
 
@@ -261,7 +263,7 @@ Two adjacent tools are development/testing aids only, not integrations the runni
 
 ## 6. Deployment & Infrastructure
 
-Cloud Provider: None. Everything here targets local/CI proof only — no App Store or production deploy required for this build's current arc (CLAUDE.md hard constraint #8).
+Cloud Provider: None. Everything here targets local/CI proof only — no App Store or production deploy required for this build's current arc (the brief's "no silent production leap" constraint).
 
 Key Services Used: Docker (`scan-service/Dockerfile`, host-independent Scan Service run path). GitHub Actions (`.github/workflows/ios-build.yml`) for the iOS side — a macOS runner generates an Xcode project via XcodeGen and builds `ios-app/` (the branded UI, on this branch) for the Simulator (`compile-check`), then a downstream job produces an ad-hoc-signed IPA.
 
@@ -319,9 +321,9 @@ Date of Last Update: 2026-08-27.
 
 FloorPlan contract: The vendor-neutral JSON shape (`contracts/floorplan.schema.json`) every capture adapter converts into and every consumer (iOS app, web-viewer, future Vuuro rental app) reads from.
 
-Independent net: `scan-service/net/verify_*.php` — HTTP-only scripts that re-derive expected results with their own separately-written logic and never import the code they're checking. The merge gate, per CLAUDE.md hard constraint #6 ("own the net").
+Independent net: `scan-service/net/verify_*.php` — HTTP-only scripts that re-derive expected results with their own separately-written logic and never import the code they're checking. The merge gate, per the brief's hard constraint: "You own the net under the work... A real independent check that runs without me, built from different assumptions than the code it guards, and whose verdict you cannot merge past."
 
-Evidence over theatre: CLAUDE.md hard constraint #7 — never round "CI-compiled and simulator-tested" up to "verified," never let "fixture" and "real capture" blur together. Drives the wording in `ios-app/README.md` and this document's own verification-status language.
+Evidence over theatre: the brief's hard constraint — "Structure them in three buckets: verified working, implemented but not yet verified, at risk." Never round "CI-compiled and simulator-tested" up to "verified," never let "fixture" and "real capture" blur together. Drives the wording in `ios-app/README.md` and this document's own verification-status language.
 
 FakeLidarMode / DebugScanServiceURL: DEBUG-only iOS tools (`ios-app/Sources/Debug/`) that make appetize.io cloud-simulator testing possible without real LiDAR hardware or a publicly reachable Scan Service. Compiled out of Release builds; never reach a real user.
 

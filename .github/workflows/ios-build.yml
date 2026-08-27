@@ -1,10 +1,11 @@
 name: iOS build
 
-# Requires this repo (or a mirror of it) to exist on GitHub — the canonical
-# repo today is gitlab.com/vuuro/scanner, which does not run GitHub Actions.
-# See ios-app/README.md's CI section for that open decision. This workflow
-# is safe to sit unused until a GitHub remote exists; nothing else depends
-# on it running.
+# The canonical repo is gitlab.com/vuuro/scanner, which does not run GitHub
+# Actions itself — this workflow runs against a push-mirror of that repo on
+# GitHub (github.com/Antrax-Inhaler/vuuro-scanner), kept in sync manually via
+# GitLab's repository mirroring settings, not automatically on every push.
+# Confirmed live and green against real pushes (not just theoretically
+# wired up) — see the run history on that mirror's Actions tab.
 on:
   push:
     paths:
