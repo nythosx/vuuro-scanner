@@ -114,6 +114,55 @@ check('note attach returns HTTP 201', $noteStatus === 201, "got HTTP $noteStatus
 check('note is appended, rooms and the earlier photo both survive',
     count($withNote['notes'] ?? []) === 1 && count($withNote['photos'] ?? []) === 1 && count($withNote['rooms'] ?? []) === 2);
 
+echo "\n== Photo uploads: real image bytes, not just a URL string ==\n";
+
+$testImagePath = tempnam(sys_get_temp_dir(), 'net_photo_') . '.png';
+$testImage = imagecreatetruecolor(4, 4);
+imagefill($testImage, 0, 0, imagecolorallocate($testImage, 255, 0, 0));
+imagepng($testImage, $testImagePath);
+imagedestroy($testImage);
+$expectedBytes = (string) file_get_contents($testImagePath);
+
+[$uploadStatus, $uploadBody] = net_http_multipart_upload("$baseUrl/scan-sessions/$sessionId/photo-uploads", $testImagePath, 'image/png', $accessToken);
+check('photo upload returns HTTP 201', $uploadStatus === 201, "got HTTP $uploadStatus");
+$uploadedUrl = $uploadBody['url'] ?? null;
+check('upload response includes a url', is_string($uploadedUrl), 'got ' . json_encode($uploadBody));
+
+if (is_string($uploadedUrl)) {
+    $ch = curl_init($uploadedUrl);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => ["X-Scan-Access-Token: $accessToken"],
+    ]);
+    $fetchedBytes = (string) curl_exec($ch);
+    $fetchStatus = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    check('the uploaded photo can be fetched back (HTTP 200)', $fetchStatus === 200, "got HTTP $fetchStatus");
+    check('the fetched bytes are byte-identical to what was uploaded — not re-encoded, not a placeholder', $fetchedBytes === $expectedBytes);
+
+    [$fetchNoTokenStatus, ] = net_http_json('GET', $uploadedUrl);
+    check('fetching an uploaded photo with no access token is rejected (HTTP 401), same ACL as everything else', $fetchNoTokenStatus === 401, "got HTTP $fetchNoTokenStatus");
+
+    [$attachUploadedStatus, $withUploadedPhoto] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", [
+        'url' => $uploadedUrl,
+        'caption' => 'Net test uploaded photo',
+    ], $accessToken);
+    check('the uploaded photo\'s own url attaches via the existing /photos endpoint unchanged (HTTP 201)', $attachUploadedStatus === 201, "got HTTP $attachUploadedStatus");
+    check('attaching it does not disturb the rooms already captured', count($withUploadedPhoto['rooms'] ?? []) === 2);
+}
+
+$textFilePath = tempnam(sys_get_temp_dir(), 'net_photo_') . '.txt';
+file_put_contents($textFilePath, 'not an image');
+[$wrongTypeStatus, $wrongTypeBody] = net_http_multipart_upload("$baseUrl/scan-sessions/$sessionId/photo-uploads", $textFilePath, 'text/plain', $accessToken);
+check('uploading a non-image file is rejected (HTTP 422), regardless of the claimed Content-Type', $wrongTypeStatus === 422, "got HTTP $wrongTypeStatus");
+check('the rejection names the specific error', ($wrongTypeBody['error'] ?? null) === 'unsupported_photo_type', 'got ' . ($wrongTypeBody['error'] ?? 'null'));
+unlink($textFilePath);
+unlink($testImagePath);
+
+[$fetchNonexistentStatus, $fetchNonexistentBody] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId/photo-uploads/00000000-0000-0000-0000-000000000000.png", null, $accessToken);
+check('fetching an uploaded-photo url that was never actually uploaded is a clean 404, not a 500', $fetchNonexistentStatus === 404, "got HTTP $fetchNonexistentStatus");
+check('the 404 names the specific error', ($fetchNonexistentBody['error'] ?? null) === 'photo_not_found', 'got ' . ($fetchNonexistentBody['error'] ?? 'null'));
+
 echo "\n== room_id on a photo/note must reference a real room in THIS session ==\n";
 
 $realRoomId = $afterSecond['rooms'][0]['room_id'] ?? null;

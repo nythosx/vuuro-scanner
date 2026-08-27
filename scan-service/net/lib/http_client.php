@@ -76,6 +76,36 @@ function net_http_json(string $method, string $url, ?array $body = null, ?string
     return [$status, is_array($decoded) ? $decoded : [], $raw];
 }
 
+/**
+ * Multipart file upload — the one shape net_http_json() can't send. Used
+ * only by the photo-uploads endpoint check; every other route on this
+ * service takes JSON.
+ *
+ * @return array{0: int, 1: array, 2: string} [status, decoded JSON body (or [] if not decodable), raw bytes]
+ */
+function net_http_multipart_upload(string $url, string $filePath, string $mimeType, ?string $accessToken = null): array
+{
+    $ch = curl_init($url);
+    $headers = [];
+    if ($accessToken !== null) {
+        $headers[] = "X-Scan-Access-Token: $accessToken";
+    }
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_POSTFIELDS => ['photo' => new \CURLFile($filePath, $mimeType, basename($filePath))],
+    ]);
+    $raw = curl_exec($ch);
+    if ($raw === false) {
+        throw new \RuntimeException('HTTP request failed: ' . curl_error($ch) . " (POST $url)");
+    }
+    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    $decoded = json_decode((string) $raw, true);
+    return [$status, is_array($decoded) ? $decoded : [], (string) $raw];
+}
+
 /** @return array{0: int, 1: string} [status, response headers as raw text] */
 function net_http_headers(string $method, string $url, ?string $accessToken = null): array
 {

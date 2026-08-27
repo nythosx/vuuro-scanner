@@ -3,6 +3,7 @@
 //  VuuroScan
 //
 //  WRITTEN, NOT COMPILED OR RUN — see Models/ScanIdentity.swift header.
+import PhotosUI
 import RoomPlan
 import SwiftUI
 import UIKit
@@ -229,9 +230,11 @@ private struct AttachmentsScreen: View {
 
     @State private var noteText = ""
     @State private var photoUrl = ""
+    @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var current: FloorPlan
     @State private var appError: AppError?
     @State private var isSaving = false
+    @State private var isUploadingPhoto = false
 
     private let client = ScanServiceClient()
 
@@ -250,9 +253,29 @@ private struct AttachmentsScreen: View {
                     .disabled(noteText.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
             }
 
-            Section("Add a photo URL (optional)") {
+            Section("Add a photo (optional)") {
+                PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                    if isUploadingPhoto {
+                        ProgressView()
+                    } else {
+                        Text("Choose from library")
+                    }
+                }
+                .buttonStyle(.vuuroSecondary)
+                .disabled(isUploadingPhoto)
+                .onChange(of: selectedPhotoItem) { _, newItem in
+                    guard let newItem else { return }
+                    Task {
+                        await uploadSelectedPhoto(newItem)
+                        selectedPhotoItem = nil
+                    }
+                }
+
+                Text("Or paste a URL to a photo already hosted elsewhere:")
+                    .font(VuuroFont.body(12))
+                    .foregroundStyle(VuuroColor.textPrimary.opacity(0.5))
                 TextField("https://…", text: $photoUrl)
-                Button("Add photo") { Task { await addPhoto() } }
+                Button("Add photo URL") { Task { await addPhoto() } }
                     .disabled(photoUrl.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
             }
 
@@ -299,6 +322,41 @@ private struct AttachmentsScreen: View {
             appError = nil
         } catch {
             appError = AppError(site: .photoAdd, underlying: error)
+        }
+    }
+
+    // Sniffs the actual bytes rather than trusting whatever the Photos
+    // library labels the item as — same "don't trust the client's own
+    // label" principle the Scan Service itself applies server-side
+    // (finfo, not the claimed Content-Type) to this same upload.
+    private func detectedMimeType(for data: Data) -> (mime: String, extension: String) {
+        if data.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
+            return ("image/png", "png")
+        }
+        if data.starts(with: [0xFF, 0xD8, 0xFF]) {
+            return ("image/jpeg", "jpg")
+        }
+        if data.count > 12, data[data.startIndex.advanced(by: 4)..<data.startIndex.advanced(by: 8)].elementsEqual("ftyp".utf8) {
+            return ("image/heic", "heic")
+        }
+        return ("image/jpeg", "jpg")
+    }
+
+    @MainActor
+    private func uploadSelectedPhoto(_ item: PhotosPickerItem) async {
+        isUploadingPhoto = true
+        defer { isUploadingPhoto = false }
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self) else {
+                appError = AppError(site: .photoUpload, underlying: nil)
+                return
+            }
+            let (mime, ext) = detectedMimeType(for: data)
+            let uploaded = try await client.uploadPhoto(sessionId: session.id, accessToken: session.accessToken, imageData: data, filename: "photo.\(ext)", mimeType: mime)
+            current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: uploaded.url)
+            appError = nil
+        } catch {
+            appError = AppError(site: .photoUpload, underlying: error)
         }
     }
 }

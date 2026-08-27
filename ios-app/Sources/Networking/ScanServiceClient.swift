@@ -33,6 +33,18 @@ private struct ScanServiceErrorBody: Decodable {
     let message: String
 }
 
+/// Response from `POST /scan-sessions/{id}/photo-uploads` — the `url` here
+/// is what gets passed straight into `addPhoto(url:)` below, unchanged.
+struct PhotoUploadResponse: Decodable {
+    let url: String
+    let photoUploadId: String
+
+    enum CodingKeys: String, CodingKey {
+        case url
+        case photoUploadId = "photo_upload_id"
+    }
+}
+
 struct ScanServiceClient {
     var baseURL: URL = {
         #if DEBUG
@@ -77,6 +89,29 @@ struct ScanServiceClient {
 
     func fetchAccessLog(sessionId: String, accessToken: String) async throws -> AccessLogResponse {
         try await get(path: "/scan-sessions/\(sessionId)/access-log", accessToken: accessToken)
+    }
+
+    /// Uploads real image bytes and gets back a url — pass that straight into
+    /// `addPhoto(url:)` below, same as any externally-hosted photo url would
+    /// be. Two separate calls, not one, so the existing /photos contract
+    /// (and its own room_id/caption validation) never has to know whether a
+    /// url came from this upload path or from somewhere else.
+    func uploadPhoto(sessionId: String, accessToken: String, imageData: Data, filename: String, mimeType: String) async throws -> PhotoUploadResponse {
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var request = URLRequest(url: baseURL.appendingPathComponent("/scan-sessions/\(sessionId)/photo-uploads"))
+        request.httpMethod = "POST"
+        request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"photo\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: \(mimeType)\r\n\r\n".data(using: .utf8)!)
+        body.append(imageData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        request.httpBody = body
+
+        return try await send(request)
     }
 
     func addPhoto(sessionId: String, accessToken: String, url: String, caption: String? = nil, roomId: String? = nil) async throws -> FloorPlan {
