@@ -32,8 +32,8 @@ for the full kickoff brief — the only source of truth for direction on this bu
 - [`docs/adr/0002-export-coordinate-frame.md`](./docs/adr/0002-export-coordinate-frame.md)
   — why floor plan exports are honest per-room tiles, not a spatially fused layout.
 - [`docs/adr/0003-privacy-acl-session-tokens.md`](./docs/adr/0003-privacy-acl-session-tokens.md)
-  — the per-session access-token/consent/audit-log model closing hard constraint #3's
-  gap, and what it deliberately doesn't solve yet.
+  — the per-session access-token/consent/audit-log model closing the brief's "privacy
+  by design" gap, and what it deliberately doesn't solve yet.
 - [`docs/adr/0004-laser-pairing-spike.md`](./docs/adr/0004-laser-pairing-spike.md) — why
   Phase 3's optional laser-pairing spike is deferred for now, and the integration sketch
   to start from if a pilot ever asks for it.
