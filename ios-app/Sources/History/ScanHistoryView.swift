@@ -32,25 +32,30 @@ struct ScanHistoryView: View {
         List {
             if entries.isEmpty {
                 Text("No scans yet on this device.")
-                    .foregroundStyle(.secondary)
+                    .font(VuuroFont.body())
+                    .foregroundStyle(VuuroColor.textPrimary.opacity(0.6))
             }
 
             ForEach(entries) { entry in
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("\(entry.propertyId) — \(entry.unitId)").font(.headline)
+                        Text("\(entry.propertyId) — \(entry.unitId)")
+                            .font(VuuroFont.display(17))
+                            .foregroundStyle(VuuroColor.textPrimary)
                         Text(entry.purpose.displayName)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .font(VuuroFont.body(13))
+                            .foregroundStyle(VuuroColor.textPrimary.opacity(0.6))
                         Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(VuuroFont.body(11))
+                            .foregroundStyle(VuuroColor.textPrimary.opacity(0.5))
                     }
+                    .padding(.vertical, 2)
 
                     HStack {
                         Button("Download image") {
                             Task { await downloadImage(for: entry) }
                         }
+                        .buttonStyle(.vuuroSecondary)
                         Spacer()
                         if let url = perEntryImageURLs[entry.sessionId] {
                             ShareLink(item: url) {
@@ -63,6 +68,7 @@ struct ScanHistoryView: View {
                         Button("Download PDF") {
                             Task { await downloadPDF(for: entry) }
                         }
+                        .buttonStyle(.vuuroSecondary)
                         Spacer()
                         if let url = perEntryPDFURLs[entry.sessionId] {
                             ShareLink(item: url) {
@@ -74,6 +80,8 @@ struct ScanHistoryView: View {
                     NavigationLink("Access log") {
                         AccessLogView(sessionId: entry.sessionId, accessToken: entry.accessToken)
                     }
+                    .font(VuuroFont.body(15))
+                    .foregroundStyle(VuuroColor.primary)
                 }
             }
 
@@ -88,7 +96,10 @@ struct ScanHistoryView: View {
                             Text("Download all images")
                         }
                     }
+                    .buttonStyle(.vuuroPrimary)
                     .disabled(isBulkFetchingImages)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
 
                     if !bulkImageURLs.isEmpty {
                         ShareLink(items: bulkImageURLs) {
@@ -105,7 +116,10 @@ struct ScanHistoryView: View {
                             Text("Download all PDFs")
                         }
                     }
+                    .buttonStyle(.vuuroPrimary)
                     .disabled(isBulkFetchingPDFs)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
 
                     if !bulkPDFURLs.isEmpty {
                         ShareLink(items: bulkPDFURLs) {
@@ -116,9 +130,12 @@ struct ScanHistoryView: View {
             }
 
             if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red).font(.caption)
+                Text(errorMessage).foregroundStyle(VuuroColor.danger).font(VuuroFont.body(13))
             }
         }
+        .tint(VuuroColor.primary)
+        .scrollContentBackground(.hidden)
+        .background(VuuroColor.surfaceMuted)
         .navigationTitle("Scan history")
         .onAppear { entries = ScanHistoryStore.shared.all() }
         .onDisappear { cleanUpTempFiles() }
@@ -126,7 +143,7 @@ struct ScanHistoryView: View {
 
     // Every download below writes into the shared tmp directory, which iOS
     // doesn't clear on any predictable schedule — same lesson as
-    // ResultSummaryView's cleanUpExportedPDF(). Cleaned up together here
+    // ResultSummaryView's cleanUpExportedFiles(). Cleaned up together here
     // since this screen can accumulate many more files than that one did.
     private func cleanUpTempFiles() {
         let all = Array(perEntryImageURLs.values) + Array(perEntryPDFURLs.values) + bulkImageURLs + bulkPDFURLs

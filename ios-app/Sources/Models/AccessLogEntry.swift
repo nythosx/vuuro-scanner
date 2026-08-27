@@ -2,7 +2,7 @@
 //  AccessLogEntry.swift
 //  VuuroScan
 //
-//  WRITTEN, NOT COMPILED OR RUN — see ScanIdentity.swift header.
+//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
 //
 
 import Foundation

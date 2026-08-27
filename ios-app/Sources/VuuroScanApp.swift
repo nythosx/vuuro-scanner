@@ -14,6 +14,7 @@ struct VuuroScanApp: App {
             NavigationStack {
                 ScanFlowView()
             }
+            .tint(VuuroColor.primary)
         }
     }
 }
@@ -41,6 +42,7 @@ struct ScanFlowView: View {
                         NavigationLink("History") {
                             ScanHistoryView()
                         }
+                        .foregroundStyle(VuuroColor.primary)
                     }
                 }
             case .capturing(let identity, let session, let attempt):
@@ -117,6 +119,7 @@ private struct RoomCaptureFlowStep: View {
                 // same upload pipeline instead.
                 #if DEBUG
                 ProgressView("Generating fake capture (Debug)…")
+                    .tint(VuuroColor.primary)
                     .onAppear { Task { await submit(FakeCaptureGenerator.random()) } }
                 #else
                 // Unreachable in a Release build: debugFakeCaptureActive is
@@ -132,8 +135,10 @@ private struct RoomCaptureFlowStep: View {
 
                     if isUploading {
                         ProgressView("Uploading capture…")
+                            .tint(VuuroColor.primary)
+                            .font(VuuroFont.body())
                             .padding()
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius))
                     }
                 }
                 .onAppear { coordinator.start() }
@@ -194,15 +199,21 @@ private struct AnotherRoomPromptView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("Room \(roomCount) captured").font(.headline)
+            Text("Room \(roomCount) captured")
+                .font(VuuroFont.display(22))
+                .foregroundStyle(VuuroColor.textPrimary)
             Text("Scan another room in this unit, or finish and attach photos/notes.")
-                .foregroundStyle(.secondary)
+                .font(VuuroFont.body())
+                .foregroundStyle(VuuroColor.textPrimary.opacity(0.6))
                 .multilineTextAlignment(.center)
             Button("Scan another room") { onChoice(true) }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.vuuroPrimary)
             Button("Finish unit") { onChoice(false) }
+                .buttonStyle(.vuuroSecondary)
         }
         .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(VuuroColor.surfaceMuted)
     }
 }
 
@@ -241,17 +252,22 @@ private struct AttachmentsScreen: View {
             }
 
             if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red).font(.caption)
+                Text(errorMessage).foregroundStyle(VuuroColor.danger).font(VuuroFont.body(13))
             }
 
             Section {
                 Text("\(current.notes.count) note(s), \(current.photos.count) photo(s) attached so far.")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
+                    .foregroundStyle(VuuroColor.textPrimary.opacity(0.6))
+                    .font(VuuroFont.body(13))
                 Button("Finish") { onDone(current) }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.vuuroPrimary)
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets())
             }
         }
+        .tint(VuuroColor.primary)
+        .scrollContentBackground(.hidden)
+        .background(VuuroColor.surfaceMuted)
         .navigationTitle("Notes & photos")
     }
 
@@ -300,31 +316,33 @@ private struct ResultSummaryView: View {
         List {
             ForEach(floorPlan.rooms, id: \.roomId) { room in
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(room.label).font(.headline)
+                    Text(room.label)
+                        .font(VuuroFont.display(17))
+                        .foregroundStyle(VuuroColor.textPrimary)
                     Text(String(format: "%.2f m²", room.floorAreaM2))
+                        .font(VuuroFont.body(17, weight: .bold))
+                        .foregroundStyle(VuuroColor.primary)
                     Text(String(format: "%.2f m perimeter", room.perimeterM))
+                        .font(VuuroFont.body())
+                        .foregroundStyle(VuuroColor.textPrimary)
                     Text("Indicative — NEN2580-inspired, not certified")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(VuuroFont.body(12))
+                        .foregroundStyle(VuuroColor.textPrimary.opacity(0.5))
 
                     if !room.coverage.usable, let message = room.coverage.message {
                         Label(message, systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
+                            .font(VuuroFont.body(12))
+                            .foregroundStyle(VuuroColor.primary)
                             .padding(.top, 2)
                     } else {
                         Text("Scan quality: \(room.coverage.score)/100")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .font(VuuroFont.body(11))
+                            .foregroundStyle(VuuroColor.textPrimary.opacity(0.5))
                     }
                 }
+                .padding(.vertical, 4)
             }
 
-            // Vuuro Scan direction brief, "Export priority for early value":
-            // floor plan image/PDF through the Scan Service API. The server
-            // already renders both (FloorPlanImageRenderer/PdfRenderer,
-            // GET .../export/floorplan.png|.pdf) — this is what actually
-            // fetches and surfaces them client-side.
             // Per-session, not per-room: the Scan Service renders one PNG
             // (rooms tiled on one sheet) and one PDF (one metrics table) per
             // session, not a separate file per room — see
@@ -340,6 +358,7 @@ private struct ResultSummaryView: View {
                         Text("Download image")
                     }
                 }
+                .buttonStyle(.vuuroSecondary)
                 .disabled(isFetchingImage)
 
                 if let floorPlanImage {
@@ -347,6 +366,7 @@ private struct ResultSummaryView: View {
                         .resizable()
                         .scaledToFit()
                         .frame(maxHeight: 220)
+                        .clipShape(RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius, style: .continuous))
 
                     if let floorPlanImageURL {
                         ShareLink(item: floorPlanImageURL) {
@@ -364,6 +384,7 @@ private struct ResultSummaryView: View {
                         Text("Download PDF")
                     }
                 }
+                .buttonStyle(.vuuroSecondary)
                 .disabled(isFetchingPDF)
 
                 if let floorPlanPDFURL {
@@ -373,7 +394,7 @@ private struct ResultSummaryView: View {
                 }
 
                 if let exportError {
-                    Text(exportError).foregroundStyle(.red).font(.caption)
+                    Text(exportError).foregroundStyle(VuuroColor.danger).font(VuuroFont.body(13))
                 }
             }
 
@@ -381,6 +402,8 @@ private struct ResultSummaryView: View {
                 NavigationLink("Access log") {
                     AccessLogView(sessionId: session.id, accessToken: session.accessToken)
                 }
+                .font(VuuroFont.body(15))
+                .foregroundStyle(VuuroColor.primary)
             }
 
             Section {
@@ -388,9 +411,14 @@ private struct ResultSummaryView: View {
                     cleanUpExportedFiles()
                     onDone()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.vuuroPrimary)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
             }
         }
+        .tint(VuuroColor.primary)
+        .scrollContentBackground(.hidden)
+        .background(VuuroColor.surfaceMuted)
         .navigationTitle("Scan result")
         .onDisappear { cleanUpExportedFiles() }
     }
@@ -450,10 +478,19 @@ private struct ErrorView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Text("Something went wrong").font(.headline)
-            Text(message).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            Button("Try again", action: onRetry).buttonStyle(.borderedProminent)
+            Text("Something went wrong")
+                .font(VuuroFont.display(20))
+                .foregroundStyle(VuuroColor.textPrimary)
+            Text(message)
+                .font(VuuroFont.body())
+                .foregroundStyle(VuuroColor.textPrimary.opacity(0.6))
+                .multilineTextAlignment(.center)
+            Button("Try again", action: onRetry)
+                .buttonStyle(.vuuroPrimary)
+                .padding(.horizontal, 32)
         }
         .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(VuuroColor.surfaceMuted)
     }
 }

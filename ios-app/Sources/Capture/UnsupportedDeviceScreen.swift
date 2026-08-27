@@ -23,24 +23,28 @@ struct UnsupportedDeviceScreen: View {
             // a long-standing, certain-to-exist symbol (iOS 13+).
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 48))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(VuuroColor.primary)
 
             Text("LiDAR scanning isn't available on this device")
-                .font(.headline)
+                .font(VuuroFont.display(20))
+                .foregroundStyle(VuuroColor.textPrimary)
                 .multilineTextAlignment(.center)
 
             Text(DeviceCapability.unsupportedReason)
-                .font(.body)
-                .foregroundStyle(.secondary)
+                .font(VuuroFont.body())
+                .foregroundStyle(VuuroColor.textPrimary.opacity(0.6))
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
 
             if let onGoBack {
                 Button("Go back", action: onGoBack)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.vuuroPrimary)
+                    .padding(.horizontal, 32)
                     .padding(.top, 8)
             }
         }
         .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(VuuroColor.surfaceMuted)
     }
 }

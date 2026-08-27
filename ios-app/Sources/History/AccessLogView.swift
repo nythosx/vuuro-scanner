@@ -25,27 +25,38 @@ struct AccessLogView: View {
         List {
             if isLoading {
                 ProgressView()
+                    .tint(VuuroColor.primary)
             } else if log.isEmpty && errorMessage == nil {
                 Text("No access attempts recorded yet.")
-                    .foregroundStyle(.secondary)
+                    .font(VuuroFont.body())
+                    .foregroundStyle(VuuroColor.textPrimary.opacity(0.6))
             }
 
             ForEach(log) { record in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(record.action).font(.headline)
+                    Text(record.action)
+                        .font(VuuroFont.display(15))
+                        .foregroundStyle(VuuroColor.textPrimary)
                     Text(record.outcome)
-                        .font(.caption)
-                        .foregroundStyle(record.outcome == "granted" ? .green : .orange)
+                        .font(VuuroFont.body(12))
+                        // accentLime reads poorly as text (see ResultSummaryView's
+                        // own quality-score color note) — granted stays neutral,
+                        // only a denied attempt gets called out.
+                        .foregroundStyle(record.outcome == "granted" ? VuuroColor.textPrimary.opacity(0.6) : VuuroColor.danger)
                     Text(record.occurredAt)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .font(VuuroFont.body(11))
+                        .foregroundStyle(VuuroColor.textPrimary.opacity(0.5))
                 }
+                .padding(.vertical, 2)
             }
 
             if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red).font(.caption)
+                Text(errorMessage).foregroundStyle(VuuroColor.danger).font(VuuroFont.body(13))
             }
         }
+        .tint(VuuroColor.primary)
+        .scrollContentBackground(.hidden)
+        .background(VuuroColor.surfaceMuted)
         .navigationTitle("Access log")
         .task { await load() }
     }

@@ -54,8 +54,8 @@ struct IdentityIntakeScreen: View {
                     Toggle("Tenant consent obtained for this scan", isOn: $consentObtained)
                     if !consentObtained {
                         Text("Consent is required before scanning an occupied unit.")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
+                            .font(VuuroFont.body(13))
+                            .foregroundStyle(VuuroColor.primary)
                     }
                 }
             }
@@ -71,9 +71,16 @@ struct IdentityIntakeScreen: View {
                         consentObtained: occupied ? consentObtained : false
                     ))
                 }
+                .buttonStyle(.vuuroPrimary)
                 .disabled(!canStart)
+                .opacity(canStart ? 1 : 0.4)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets())
             }
         }
+        .tint(VuuroColor.primary)
+        .scrollContentBackground(.hidden)
+        .background(VuuroColor.surfaceMuted)
         .navigationTitle("New scan")
     }
 }
