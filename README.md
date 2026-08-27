@@ -37,9 +37,16 @@ for the full kickoff brief — the only source of truth for direction on this bu
 - [`docs/adr/0004-laser-pairing-spike.md`](./docs/adr/0004-laser-pairing-spike.md) — why
   Phase 3's optional laser-pairing spike is deferred for now, and the integration sketch
   to start from if a pilot ever asks for it.
-- [`ios-app/`](./ios-app/) — RoomPlan capture flow **written, not compiled or run** (no
-  Mac/Xcode access on this machine); see `ios-app/README.md` for the verification
-  checklist for whoever opens it in Xcode first.
+- [`ios-app/`](./ios-app/) — RoomPlan capture flow, **CI-compiled and simulator-tested,
+  not yet run on a real device** (no Mac/Xcode access on this machine, but GitHub
+  Actions builds it for the iOS Simulator and it's been live-tested end to end on
+  appetize.io using DEBUG-only fake-LiDAR/tunnel tooling); see `ios-app/README.md` for
+  exactly what's verified vs. still open, and the checklist for whoever opens it in
+  Xcode first.
+- [`ios-app-with-design/`](./ios-app-with-design/) — an optional, separate copy of
+  `ios-app/` restyled to vuuro.com's actual brand. Not part of the direction brief, not
+  covered by CI, kept fully independent so it never affects `ios-app/`; see
+  `ios-app-with-design/README.md`.
 
 ## What this is
 

@@ -37,6 +37,14 @@ struct ScanFlowView: View {
                 IdentityIntakeScreen { identity in
                     stage = .capturing(identity: identity, session: nil, attempt: UUID())
                 }
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        NavigationLink("History") {
+                            ScanHistoryView()
+                        }
+                        .foregroundStyle(VuuroColor.primary)
+                    }
+                }
             case .capturing(let identity, let session, let attempt):
                 RoomCaptureFlowStep(identity: identity, existingSession: session) { session, floorPlan, addAnotherRoom in
                     if addAnotherRoom {
@@ -165,6 +173,17 @@ private struct RoomCaptureFlowStep: View {
                 session = existingSession
             } else {
                 session = try await client.createSession(identity: identity)
+                // Local-only scan history — see History/ScanHistoryEntry.swift's
+                // header for why this can't be a server-side listing.
+                ScanHistoryStore.shared.add(ScanHistoryEntry(
+                    sessionId: session.id,
+                    accessToken: session.accessToken,
+                    propertyId: identity.propertyId,
+                    unitId: identity.unitId,
+                    organisationId: identity.organisationId,
+                    purpose: identity.purpose,
+                    createdAt: Date()
+                ))
             }
             let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export)
             justCaptured = (session, floorPlan)
@@ -287,6 +306,7 @@ private struct ResultSummaryView: View {
     @State private var isFetchingImage = false
     @State private var isFetchingPDF = false
     @State private var floorPlanImage: UIImage?
+    @State private var floorPlanImageURL: URL?
     @State private var floorPlanPDFURL: URL?
     @State private var exportError: String?
 
@@ -323,11 +343,11 @@ private struct ResultSummaryView: View {
                 .padding(.vertical, 4)
             }
 
-            // Vuuro Scan direction brief, "Export priority for early value":
-            // floor plan image/PDF through the Scan Service API. The server
-            // already renders both (FloorPlanImageRenderer/PdfRenderer,
-            // GET .../export/floorplan.png|.pdf) — this is what actually
-            // fetches and surfaces them client-side.
+            // Per-session, not per-room: the Scan Service renders one PNG
+            // (rooms tiled on one sheet) and one PDF (one metrics table) per
+            // session, not a separate file per room — see
+            // ../../docs/adr/0002-export-coordinate-frame.md for why. Same
+            // per-session shape as History/ScanHistoryView.swift's rows.
             Section("Floor plan exports") {
                 Button {
                     Task { await loadImage() }
@@ -335,9 +355,10 @@ private struct ResultSummaryView: View {
                     if isFetchingImage {
                         ProgressView()
                     } else {
-                        Text("View floor plan image")
+                        Text("Download image")
                     }
                 }
+                .buttonStyle(.vuuroSecondary)
                 .disabled(isFetchingImage)
 
                 if let floorPlanImage {
@@ -345,6 +366,13 @@ private struct ResultSummaryView: View {
                         .resizable()
                         .scaledToFit()
                         .frame(maxHeight: 220)
+                        .clipShape(RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius, style: .continuous))
+
+                    if let floorPlanImageURL {
+                        ShareLink(item: floorPlanImageURL) {
+                            Label("Save image", systemImage: "square.and.arrow.up")
+                        }
+                    }
                 }
 
                 Button {
@@ -353,14 +381,15 @@ private struct ResultSummaryView: View {
                     if isFetchingPDF {
                         ProgressView()
                     } else {
-                        Text("View floor plan PDF")
+                        Text("Download PDF")
                     }
                 }
+                .buttonStyle(.vuuroSecondary)
                 .disabled(isFetchingPDF)
 
                 if let floorPlanPDFURL {
                     ShareLink(item: floorPlanPDFURL) {
-                        Label("Share or open PDF", systemImage: "square.and.arrow.up")
+                        Label("Save PDF", systemImage: "square.and.arrow.up")
                     }
                 }
 
@@ -370,8 +399,16 @@ private struct ResultSummaryView: View {
             }
 
             Section {
+                NavigationLink("Access log") {
+                    AccessLogView(sessionId: session.id, accessToken: session.accessToken)
+                }
+                .font(VuuroFont.body(15))
+                .foregroundStyle(VuuroColor.primary)
+            }
+
+            Section {
                 Button("Done") {
-                    cleanUpExportedPDF()
+                    cleanUpExportedFiles()
                     onDone()
                 }
                 .buttonStyle(.vuuroPrimary)
@@ -383,17 +420,20 @@ private struct ResultSummaryView: View {
         .scrollContentBackground(.hidden)
         .background(VuuroColor.surfaceMuted)
         .navigationTitle("Scan result")
-        .onDisappear { cleanUpExportedPDF() }
+        .onDisappear { cleanUpExportedFiles() }
     }
 
-    // loadPDF() writes into the shared tmp directory, which iOS doesn't
-    // clear on any predictable schedule — without this, every "View floor
-    // plan PDF" tap leaves a file behind for the life of the app install.
+    // loadImage()/loadPDF() write into the shared tmp directory, which iOS
+    // doesn't clear on any predictable schedule — without this, every
+    // "Download image"/"Download PDF" tap leaves a file behind for the life
+    // of the app install.
     @MainActor
-    private func cleanUpExportedPDF() {
-        guard let floorPlanPDFURL else { return }
-        try? FileManager.default.removeItem(at: floorPlanPDFURL)
-        self.floorPlanPDFURL = nil
+    private func cleanUpExportedFiles() {
+        for url in [floorPlanImageURL, floorPlanPDFURL].compactMap({ $0 }) {
+            try? FileManager.default.removeItem(at: url)
+        }
+        floorPlanImageURL = nil
+        floorPlanPDFURL = nil
     }
 
     @MainActor
@@ -406,7 +446,10 @@ private struct ResultSummaryView: View {
                 exportError = "The floor plan image couldn't be decoded."
                 return
             }
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(session.id).png")
+            try data.write(to: url)
             floorPlanImage = image
+            floorPlanImageURL = url
             exportError = nil
         } catch {
             exportError = "Couldn't load the floor plan image: \(error.localizedDescription)"

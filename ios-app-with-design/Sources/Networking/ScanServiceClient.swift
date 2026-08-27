@@ -75,6 +75,10 @@ struct ScanServiceClient {
         try await getData(path: "/scan-sessions/\(sessionId)/export/floorplan.pdf", accessToken: accessToken)
     }
 
+    func fetchAccessLog(sessionId: String, accessToken: String) async throws -> AccessLogResponse {
+        try await get(path: "/scan-sessions/\(sessionId)/access-log", accessToken: accessToken)
+    }
+
     func addPhoto(sessionId: String, accessToken: String, url: String, caption: String? = nil, roomId: String? = nil) async throws -> FloorPlan {
         struct Body: Encodable {
             let url: String
