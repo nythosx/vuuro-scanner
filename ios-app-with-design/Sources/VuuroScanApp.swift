@@ -25,7 +25,7 @@ struct ScanFlowView: View {
         case capturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
         case attachments(session: ScanSessionResponse, floorPlan: FloorPlan)
         case summary(session: ScanSessionResponse, floorPlan: FloorPlan)
-        case error(String)
+        case error(AppError)
     }
 
     @State private var stage: Stage = .intake
@@ -52,8 +52,8 @@ struct ScanFlowView: View {
                     } else {
                         stage = .attachments(session: session, floorPlan: floorPlan)
                     }
-                } onError: { message in
-                    stage = .error(message)
+                } onError: { appError in
+                    stage = .error(appError)
                 } onGoBack: {
                     stage = .intake
                 }
@@ -66,8 +66,8 @@ struct ScanFlowView: View {
                 ResultSummaryView(session: session, floorPlan: floorPlan) {
                     stage = .intake
                 }
-            case .error(let message):
-                ErrorView(message: message) { stage = .intake }
+            case .error(let appError):
+                ErrorView(error: appError) { stage = .intake }
             }
         }
     }
@@ -77,7 +77,7 @@ private struct RoomCaptureFlowStep: View {
     let identity: ScanIdentity
     let existingSession: ScanSessionResponse?
     let onRoomCaptured: (ScanSessionResponse, FloorPlan, _ addAnotherRoom: Bool) -> Void
-    let onError: (String) -> Void
+    let onError: (AppError) -> Void
     let onGoBack: () -> Void
 
     @StateObject private var coordinator = CaptureCoordinator()
@@ -155,9 +155,9 @@ private struct RoomCaptureFlowStep: View {
             guard let room = coordinator.capturedRoom else { return }
             Task { await submit(CapturedRoomExporter.export(room)) }
         case .finished(roomAvailable: false):
-            onError("Capture finished without a usable room.")
+            onError(AppError(site: .captureNoRoom, underlying: nil))
         case .failed(let message):
-            onError(message)
+            onError(AppError(site: .captureFailed, underlying: PlainError(message: message)))
         case .scanning:
             break
         }
@@ -167,28 +167,33 @@ private struct RoomCaptureFlowStep: View {
     private func submit(_ export: RoomPlanCaptureExport) async {
         isUploading = true
         defer { isUploading = false }
-        do {
-            let session: ScanSessionResponse
-            if let existingSession {
-                session = existingSession
-            } else {
+        let session: ScanSessionResponse
+        if let existingSession {
+            session = existingSession
+        } else {
+            do {
                 session = try await client.createSession(identity: identity)
-                // Local-only scan history — see History/ScanHistoryEntry.swift's
-                // header for why this can't be a server-side listing.
-                ScanHistoryStore.shared.add(ScanHistoryEntry(
-                    sessionId: session.id,
-                    accessToken: session.accessToken,
-                    propertyId: identity.propertyId,
-                    unitId: identity.unitId,
-                    organisationId: identity.organisationId,
-                    purpose: identity.purpose,
-                    createdAt: Date()
-                ))
+            } catch {
+                onError(AppError(site: .sessionCreate, underlying: error))
+                return
             }
+            // Local-only scan history — see History/ScanHistoryEntry.swift's
+            // header for why this can't be a server-side listing.
+            ScanHistoryStore.shared.add(ScanHistoryEntry(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                propertyId: identity.propertyId,
+                unitId: identity.unitId,
+                organisationId: identity.organisationId,
+                purpose: identity.purpose,
+                createdAt: Date()
+            ))
+        }
+        do {
             let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export)
             justCaptured = (session, floorPlan)
         } catch {
-            onError("Upload failed: \(error.localizedDescription)")
+            onError(AppError(site: .captureUpload, underlying: error))
         }
     }
 }
@@ -225,7 +230,7 @@ private struct AttachmentsScreen: View {
     @State private var noteText = ""
     @State private var photoUrl = ""
     @State private var current: FloorPlan
-    @State private var errorMessage: String?
+    @State private var appError: AppError?
     @State private var isSaving = false
 
     private let client = ScanServiceClient()
@@ -251,8 +256,8 @@ private struct AttachmentsScreen: View {
                     .disabled(photoUrl.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
             }
 
-            if let errorMessage {
-                Text(errorMessage).foregroundStyle(VuuroColor.danger).font(VuuroFont.body(13))
+            if let appError {
+                ErrorCodeView(error: appError)
             }
 
             Section {
@@ -278,9 +283,9 @@ private struct AttachmentsScreen: View {
         do {
             current = try await client.addNote(sessionId: session.id, accessToken: session.accessToken, text: noteText)
             noteText = ""
-            errorMessage = nil
+            appError = nil
         } catch {
-            errorMessage = "Couldn't add note: \(error.localizedDescription)"
+            appError = AppError(site: .noteAdd, underlying: error)
         }
     }
 
@@ -291,9 +296,9 @@ private struct AttachmentsScreen: View {
         do {
             current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: photoUrl)
             photoUrl = ""
-            errorMessage = nil
+            appError = nil
         } catch {
-            errorMessage = "Couldn't add photo: \(error.localizedDescription)"
+            appError = AppError(site: .photoAdd, underlying: error)
         }
     }
 }
@@ -308,7 +313,7 @@ private struct ResultSummaryView: View {
     @State private var floorPlanImage: UIImage?
     @State private var floorPlanImageURL: URL?
     @State private var floorPlanPDFURL: URL?
-    @State private var exportError: String?
+    @State private var appError: AppError?
 
     private let client = ScanServiceClient()
 
@@ -393,8 +398,8 @@ private struct ResultSummaryView: View {
                     }
                 }
 
-                if let exportError {
-                    Text(exportError).foregroundStyle(VuuroColor.danger).font(VuuroFont.body(13))
+                if let appError {
+                    ErrorCodeView(error: appError)
                 }
             }
 
@@ -443,16 +448,16 @@ private struct ResultSummaryView: View {
         do {
             let data = try await client.fetchFloorPlanImage(sessionId: session.id, accessToken: session.accessToken)
             guard let image = UIImage(data: data) else {
-                exportError = "The floor plan image couldn't be decoded."
+                appError = AppError(site: .resultImageDecode, underlying: nil)
                 return
             }
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(session.id).png")
             try data.write(to: url)
             floorPlanImage = image
             floorPlanImageURL = url
-            exportError = nil
+            appError = nil
         } catch {
-            exportError = "Couldn't load the floor plan image: \(error.localizedDescription)"
+            appError = AppError(site: .resultImageLoad, underlying: error)
         }
     }
 
@@ -465,15 +470,15 @@ private struct ResultSummaryView: View {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(session.id).pdf")
             try data.write(to: url)
             floorPlanPDFURL = url
-            exportError = nil
+            appError = nil
         } catch {
-            exportError = "Couldn't load the floor plan PDF: \(error.localizedDescription)"
+            appError = AppError(site: .resultPDFLoad, underlying: error)
         }
     }
 }
 
 private struct ErrorView: View {
-    let message: String
+    let error: AppError
     let onRetry: () -> Void
 
     var body: some View {
@@ -481,9 +486,7 @@ private struct ErrorView: View {
             Text("Something went wrong")
                 .font(VuuroFont.display(20))
                 .foregroundStyle(VuuroColor.textPrimary)
-            Text(message)
-                .font(VuuroFont.body())
-                .foregroundStyle(VuuroColor.textPrimary.opacity(0.6))
+            ErrorCodeView(error: error)
                 .multilineTextAlignment(.center)
             Button("Try again", action: onRetry)
                 .buttonStyle(.vuuroPrimary)

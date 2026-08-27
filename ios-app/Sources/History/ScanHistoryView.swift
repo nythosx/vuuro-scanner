@@ -24,6 +24,7 @@ struct ScanHistoryView: View {
     @State private var bulkPDFURLs: [URL] = []
     @State private var isBulkFetchingImages = false
     @State private var isBulkFetchingPDFs = false
+    @State private var appError: AppError?
     @State private var errorMessage: String?
 
     private let client = ScanServiceClient()
@@ -115,8 +116,12 @@ struct ScanHistoryView: View {
                 }
             }
 
+            if let appError {
+                ErrorCodeView(error: appError)
+            }
+
             if let errorMessage {
-                Text(errorMessage).foregroundStyle(.red).font(.caption)
+                Text(errorMessage).foregroundStyle(.secondary).font(.caption)
             }
         }
         .navigationTitle("Scan history")
@@ -146,9 +151,9 @@ struct ScanHistoryView: View {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(entry.sessionId).png")
             try data.write(to: url)
             perEntryImageURLs[entry.sessionId] = url
-            errorMessage = nil
+            appError = nil
         } catch {
-            errorMessage = "Couldn't download the image for \(entry.propertyId): \(error.localizedDescription)"
+            appError = AppError(site: .historyImageDownload, underlying: error)
         }
     }
 
@@ -159,9 +164,9 @@ struct ScanHistoryView: View {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(entry.sessionId).pdf")
             try data.write(to: url)
             perEntryPDFURLs[entry.sessionId] = url
-            errorMessage = nil
+            appError = nil
         } catch {
-            errorMessage = "Couldn't download the PDF for \(entry.propertyId): \(error.localizedDescription)"
+            appError = AppError(site: .historyPDFDownload, underlying: error)
         }
     }
 
