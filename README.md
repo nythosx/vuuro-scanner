@@ -17,8 +17,14 @@ deferred with a written rationale (`docs/adr/0004-laser-pairing-spike.md`). On t
 that, an enterprise-hardening pass adds access-token expiry/rotation, per-caller-IP and
 per-session rate limiting, idempotent capture retries, a request body size cap, and a
 `GET /health` endpoint — see `scan-service/README.md`'s "Known limits" for exactly what
-each does and doesn't solve. All on branch `feature/vuuro-scan` — the single working
-branch for this whole build, not merged to `main` yet. See
+each does and doesn't solve.
+
+**This branch, `feature/vuuro-scan-design`, is a pick-one variant of `feature/vuuro-scan`:**
+`ios-app/` here is restyled to vuuro.com's actual brand (colors/fonts/buttons pulled from
+the live site's own computed CSS, not guessed) — everything else (Scan Service,
+contracts, docs) is identical between the two branches. Check out this branch to use the
+branded UI, or `feature/vuuro-scan` for the plain, brief-exact UI — pick one, they're not
+meant to be merged together. Neither is merged to `main` yet. See
 [`docs/VUURO_SCAN_LIDAR_DIRECTION_BRIEF_JOVEN_2026-08-06.pdf`](./docs/VUURO_SCAN_LIDAR_DIRECTION_BRIEF_JOVEN_2026-08-06.pdf)
 for the full kickoff brief — the only source of truth for direction on this build.
 
@@ -37,16 +43,13 @@ for the full kickoff brief — the only source of truth for direction on this bu
 - [`docs/adr/0004-laser-pairing-spike.md`](./docs/adr/0004-laser-pairing-spike.md) — why
   Phase 3's optional laser-pairing spike is deferred for now, and the integration sketch
   to start from if a pilot ever asks for it.
-- [`ios-app/`](./ios-app/) — RoomPlan capture flow, **CI-compiled and simulator-tested,
-  not yet run on a real device** (no Mac/Xcode access on this machine, but GitHub
-  Actions builds it for the iOS Simulator and it's been live-tested end to end on
-  appetize.io using DEBUG-only fake-LiDAR/tunnel tooling); see `ios-app/README.md` for
-  exactly what's verified vs. still open, and the checklist for whoever opens it in
-  Xcode first.
-- [`ios-app-with-design/`](./ios-app-with-design/) — an optional, separate copy of
-  `ios-app/` restyled to vuuro.com's actual brand. Not part of the direction brief, not
-  covered by CI, kept fully independent so it never affects `ios-app/`; see
-  `ios-app-with-design/README.md`.
+- [`ios-app/`](./ios-app/) — RoomPlan capture flow, **restyled to vuuro.com's actual
+  brand** on this branch (see `Sources/Design/VuuroDesign.swift`), and
+  **CI-compiled and simulator-tested, not yet run on a real device** (no Mac/Xcode
+  access on this machine, but GitHub Actions builds it for the iOS Simulator and it's
+  been live-tested end to end on appetize.io using DEBUG-only fake-LiDAR/tunnel
+  tooling); see `ios-app/README.md` for exactly what's verified vs. still open, and the
+  checklist for whoever opens it in Xcode first.
 
 ## What this is
 

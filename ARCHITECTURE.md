@@ -2,6 +2,8 @@
 
 This document serves as a critical, living template designed to equip agents with a rapid and comprehensive understanding of the codebase's architecture, enabling efficient navigation and effective contribution from day one. Update this document as the codebase evolves.
 
+**This branch (`feature/vuuro-scan-design`) is a pick-one variant of `feature/vuuro-scan`**: `ios-app/` here is restyled to vuuro.com's actual brand (`Sources/Design/VuuroDesign.swift`) instead of the plain, brief-exact UI on `feature/vuuro-scan`. Everything else — the Scan Service, contracts, docs — is identical between the two branches. Pick one branch to build from; they are not meant to be merged together.
+
 ## 1. Project Structure
 
 ```
@@ -78,6 +80,11 @@ This document serves as a critical, living template designed to equip agents wit
 │   │   │   └── CapturedRoomExporter.swift    # CapturedRoom -> Scan Service JSON
 │   │   ├── Networking/
 │   │   │   └── ScanServiceClient.swift       # HTTP client, X-Scan-Access-Token
+│   │   ├── Design/
+│   │   │   └── VuuroDesign.swift        # Color/type/button tokens pulled from
+│   │   │                                # vuuro.com's own computed CSS — this
+│   │   │                                # branch's whole reason to exist,
+│   │   │                                # see the note at the top of this doc
 │   │   ├── Models/             # Codable structs mirroring the FloorPlan
 │   │   │                       # contract, kept in sync by hand
 │   │   ├── History/            # Local-only scan history + audit log UI
@@ -101,12 +108,6 @@ This document serves as a critical, living template designed to equip agents wit
 │   └── README.md               # Local-only (gitignored) — verification
 │                                # status, checklist for whoever opens this
 │                                # in Xcode first
-├── ios-app-with-design/        # Optional Vuuro-branded restyle of ios-app/ —
-│   │                          # not in the brief, not covered by CI, kept
-│   │                          # fully independent so it can never affect
-│   │                          # ios-app/'s own state
-│   └── Sources/Design/VuuroDesign.swift  # Color/type/button tokens pulled
-│                                          # from vuuro.com's own computed CSS
 ├── web-viewer/                 # Static HTML/JS dev console driving the real
 │   │                          # Scan Service HTTP API end to end (no direct
 │   │                          # PHP-class or SQLite access) — local-only
@@ -168,7 +169,7 @@ This document serves as a critical, living template designed to equip agents wit
   in-process unit tests) and from the manual appetize.io simulator loop above.
 ```
 
-The Scan Service is the only thing every other component agrees with: `ios-app`/`ios-app-with-design` produce `raw_capture` JSON and consume the resulting `FloorPlan`; `web-viewer` drives the same public HTTP API a real client would, with zero special access; the independent net proves the API's behavior from the outside, sharing no code with the adapter/repository/renderer it's checking.
+The Scan Service is the only thing every other component agrees with: `ios-app` produces `raw_capture` JSON and consumes the resulting `FloorPlan`; `web-viewer` drives the same public HTTP API a real client would, with zero special access; the independent net proves the API's behavior from the outside, sharing no code with the adapter/repository/renderer it's checking.
 
 ## 3. Core Components
 
@@ -252,7 +253,7 @@ Two adjacent tools are development/testing aids only, not integrations the runni
 
 Cloud Provider: None. Everything here targets local/CI proof only — no App Store or production deploy required for this build's current arc (CLAUDE.md hard constraint #8).
 
-Key Services Used: Docker (`scan-service/Dockerfile`, host-independent Scan Service run path). GitHub Actions (`.github/workflows/ios-build.yml`) for the iOS side — a macOS runner generates an Xcode project via XcodeGen and builds `ios-app/` for the Simulator (`compile-check`), then a downstream job produces an ad-hoc-signed IPA. `ios-app-with-design/` is **not** built by this workflow.
+Key Services Used: Docker (`scan-service/Dockerfile`, host-independent Scan Service run path). GitHub Actions (`.github/workflows/ios-build.yml`) for the iOS side — a macOS runner generates an Xcode project via XcodeGen and builds `ios-app/` (the branded UI, on this branch) for the Simulator (`compile-check`), then a downstream job produces an ad-hoc-signed IPA.
 
 CI/CD Pipeline: `.github/workflows/ios-build.yml` is the only CI in this repo today. The Scan Service's own "merge gate" (`scan-service/net/verify_*.php` + `scan-service/tests/*_test.php`) is currently run manually per `scan-service/README.md`, not wired into a CI pipeline yet.
 
@@ -277,7 +278,7 @@ Key Security Tools/Practices:
 
 ## 8. Development & Testing Environment
 
-Local Setup Instructions: See `scan-service/README.md` "Run it (native PHP, no Docker)" and "Run it (Docker, host-independent)". No Mac/Xcode locally for `ios-app/`/`ios-app-with-design/` — see each README's verification-status section for exactly what is and isn't proven without one.
+Local Setup Instructions: See `scan-service/README.md` "Run it (native PHP, no Docker)" and "Run it (Docker, host-independent)". No Mac/Xcode locally for `ios-app/` — see its README's verification-status section for exactly what is and isn't proven without one.
 
 Testing Frameworks:
 - Scan Service: hand-rolled PHP test scripts, no framework. `tests/*_test.php` (fast, in-process: `adapter_test.php`, `repository_test.php`, `export_renderer_test.php`, `concurrency_test.php`) and `net/verify_*.php` (the independent, HTTP-only merge gate — 8 chained scripts + 1 deliberately standalone, see `scan-service/README.md`).
@@ -288,7 +289,7 @@ Code Quality Tools: None automated yet (no linter/formatter config found in this
 ## 9. Future Considerations / Roadmap
 
 - **iOS real-device verification** — the single biggest open item. Everything in `ios-app/` is CI-compiled and appetize.io-simulator-verified, never run on a Mac, a real device, or against real LiDAR hardware. See `ios-app/README.md`'s checklist for whoever opens this in Xcode first.
-- **`ios-app-with-design/` promotion decision** — currently an uncompiled, CI-uncovered branded variant kept deliberately separate from `ios-app/`. If it's ever promoted, diff it against `ios-app/` for business-logic drift first, then either point CI at it or fold it back in and retire the copy (see `ios-app-with-design/README.md`).
+- **Branch choice: plain vs. branded `ios-app/`** — this branch (`feature/vuuro-scan-design`) and `feature/vuuro-scan` diverge only in `ios-app/`'s styling. If Mark picks the branded one, this branch's history should be rebased/merged forward as the primary line and `feature/vuuro-scan` retired (or vice versa) — don't let both live long-term as separate branches past that decision.
 - **Laser-pairing spike** — deliberately deferred with a written rationale and integration sketch; revisit only if a named pilot or Mark asks for ground-truth measurement validation (`docs/adr/0004`).
 - **Real fused multi-room floor plan layout** — blocked on the capture flow moving to one continuous multi-room RoomPlan session per unit rather than one session per room; `outline_m` staying room-local today is the honest data to have either way (`docs/adr/0002`).
 - **Real Vuuro account auth** — the per-session token model is designed to compose underneath a future account system once Vuuro API coupling is decided, not to be replaced wholesale (`docs/adr/0003`).
