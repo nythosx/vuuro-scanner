@@ -17,7 +17,7 @@ struct AccessLogView: View {
 
     @State private var isLoading = false
     @State private var log: [AccessLogEntry] = []
-    @State private var errorMessage: String?
+    @State private var appError: AppError?
 
     private let client = ScanServiceClient()
 
@@ -26,7 +26,7 @@ struct AccessLogView: View {
             if isLoading {
                 ProgressView()
                     .tint(VuuroColor.primary)
-            } else if log.isEmpty && errorMessage == nil {
+            } else if log.isEmpty && appError == nil {
                 Text("No access attempts recorded yet.")
                     .font(VuuroFont.body())
                     .foregroundStyle(VuuroColor.textPrimary.opacity(0.6))
@@ -50,8 +50,8 @@ struct AccessLogView: View {
                 .padding(.vertical, 2)
             }
 
-            if let errorMessage {
-                Text(errorMessage).foregroundStyle(VuuroColor.danger).font(VuuroFont.body(13))
+            if let appError {
+                ErrorCodeView(error: appError)
             }
         }
         .tint(VuuroColor.primary)
@@ -68,9 +68,9 @@ struct AccessLogView: View {
         do {
             let response = try await client.fetchAccessLog(sessionId: sessionId, accessToken: accessToken)
             log = response.accessLog
-            errorMessage = nil
+            appError = nil
         } catch {
-            errorMessage = "Couldn't load the access log: \(error.localizedDescription)"
+            appError = AppError(site: .accessLog, underlying: error)
         }
     }
 }
