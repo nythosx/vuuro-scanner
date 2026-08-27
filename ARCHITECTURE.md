@@ -96,6 +96,16 @@ This document serves as a critical, living template designed to equip agents wit
 │   │   │   ├── ScanHistoryView.swift   # Per-session image/PDF download +
 │   │   │   │                           # bulk "download all" across history
 │   │   │   └── AccessLogView.swift     # GET .../access-log, in-app
+│   │   ├── Diagnostics/         # Deterministic error-code mechanism
+│   │   │   ├── AppError.swift          # code is DERIVED from the real
+│   │   │   │                           # caught error (HTTP status/transport
+│   │   │   │                           # failure), never guessed — one place
+│   │   │   │                           # owns the mapping so every screen
+│   │   │   │                           # shows the same code for the same
+│   │   │   │                           # failure
+│   │   │   └── ErrorCodeView.swift     # Renders the code + a "Copy error
+│   │   │                               # details" button (clipboard only —
+│   │   │                               # no backend/telemetry)
 │   │   └── Debug/              # DEBUG-only, compiled out of Release
 │   │       ├── FakeLidarMode.swift        # synthetic capture data, so a
 │   │       │                              # cloud/no-LiDAR simulator has
@@ -216,7 +226,7 @@ Deployment: In-process with the Scan Service.
 
 Name: VuuroScan iOS app
 
-Description: SwiftUI app wiring identity/consent intake -> device-capability check (`DeviceCapability.isRoomPlanSupported`) -> one or more guided RoomPlan captures stitched onto one scan session -> optional photo/note attachments -> results. `Sources/Debug/` (compiled out of Release) provides `FakeLidarMode` (synthetic capture data, since neither a Mac nor a cloud simulator has real LiDAR) and `DebugScanServiceURL` (points at a tunnel reachable from a cloud simulator, since `127.0.0.1` isn't). CI-compiled and appetize.io-verified end to end (capture -> upload -> results -> PDF export); real-device/real-LiDAR behavior is still unverified.
+Description: SwiftUI app wiring identity/consent intake -> device-capability check (`DeviceCapability.isRoomPlanSupported`) -> one or more guided RoomPlan captures stitched onto one scan session -> optional photo/note attachments -> results. `Sources/Debug/` (compiled out of Release) provides `FakeLidarMode` (synthetic capture data, since neither a Mac nor a cloud simulator has real LiDAR) and `DebugScanServiceURL` (points at a tunnel reachable from a cloud simulator, since `127.0.0.1` isn't). CI-compiled and appetize.io-verified end to end (capture -> upload -> results -> PDF export); real-device/real-LiDAR behavior is still unverified. Every user-facing failure is wrapped by `Sources/Diagnostics/AppError.swift` into a short code (e.g. `VS-CAPTURE_UPLOAD-500`) derived directly from the real caught error, with a one-tap "Copy error details" action — the mechanism whoever is running the app (Mark, on a real device) uses to report a failure precisely enough to act on, with no telemetry/backend involved.
 
 Technologies: Swift, SwiftUI, RoomPlan/ARKit (per public API docs — never compiled against the real SDK locally).
 
