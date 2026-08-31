@@ -4,6 +4,10 @@
 # Scan Service local runtime data
 scan-service/data/
 
+# Scratch appetize.io build extraction/repackaging, never a project artifact
+.appetize-build/
+.appetize-build2/
+
 # OS
 .DS_Store
 Thumbs.db

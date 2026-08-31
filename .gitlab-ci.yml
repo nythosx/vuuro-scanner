@@ -74,3 +74,31 @@ scan-service-net:
     - changes:
         - scan-service/**/*
         - .gitlab-ci.yml
+
+# scan-service-net above never touches the Dockerfile at all (it runs PHP
+# straight on the runner host), so it stayed green through a whole build of
+# ba2f729's Dockerfile being broken (--with-jpeg with no libjpeg-dev,
+# pdo_sqlite with no libsqlite3-dev - Mark found it testing on his Mac,
+# 2026-09-01, since he runs the Scan Service via Docker there). This job
+# closes that gap: a real `docker build` + `docker run` + /health check on
+# this same runner host, via Docker-in-WSL2 (Ubuntu, installed as
+# docker.io, run as root to avoid needing an interactive sudo password on a
+# non-interactive runner). Without this, "the Dockerfile builds" is once
+# again a claim nothing re-checks on the next change to it.
+scan-service-docker-build:
+  stage: test
+  tags:
+    - windows-shell
+  script:
+    - $projectRoot = (Get-Location).Path
+    - $wslRoot = "/mnt/" + $projectRoot.Substring(0,1).ToLower() + $projectRoot.Substring(2).Replace('\','/')
+    - wsl -d Ubuntu -u root -- bash -c "service docker status >/dev/null 2>&1 || service docker start"
+    - wsl -d Ubuntu -u root -- bash -c "docker rm -f vuuro-ci-dockercheck >/dev/null 2>&1; cd '$wslRoot/scan-service' && docker build -t vuuro-ci-scan-service ."
+    - wsl -d Ubuntu -u root -- bash -c "docker run -d --name vuuro-ci-dockercheck -p 18099:8089 vuuro-ci-scan-service"
+    - Start-Sleep -Seconds 3
+    - wsl -d Ubuntu -u root -- bash -c "curl -sf http://127.0.0.1:18099/health"
+    - wsl -d Ubuntu -u root -- bash -c "docker rm -f vuuro-ci-dockercheck"
+  rules:
+    - changes:
+        - scan-service/**/*
+        - .gitlab-ci.yml
