@@ -14,11 +14,14 @@
 # pdo_sqlite/gd/curl/mbstring must be pre-installed there (see the runner
 # host's own setup, not this file).
 #
-# Every "this might not exist yet" cleanup below uses try/-ErrorAction Stop/
-# catch, never bare -ErrorAction SilentlyContinue: GitLab's PowerShell shell
-# treats a non-terminating error as a failed line even when SilentlyContinue
-# hides its text, which silently aborted step_script here with zero output
-# the first time this ran (Remove-Item on a not-yet-existing sqlite file).
+# Every "this might not exist yet" cleanup below is written to never raise a
+# PowerShell error in the first place (Test-Path / HasExited / an unfiltered
+# Get-Process piped through Where-Object) rather than raising one and trying
+# to catch it: GitLab's PowerShell shell treats $? as failed for the whole
+# line even when a try/catch around the failing call swallowed the
+# exception, which silently aborted step_script here twice in a row with
+# zero visible error (first on a bare Remove-Item on a not-yet-existing
+# sqlite file, then again on the same line wrapped in try/catch).
 
 stages:
   - test
@@ -34,7 +37,7 @@ scan-service-net:
     - php tests/repository_test.php
     - php tests/export_renderer_test.php
     - php tests/concurrency_test.php
-    - try { Remove-Item -Force -ErrorAction Stop data\scan_service.sqlite } catch {}
+    - if (Test-Path data\scan_service.sqlite) { Remove-Item -Force data\scan_service.sqlite }
     - $server1 = Start-Process -FilePath php -ArgumentList "-d","post_max_size=16M","-d","display_errors=0","-S","127.0.0.1:8089","public/index.php" -WindowStyle Hidden -PassThru
     - |
       for ($i = 0; $i -lt 20; $i++) {
@@ -52,8 +55,8 @@ scan-service-net:
     - php net/verify_security_fixes.php http://127.0.0.1:8089
     - php net/verify_error_messages.php http://127.0.0.1:8089
     - php net/verify_enterprise_hardening.php http://127.0.0.1:8089
-    - try { Stop-Process -Id $server1.Id -Force -ErrorAction Stop } catch {}
-    - try { Remove-Item -Force -ErrorAction Stop data\scan_service.sqlite } catch {}
+    - if (-not $server1.HasExited) { Stop-Process -Id $server1.Id -Force }
+    - if (Test-Path data\scan_service.sqlite) { Remove-Item -Force data\scan_service.sqlite }
     - $server2 = Start-Process -FilePath php -ArgumentList "-d","post_max_size=16M","-d","display_errors=0","-S","127.0.0.1:9499","public/index.php" -WindowStyle Hidden -PassThru
     - |
       for ($i = 0; $i -lt 20; $i++) {
@@ -64,9 +67,9 @@ scan-service-net:
         Start-Sleep -Milliseconds 500
       }
     - php net/verify_post_body_read_rate_limit.php http://127.0.0.1:9499
-    - try { Stop-Process -Id $server2.Id -Force -ErrorAction Stop } catch {}
+    - if (-not $server2.HasExited) { Stop-Process -Id $server2.Id -Force }
   after_script:
-    - try { Get-Process php -ErrorAction Stop | Stop-Process -Force -ErrorAction Stop } catch {}
+    - Get-Process | Where-Object { $_.ProcessName -eq 'php' } | ForEach-Object { Stop-Process -Id $_.Id -Force }
   rules:
     - changes:
         - scan-service/**/*
