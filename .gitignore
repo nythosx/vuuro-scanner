@@ -4,9 +4,12 @@
 # Scan Service local runtime data
 scan-service/data/
 
-# Scratch appetize.io build extraction/repackaging, never a project artifact
-.appetize-build/
-.appetize-build2/
+# Scratch appetize.io build extraction/repackaging, never a project artifact.
+# Wildcarded since a new numbered dir gets created each retest cycle -
+# .appetize-build/ and .appetize-build2/ alone missed .appetize-build3/ and
+# .appetize-build4/, which sat untracked instead of ignored.
+.appetize-build*/
+.appetize-evidence/
 
 # OS
 .DS_Store
