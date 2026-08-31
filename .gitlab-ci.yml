@@ -5,9 +5,14 @@
 # Runs on a project-registered shell-executor runner (tag: windows-shell) —
 # no shared-runner CI/CD minutes required. `image:` is ignored by a shell
 # executor; it's left here as the documented target if this ever moves to a
-# docker-executor runner instead. A shell executor uses whatever's already on
-# the runner host, so PHP + pdo_sqlite/gd/curl/mbstring must be pre-installed
-# there (see the runner host's own setup, not this file).
+# docker-executor runner instead. Script is PowerShell, not bash: GitLab's
+# own Windows shell-executor guidance is to use powershell/pwsh, not bash —
+# Git-for-Windows' MSYS2 bash.exe doesn't behave reliably when GitLab Runner
+# launches it detached/without a console (confirmed while wiring this up: it
+# returns exit 0 and drops all output even for a trivial `exit 7`). A shell
+# executor uses whatever's already on the runner host, so PHP with
+# pdo_sqlite/gd/curl/mbstring must be pre-installed there (see the runner
+# host's own setup, not this file).
 
 stages:
   - test
@@ -23,13 +28,16 @@ scan-service-net:
     - php tests/repository_test.php
     - php tests/export_renderer_test.php
     - php tests/concurrency_test.php
-    - rm -f data/scan_service.sqlite
-    - php -d post_max_size=16M -d display_errors=0 -S 127.0.0.1:8089 public/index.php &
+    - Remove-Item -Force -ErrorAction SilentlyContinue data\scan_service.sqlite
+    - $server1 = Start-Process -FilePath php -ArgumentList "-d","post_max_size=16M","-d","display_errors=0","-S","127.0.0.1:8089","public/index.php" -WindowStyle Hidden -PassThru
     - |
-      for i in $(seq 1 20); do
-        curl -sf http://127.0.0.1:8089/health > /dev/null && break
-        sleep 0.5
-      done
+      for ($i = 0; $i -lt 20; $i++) {
+        try {
+          $r = Invoke-WebRequest -Uri http://127.0.0.1:8089/health -UseBasicParsing -TimeoutSec 1
+          if ($r.StatusCode -eq 200) { break }
+        } catch {}
+        Start-Sleep -Milliseconds 500
+      }
     - php net/verify_capture_geometry.php http://127.0.0.1:8089
     - php net/verify_multiroom_and_attachments.php http://127.0.0.1:8089
     - php net/verify_exports.php http://127.0.0.1:8089
@@ -38,14 +46,21 @@ scan-service-net:
     - php net/verify_security_fixes.php http://127.0.0.1:8089
     - php net/verify_error_messages.php http://127.0.0.1:8089
     - php net/verify_enterprise_hardening.php http://127.0.0.1:8089
-    - rm -f data/scan_service.sqlite
-    - php -d post_max_size=16M -d display_errors=0 -S 127.0.0.1:9499 public/index.php &
+    - Stop-Process -Id $server1.Id -Force -ErrorAction SilentlyContinue
+    - Remove-Item -Force -ErrorAction SilentlyContinue data\scan_service.sqlite
+    - $server2 = Start-Process -FilePath php -ArgumentList "-d","post_max_size=16M","-d","display_errors=0","-S","127.0.0.1:9499","public/index.php" -WindowStyle Hidden -PassThru
     - |
-      for i in $(seq 1 20); do
-        curl -sf http://127.0.0.1:9499/health > /dev/null && break
-        sleep 0.5
-      done
+      for ($i = 0; $i -lt 20; $i++) {
+        try {
+          $r = Invoke-WebRequest -Uri http://127.0.0.1:9499/health -UseBasicParsing -TimeoutSec 1
+          if ($r.StatusCode -eq 200) { break }
+        } catch {}
+        Start-Sleep -Milliseconds 500
+      }
     - php net/verify_post_body_read_rate_limit.php http://127.0.0.1:9499
+    - Stop-Process -Id $server2.Id -Force -ErrorAction SilentlyContinue
+  after_script:
+    - Get-Process php -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
   rules:
     - changes:
         - scan-service/**/*
