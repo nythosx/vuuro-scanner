@@ -3,7 +3,11 @@ FROM php:8.3-cli
 WORKDIR /app
 COPY . /app
 
-RUN docker-php-ext-install pdo_sqlite
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libpng-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && docker-php-ext-configure gd --with-jpeg \
+    && docker-php-ext-install pdo_sqlite gd
 
 EXPOSE 8089
 ENV SCAN_SERVICE_DB_PATH=/app/data/scan_service.sqlite
