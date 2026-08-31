@@ -191,7 +191,7 @@ notable calls made, and the reasoning:
 **Standing (verified, not just claimed):**
 
 - Scan Service core (sessions, capture ingest, real photo-byte uploads, notes,
-  PNG/PDF export, access-log) — 114 unit checks + 251 independent-net checks, run
+  PNG/PDF export, access-log) — 114 unit checks + 270 independent-net checks, run
   fresh today, all green.
 - Consent gate, per-session/per-IP rate limiting, idempotent capture retries, request
   body-size cap, and the write-lock concurrency fix — all covered by that same net.
