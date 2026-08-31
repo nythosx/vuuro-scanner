@@ -3,10 +3,15 @@ FROM php:8.3-cli
 WORKDIR /app
 COPY . /app
 
+# libpng-dev is gd's own dependency; libsqlite3-dev is pdo_sqlite's -
+# docker-php-ext-install compiles both extensions from source against these
+# headers, so both are required even though only libpng-dev was here before
+# (confirmed failing to build without libsqlite3-dev - Mark, 2026-09-01).
+# No --with-jpeg/libjpeg-dev: FloorPlanImageRenderer only ever calls
+# imagepng(), never imagejpeg(), so there is nothing here that needs it.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libpng-dev \
+    && apt-get install -y --no-install-recommends libpng-dev libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/* \
-    && docker-php-ext-configure gd --with-jpeg \
     && docker-php-ext-install pdo_sqlite gd
 
 EXPOSE 8089

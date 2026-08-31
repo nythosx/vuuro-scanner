@@ -17,6 +17,18 @@ targets:
       properties:
         CFBundleDisplayName: Vuuro Scan
         NSCameraUsageDescription: Vuuro Scan uses the camera and LiDAR sensor to capture room geometry for floor plans.
+        # Without this, iOS blocks plain-HTTP capture uploads to a LAN IP on a
+        # real device by default (only localhost is exempt) - this never
+        # surfaced on appetize.io (https tunnel) or the Simulator (127.0.0.1)
+        # (Mark, 2026-09-01). NSAllowsLocalNetworking only exempts local/
+        # private network ranges and loopback, not arbitrary internet
+        # cleartext, so it's narrow enough to ship in Release too - not
+        # scoped to Debug-only here because XcodeGen's `info.properties`
+        # generates one shared Info.plist for every configuration; a true
+        # Debug-only split would need a raw Info.plist source file processed
+        # with INFOPLIST_PREPROCESS/#ifdef instead of this declarative block.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
