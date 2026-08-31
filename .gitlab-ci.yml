@@ -13,6 +13,12 @@
 # executor uses whatever's already on the runner host, so PHP with
 # pdo_sqlite/gd/curl/mbstring must be pre-installed there (see the runner
 # host's own setup, not this file).
+#
+# Every "this might not exist yet" cleanup below uses try/-ErrorAction Stop/
+# catch, never bare -ErrorAction SilentlyContinue: GitLab's PowerShell shell
+# treats a non-terminating error as a failed line even when SilentlyContinue
+# hides its text, which silently aborted step_script here with zero output
+# the first time this ran (Remove-Item on a not-yet-existing sqlite file).
 
 stages:
   - test
@@ -28,7 +34,7 @@ scan-service-net:
     - php tests/repository_test.php
     - php tests/export_renderer_test.php
     - php tests/concurrency_test.php
-    - Remove-Item -Force -ErrorAction SilentlyContinue data\scan_service.sqlite
+    - try { Remove-Item -Force -ErrorAction Stop data\scan_service.sqlite } catch {}
     - $server1 = Start-Process -FilePath php -ArgumentList "-d","post_max_size=16M","-d","display_errors=0","-S","127.0.0.1:8089","public/index.php" -WindowStyle Hidden -PassThru
     - |
       for ($i = 0; $i -lt 20; $i++) {
@@ -46,8 +52,8 @@ scan-service-net:
     - php net/verify_security_fixes.php http://127.0.0.1:8089
     - php net/verify_error_messages.php http://127.0.0.1:8089
     - php net/verify_enterprise_hardening.php http://127.0.0.1:8089
-    - Stop-Process -Id $server1.Id -Force -ErrorAction SilentlyContinue
-    - Remove-Item -Force -ErrorAction SilentlyContinue data\scan_service.sqlite
+    - try { Stop-Process -Id $server1.Id -Force -ErrorAction Stop } catch {}
+    - try { Remove-Item -Force -ErrorAction Stop data\scan_service.sqlite } catch {}
     - $server2 = Start-Process -FilePath php -ArgumentList "-d","post_max_size=16M","-d","display_errors=0","-S","127.0.0.1:9499","public/index.php" -WindowStyle Hidden -PassThru
     - |
       for ($i = 0; $i -lt 20; $i++) {
@@ -58,9 +64,9 @@ scan-service-net:
         Start-Sleep -Milliseconds 500
       }
     - php net/verify_post_body_read_rate_limit.php http://127.0.0.1:9499
-    - Stop-Process -Id $server2.Id -Force -ErrorAction SilentlyContinue
+    - try { Stop-Process -Id $server2.Id -Force -ErrorAction Stop } catch {}
   after_script:
-    - Get-Process php -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    - try { Get-Process php -ErrorAction Stop | Stop-Process -Force -ErrorAction Stop } catch {}
   rules:
     - changes:
         - scan-service/**/*
