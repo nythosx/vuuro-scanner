@@ -1,6 +1,13 @@
 # Mirrors .github/workflows/scan-service-ci.yml's merge gate on GitLab, where
 # merges to this repo actually happen (the GitHub mirror is a CI convenience
 # for the iOS/macOS build only — Actions results there block nothing here).
+#
+# Runs on a project-registered shell-executor runner (tag: windows-shell) —
+# no shared-runner CI/CD minutes required. `image:` is ignored by a shell
+# executor; it's left here as the documented target if this ever moves to a
+# docker-executor runner instead. A shell executor uses whatever's already on
+# the runner host, so PHP + pdo_sqlite/gd/curl/mbstring must be pre-installed
+# there (see the runner host's own setup, not this file).
 
 stages:
   - test
@@ -8,9 +15,8 @@ stages:
 scan-service-net:
   stage: test
   image: php:8.3-cli
-  before_script:
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends libsqlite3-dev libpng-dev curl
-    - docker-php-ext-install pdo_sqlite gd
+  tags:
+    - windows-shell
   script:
     - cd scan-service
     - php tests/adapter_test.php
