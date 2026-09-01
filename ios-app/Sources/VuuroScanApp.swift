@@ -2,7 +2,13 @@
 //  VuuroScanApp.swift
 //  VuuroScan
 //
-//  WRITTEN, NOT COMPILED OR RUN — see Models/ScanIdentity.swift header.
+//  Real-device confirmed for the core flow through Mark's 2026-09-01 test
+//  (feature/vuuro-scan @ a3c6284): identity intake, RoomCaptureScreen with
+//  live AR wireframe/coaching, and the error screen all ran for real. The
+//  Done/Stop button, Cancel button, and partial-capture recovery in this
+//  file were added after that test and are compiled-via-CI only so far —
+//  not yet run on real hardware, see Models/ScanIdentity.swift header for
+//  what that distinction means generally.
 import PhotosUI
 import RoomPlan
 import SwiftUI
@@ -25,7 +31,13 @@ struct ScanFlowView: View {
         case capturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
         case attachments(session: ScanSessionResponse, floorPlan: FloorPlan)
         case summary(session: ScanSessionResponse, floorPlan: FloorPlan)
-        case error(AppError)
+        // Carries identity/existingSession, not just the error, so "Try
+        // again" can resume the same multi-room session instead of resetting
+        // to blank intake. Real gap this closes: Mark's actual test was a
+        // 2-room session (attic, then bathroom) — without this, a room 2
+        // failure would silently orphan room 1's already-created session
+        // instead of letting him retry room 2 into it.
+        case error(AppError, identity: ScanIdentity, existingSession: ScanSessionResponse?)
     }
 
     @State private var stage: Stage = .intake
@@ -52,7 +64,7 @@ struct ScanFlowView: View {
                         stage = .attachments(session: session, floorPlan: floorPlan)
                     }
                 } onError: { appError in
-                    stage = .error(appError)
+                    stage = .error(appError, identity: identity, existingSession: session)
                 } onGoBack: {
                     stage = .intake
                 }
@@ -65,8 +77,10 @@ struct ScanFlowView: View {
                 ResultSummaryView(session: session, floorPlan: floorPlan) {
                     stage = .intake
                 }
-            case .error(let appError):
-                ErrorView(error: appError) { stage = .intake }
+            case .error(let appError, let identity, let existingSession):
+                ErrorView(error: appError) {
+                    stage = .capturing(identity: identity, session: existingSession, attempt: UUID())
+                }
             }
         }
     }
@@ -82,6 +96,9 @@ private struct RoomCaptureFlowStep: View {
     @StateObject private var coordinator = CaptureCoordinator()
     @State private var isUploading = false
     @State private var justCaptured: (session: ScanSessionResponse, floorPlan: FloorPlan)?
+    @State private var didRequestStop = false
+    @State private var partialCaptureFailureMessage: String?
+    @State private var isUploadingPartialCapture = false
 
     private let client = ScanServiceClient()
 
@@ -108,6 +125,40 @@ private struct RoomCaptureFlowStep: View {
                 AnotherRoomPromptView(roomCount: justCaptured.floorPlan.rooms.count) { addAnother in
                     onRoomCaptured(justCaptured.session, justCaptured.floorPlan, addAnother)
                 }
+            } else if isUploadingPartialCapture {
+                // Checked ahead of partialCaptureFailureMessage and the real-
+                // capture branch below, on purpose: real bug caught in review
+                // before this ever reached Mark — clearing
+                // partialCaptureFailureMessage synchronously while submit()
+                // only sets isUploading = true one Task{} hop later left a
+                // render frame where every guard here was false, which fell
+                // through to the bare capture branch and fired
+                // coordinator.start() again on an already-ended session
+                // (flashing the live camera back on mid-upload). Setting this
+                // flag synchronously, in the same scope that clears
+                // partialCaptureFailureMessage, closes that gap.
+                ProgressView("Uploading capture…")
+                    .padding()
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            } else if let partialCaptureFailureMessage {
+                // Answers Mark's real-device question directly: RoomPlan can
+                // still hand back reconstructable geometry after a session-
+                // ending error like world tracking failure (see
+                // CaptureCoordinator.didEndWith) — so discard-and-retry isn't
+                // the only honest option when that happens. Only reachable
+                // when coordinator.capturedRoom is actually set (see handle
+                // below), so the force-unwrap in onUsePartial is safe.
+                PartialCaptureFailureView(
+                    message: partialCaptureFailureMessage,
+                    onUsePartial: {
+                        let room = coordinator.capturedRoom!
+                        isUploadingPartialCapture = true
+                        Task { await submit(CapturedRoomExporter.export(room)) }
+                    },
+                    onDiscard: {
+                        onError(AppError(site: .captureFailed, underlying: PlainError(message: partialCaptureFailureMessage)))
+                    }
+                )
             } else if !DeviceCapability.isRoomPlanSupported {
                 // debugFakeCaptureActive must be true to reach here (see the
                 // first branch) — real hardware doesn't support RoomPlan, but
@@ -135,6 +186,48 @@ private struct RoomCaptureFlowStep: View {
                         ProgressView("Uploading capture…")
                             .padding()
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    } else if didRequestStop {
+                        // Gap between tapping Done and RoomPlan actually
+                        // delivering didEndWith (real bug Mark found on a
+                        // real device: without this, and without isUploading
+                        // yet true, there was no way to end a scan at all —
+                        // start() ran on appear but nothing ever called
+                        // coordinator.stop()).
+                        ProgressView("Finishing scan…")
+                            .padding()
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    } else if coordinator.state == .scanning {
+                        VStack {
+                            // Same bug class as the missing Done button, other
+                            // direction: without this, a user who entered
+                            // capture by mistake (wrong unit, changed their
+                            // mind) had no way back except forcing an error —
+                            // there's no automatic nav-bar back button here
+                            // since this stage swaps in via @State, not a
+                            // NavigationStack push, and .ignoresSafeArea()
+                            // covers the whole screen.
+                            HStack {
+                                Button {
+                                    coordinator.stop()
+                                    onGoBack()
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.headline)
+                                        .padding(10)
+                                        .background(.regularMaterial, in: Circle())
+                                }
+                                .padding(.leading, 20)
+                                .padding(.top, 8)
+                                Spacer()
+                            }
+                            Spacer()
+                            Button("Done") {
+                                didRequestStop = true
+                                coordinator.stop()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .padding(.bottom, 40)
+                        }
                     }
                 }
                 .onAppear { coordinator.start() }
@@ -152,8 +245,24 @@ private struct RoomCaptureFlowStep: View {
             Task { await submit(CapturedRoomExporter.export(room)) }
         case .finished(roomAvailable: false):
             onError(AppError(site: .captureNoRoom, underlying: nil))
-        case .failed(let message):
-            onError(AppError(site: .captureFailed, underlying: PlainError(message: message)))
+        case .failed(let message, let partialRoomAvailable):
+            if partialRoomAvailable {
+                // Route through the local partial-capture choice, not
+                // straight to onError — see the body's dedicated branch.
+                partialCaptureFailureMessage = message
+            } else if didRequestStop {
+                // The Done button (new, untested on real hardware until
+                // Mark's next run) has no minimum-scan-time guard, so an
+                // experimental tap right after appearing is a real scenario
+                // — RoomBuilder throwing on essentially-empty data here isn't
+                // a crash/error, it's "nothing to build yet." Same case
+                // .finished(roomAvailable: false) already has a friendly
+                // message for; use it here too instead of RoomBuilder's raw
+                // (likely cryptic) thrown-error text.
+                onError(AppError(site: .captureNoRoom, underlying: nil))
+            } else {
+                onError(AppError(site: .captureFailed, underlying: PlainError(message: message)))
+            }
         case .scanning:
             break
         }
@@ -207,6 +316,35 @@ private struct AnotherRoomPromptView: View {
             Button("Scan another room") { onChoice(true) }
                 .buttonStyle(.borderedProminent)
             Button("Finish unit") { onChoice(false) }
+        }
+        .padding()
+    }
+}
+
+// Real-device finding (Mark, 2026-09-01): a session-ending error like
+// CaptureError.worldTrackingFailure doesn't necessarily mean nothing was
+// captured — RoomBuilder can still reconstruct a room from the partial
+// CapturedRoomData RoomPlan hands back alongside the error (see
+// CaptureCoordinator.didEndWith). This view is what turns that into an
+// actual choice instead of forcing discard-and-retry every time.
+private struct PartialCaptureFailureView: View {
+    let message: String
+    let onUsePartial: () -> Void
+    let onDiscard: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Scan interrupted").font(.headline)
+            Text(message)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Text("Some of this room was captured before the interruption. You can try uploading it as-is, or discard it and scan again.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Upload what was captured") { onUsePartial() }
+                .buttonStyle(.borderedProminent)
+            Button("Discard and try again", role: .destructive) { onDiscard() }
         }
         .padding()
     }

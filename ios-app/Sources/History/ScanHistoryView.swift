@@ -75,6 +75,14 @@ struct ScanHistoryView: View {
                     NavigationLink("Access log") {
                         AccessLogView(sessionId: entry.sessionId, accessToken: entry.accessToken)
                     }
+
+                    // ScanHistoryStore.remove(sessionId:) already existed but
+                    // was never called from anywhere in the app — same
+                    // designed-but-unwired pattern as this project's other
+                    // real findings. This is what actually wires it.
+                    Button("Delete this scan", role: .destructive) {
+                        deleteEntry(entry)
+                    }
                 }
             }
 
@@ -142,6 +150,20 @@ struct ScanHistoryView: View {
         perEntryPDFURLs = [:]
         bulkImageURLs = []
         bulkPDFURLs = []
+    }
+
+    @MainActor
+    private func deleteEntry(_ entry: ScanHistoryEntry) {
+        if let url = perEntryImageURLs[entry.sessionId] {
+            try? FileManager.default.removeItem(at: url)
+        }
+        if let url = perEntryPDFURLs[entry.sessionId] {
+            try? FileManager.default.removeItem(at: url)
+        }
+        perEntryImageURLs[entry.sessionId] = nil
+        perEntryPDFURLs[entry.sessionId] = nil
+        ScanHistoryStore.shared.remove(sessionId: entry.sessionId)
+        entries = ScanHistoryStore.shared.all()
     }
 
     @MainActor
