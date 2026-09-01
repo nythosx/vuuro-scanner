@@ -32,7 +32,13 @@ final class CaptureCoordinator: NSObject, ObservableObject {
         case failed(String, partialRoomAvailable: Bool)
     }
 
-    @Published private(set) var state: State = .scanning
+    // didSet, not a wrapper around every assignment site, so no future state
+    // change can silently skip logging. Ported from ios-app/'s copy.
+    @Published private(set) var state: State = .scanning {
+        didSet {
+            DiagnosticsLog.shared.record("Capture state -> \(state)", category: .state)
+        }
+    }
 
     private(set) var capturedRoom: CapturedRoom?
 
@@ -102,6 +108,15 @@ extension CaptureCoordinator: RoomCaptureSessionDelegate {
             } catch {
                 self.state = .failed(error.localizedDescription, partialRoomAvailable: false)
             }
+        }
+    }
+
+    // RoomPlan's own real-time guidance — logged so a report comes with what
+    // RoomPlan was telling the tester right before a failure, not just the
+    // final error. Ported from ios-app/'s copy of this file.
+    nonisolated func captureSession(_ session: RoomCaptureSession, didProvide instruction: RoomCaptureSession.Instruction) {
+        Task { @MainActor in
+            DiagnosticsLog.shared.record("RoomPlan instruction: \(instruction)", category: .instruction)
         }
     }
 }

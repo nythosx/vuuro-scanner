@@ -41,8 +41,33 @@ struct ScanFlowView: View {
     }
 
     @State private var stage: Stage = .intake
+    @State private var showDiagnostics = false
 
     var body: some View {
+        ZStack(alignment: .topLeading) {
+            content
+            // Top-leading, opposite corner from the capture screen's back
+            // button (top-trailing) so the two never overlap. Shown across
+            // every stage, not just capturing, since real errors happen in
+            // session creation/upload/photo-attach too, not only mid-scan.
+            Button {
+                showDiagnostics = true
+            } label: {
+                Image(systemName: "ladybug")
+                    .font(.headline)
+                    .padding(10)
+                    .background(.regularMaterial, in: Circle())
+            }
+            .padding(.leading, 20)
+            .padding(.top, 8)
+        }
+        .sheet(isPresented: $showDiagnostics) {
+            DiagnosticsLogView()
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         Group {
             switch stage {
             case .intake:

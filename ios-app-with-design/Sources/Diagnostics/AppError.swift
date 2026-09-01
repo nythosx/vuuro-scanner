@@ -19,7 +19,19 @@ import Foundation
 struct AppError {
     let site: Site
     let underlying: Error?
-    let occurredAt: Date = Date()
+    let occurredAt: Date
+
+    // A custom init, not the synthesized memberwise one — ported from
+    // ios-app/'s copy of this file, see there for why: it's the one place
+    // that guarantees every AppError anywhere in the app reaches
+    // DiagnosticsLog automatically.
+    @MainActor
+    init(site: Site, underlying: Error?) {
+        self.site = site
+        self.underlying = underlying
+        self.occurredAt = Date()
+        DiagnosticsLog.shared.record(copyableDetails, category: .error)
+    }
 
     enum Site: String {
         case sessionCreate = "SESSION_CREATE"

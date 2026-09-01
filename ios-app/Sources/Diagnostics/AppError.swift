@@ -19,7 +19,22 @@ import Foundation
 struct AppError {
     let site: Site
     let underlying: Error?
-    let occurredAt: Date = Date()
+    let occurredAt: Date
+
+    // A custom init, not the synthesized memberwise one, on purpose: this is
+    // the one place every AppError anywhere in the app gets created, so it's
+    // the one place that can guarantee every error actually reaches
+    // DiagnosticsLog — no call site can construct one that silently skips
+    // logging. All existing call sites already run on @MainActor (view
+    // methods, CaptureCoordinator's Task { @MainActor in ... } blocks), so
+    // this needs no await anywhere it's already used.
+    @MainActor
+    init(site: Site, underlying: Error?) {
+        self.site = site
+        self.underlying = underlying
+        self.occurredAt = Date()
+        DiagnosticsLog.shared.record(copyableDetails, category: .error)
+    }
 
     enum Site: String {
         case sessionCreate = "SESSION_CREATE"
