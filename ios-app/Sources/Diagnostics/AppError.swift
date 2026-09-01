@@ -2,7 +2,10 @@
 //  AppError.swift
 //  VuuroScan
 //
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
+//  Real, side-effecting behavior as of 2026-09 (compiled-via-CI only so far,
+//  not yet run on real hardware — see ../Models/ScanIdentity.swift header for
+//  what that distinction means generally): the @MainActor init below wires
+//  every AppError into DiagnosticsLog automatically.
 //
 //  Every error the app shows a user is wrapped here so its support code is
 //  DERIVED from the real underlying failure, never guessed or hand-typed at

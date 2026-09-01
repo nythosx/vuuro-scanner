@@ -112,6 +112,22 @@ struct ScanFlowView: View {
                     stage = .error(appError, identity: identity, existingSession: sessionToResume)
                 } onGoBack: {
                     stage = .intake
+                } onDiscardRoom: {
+                    // Real bug fixed here: this used to always call onGoBack,
+                    // which resets straight to .intake — for room 2+ of a
+                    // multi-room unit, that wiped identity AND session,
+                    // silently orphaning every already-uploaded room (no
+                    // idempotency key on POST /scan-sessions to catch the
+                    // duplicate a retry would then create). Discarding THIS
+                    // room's in-progress capture should only ever cost this
+                    // room, matching what the confirmation alert promises —
+                    // so with an existing session, resume a fresh attempt
+                    // against it instead of leaving the flow entirely.
+                    if let session {
+                        stage = .capturing(identity: identity, session: session, attempt: UUID())
+                    } else {
+                        stage = .intake
+                    }
                 }
                 .id(attempt)
             case .attachments(let session, let floorPlan):
@@ -145,6 +161,12 @@ private struct RoomCaptureFlowStep: View {
     // nothing on the server catches this either.
     let onError: (AppError, ScanSessionResponse?) -> Void
     let onGoBack: () -> Void
+    // Separate from onGoBack on purpose: onGoBack means "leave the flow
+    // entirely" (only ever correct when nothing has been created server-side
+    // yet). Discarding a mid-scan room needs its own callback so the parent
+    // can resume with existingSession instead, rather than conflating "exit"
+    // and "abandon this one room" into the same action.
+    let onDiscardRoom: () -> Void
 
     @StateObject private var coordinator = CaptureCoordinator()
     @State private var isUploading = false
@@ -295,7 +317,7 @@ private struct RoomCaptureFlowStep: View {
                                 .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
                                     Button("Discard", role: .destructive) {
                                         coordinator.stop()
-                                        onGoBack()
+                                        onDiscardRoom()
                                     }
                                     Button("Keep Scanning", role: .cancel) {}
                                 } message: {

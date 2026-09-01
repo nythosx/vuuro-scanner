@@ -186,6 +186,21 @@ struct ScanHistoryView: View {
         }
         perEntryImageURLs[entry.sessionId] = nil
         perEntryPDFURLs[entry.sessionId] = nil
+
+        // See ios-app/'s copy of this file: bulk downloads live in a flat
+        // array, not keyed by session, so "Forget" left this entry's file
+        // untouched there and still shareable via "Save all images/PDFs".
+        let imageFilename = "floorplan-\(entry.sessionId).png"
+        let pdfFilename = "floorplan-\(entry.sessionId).pdf"
+        for url in bulkImageURLs where url.lastPathComponent == imageFilename {
+            try? FileManager.default.removeItem(at: url)
+        }
+        bulkImageURLs.removeAll { $0.lastPathComponent == imageFilename }
+        for url in bulkPDFURLs where url.lastPathComponent == pdfFilename {
+            try? FileManager.default.removeItem(at: url)
+        }
+        bulkPDFURLs.removeAll { $0.lastPathComponent == pdfFilename }
+
         ScanHistoryStore.shared.remove(sessionId: entry.sessionId)
         entries = ScanHistoryStore.shared.all()
     }

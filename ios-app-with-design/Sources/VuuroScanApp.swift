@@ -100,6 +100,17 @@ struct ScanFlowView: View {
                     stage = .error(appError, identity: identity, existingSession: sessionToResume)
                 } onGoBack: {
                     stage = .intake
+                } onDiscardRoom: {
+                    // Real bug fixed here: this used to always call onGoBack,
+                    // wiping identity AND session for room 2+ of a multi-room
+                    // unit — see ios-app/'s copy of this file for the full
+                    // rationale. Resume a fresh attempt against the existing
+                    // session instead of leaving the flow when one exists.
+                    if let session {
+                        stage = .capturing(identity: identity, session: session, attempt: UUID())
+                    } else {
+                        stage = .intake
+                    }
                 }
                 .id(attempt)
             case .attachments(let session, let floorPlan):
@@ -129,6 +140,11 @@ private struct RoomCaptureFlowStep: View {
     // otherwise get orphaned if uploadCapture then fails).
     let onError: (AppError, ScanSessionResponse?) -> Void
     let onGoBack: () -> Void
+    // See ios-app/'s copy of this file for why this is separate from
+    // onGoBack: onGoBack means "leave the flow entirely" (only correct when
+    // nothing has been created server-side yet); discarding a mid-scan room
+    // needs its own callback so the parent can resume with existingSession.
+    let onDiscardRoom: () -> Void
 
     @StateObject private var coordinator = CaptureCoordinator()
     @State private var isUploading = false
@@ -256,7 +272,7 @@ private struct RoomCaptureFlowStep: View {
                                 .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
                                     Button("Discard", role: .destructive) {
                                         coordinator.stop()
-                                        onGoBack()
+                                        onDiscardRoom()
                                     }
                                     Button("Keep Scanning", role: .cancel) {}
                                 } message: {

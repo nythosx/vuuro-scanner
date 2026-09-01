@@ -168,6 +168,24 @@ struct ScanHistoryView: View {
         }
         perEntryImageURLs[entry.sessionId] = nil
         perEntryPDFURLs[entry.sessionId] = nil
+
+        // Real bug fixed here: bulk downloads ("Download all images/PDFs")
+        // use the same filename shape (floorplan-<sessionId>.ext) but live in
+        // a flat array, not keyed by session — without this, "Forget" only
+        // cleared the per-entry dictionaries, leaving this entry's file
+        // untouched in bulkImageURLs/bulkPDFURLs and still shareable via
+        // "Save all images/PDFs", contradicting what "Forget" claims to do.
+        let imageFilename = "floorplan-\(entry.sessionId).png"
+        let pdfFilename = "floorplan-\(entry.sessionId).pdf"
+        for url in bulkImageURLs where url.lastPathComponent == imageFilename {
+            try? FileManager.default.removeItem(at: url)
+        }
+        bulkImageURLs.removeAll { $0.lastPathComponent == imageFilename }
+        for url in bulkPDFURLs where url.lastPathComponent == pdfFilename {
+            try? FileManager.default.removeItem(at: url)
+        }
+        bulkPDFURLs.removeAll { $0.lastPathComponent == pdfFilename }
+
         ScanHistoryStore.shared.remove(sessionId: entry.sessionId)
         entries = ScanHistoryStore.shared.all()
     }
