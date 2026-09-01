@@ -38,6 +38,7 @@ struct ScanFlowView: View {
     }
 
     @State private var stage: Stage = .intake
+    #if DEBUG
     @State private var showDiagnostics = false
 
     // Whether a full-screen .sheet over an active RoomCaptureView/ARSession
@@ -48,10 +49,12 @@ struct ScanFlowView: View {
         if case .capturing = stage { return true }
         return false
     }
+    #endif
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             content
+            #if DEBUG
             // Top-leading, opposite corner from the capture screen's back
             // button (top-trailing) so the two never overlap.
             if !isCapturingStage {
@@ -67,10 +70,13 @@ struct ScanFlowView: View {
                 .padding(.leading, 20)
                 .padding(.top, 8)
             }
+            #endif
         }
+        #if DEBUG
         .sheet(isPresented: $showDiagnostics) {
             DiagnosticsLogView()
         }
+        #endif
     }
 
     @ViewBuilder

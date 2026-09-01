@@ -5,7 +5,10 @@
 //  Real, side-effecting behavior as of 2026-09 (compiled-via-CI only so far,
 //  not yet run on real hardware — see ../Models/ScanIdentity.swift header for
 //  what that distinction means generally): the @MainActor init below wires
-//  every AppError into DiagnosticsLog automatically.
+//  every AppError into DiagnosticsLog automatically. That #if DEBUG guard is
+//  load-bearing, not decorative — DiagnosticsLog.swift itself only exists in
+//  a Debug build (see its header), per Mark's 2026-09-01 "Debug-only, no
+//  telemetry" requirement.
 //
 //  Every error the app shows a user is wrapped here so its support code is
 //  DERIVED from the real underlying failure, never guessed or hand-typed at
@@ -33,7 +36,9 @@ struct AppError {
         self.site = site
         self.underlying = underlying
         self.occurredAt = Date()
+        #if DEBUG
         DiagnosticsLog.shared.record(copyableDetails, category: .error)
+        #endif
     }
 
     enum Site: String {

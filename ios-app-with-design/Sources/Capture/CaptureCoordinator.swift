@@ -36,7 +36,9 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     // change can silently skip logging. Ported from ios-app/'s copy.
     @Published private(set) var state: State = .scanning {
         didSet {
+            #if DEBUG
             DiagnosticsLog.shared.record("Capture state -> \(state)", category: .state)
+            #endif
         }
     }
 
@@ -115,8 +117,10 @@ extension CaptureCoordinator: RoomCaptureSessionDelegate {
     // RoomPlan was telling the tester right before a failure, not just the
     // final error. Ported from ios-app/'s copy of this file.
     nonisolated func captureSession(_ session: RoomCaptureSession, didProvide instruction: RoomCaptureSession.Instruction) {
+        #if DEBUG
         Task { @MainActor in
             DiagnosticsLog.shared.record("RoomPlan instruction: \(instruction)", category: .instruction)
         }
+        #endif
     }
 }

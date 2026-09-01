@@ -5,7 +5,10 @@
 //  Ported from ios-app/'s copy of this file — see there for the full
 //  rationale. Toggled from the floating button in ScanFlowView.
 //
+//  #if DEBUG on the whole file — see DiagnosticsLog.swift's header for why.
+//
 
+#if DEBUG
 import SwiftUI
 
 struct DiagnosticsLogView: View {
@@ -79,3 +82,4 @@ struct DiagnosticsLogView: View {
         exportURL = nil
     }
 }
+#endif

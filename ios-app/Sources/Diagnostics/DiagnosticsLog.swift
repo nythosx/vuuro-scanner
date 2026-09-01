@@ -6,12 +6,20 @@
 //  screenshotting an error screen and describing what led up to it — this is
 //  what lets him export the actual sequence instead. Every AppError anywhere
 //  in the app logs itself here (see AppError's init), plus CaptureCoordinator
-//  state transitions and RoomPlan's own real-time coaching instructions
-//  (e.g. "move closer to wall"), so a report like his 2026-09-01 world-
-//  tracking failure comes with what RoomPlan was telling him right before it
-//  happened, not just the final error.
+//  state transitions, RoomPlan's own real-time coaching instructions
+//  (e.g. "move closer to wall"), and every ScanServiceClient request's method/
+//  path/response code, so a report like his 2026-09-01 world-tracking failure
+//  comes with what RoomPlan was telling him and what the network was doing
+//  right before it happened, not just the final error.
+//
+//  #if DEBUG on the whole file, not just the call sites that use it — per
+//  Mark's 2026-09-01 request ("Debug-only, no telemetry"). An earlier pass
+//  built this without any DEBUG gate at all, so it (and the floating button
+//  that opens it) would have compiled straight into a Release build and
+//  stayed visible to a real tenant. Caught before ever shipping.
 //
 
+#if DEBUG
 import Foundation
 
 struct DiagnosticsLogEntry: Identifiable {
@@ -19,6 +27,7 @@ struct DiagnosticsLogEntry: Identifiable {
         case error = "ERROR"
         case state = "STATE"
         case instruction = "INSTRUCTION"
+        case request = "REQUEST"
     }
 
     let id = UUID()
@@ -48,3 +57,4 @@ final class DiagnosticsLog: ObservableObject {
         }
     }
 }
+#endif

@@ -8,7 +8,10 @@
 //  no retyping it by hand" principle as ErrorCodeView, extended from one
 //  error to the whole session's activity.
 //
+//  #if DEBUG on the whole file — see DiagnosticsLog.swift's header for why.
+//
 
+#if DEBUG
 import SwiftUI
 
 struct DiagnosticsLogView: View {
@@ -84,3 +87,4 @@ struct DiagnosticsLogView: View {
         exportURL = nil
     }
 }
+#endif

@@ -170,12 +170,19 @@ struct ScanServiceClient {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            #if DEBUG
+            await logRequest(request, status: nil)
+            #endif
             throw ScanServiceError.transport(error)
         }
 
+        let status = (response as? HTTPURLResponse)?.statusCode
+        #if DEBUG
+        await logRequest(request, status: status)
+        #endif
+
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw ScanServiceError.unexpectedStatus(status, body: String(data: data, encoding: .utf8) ?? "")
+            throw ScanServiceError.unexpectedStatus(status ?? -1, body: String(data: data, encoding: .utf8) ?? "")
         }
 
         return data
@@ -187,14 +194,32 @@ struct ScanServiceClient {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            #if DEBUG
+            await logRequest(request, status: nil)
+            #endif
             throw ScanServiceError.transport(error)
         }
 
+        let status = (response as? HTTPURLResponse)?.statusCode
+        #if DEBUG
+        await logRequest(request, status: status)
+        #endif
+
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw ScanServiceError.unexpectedStatus(status, body: String(data: data, encoding: .utf8) ?? "")
+            throw ScanServiceError.unexpectedStatus(status ?? -1, body: String(data: data, encoding: .utf8) ?? "")
         }
 
         return try JSONDecoder().decode(Response.self, from: data)
     }
+
+    // See ios-app/'s copy of this file for why: per Mark's 2026-09-01 request,
+    // "each request with its response code and the VS code on failure."
+    #if DEBUG
+    private func logRequest(_ request: URLRequest, status: Int?) async {
+        let method = request.httpMethod ?? "GET"
+        let path = request.url?.path ?? "?"
+        let statusText = status.map(String.init) ?? "no response (transport error)"
+        await DiagnosticsLog.shared.record("\(method) \(path) -> \(statusText)", category: .request)
+    }
+    #endif
 }
