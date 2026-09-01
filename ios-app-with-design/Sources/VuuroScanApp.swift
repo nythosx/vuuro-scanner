@@ -40,24 +40,33 @@ struct ScanFlowView: View {
     @State private var stage: Stage = .intake
     @State private var showDiagnostics = false
 
+    // Whether a full-screen .sheet over an active RoomCaptureView/ARSession
+    // is safe is unverified — see ios-app/'s copy of this file for the full
+    // rationale. Hidden for the whole capturing stage as the conservative
+    // choice until confirmed; the log itself keeps recording underneath.
+    private var isCapturingStage: Bool {
+        if case .capturing = stage { return true }
+        return false
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             content
             // Top-leading, opposite corner from the capture screen's back
-            // button (top-trailing) so the two never overlap. Ported from
-            // ios-app/'s copy of this file — see there for the full
-            // rationale.
-            Button {
-                showDiagnostics = true
-            } label: {
-                Image(systemName: "ladybug")
-                    .font(.headline)
-                    .foregroundStyle(VuuroColor.textPrimary)
-                    .padding(10)
-                    .background(.regularMaterial, in: Circle())
+            // button (top-trailing) so the two never overlap.
+            if !isCapturingStage {
+                Button {
+                    showDiagnostics = true
+                } label: {
+                    Image(systemName: "ladybug")
+                        .font(.headline)
+                        .foregroundStyle(VuuroColor.textPrimary)
+                        .padding(10)
+                        .background(.regularMaterial, in: Circle())
+                }
+                .padding(.leading, 20)
+                .padding(.top, 8)
             }
-            .padding(.leading, 20)
-            .padding(.top, 8)
         }
         .sheet(isPresented: $showDiagnostics) {
             DiagnosticsLogView()

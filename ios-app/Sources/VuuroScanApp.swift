@@ -43,23 +43,43 @@ struct ScanFlowView: View {
     @State private var stage: Stage = .intake
     @State private var showDiagnostics = false
 
+    // Whether presenting a full-screen .sheet over an active RoomCaptureView/
+    // ARSession is actually safe (does iOS pause/interrupt ARKit tracking
+    // when its hosting view stops being frontmost?) is genuinely unverified
+    // here — no Xcode/device to check it against, same category as every
+    // other "unverified against real SDK behavior" note in this codebase.
+    // Hiding the button for the whole capturing stage, not just while
+    // coordinator.state == .scanning specifically, is the conservative
+    // choice until that's confirmed: this tool exists to help diagnose
+    // problems, it should not risk causing the exact class of problem
+    // (a world-tracking failure) it was built to help diagnose. The log
+    // itself keeps recording underneath regardless — only viewing/exporting
+    // it is paused, not capturing it.
+    private var isCapturingStage: Bool {
+        if case .capturing = stage { return true }
+        return false
+    }
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             content
             // Top-leading, opposite corner from the capture screen's back
-            // button (top-trailing) so the two never overlap. Shown across
-            // every stage, not just capturing, since real errors happen in
-            // session creation/upload/photo-attach too, not only mid-scan.
-            Button {
-                showDiagnostics = true
-            } label: {
-                Image(systemName: "ladybug")
-                    .font(.headline)
-                    .padding(10)
-                    .background(.regularMaterial, in: Circle())
+            // button (top-trailing) so the two never overlap. Shown on every
+            // other stage, since real errors happen in session creation/
+            // upload/photo-attach too, not only mid-scan — see
+            // isCapturingStage for why it's hidden specifically here.
+            if !isCapturingStage {
+                Button {
+                    showDiagnostics = true
+                } label: {
+                    Image(systemName: "ladybug")
+                        .font(.headline)
+                        .padding(10)
+                        .background(.regularMaterial, in: Circle())
+                }
+                .padding(.leading, 20)
+                .padding(.top, 8)
             }
-            .padding(.leading, 20)
-            .padding(.top, 8)
         }
         .sheet(isPresented: $showDiagnostics) {
             DiagnosticsLogView()

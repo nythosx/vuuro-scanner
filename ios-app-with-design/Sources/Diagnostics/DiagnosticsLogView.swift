@@ -42,21 +42,28 @@ struct DiagnosticsLogView: View {
                             Label("Export", systemImage: "square.and.arrow.up")
                         }
                     } else {
-                        Button {
-                            prepareExport()
-                        } label: {
-                            Label("Export", systemImage: "square.and.arrow.up")
-                        }
-                        .disabled(log.entries.isEmpty)
+                        Label("Export", systemImage: "square.and.arrow.up")
+                            .foregroundStyle(VuuroColor.textPrimary.opacity(0.5))
                     }
                 }
             }
+            // See ios-app/'s copy of this file for why this refreshes on
+            // every entries change instead of writing the export file once:
+            // a .sheet doesn't pause in-flight Tasks, so a cached URL could
+            // export a snapshot missing the very thing that made someone
+            // open this screen.
+            .onAppear { refreshExport() }
+            .onChange(of: log.entries.count) { _, _ in refreshExport() }
             .onDisappear { cleanUpExport() }
         }
     }
 
     @MainActor
-    private func prepareExport() {
+    private func refreshExport() {
+        guard !log.entries.isEmpty else {
+            cleanUpExport()
+            return
+        }
         let formatted = log.entries.map { entry in
             "[\(entry.timestamp.formatted(date: .abbreviated, time: .standard))] \(entry.category.rawValue): \(entry.message)"
         }.joined(separator: "\n")
