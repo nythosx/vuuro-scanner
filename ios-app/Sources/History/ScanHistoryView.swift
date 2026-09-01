@@ -80,7 +80,13 @@ struct ScanHistoryView: View {
                     // was never called from anywhere in the app — same
                     // designed-but-unwired pattern as this project's other
                     // real findings. This is what actually wires it.
-                    Button("Delete this scan", role: .destructive) {
+                    //
+                    // Labeled "Forget", not "Delete" — this only removes the
+                    // local ScanHistoryStore entry (see its header: there's
+                    // no server-side listing to delete from, and the session
+                    // itself still exists with its data intact). "Delete"
+                    // would overclaim what this button actually does.
+                    Button("Forget this scan (device only)", role: .destructive) {
                         deleteEntry(entry)
                     }
                 }
@@ -139,7 +145,7 @@ struct ScanHistoryView: View {
 
     // Every download below writes into the shared tmp directory, which iOS
     // doesn't clear on any predictable schedule — same lesson as
-    // ResultSummaryView's cleanUpExportedPDF(). Cleaned up together here
+    // ResultSummaryView's cleanUpExportedFiles(). Cleaned up together here
     // since this screen can accumulate many more files than that one did.
     private func cleanUpTempFiles() {
         let all = Array(perEntryImageURLs.values) + Array(perEntryPDFURLs.values) + bulkImageURLs + bulkPDFURLs

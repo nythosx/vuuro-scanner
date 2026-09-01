@@ -114,7 +114,7 @@
         "required": ["photo_id", "url", "caption", "room_id", "taken_at"],
         "properties": {
           "photo_id": { "type": "string" },
-          "url": { "type": "string", "description": "Wherever the mobile client already uploaded the image. The Scan Service does not itself receive/store image bytes in Phase 2 — that's a deliberately deferred decision, not an oversight." },
+          "url": { "type": "string", "description": "Wherever the image is hosted — either an externally-hosted URL the client already had, or, if the client uploaded real image bytes via POST /scan-sessions/{id}/photo-uploads first (added 2026-08-27), the exact URL that endpoint returned: /scan-sessions/{session_id}/photo-uploads/{filename} under this host. This field's shape didn't change, only what a URL under this host can now mean." },
           "caption": { "type": "string" },
           "room_id": { "type": ["string", "null"], "description": "Which room this photo belongs to, matching a rooms[].room_id. Null means unit-level (not tied to one room)." },
           "taken_at": { "type": "string", "format": "date-time" }

@@ -63,8 +63,8 @@ struct ScanFlowView: View {
                     } else {
                         stage = .attachments(session: session, floorPlan: floorPlan)
                     }
-                } onError: { appError in
-                    stage = .error(appError, identity: identity, existingSession: session)
+                } onError: { appError, sessionToResume in
+                    stage = .error(appError, identity: identity, existingSession: sessionToResume)
                 } onGoBack: {
                     stage = .intake
                 }
@@ -90,7 +90,15 @@ private struct RoomCaptureFlowStep: View {
     let identity: ScanIdentity
     let existingSession: ScanSessionResponse?
     let onRoomCaptured: (ScanSessionResponse, FloorPlan, _ addAnotherRoom: Bool) -> Void
-    let onError: (AppError) -> Void
+    // The second parameter is the session to resume with on retry, not
+    // necessarily existingSession: if submit() gets far enough to create a
+    // new session before failing (createSession succeeds, uploadCapture then
+    // fails on a network blip), retrying with existingSession (still nil at
+    // that point) would silently create a second orphaned session server-
+    // side instead of reusing the one that already exists. Real gap — POST
+    // /scan-sessions has no idempotency key the way /capture does, so
+    // nothing on the server catches this either.
+    let onError: (AppError, ScanSessionResponse?) -> Void
     let onGoBack: () -> Void
 
     @StateObject private var coordinator = CaptureCoordinator()
@@ -99,6 +107,7 @@ private struct RoomCaptureFlowStep: View {
     @State private var didRequestStop = false
     @State private var partialCaptureFailureMessage: String?
     @State private var isUploadingPartialCapture = false
+    @State private var showDiscardConfirmation = false
 
     private let client = ScanServiceClient()
 
@@ -156,7 +165,10 @@ private struct RoomCaptureFlowStep: View {
                         Task { await submit(CapturedRoomExporter.export(room)) }
                     },
                     onDiscard: {
-                        onError(AppError(site: .captureFailed, underlying: PlainError(message: partialCaptureFailureMessage)))
+                        // No session was created for this attempt (it failed
+                        // before ever reaching submit()), so existingSession
+                        // is still the right value to resume with.
+                        onError(AppError(site: .captureFailed, underlying: PlainError(message: partialCaptureFailureMessage)), existingSession)
                     }
                 )
             } else if !DeviceCapability.isRoomPlanSupported {
@@ -204,21 +216,46 @@ private struct RoomCaptureFlowStep: View {
                             // mind) had no way back except forcing an error —
                             // there's no automatic nav-bar back button here
                             // since this stage swaps in via @State, not a
-                            // NavigationStack push, and .ignoresSafeArea()
-                            // covers the whole screen.
+                            // NavigationStack push. .ignoresSafeArea() below
+                            // is on RoomCaptureScreen alone, not this VStack
+                            // or the ZStack — this button already lays out
+                            // respecting the safe area on its own, so 8pt is
+                            // a buffer past the notch/status bar inset, not
+                            // flush against it (corrected here after an
+                            // earlier pass bumped this to 50, on a wrong
+                            // assumption that it was overlapping — that
+                            // would have stacked 50pt past the safe area
+                            // inset too, risking crowding RoomPlan's own
+                            // coaching UI. Still unverified either way
+                            // without a real device — flag to Mark).
                             HStack {
+                                Spacer()
                                 Button {
-                                    coordinator.stop()
-                                    onGoBack()
+                                    showDiscardConfirmation = true
                                 } label: {
-                                    Image(systemName: "xmark")
+                                    Image(systemName: "chevron.backward")
                                         .font(.headline)
                                         .padding(10)
                                         .background(.regularMaterial, in: Circle())
                                 }
-                                .padding(.leading, 20)
+                                .padding(.trailing, 20)
                                 .padding(.top, 8)
-                                Spacer()
+                                // chevron.backward reads as "go back, nothing
+                                // lost" (iOS's standard non-destructive-nav
+                                // symbol), but the action is a full abandon —
+                                // this confirmation is what makes that icon
+                                // honest instead of misleading, matching this
+                                // project's own "don't claim more than what
+                                // actually happens" standard.
+                                .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
+                                    Button("Discard", role: .destructive) {
+                                        coordinator.stop()
+                                        onGoBack()
+                                    }
+                                    Button("Keep Scanning", role: .cancel) {}
+                                } message: {
+                                    Text("Everything captured so far in this room will be lost.")
+                                }
                             }
                             Spacer()
                             Button("Done") {
@@ -244,7 +281,9 @@ private struct RoomCaptureFlowStep: View {
             guard let room = coordinator.capturedRoom else { return }
             Task { await submit(CapturedRoomExporter.export(room)) }
         case .finished(roomAvailable: false):
-            onError(AppError(site: .captureNoRoom, underlying: nil))
+            // No session created for this attempt yet (submit() never ran),
+            // so existingSession is the right value to resume with.
+            onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
         case .failed(let message, let partialRoomAvailable):
             if partialRoomAvailable {
                 // Route through the local partial-capture choice, not
@@ -259,9 +298,9 @@ private struct RoomCaptureFlowStep: View {
                 // .finished(roomAvailable: false) already has a friendly
                 // message for; use it here too instead of RoomBuilder's raw
                 // (likely cryptic) thrown-error text.
-                onError(AppError(site: .captureNoRoom, underlying: nil))
+                onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
             } else {
-                onError(AppError(site: .captureFailed, underlying: PlainError(message: message)))
+                onError(AppError(site: .captureFailed, underlying: PlainError(message: message)), existingSession)
             }
         case .scanning:
             break
@@ -279,7 +318,9 @@ private struct RoomCaptureFlowStep: View {
             do {
                 session = try await client.createSession(identity: identity)
             } catch {
-                onError(AppError(site: .sessionCreate, underlying: error))
+                // No session exists yet — nil is correct here, retry should
+                // create one, same as this attempt just tried to.
+                onError(AppError(site: .sessionCreate, underlying: error), nil)
                 return
             }
             // Local-only scan history — see History/ScanHistoryEntry.swift's
@@ -298,7 +339,15 @@ private struct RoomCaptureFlowStep: View {
             let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export)
             justCaptured = (session, floorPlan)
         } catch {
-            onError(AppError(site: .captureUpload, underlying: error))
+            // The real fix: `session` here (not existingSession) is whatever
+            // this attempt actually ended up with — including a session
+            // createSession just created moments ago, above, if this was the
+            // first room. Passing existingSession instead would have retried
+            // into a blank session, calling createSession again and orphaning
+            // this one server-side with zero captures, silently, since
+            // POST /scan-sessions has no idempotency key the way /capture
+            // does to catch a duplicate.
+            onError(AppError(site: .captureUpload, underlying: error), session)
         }
     }
 }

@@ -2,7 +2,11 @@
 //  CaptureCoordinator.swift
 //  VuuroScan
 //
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
+//  This branch had fallen behind ios-app/'s logic: stop(), the removal of
+//  the dead didFailWith method, and the partial-capture-recovery branch
+//  below were ported over from there (2026-09) — see ARCHITECTURE.md's
+//  business-logic-drift note and ios-app/'s copy of this file for the
+//  real-device verification history behind these changes.
 //
 //  Owns one RoomPlan capture session end to end and hands the finished
 //  CapturedRoom to the exporter/network layer. Deliberately holds nothing
@@ -21,7 +25,11 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     enum State: Equatable {
         case scanning
         case finished(roomAvailable: Bool)
-        case failed(String)
+        // partialRoomAvailable distinguishes "RoomBuilder still reconstructed
+        // something from what was captured before the error" from "genuinely
+        // nothing to salvage" — see didEndWith below for why this is knowable
+        // at all.
+        case failed(String, partialRoomAvailable: Bool)
     }
 
     @Published private(set) var state: State = .scanning
@@ -57,12 +65,23 @@ final class CaptureCoordinator: NSObject, ObservableObject {
 }
 
 extension CaptureCoordinator: RoomCaptureSessionDelegate {
+    // RoomCaptureSessionDelegate has exactly one session-end callback —
+    // didEndWith(data:error:), confirmed against Apple's own docs/forums.
+    // There is no separate didFailWith(error:)-style member: this file
+    // previously declared one anyway, which compiled cleanly (an extension
+    // can always add extra methods) but RoomCaptureSession itself never
+    // calls anything but didEndWith, on success AND on a fatal error like
+    // CaptureError.worldTrackingFailure — so that method was dead code that
+    // never actually ran, removed here (see ios-app/'s copy of this file for
+    // the full source citations).
+    //
+    // The real, verified consequence: `data` is still delivered alongside a
+    // non-nil `error`, so a world-tracking failure does not by itself mean
+    // nothing was captured. Always attempting RoomBuilder, rather than
+    // returning early on `error != nil`, is what actually answers "is there
+    // a sensible 'use what was captured' option."
     nonisolated func captureSession(_ session: RoomCaptureSession, didEndWith data: CapturedRoomData, error: Error?) {
         Task { @MainActor in
-            if let error {
-                self.state = .failed(error.localizedDescription)
-                return
-            }
             // CapturedRoomData -> CapturedRoom normally goes through
             // RoomBuilder in Apple's sample code. Modeled that way here;
             // unverified against the real SDK signature until this is built
@@ -70,16 +89,19 @@ extension CaptureCoordinator: RoomCaptureSessionDelegate {
             do {
                 let room = try await RoomBuilder(options: [.beautifyObjects]).capturedRoom(from: data)
                 self.capturedRoom = room
-                self.state = .finished(roomAvailable: true)
+                if let error {
+                    // RoomBuilder not throwing doesn't mean there's anything
+                    // worth offering — a near-instant failure can still
+                    // produce a technically-valid but empty room. Only call
+                    // it a real partial capture if it actually has geometry.
+                    let hasUsableGeometry = !room.walls.isEmpty || !room.floors.isEmpty
+                    self.state = .failed(error.localizedDescription, partialRoomAvailable: hasUsableGeometry)
+                } else {
+                    self.state = .finished(roomAvailable: true)
+                }
             } catch {
-                self.state = .failed(error.localizedDescription)
+                self.state = .failed(error.localizedDescription, partialRoomAvailable: false)
             }
-        }
-    }
-
-    nonisolated func captureSession(_ session: RoomCaptureSession, didFailWith error: Error) {
-        Task { @MainActor in
-            self.state = .failed(error.localizedDescription)
         }
     }
 }

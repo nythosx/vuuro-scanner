@@ -83,6 +83,21 @@ struct ScanHistoryView: View {
                     }
                     .font(VuuroFont.body(15))
                     .foregroundStyle(VuuroColor.primary)
+
+                    // ScanHistoryStore.remove(sessionId:) already existed but
+                    // was never called from anywhere in the app — ported
+                    // from ios-app/'s copy of this file (2026-09), same
+                    // designed-but-unwired pattern as this project's other
+                    // real findings.
+                    //
+                    // Labeled "Forget", not "Delete" — this only removes the
+                    // local ScanHistoryStore entry (see its header: there's
+                    // no server-side listing to delete from, and the session
+                    // itself still exists with its data intact).
+                    Button("Forget this scan (device only)", role: .destructive) {
+                        deleteEntry(entry)
+                    }
+                    .buttonStyle(.vuuroSecondary)
                 }
             }
 
@@ -159,6 +174,20 @@ struct ScanHistoryView: View {
         perEntryPDFURLs = [:]
         bulkImageURLs = []
         bulkPDFURLs = []
+    }
+
+    @MainActor
+    private func deleteEntry(_ entry: ScanHistoryEntry) {
+        if let url = perEntryImageURLs[entry.sessionId] {
+            try? FileManager.default.removeItem(at: url)
+        }
+        if let url = perEntryPDFURLs[entry.sessionId] {
+            try? FileManager.default.removeItem(at: url)
+        }
+        perEntryImageURLs[entry.sessionId] = nil
+        perEntryPDFURLs[entry.sessionId] = nil
+        ScanHistoryStore.shared.remove(sessionId: entry.sessionId)
+        entries = ScanHistoryStore.shared.all()
     }
 
     @MainActor

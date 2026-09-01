@@ -2,7 +2,11 @@
 //  VuuroScanApp.swift
 //  VuuroScan
 //
-//  WRITTEN, NOT COMPILED OR RUN — see Models/ScanIdentity.swift header.
+//  This branch had fallen behind ios-app/'s logic: the Done/Stop button,
+//  Cancel button, partial-capture recovery, and multi-room-session-on-retry
+//  fixes below were ported over from there (2026-09) after being verified
+//  there but never here — see ARCHITECTURE.md's business-logic-drift note.
+//  Not run on real hardware; only ios-app/ has had a real-device test so far.
 import PhotosUI
 import RoomPlan
 import SwiftUI
@@ -26,7 +30,11 @@ struct ScanFlowView: View {
         case capturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
         case attachments(session: ScanSessionResponse, floorPlan: FloorPlan)
         case summary(session: ScanSessionResponse, floorPlan: FloorPlan)
-        case error(AppError)
+        // Carries identity/existingSession, not just the error, so "Try
+        // again" can resume the same multi-room session instead of resetting
+        // to blank intake — see ios-app/'s VuuroScanApp.swift for the real
+        // gap this closes (Mark's 2026-09-01 2-room test).
+        case error(AppError, identity: ScanIdentity, existingSession: ScanSessionResponse?)
     }
 
     @State private var stage: Stage = .intake
@@ -53,8 +61,8 @@ struct ScanFlowView: View {
                     } else {
                         stage = .attachments(session: session, floorPlan: floorPlan)
                     }
-                } onError: { appError in
-                    stage = .error(appError)
+                } onError: { appError, sessionToResume in
+                    stage = .error(appError, identity: identity, existingSession: sessionToResume)
                 } onGoBack: {
                     stage = .intake
                 }
@@ -67,8 +75,10 @@ struct ScanFlowView: View {
                 ResultSummaryView(session: session, floorPlan: floorPlan) {
                     stage = .intake
                 }
-            case .error(let appError):
-                ErrorView(error: appError) { stage = .intake }
+            case .error(let appError, let identity, let existingSession):
+                ErrorView(error: appError) {
+                    stage = .capturing(identity: identity, session: existingSession, attempt: UUID())
+                }
             }
         }
     }
@@ -78,12 +88,20 @@ private struct RoomCaptureFlowStep: View {
     let identity: ScanIdentity
     let existingSession: ScanSessionResponse?
     let onRoomCaptured: (ScanSessionResponse, FloorPlan, _ addAnotherRoom: Bool) -> Void
-    let onError: (AppError) -> Void
+    // Second parameter is the session to resume with on retry — see
+    // ios-app/'s VuuroScanApp.swift for why existingSession alone isn't
+    // always right (a session createSession creates inside submit() can
+    // otherwise get orphaned if uploadCapture then fails).
+    let onError: (AppError, ScanSessionResponse?) -> Void
     let onGoBack: () -> Void
 
     @StateObject private var coordinator = CaptureCoordinator()
     @State private var isUploading = false
     @State private var justCaptured: (session: ScanSessionResponse, floorPlan: FloorPlan)?
+    @State private var didRequestStop = false
+    @State private var partialCaptureFailureMessage: String?
+    @State private var isUploadingPartialCapture = false
+    @State private var showDiscardConfirmation = false
 
     private let client = ScanServiceClient()
 
@@ -110,6 +128,32 @@ private struct RoomCaptureFlowStep: View {
                 AnotherRoomPromptView(roomCount: justCaptured.floorPlan.rooms.count) { addAnother in
                     onRoomCaptured(justCaptured.session, justCaptured.floorPlan, addAnother)
                 }
+            } else if isUploadingPartialCapture {
+                // Checked ahead of partialCaptureFailureMessage and the real-
+                // capture branch below — see ios-app/'s VuuroScanApp.swift
+                // for the render-frame race this closes.
+                ProgressView("Uploading capture…")
+                    .tint(VuuroColor.primary)
+                    .font(VuuroFont.body())
+                    .padding()
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius))
+            } else if let partialCaptureFailureMessage {
+                // RoomPlan can still hand back reconstructable geometry after
+                // a session-ending error like world tracking failure — see
+                // CaptureCoordinator.didEndWith. Only reachable when
+                // coordinator.capturedRoom is actually set, so the
+                // force-unwrap in onUsePartial is safe.
+                PartialCaptureFailureView(
+                    message: partialCaptureFailureMessage,
+                    onUsePartial: {
+                        let room = coordinator.capturedRoom!
+                        isUploadingPartialCapture = true
+                        Task { await submit(CapturedRoomExporter.export(room)) }
+                    },
+                    onDiscard: {
+                        onError(AppError(site: .captureFailed, underlying: PlainError(message: partialCaptureFailureMessage)), existingSession)
+                    }
+                )
             } else if !DeviceCapability.isRoomPlanSupported {
                 // debugFakeCaptureActive must be true to reach here (see the
                 // first branch) — real hardware doesn't support RoomPlan, but
@@ -140,6 +184,58 @@ private struct RoomCaptureFlowStep: View {
                             .font(VuuroFont.body())
                             .padding()
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius))
+                    } else if didRequestStop {
+                        // Gap between tapping Done and RoomPlan delivering
+                        // didEndWith — see ios-app/'s VuuroScanApp.swift for
+                        // the real bug (no way to end a scan at all) this
+                        // and the Done button below close.
+                        ProgressView("Finishing scan…")
+                            .tint(VuuroColor.primary)
+                            .font(VuuroFont.body())
+                            .padding()
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius))
+                    } else if coordinator.state == .scanning {
+                        VStack {
+                            HStack {
+                                Spacer()
+                                Button {
+                                    showDiscardConfirmation = true
+                                } label: {
+                                    Image(systemName: "chevron.backward")
+                                        .font(.headline)
+                                        .foregroundStyle(VuuroColor.textPrimary)
+                                        .padding(10)
+                                        .background(.regularMaterial, in: Circle())
+                                }
+                                .padding(.trailing, 20)
+                                // .ignoresSafeArea() below is on
+                                // RoomCaptureScreen alone, not this VStack —
+                                // 8pt is a buffer past the safe-area inset,
+                                // not flush against it. See ios-app/'s copy
+                                // of this file for why an earlier pass's
+                                // bump to 50 was reverted.
+                                .padding(.top, 8)
+                                // See ios-app/'s copy of this file for why:
+                                // chevron.backward reads as non-destructive,
+                                // but the action fully abandons the scan.
+                                .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
+                                    Button("Discard", role: .destructive) {
+                                        coordinator.stop()
+                                        onGoBack()
+                                    }
+                                    Button("Keep Scanning", role: .cancel) {}
+                                } message: {
+                                    Text("Everything captured so far in this room will be lost.")
+                                }
+                            }
+                            Spacer()
+                            Button("Done") {
+                                didRequestStop = true
+                                coordinator.stop()
+                            }
+                            .buttonStyle(.vuuroPrimary)
+                            .padding(.bottom, 40)
+                        }
                     }
                 }
                 .onAppear { coordinator.start() }
@@ -156,9 +252,19 @@ private struct RoomCaptureFlowStep: View {
             guard let room = coordinator.capturedRoom else { return }
             Task { await submit(CapturedRoomExporter.export(room)) }
         case .finished(roomAvailable: false):
-            onError(AppError(site: .captureNoRoom, underlying: nil))
-        case .failed(let message):
-            onError(AppError(site: .captureFailed, underlying: PlainError(message: message)))
+            onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
+        case .failed(let message, let partialRoomAvailable):
+            if partialRoomAvailable {
+                partialCaptureFailureMessage = message
+            } else if didRequestStop {
+                // Done has no minimum-scan-time guard, so an experimental
+                // tap right after appearing is a real scenario — same
+                // friendly message as .finished(roomAvailable: false)
+                // instead of RoomBuilder's raw thrown text.
+                onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
+            } else {
+                onError(AppError(site: .captureFailed, underlying: PlainError(message: message)), existingSession)
+            }
         case .scanning:
             break
         }
@@ -175,7 +281,7 @@ private struct RoomCaptureFlowStep: View {
             do {
                 session = try await client.createSession(identity: identity)
             } catch {
-                onError(AppError(site: .sessionCreate, underlying: error))
+                onError(AppError(site: .sessionCreate, underlying: error), nil)
                 return
             }
             // Local-only scan history — see History/ScanHistoryEntry.swift's
@@ -194,7 +300,11 @@ private struct RoomCaptureFlowStep: View {
             let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export)
             justCaptured = (session, floorPlan)
         } catch {
-            onError(AppError(site: .captureUpload, underlying: error))
+            // `session` here, not existingSession — see ios-app/'s
+            // VuuroScanApp.swift for why: it may be one createSession just
+            // created above, and passing existingSession instead would
+            // orphan it on retry.
+            onError(AppError(site: .captureUpload, underlying: error), session)
         }
     }
 }
@@ -215,6 +325,40 @@ private struct AnotherRoomPromptView: View {
             Button("Scan another room") { onChoice(true) }
                 .buttonStyle(.vuuroPrimary)
             Button("Finish unit") { onChoice(false) }
+                .buttonStyle(.vuuroSecondary)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(VuuroColor.surfaceMuted)
+    }
+}
+
+// A session-ending error like CaptureError.worldTrackingFailure doesn't
+// necessarily mean nothing was captured — RoomBuilder can still reconstruct
+// a room from the partial CapturedRoomData RoomPlan hands back alongside the
+// error (see CaptureCoordinator.didEndWith). This view turns that into an
+// actual choice instead of forcing discard-and-retry every time.
+private struct PartialCaptureFailureView: View {
+    let message: String
+    let onUsePartial: () -> Void
+    let onDiscard: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Scan interrupted")
+                .font(VuuroFont.display(20))
+                .foregroundStyle(VuuroColor.textPrimary)
+            Text(message)
+                .font(VuuroFont.body())
+                .foregroundStyle(VuuroColor.textPrimary.opacity(0.6))
+                .multilineTextAlignment(.center)
+            Text("Some of this room was captured before the interruption. You can try uploading it as-is, or discard it and scan again.")
+                .font(VuuroFont.body(12))
+                .foregroundStyle(VuuroColor.textPrimary.opacity(0.5))
+                .multilineTextAlignment(.center)
+            Button("Upload what was captured") { onUsePartial() }
+                .buttonStyle(.vuuroPrimary)
+            Button("Discard and try again", role: .destructive) { onDiscard() }
                 .buttonStyle(.vuuroSecondary)
         }
         .padding()

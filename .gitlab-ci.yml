@@ -102,3 +102,45 @@ scan-service-docker-build:
     - changes:
         - scan-service/**/*
         - .gitlab-ci.yml
+
+# Catches exactly the incident Mark found by hand on 2026-08-31: both
+# FakeLidarMode.fallback and DebugScanServiceURL's tunnel URL left live
+# ("on") on a branch tip after appetize.io testing, twice, only caught
+# because Mark happened to re-clone and read the files himself. Git log shows
+# this flip-then-reset cycle repeating 7-8 times across this project's
+# history - a debug default shipping "on" is a matter of when, not if,
+# without something other than manual memory catching it. Cheap and
+# deliberately dumb: a plain text match against the one known-safe literal
+# for each file, checked on both app copies so a fix to one doesn't leave the
+# other silently behind (see ARCHITECTURE.md's business-logic-drift note).
+#
+# Deliberately NOT path-gated on Debug/**, unlike the jobs above: this checks
+# a standing invariant on the current HEAD, not "did this diff break
+# something." A `changes:` gate here would defeat the whole point - a flag
+# flipped on in one commit would go unchecked through every later commit that
+# doesn't happen to touch Debug/** again, which is exactly the silent-
+# persistence failure mode this exists to catch. Four file reads and a regex
+# match costs nothing to run on every pipeline.
+debug-flags-safe-defaults:
+  stage: test
+  tags:
+    - windows-shell
+  script:
+    - |
+      $checks = @(
+        @{ Path = "ios-app/Sources/Debug/FakeLidarMode.swift"; Pattern = 'private static let fallback = false' },
+        @{ Path = "ios-app/Sources/Debug/DebugScanServiceURL.swift"; Pattern = 'private static let fallback: String\? = nil' },
+        @{ Path = "ios-app-with-design/Sources/Debug/FakeLidarMode.swift"; Pattern = 'private static let fallback = false' },
+        @{ Path = "ios-app-with-design/Sources/Debug/DebugScanServiceURL.swift"; Pattern = 'private static let fallback: String\? = nil' }
+      )
+      $failed = $false
+      foreach ($check in $checks) {
+        $content = Get-Content $check.Path -Raw
+        if ($content -notmatch $check.Pattern) {
+          Write-Host "FAIL: $($check.Path) is not at its safe default ($($check.Pattern)) - a debug override must never ship live."
+          $failed = $true
+        } else {
+          Write-Host "OK: $($check.Path)"
+        }
+      }
+      if ($failed) { exit 1 }
