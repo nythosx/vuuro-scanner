@@ -159,6 +159,11 @@ private struct RoomCaptureFlowStep: View {
     @State private var partialCaptureFailureMessage: String?
     @State private var isUploadingPartialCapture = false
     @State private var showDiscardConfirmation = false
+    // See ios-app/'s copy of this file for the full rationale (Mark's
+    // 2026-09-02 asks (b) and (c)).
+    @State private var isDegenerateCapture = false
+    @State private var uploadRejection: (error: AppError, export: RoomPlanCaptureExport, session: ScanSessionResponse)?
+    @State private var isRetryingUpload = false
 
     private let client = ScanServiceClient()
 
@@ -209,6 +214,33 @@ private struct RoomCaptureFlowStep: View {
                     },
                     onDiscard: {
                         onError(AppError(site: .captureFailed, underlying: PlainError(message: partialCaptureFailureMessage)), existingSession)
+                    }
+                )
+            } else if isDegenerateCapture {
+                DegenerateCaptureView {
+                    onDiscardRoom()
+                }
+            } else if isRetryingUpload {
+                ProgressView("Uploading capture…")
+                    .tint(VuuroColor.primary)
+                    .font(VuuroFont.body())
+                    .padding()
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius))
+            } else if let uploadRejection {
+                UploadRejectedView(
+                    error: uploadRejection.error,
+                    onRetryUpload: {
+                        // isRetryingUpload must flip synchronously, in the
+                        // same scope that clears uploadRejection — see
+                        // ios-app/'s copy of this file for the render-frame
+                        // race this avoids.
+                        let pending = uploadRejection
+                        self.uploadRejection = nil
+                        isRetryingUpload = true
+                        Task { await retryUpload(session: pending.session, export: pending.export) }
+                    },
+                    onRescan: {
+                        onDiscardRoom()
                     }
                 )
             } else if !DeviceCapability.isRoomPlanSupported {
@@ -307,7 +339,14 @@ private struct RoomCaptureFlowStep: View {
         switch state {
         case .finished(roomAvailable: true):
             guard let room = coordinator.capturedRoom else { return }
-            Task { await submit(CapturedRoomExporter.export(room)) }
+            let export = CapturedRoomExporter.export(room)
+            guard export.hasUsableFloorOutline else {
+                // Mark's 2026-09-02 ask (b) — see ios-app/'s copy of this
+                // file for the full rationale.
+                isDegenerateCapture = true
+                return
+            }
+            Task { await submit(export) }
         case .finished(roomAvailable: false):
             onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
         case .failed(let message, let partialRoomAvailable):
@@ -357,11 +396,22 @@ private struct RoomCaptureFlowStep: View {
             let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export)
             justCaptured = (session, floorPlan)
         } catch {
-            // `session` here, not existingSession — see ios-app/'s
-            // VuuroScanApp.swift for why: it may be one createSession just
-            // created above, and passing existingSession instead would
-            // orphan it on retry.
-            onError(AppError(site: .captureUpload, underlying: error), session)
+            // Mark's 2026-09-02 ask (c) — kept in place instead of routed to
+            // onError, which always started a whole new capture attempt. See
+            // ios-app/'s copy of this file for why `session`, not
+            // existingSession, is what "Retry upload" resubmits into.
+            uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session)
+        }
+    }
+
+    @MainActor
+    private func retryUpload(session: ScanSessionResponse, export: RoomPlanCaptureExport) async {
+        defer { isRetryingUpload = false }
+        do {
+            let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export)
+            justCaptured = (session, floorPlan)
+        } catch {
+            uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session)
         }
     }
 }
@@ -416,6 +466,58 @@ private struct PartialCaptureFailureView: View {
             Button("Upload what was captured") { onUsePartial() }
                 .buttonStyle(.vuuroPrimary)
             Button("Discard and try again", role: .destructive) { onDiscard() }
+                .buttonStyle(.vuuroSecondary)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(VuuroColor.surfaceMuted)
+    }
+}
+
+// See ios-app/'s copy of this file for the full rationale (Mark's
+// 2026-09-02 ask (b)).
+private struct DegenerateCaptureView: View {
+    let onRescan: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Keep scanning")
+                .font(VuuroFont.display(20))
+                .foregroundStyle(VuuroColor.textPrimary)
+            Text("This room's outline came out too small or flat to use. Try scanning more slowly and cover the whole floor before tapping Done.")
+                .font(VuuroFont.body())
+                .foregroundStyle(VuuroColor.textPrimary.opacity(0.6))
+                .multilineTextAlignment(.center)
+            Button("Rescan this room", action: onRescan)
+                .buttonStyle(.vuuroPrimary)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(VuuroColor.surfaceMuted)
+    }
+}
+
+// See ios-app/'s copy of this file for the full rationale (Mark's
+// 2026-09-02 ask (c)).
+private struct UploadRejectedView: View {
+    let error: AppError
+    let onRetryUpload: () -> Void
+    let onRescan: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Upload didn't go through")
+                .font(VuuroFont.display(20))
+                .foregroundStyle(VuuroColor.textPrimary)
+            ErrorCodeView(error: error)
+                .multilineTextAlignment(.center)
+            Text("This room's capture is still on your device. Retry the same upload, or rescan if the room itself needs it.")
+                .font(VuuroFont.body(12))
+                .foregroundStyle(VuuroColor.textPrimary.opacity(0.5))
+                .multilineTextAlignment(.center)
+            Button("Retry upload", action: onRetryUpload)
+                .buttonStyle(.vuuroPrimary)
+            Button("Rescan this room", role: .destructive, action: onRescan)
                 .buttonStyle(.vuuroSecondary)
         }
         .padding()

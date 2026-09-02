@@ -181,6 +181,25 @@ private struct RoomCaptureFlowStep: View {
     @State private var partialCaptureFailureMessage: String?
     @State private var isUploadingPartialCapture = false
     @State private var showDiscardConfirmation = false
+    // Mark's 2026-09-02 ask (b): caught locally, before ever reaching the
+    // server — RoomBuilder produced a room, but its floor outline is
+    // degenerate (see CapturedRoomExporter.hasUsableFloorOutline). Nothing
+    // to upload here; only a rescan can fix it, so there's no export value
+    // worth holding onto.
+    @State private var isDegenerateCapture = false
+    // Mark's 2026-09-02 ask (c): a rejected upload (network blip or a
+    // server-side validation reject) used to route straight to onError,
+    // which always started a brand new capture attempt — throwing away
+    // geometry that was already captured even when only the upload itself
+    // needed retrying. Keeping it here instead lets "Retry upload" resubmit
+    // the exact same export with no rescan required.
+    @State private var uploadRejection: (error: AppError, export: RoomPlanCaptureExport, session: ScanSessionResponse)?
+    // Same reasoning as isUploadingPartialCapture: a dedicated top-level flag,
+    // not a reuse of isUploading, because isUploading is only checked *inside*
+    // the bare-capture ZStack branch below — clearing uploadRejection without
+    // this would fall through to that branch, remounting it and re-firing its
+    // .onAppear { coordinator.start() } on an already-ended RoomCaptureSession.
+    @State private var isRetryingUpload = false
 
     private let client = ScanServiceClient()
 
@@ -242,6 +261,31 @@ private struct RoomCaptureFlowStep: View {
                         // before ever reaching submit()), so existingSession
                         // is still the right value to resume with.
                         onError(AppError(site: .captureFailed, underlying: PlainError(message: partialCaptureFailureMessage)), existingSession)
+                    }
+                )
+            } else if isDegenerateCapture {
+                DegenerateCaptureView {
+                    onDiscardRoom()
+                }
+            } else if isRetryingUpload {
+                ProgressView("Uploading capture…")
+                    .padding()
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            } else if let uploadRejection {
+                UploadRejectedView(
+                    error: uploadRejection.error,
+                    onRetryUpload: {
+                        // isRetryingUpload must flip synchronously, in the
+                        // same scope that clears uploadRejection — same class
+                        // of gap isUploadingPartialCapture's comment
+                        // documents elsewhere in this file.
+                        let pending = uploadRejection
+                        self.uploadRejection = nil
+                        isRetryingUpload = true
+                        Task { await retryUpload(session: pending.session, export: pending.export) }
+                    },
+                    onRescan: {
+                        onDiscardRoom()
                     }
                 )
             } else if !DeviceCapability.isRoomPlanSupported {
@@ -352,7 +396,15 @@ private struct RoomCaptureFlowStep: View {
         switch state {
         case .finished(roomAvailable: true):
             guard let room = coordinator.capturedRoom else { return }
-            Task { await submit(CapturedRoomExporter.export(room)) }
+            let export = CapturedRoomExporter.export(room)
+            guard export.hasUsableFloorOutline else {
+                // Mark's 2026-09-02 ask (b): refuse locally instead of
+                // round-tripping to the server for the same deterministic
+                // reject — nothing here needed real LiDAR to build or test.
+                isDegenerateCapture = true
+                return
+            }
+            Task { await submit(export) }
         case .finished(roomAvailable: false):
             // No session created for this attempt yet (submit() never ran),
             // so existingSession is the right value to resume with.
@@ -412,15 +464,24 @@ private struct RoomCaptureFlowStep: View {
             let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export)
             justCaptured = (session, floorPlan)
         } catch {
-            // The real fix: `session` here (not existingSession) is whatever
-            // this attempt actually ended up with — including a session
-            // createSession just created moments ago, above, if this was the
-            // first room. Passing existingSession instead would have retried
-            // into a blank session, calling createSession again and orphaning
-            // this one server-side with zero captures, silently, since
-            // POST /scan-sessions has no idempotency key the way /capture
-            // does to catch a duplicate.
-            onError(AppError(site: .captureUpload, underlying: error), session)
+            // Mark's 2026-09-02 ask (c): kept in place instead of routed to
+            // onError, which always started a whole new capture attempt —
+            // `session` here (not existingSession) is whatever this attempt
+            // actually ended up with, same reasoning as the comment this
+            // replaced, so "Retry upload" resubmits into the right session
+            // without a duplicate create.
+            uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session)
+        }
+    }
+
+    @MainActor
+    private func retryUpload(session: ScanSessionResponse, export: RoomPlanCaptureExport) async {
+        defer { isRetryingUpload = false }
+        do {
+            let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export)
+            justCaptured = (session, floorPlan)
+        } catch {
+            uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session)
         }
     }
 }
@@ -467,6 +528,49 @@ private struct PartialCaptureFailureView: View {
             Button("Upload what was captured") { onUsePartial() }
                 .buttonStyle(.borderedProminent)
             Button("Discard and try again", role: .destructive) { onDiscard() }
+        }
+        .padding()
+    }
+}
+
+// Mark's 2026-09-02 ask (b): a local, pre-upload rejection — no VS code,
+// no server round trip, since RoomBuilder finished normally and there was
+// simply nothing usable in the outline it produced.
+private struct DegenerateCaptureView: View {
+    let onRescan: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Keep scanning").font(.headline)
+            Text("This room's outline came out too small or flat to use. Try scanning more slowly and cover the whole floor before tapping Done.")
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Rescan this room", action: onRescan).buttonStyle(.borderedProminent)
+        }
+        .padding()
+    }
+}
+
+// Mark's 2026-09-02 ask (c): keeps the already-captured export in place
+// instead of forcing a full rescan for what might just be a network blip —
+// "Rescan this room" is still offered for when the geometry itself is the
+// problem.
+private struct UploadRejectedView: View {
+    let error: AppError
+    let onRetryUpload: () -> Void
+    let onRescan: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Upload didn't go through").font(.headline)
+            ErrorCodeView(error: error)
+                .multilineTextAlignment(.center)
+            Text("This room's capture is still on your device. Retry the same upload, or rescan if the room itself needs it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Retry upload", action: onRetryUpload).buttonStyle(.borderedProminent)
+            Button("Rescan this room", role: .destructive, action: onRescan)
         }
         .padding()
     }

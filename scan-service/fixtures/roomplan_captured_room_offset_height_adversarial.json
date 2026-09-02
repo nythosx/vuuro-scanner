@@ -1,0 +1,27 @@
+{
+  "_fixture_note": "Adversarial fixture, not a regression fixture. Purpose: every other fixture here has every floor corner at y=0.0 and an origin-anchored polygon — a bug that silently depends on y being exactly 0, or on the polygon starting at (0,0), would pass all of them and still be wrong. Mark found exactly this class of bug on a real device (2026-09-02): the iOS exporter passed a floor's local-frame corners straight through without applying surface.transform, and every existing fixture (client and server) happened to already look like valid world-space data, so nothing caught it. This floor sits at y=-2.5 (a non-zero height) and is translated well away from the origin (x in [10.0, 13.5], z in [-5.0, -2.2]) — same 3.5m x 2.8m rectangle as roomplan_captured_room_single_room.json's shape, translated, so the expected area (9.8 m2) and perimeter (12.6 m) are still hand-verifiable.",
+  "story": 0,
+  "floors": [
+    {
+      "identifier": "floor-0003",
+      "category": "floor",
+      "confidence": "high",
+      "polygonCorners": [
+        [10.0, -2.5, -5.0],
+        [13.5, -2.5, -5.0],
+        [13.5, -2.5, -2.2],
+        [10.0, -2.5, -2.2]
+      ]
+    }
+  ],
+  "walls": [
+    { "identifier": "wall-2001", "category": "wall", "confidence": "high", "dimensions": [3.5, 2.60, 0.10] },
+    { "identifier": "wall-2002", "category": "wall", "confidence": "high", "dimensions": [2.8, 2.60, 0.10] },
+    { "identifier": "wall-2003", "category": "wall", "confidence": "high", "dimensions": [3.5, 2.60, 0.10] },
+    { "identifier": "wall-2004", "category": "wall", "confidence": "high", "dimensions": [2.8, 2.60, 0.10] }
+  ],
+  "doors": [],
+  "windows": [],
+  "openings": [],
+  "objects": []
+}

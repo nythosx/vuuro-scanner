@@ -153,6 +153,12 @@ run_fixture_case($baseUrl, __DIR__ . '/../fixtures/roomplan_captured_room_single
 // area/perimeter here.
 run_fixture_case($baseUrl, __DIR__ . '/../fixtures/roomplan_captured_room_lshaped_adversarial.json', 'Adversarial: L-shaped concave room');
 
+// Every other fixture has every corner at y=0.0, anchored at the origin —
+// this one sits at a non-zero height and is translated well away from
+// (0,0), so a regression that only works "by accident" for y=0/origin-
+// anchored data (like the real 2026-09-02 exporter bug) would show up here.
+run_fixture_case($baseUrl, __DIR__ . '/../fixtures/roomplan_captured_room_offset_height_adversarial.json', 'Adversarial: non-zero height, translated origin');
+
 // A session missing any identity field must be rejected, not silently defaulted.
 foreach (['property_id', 'unit_id', 'organisation_id'] as $missingField) {
     $payload = [
