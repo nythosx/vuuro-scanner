@@ -4,13 +4,10 @@
 //
 //  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
 //
-//  Design tokens pulled from vuuro.com's live computed styles (brand's own
-//  marketing site), not invented: primary orange, lime accent, dark text,
-//  card radius/shadow, and the "Space Grotesk" display font. This file
-//  exists only in ios-app-with-design/ — the plain ios-app/ target this was
-//  copied from is untouched and still matches the brief's screens with no
-//  branding applied, per hard constraint #7 (evidence over theatre): this
-//  restyle is an optional variant, not something the brief asked for.
+//  LIDAR-7: folded in from the retired ios-app-with-design/ tree
+//  (2026-09-03) — CI never compiled that tree, so it drifted. Not applied
+//  to any view by default; wire a screen to .vuuroPrimary/.vuuroSecondary/
+//  .vuuroCard() to use it. Tokens pulled from vuuro.com's live styles.
 //
 
 import SwiftUI

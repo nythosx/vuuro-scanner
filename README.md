@@ -44,10 +44,11 @@ for the full kickoff brief — the only source of truth for direction on this bu
   appetize.io using DEBUG-only fake-LiDAR/tunnel tooling); see `ios-app/README.md` for
   exactly what's verified vs. still open, and the checklist for whoever opens it in
   Xcode first.
-- [`ios-app-with-design/`](./ios-app-with-design/) — an optional, separate copy of
-  `ios-app/` restyled to vuuro.com's actual brand. Not part of the direction brief, not
-  covered by CI, kept fully independent so it never affects `ios-app/`; see
-  `ios-app-with-design/README.md`.
+- `ios-app-with-design/` — retired 2026-09-03 (LIDAR-7). It was a second, parallel copy
+  of `ios-app/` restyled to vuuro.com's brand; CI never compiled it and it silently fell
+  behind `ios-app/`'s real bug fixes more than once. Its one differentiator — the actual
+  brand tokens/button styles — is folded into `ios-app/Sources/Design/VuuroDesign.swift`,
+  unwired by default; see `ios-app/README.md`'s "Branding later" section.
 
 ## What this is
 

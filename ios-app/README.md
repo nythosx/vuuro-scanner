@@ -17,6 +17,14 @@
 Evidence over theatre: never round "CI-compiled and simulator-tested" up to "verified."
 Fixture/simulator proof and real-capture proof are not the same claim.
 
+## Branding later
+
+`Sources/Design/VuuroDesign.swift` holds vuuro.com's brand tokens (colors, fonts, button
+styles) — folded in from the retired `ios-app-with-design/` tree (LIDAR-7, 2026-09-03).
+Nothing uses it by default; the app ships on plain system styling. To brand a screen,
+wire it to `.vuuroPrimary`/`.vuuroSecondary`/`.vuuroCard()`. This keeps branding a
+same-tree, opt-in change instead of a second app to maintain.
+
 ## Checklist: opening this in Xcode for the first time (real-device test)
 
 ### Prereqs

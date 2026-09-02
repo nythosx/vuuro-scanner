@@ -111,8 +111,10 @@ scan-service-docker-build:
 # history - a debug default shipping "on" is a matter of when, not if,
 # without something other than manual memory catching it. Cheap and
 # deliberately dumb: a plain text match against the one known-safe literal
-# for each file, checked on both app copies so a fix to one doesn't leave the
-# other silently behind (see ARCHITECTURE.md's business-logic-drift note).
+# for each file. Used to check both app copies so a fix to one didn't leave
+# the other silently behind — now just the one tree, since LIDAR-7 folded
+# ios-app-with-design/ back into ios-app/ and retired it (2026-09-03, see
+# ARCHITECTURE.md's roadmap entry).
 #
 # Deliberately NOT path-gated on Debug/**, unlike the jobs above: this checks
 # a standing invariant on the current HEAD, not "did this diff break
@@ -129,9 +131,7 @@ debug-flags-safe-defaults:
     - |
       $checks = @(
         @{ Path = "ios-app/Sources/Debug/FakeLidarMode.swift"; Pattern = 'private static let fallback = false' },
-        @{ Path = "ios-app/Sources/Debug/DebugScanServiceURL.swift"; Pattern = 'private static let fallback: String\? = nil' },
-        @{ Path = "ios-app-with-design/Sources/Debug/FakeLidarMode.swift"; Pattern = 'private static let fallback = false' },
-        @{ Path = "ios-app-with-design/Sources/Debug/DebugScanServiceURL.swift"; Pattern = 'private static let fallback: String\? = nil' }
+        @{ Path = "ios-app/Sources/Debug/DebugScanServiceURL.swift"; Pattern = 'private static let fallback: String\? = nil' }
       )
       $failed = $false
       foreach ($check in $checks) {
