@@ -396,15 +396,10 @@ private struct RoomCaptureFlowStep: View {
         switch state {
         case .finished(roomAvailable: true):
             guard let room = coordinator.capturedRoom else { return }
-            let export = CapturedRoomExporter.export(room)
-            guard export.hasUsableFloorOutline else {
-                // Mark's 2026-09-02 ask (b): refuse locally instead of
-                // round-tripping to the server for the same deterministic
-                // reject — nothing here needed real LiDAR to build or test.
-                isDegenerateCapture = true
-                return
-            }
-            Task { await submit(export) }
+            // The degenerate-outline guard lives inside submit(), not here —
+            // "Upload what was captured" (below) calls submit() directly too,
+            // and needs the same guard.
+            Task { await submit(CapturedRoomExporter.export(room)) }
         case .finished(roomAvailable: false):
             // No session created for this attempt yet (submit() never ran),
             // so existingSession is the right value to resume with.
@@ -434,6 +429,22 @@ private struct RoomCaptureFlowStep: View {
 
     @MainActor
     private func submit(_ export: RoomPlanCaptureExport) async {
+        guard export.hasUsableFloorOutline else {
+            // Mark's 2026-09-02 ask (b): refuse locally instead of round-
+            // tripping to the server for the same deterministic reject.
+            // Checked here, not at each call site, so "Upload what was
+            // captured" (the partial-capture recovery path) gets the same
+            // guard as a normal finished capture — isUploadingPartialCapture
+            // must be cleared too, or it would keep showing its own
+            // "Uploading capture…" screen over this one (it's checked first
+            // in the view's if-else chain).
+            isUploadingPartialCapture = false
+            #if DEBUG
+            DiagnosticsLog.shared.record("Local reject: floor outline too small/degenerate, upload skipped", category: .error)
+            #endif
+            isDegenerateCapture = true
+            return
+        }
         isUploading = true
         defer { isUploading = false }
         let session: ScanSessionResponse
@@ -565,12 +576,24 @@ private struct UploadRejectedView: View {
             Text("Upload didn't go through").font(.headline)
             ErrorCodeView(error: error)
                 .multilineTextAlignment(.center)
-            Text("This room's capture is still on your device. Retry the same upload, or rescan if the room itself needs it.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Retry upload", action: onRetryUpload).buttonStyle(.borderedProminent)
-            Button("Rescan this room", role: .destructive, action: onRescan)
+            if error.isLikelyRetryable {
+                Text("This room's capture is still on your device. Retry the same upload, or rescan if the room itself needs it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Retry upload", action: onRetryUpload).buttonStyle(.borderedProminent)
+                Button("Rescan this room", role: .destructive, action: onRescan)
+            } else {
+                // The server looked at this exact data and rejected it (a
+                // 4xx, e.g. a degenerate-outline reject) — retrying the same
+                // bytes would just fail the same way again, so only rescan
+                // is offered, not a pointless retry.
+                Text("The server rejected this capture's data — retrying the same upload won't change that. Rescanning this room is the way forward.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Rescan this room", action: onRescan).buttonStyle(.borderedProminent)
+            }
         }
         .padding()
     }

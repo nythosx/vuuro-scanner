@@ -75,15 +75,21 @@ extension RoomPlanCaptureExport {
     // RoomPlanSimulatorAdapter.php's MIN_POLYGON_AREA_M2 guard client-side.
     private static let minFloorAreaM2 = 0.25
 
+    // See ios-app/'s copy of this file for why: checks every floor, not just
+    // the first — a multi-story capture can carry more than one, and the
+    // adapter rejects on any floor with a degenerate outline.
     var hasUsableFloorOutline: Bool {
-        guard let corners = floors.first?.polygonCorners, corners.count >= 3 else { return false }
-        let points = corners.map { (x: $0[0], z: $0[2]) }
-        var sum = 0.0
-        for i in points.indices {
-            let a = points[i]
-            let b = points[(i + 1) % points.count]
-            sum += a.x * b.z - b.x * a.z
+        guard !floors.isEmpty else { return false }
+        return floors.allSatisfy { floor in
+            guard let corners = floor.polygonCorners, corners.count >= 3 else { return false }
+            let points = corners.map { (x: $0[0], z: $0[2]) }
+            var sum = 0.0
+            for i in points.indices {
+                let a = points[i]
+                let b = points[(i + 1) % points.count]
+                sum += a.x * b.z - b.x * a.z
+            }
+            return abs(sum) / 2.0 >= Self.minFloorAreaM2
         }
-        return abs(sum) / 2.0 >= Self.minFloorAreaM2
     }
 }

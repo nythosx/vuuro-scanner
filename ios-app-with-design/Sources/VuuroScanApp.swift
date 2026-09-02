@@ -339,14 +339,9 @@ private struct RoomCaptureFlowStep: View {
         switch state {
         case .finished(roomAvailable: true):
             guard let room = coordinator.capturedRoom else { return }
-            let export = CapturedRoomExporter.export(room)
-            guard export.hasUsableFloorOutline else {
-                // Mark's 2026-09-02 ask (b) — see ios-app/'s copy of this
-                // file for the full rationale.
-                isDegenerateCapture = true
-                return
-            }
-            Task { await submit(export) }
+            // The degenerate-outline guard lives inside submit(), not here —
+            // see ios-app/'s copy of this file for why.
+            Task { await submit(CapturedRoomExporter.export(room)) }
         case .finished(roomAvailable: false):
             onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
         case .failed(let message, let partialRoomAvailable):
@@ -368,6 +363,16 @@ private struct RoomCaptureFlowStep: View {
 
     @MainActor
     private func submit(_ export: RoomPlanCaptureExport) async {
+        guard export.hasUsableFloorOutline else {
+            // See ios-app/'s copy of this file for the full rationale,
+            // including why isUploadingPartialCapture must be cleared here.
+            isUploadingPartialCapture = false
+            #if DEBUG
+            DiagnosticsLog.shared.record("Local reject: floor outline too small/degenerate, upload skipped", category: .error)
+            #endif
+            isDegenerateCapture = true
+            return
+        }
         isUploading = true
         defer { isUploading = false }
         let session: ScanSessionResponse
@@ -511,14 +516,26 @@ private struct UploadRejectedView: View {
                 .foregroundStyle(VuuroColor.textPrimary)
             ErrorCodeView(error: error)
                 .multilineTextAlignment(.center)
-            Text("This room's capture is still on your device. Retry the same upload, or rescan if the room itself needs it.")
-                .font(VuuroFont.body(12))
-                .foregroundStyle(VuuroColor.textPrimary.opacity(0.5))
-                .multilineTextAlignment(.center)
-            Button("Retry upload", action: onRetryUpload)
-                .buttonStyle(.vuuroPrimary)
-            Button("Rescan this room", role: .destructive, action: onRescan)
-                .buttonStyle(.vuuroSecondary)
+            if error.isLikelyRetryable {
+                Text("This room's capture is still on your device. Retry the same upload, or rescan if the room itself needs it.")
+                    .font(VuuroFont.body(12))
+                    .foregroundStyle(VuuroColor.textPrimary.opacity(0.5))
+                    .multilineTextAlignment(.center)
+                Button("Retry upload", action: onRetryUpload)
+                    .buttonStyle(.vuuroPrimary)
+                Button("Rescan this room", role: .destructive, action: onRescan)
+                    .buttonStyle(.vuuroSecondary)
+            } else {
+                // See ios-app/'s copy of this file for why: a 4xx means the
+                // server already rejected this exact data, so retrying the
+                // same upload is pointless — only rescan is offered.
+                Text("The server rejected this capture's data — retrying the same upload won't change that. Rescanning this room is the way forward.")
+                    .font(VuuroFont.body(12))
+                    .foregroundStyle(VuuroColor.textPrimary.opacity(0.5))
+                    .multilineTextAlignment(.center)
+                Button("Rescan this room", action: onRescan)
+                    .buttonStyle(.vuuroPrimary)
+            }
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)

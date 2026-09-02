@@ -108,6 +108,20 @@ struct AppError {
         underlying?.localizedDescription ?? site.defaultMessage
     }
 
+    // Distinguishes "worth retrying as-is" (a network blip, a 5xx) from "the
+    // server looked at this exact data and rejected it" (a 4xx validation
+    // error, e.g. VS-CAPTURE_UPLOAD-422's degenerate-outline reject) —
+    // retrying identical data against the same validation would just fail
+    // again the same way. Defaults true (a thrown error with no HTTP status
+    // at all, or one this app doesn't otherwise recognize, is assumed
+    // transient) so this only ever suppresses retry when there's a specific,
+    // known reason to.
+    var isLikelyRetryable: Bool {
+        guard let scanError = underlying as? ScanServiceError,
+              case .unexpectedStatus(let status, _) = scanError else { return true }
+        return !(400...499).contains(status)
+    }
+
     /// Everything needed to diagnose the failure, safe to paste into a
     /// message to Joven — no access token or other session secret in here.
     var copyableDetails: String {

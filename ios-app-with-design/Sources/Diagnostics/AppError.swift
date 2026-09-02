@@ -105,6 +105,14 @@ struct AppError {
         underlying?.localizedDescription ?? site.defaultMessage
     }
 
+    // See ios-app/'s copy of this file for why: distinguishes "worth
+    // retrying as-is" from "the server rejected this exact data" (a 4xx).
+    var isLikelyRetryable: Bool {
+        guard let scanError = underlying as? ScanServiceError,
+              case .unexpectedStatus(let status, _) = scanError else { return true }
+        return !(400...499).contains(status)
+    }
+
     /// Everything needed to diagnose the failure, safe to paste into a
     /// message to Joven — no access token or other session secret in here.
     var copyableDetails: String {
