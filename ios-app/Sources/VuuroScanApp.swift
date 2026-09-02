@@ -108,13 +108,15 @@ struct ScanFlowView: View {
                             // ScanHistoryEntry.asResumableSession()/
                             // asResumableIdentity() for why reconstructing
                             // these two values here is safe.
-                            ScanHistoryView { entry in
+                            ScanHistoryView(onResumeToAddRoom: { entry in
                                 stage = .capturing(
                                     identity: entry.asResumableIdentity(),
                                     session: entry.asResumableSession(),
                                     attempt: UUID()
                                 )
-                            }
+                            }, onAttachToSession: { entry, floorPlan in
+                                stage = .attachments(session: entry.asResumableSession(), floorPlan: floorPlan)
+                            })
                         }
                     }
                 }
@@ -610,7 +612,9 @@ private struct UploadRejectedView: View {
     }
 }
 
-private struct AttachmentsScreen: View {
+// Not private: LIDAR-6 reuses this from ScanHistoryView to attach a photo/
+// note to a past session without a new room capture.
+struct AttachmentsScreen: View {
     let session: ScanSessionResponse
     let floorPlan: FloorPlan
     let onDone: (FloorPlan) -> Void

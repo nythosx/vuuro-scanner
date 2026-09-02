@@ -58,6 +58,7 @@ struct AppError {
         case accessLog = "ACCESS_LOG"
         case historyImageDownload = "HISTORY_IMAGE_DOWNLOAD"
         case historyPDFDownload = "HISTORY_PDF_DOWNLOAD"
+        case historySessionFetch = "HISTORY_SESSION_FETCH"
 
         /// Only used when there's no thrown Error to describe the failure
         /// (e.g. capture finished but RoomPlan reported no usable room) —

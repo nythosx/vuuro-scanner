@@ -23,8 +23,15 @@ struct ScanHistoryView: View {
     /// existing callers (and any future read-only use) don't have to supply
     /// a callback they don't need.
     var onResumeToAddRoom: ((ScanHistoryEntry) -> Void)?
+    /// LIDAR-6: attaching a photo/note (e.g. later check-in evidence) has no
+    /// path once you leave the live capture flow — same class of gap as
+    /// LIDAR-4's missing room-resume. Fetches this session's current
+    /// FloorPlan fresh, then hands it back so the caller can enter the same
+    /// AttachmentsScreen the live flow already uses.
+    var onAttachToSession: ((ScanHistoryEntry, FloorPlan) -> Void)?
 
     @State private var entries: [ScanHistoryEntry] = ScanHistoryStore.shared.all()
+    @State private var isFetchingToAttach: Set<String> = []
     @State private var perEntryImageURLs: [String: URL] = [:]
     @State private var perEntryPDFURLs: [String: URL] = [:]
     @State private var bulkImageURLs: [URL] = []
@@ -90,6 +97,19 @@ struct ScanHistoryView: View {
                             dismiss()
                             onResumeToAddRoom(entry)
                         }
+                    }
+
+                    if let onAttachToSession {
+                        Button {
+                            Task { await attach(entry, using: onAttachToSession) }
+                        } label: {
+                            if isFetchingToAttach.contains(entry.sessionId) {
+                                ProgressView()
+                            } else {
+                                Text("Add a photo or note")
+                            }
+                        }
+                        .disabled(isFetchingToAttach.contains(entry.sessionId))
                     }
 
                     // ScanHistoryStore.remove(sessionId:) already existed but
@@ -204,6 +224,20 @@ struct ScanHistoryView: View {
 
         ScanHistoryStore.shared.remove(sessionId: entry.sessionId)
         entries = ScanHistoryStore.shared.all()
+    }
+
+    @MainActor
+    private func attach(_ entry: ScanHistoryEntry, using onAttachToSession: (ScanHistoryEntry, FloorPlan) -> Void) async {
+        isFetchingToAttach.insert(entry.sessionId)
+        defer { isFetchingToAttach.remove(entry.sessionId) }
+        do {
+            let floorPlan = try await client.fetchSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
+            appError = nil
+            dismiss()
+            onAttachToSession(entry, floorPlan)
+        } catch {
+            appError = AppError(site: .historySessionFetch, underlying: error)
+        }
     }
 
     @MainActor
