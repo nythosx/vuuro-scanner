@@ -106,6 +106,7 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
   php net/verify_exports.php http://127.0.0.1:8089
   php net/verify_acl.php http://127.0.0.1:8089
   php net/verify_coverage.php http://127.0.0.1:8089
+  php net/verify_openings_and_objects.php http://127.0.0.1:8089
   php net/verify_security_fixes.php http://127.0.0.1:8089
   php net/verify_error_messages.php http://127.0.0.1:8089
   php net/verify_enterprise_hardening.php http://127.0.0.1:8089
