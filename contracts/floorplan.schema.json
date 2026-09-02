@@ -58,7 +58,7 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["room_id", "label", "floor_area_m2", "perimeter_m", "bounding_dimensions_m", "confidence", "outline_m", "coverage"],
+        "required": ["room_id", "label", "floor_area_m2", "perimeter_m", "bounding_dimensions_m", "confidence", "outline_m", "coverage", "openings", "height_m", "volume_m3_indicative", "objects"],
         "properties": {
           "room_id": { "type": "string" },
           "label": { "type": "string" },
@@ -82,6 +82,63 @@
               "minItems": 2,
               "maxItems": 2,
               "items": { "type": "number" }
+            }
+          },
+          "openings": {
+            "type": "array",
+            "description": "LIDAR-10: doors/windows/openings this room's capture call reported, with positions — not just the coverage confidence tally. Always present; empty array only when RoomPlan reported none, never omitted. Same room-local coordinate frame as outline_m (see docs/adr/0002-export-coordinate-frame.md) — never a shared/world frame across rooms.",
+            "items": {
+              "type": "object",
+              "required": ["opening_id", "category", "position_m", "confidence"],
+              "properties": {
+                "opening_id": { "type": "string" },
+                "category": { "type": "string", "enum": ["door", "window", "opening"] },
+                "position_m": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": { "type": "number" },
+                  "description": "Room-local [x, z] centroid of the opening's captured outline, same frame/translation as outline_m."
+                },
+                "confidence": { "type": "string", "enum": ["low", "medium", "high"] }
+              }
+            }
+          },
+          "height_m": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "LIDAR-10: indicative room height only, derived from captured wall dimensions (hard constraint #2 — never certified). Null when no wall height was reported for this capture call, never fabricated as 0."
+          },
+          "volume_m3_indicative": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "LIDAR-10: floor_area_m2 * height_m, indicative only (name says so explicitly — never present as certified volume). Null whenever height_m is null."
+          },
+          "objects": {
+            "type": "array",
+            "description": "LIDAR-10: real furniture/fixtures RoomPlan captured for this room. Always present; empty array only when the capture saw none — never invented.",
+            "items": {
+              "type": "object",
+              "required": ["object_id", "category", "position_m", "dimensions_m", "confidence"],
+              "properties": {
+                "object_id": { "type": "string" },
+                "category": { "type": "string" },
+                "position_m": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": { "type": "number" },
+                  "description": "Room-local [x, z] position, same frame/translation as outline_m."
+                },
+                "dimensions_m": {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": { "type": "number" },
+                  "description": "[width, height, depth] as RoomPlan reported them."
+                },
+                "confidence": { "type": "string", "enum": ["low", "medium", "high"] }
+              }
             }
           },
           "coverage": {

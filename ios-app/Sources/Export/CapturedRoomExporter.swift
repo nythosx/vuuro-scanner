@@ -21,6 +21,10 @@ struct RoomPlanCaptureExport: Encodable {
         let confidence: String
         var dimensions: [Double]? = nil
         var polygonCorners: [[Double]]? = nil
+        // Single world-space point — only set for `objects`, which RoomPlan
+        // reports as a bounding box + transform, not a polygon outline like
+        // floors/walls/doors/windows/openings.
+        var position: [Double]? = nil
     }
 }
 
@@ -28,12 +32,14 @@ enum CapturedRoomExporter {
     static func export(_ room: CapturedRoom) -> RoomPlanCaptureExport {
         RoomPlanCaptureExport(
             story: 0,
-            floors: room.floors.map(mapFloor),
+            floors: room.floors.map { mapSurface($0, category: "floor") },
             walls: room.walls.map { mapSurface($0, category: "wall") },
             doors: room.doors.map { mapSurface($0, category: "door") },
             windows: room.windows.map { mapSurface($0, category: "window") },
             openings: room.openings.map { mapSurface($0, category: "opening") },
-            objects: []
+            // LIDAR-10: real captured furniture/fixtures, not the previous
+            // hardcoded `[]` — empty only when RoomPlan itself saw none.
+            objects: room.objects.map(mapObject)
         )
     }
 
@@ -49,22 +55,70 @@ enum CapturedRoomExporter {
     // (both here and scan-service/fixtures/*.json) always assumed the
     // exporter already did. No fixture ever exercised this specific step
     // because it was never possible to test without real hardware.
-    private static func mapFloor(_ surface: CapturedRoom.Surface) -> RoomPlanCaptureExport.SurfaceExport {
-        var export = mapSurface(surface, category: "floor")
-        export.polygonCorners = surface.polygonCorners.map { corner in
+    //
+    // LIDAR-10: doors/windows/openings get the same treatment now, not just
+    // floors — Mark's card asks for door/window "positions, not only
+    // coverage," and this is the one technique already proven on real
+    // hardware, so it's reused rather than inventing a second approach.
+    private static func worldPolygonCorners(_ surface: CapturedRoom.Surface) -> [[Double]] {
+        surface.polygonCorners.map { corner in
             let world = surface.transform * simd_float4(corner, 1)
             return [Double(world.x), Double(world.y), Double(world.z)]
         }
-        return export
     }
 
     private static func mapSurface(_ surface: CapturedRoom.Surface, category: String) -> RoomPlanCaptureExport.SurfaceExport {
-        RoomPlanCaptureExport.SurfaceExport(
+        var export = RoomPlanCaptureExport.SurfaceExport(
             identifier: surface.identifier.uuidString,
             category: category,
             confidence: mapConfidence(surface.confidence),
             dimensions: [Double(surface.dimensions.x), Double(surface.dimensions.y), Double(surface.dimensions.z)]
         )
+        export.polygonCorners = worldPolygonCorners(surface)
+        return export
+    }
+
+    // Unverified without Xcode/real hardware (no Mac reachable on this
+    // machine — see docs/adr/0001-scan-service-stack.md): written to
+    // RoomPlan's documented CapturedRoom.Object shape (category, confidence,
+    // dimensions, transform), same caution CaptureCoordinator.swift's
+    // RoomBuilder call already flags. Mark's real-device retest loop is what
+    // confirms this, same as it caught the mapFloor transform bug above.
+    private static func mapObject(_ object: CapturedRoom.Object) -> RoomPlanCaptureExport.SurfaceExport {
+        var export = RoomPlanCaptureExport.SurfaceExport(
+            identifier: object.identifier.uuidString,
+            category: mapObjectCategory(object.category),
+            confidence: mapConfidence(object.confidence),
+            dimensions: [Double(object.dimensions.x), Double(object.dimensions.y), Double(object.dimensions.z)]
+        )
+        let translation = object.transform.columns.3
+        export.position = [Double(translation.x), Double(translation.y), Double(translation.z)]
+        return export
+    }
+
+    // Passes through RoomPlan's own category — never invents one it did not
+    // report. @unknown default covers a category added in a newer SDK than
+    // this was written against.
+    private static func mapObjectCategory(_ category: CapturedRoom.Object.Category) -> String {
+        switch category {
+        case .storage: return "storage"
+        case .refrigerator: return "refrigerator"
+        case .stove: return "stove"
+        case .bed: return "bed"
+        case .sink: return "sink"
+        case .toilet: return "toilet"
+        case .bathtub: return "bathtub"
+        case .oven: return "oven"
+        case .dishwasher: return "dishwasher"
+        case .table: return "table"
+        case .sofa: return "sofa"
+        case .chair: return "chair"
+        case .fireplace: return "fireplace"
+        case .television: return "television"
+        case .stairs: return "stairs"
+        case .washerDryer: return "washerDryer"
+        @unknown default: return "object"
+        }
     }
 
     private static func mapConfidence(_ confidence: CapturedRoom.Confidence) -> String {

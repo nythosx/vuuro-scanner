@@ -75,6 +75,130 @@ t_check('coverage.confidence_counts has 6 high, 1 medium, 0 low',
     $result['rooms'][0]['coverage']['confidence_counts'] === ['high' => 6, 'medium' => 1, 'low' => 0]);
 echo "\n";
 
+// LIDAR-10: openings/height/volume/objects for the same fixture — doors and
+// windows now carry room-local positions (not just the coverage tally
+// above), height/volume are derived from wall dimensions[1] (2.60 in this
+// fixture), and the fixture's one bed object round-trips.
+echo "== LIDAR-10: openings, height/volume, and objects ==\n";
+$room = $result['rooms'][0];
+t_check('openings has 2 entries (1 door + 1 window)', count($room['openings']) === 2);
+t_check('openings[0] is the door, room-local position (2.40, 0.00)',
+    $room['openings'][0]['category'] === 'door' && $room['openings'][0]['position_m'] === [2.4, 0.0]);
+t_check('openings[1] is the window, room-local position (0.60, 3.10)',
+    $room['openings'][1]['category'] === 'window' && $room['openings'][1]['position_m'] === [0.6, 3.1]);
+t_check('openings[0].confidence is high, matching the fixture', $room['openings'][0]['confidence'] === 'high');
+t_check('height_m is 2.60, the tallest (only) wall dimensions[1] in the fixture', t_approx($room['height_m'], 2.60));
+t_check('volume_m3_indicative is floor_area_m2 * height_m = 13.02 * 2.60 = 33.85',
+    t_approx($room['volume_m3_indicative'], 33.85));
+t_check('objects has 1 entry (the fixture bed)', count($room['objects']) === 1);
+t_check('objects[0].category is "bed", passed through as the fixture reported it', $room['objects'][0]['category'] === 'bed');
+t_check('objects[0].position_m is room-local (3.00, 2.20)', $room['objects'][0]['position_m'] === [3.0, 2.2]);
+t_check('objects[0].dimensions_m matches the fixture (1.60, 0.55, 2.00)', $room['objects'][0]['dimensions_m'] === [1.6, 0.55, 2.0]);
+echo "\n";
+
+// LIDAR-10, adjacent case: a capture call with no walls[] at all must give
+// height_m/volume_m3_indicative as null, never a fabricated 0 — and multiple
+// doors/windows/objects across groups must all aggregate into openings[]/
+// objects[], not just the first of each.
+echo "== LIDAR-10: multiple openings/objects, and height/volume null with no walls ==\n";
+$openingsFixture = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_openings_and_objects.json'), true, 512, JSON_THROW_ON_ERROR);
+$openingsResult = $adapter->adapt($openingsFixture, $identity);
+$openingsRoom = $openingsResult['rooms'][0];
+
+t_check('floor_area_m2 is 5.0 x 4.0 = 20.00 m2', t_approx($openingsRoom['floor_area_m2'], 20.00));
+t_check('openings has 4 entries (2 doors + 2 windows), not just the first of each group', count($openingsRoom['openings']) === 4);
+t_check('openings category breakdown is 2 door + 2 window',
+    array_count_values(array_column($openingsRoom['openings'], 'category')) === ['door' => 2, 'window' => 2]);
+t_check('height_m is null when the capture call reported no walls[]', $openingsRoom['height_m'] === null);
+t_check('volume_m3_indicative is null, not a fabricated 0, when height_m is null', $openingsRoom['volume_m3_indicative'] === null);
+t_check('objects has 2 entries', count($openingsRoom['objects']) === 2);
+t_check('objects categories round-trip as reported (sofa, table)',
+    array_column($openingsRoom['objects'], 'category') === ['sofa', 'table']);
+echo "\n";
+
+// LIDAR-10: the card's own required check — a door/window present in the
+// raw capture must never silently disappear from openings[]. Exercised here
+// directly against the adapter (the independent-net equivalent,
+// net/verify_openings_and_objects.php, re-derives this over HTTP without
+// importing the adapter at all).
+echo "== LIDAR-10: a door present in capture must not go missing from the contract ==\n";
+$doorCount = count($fixture['doors'] ?? []) + count($fixture['windows'] ?? []) + count($fixture['openings'] ?? []);
+t_check('every door/window in the raw capture has a matching openings[] entry',
+    count($result['rooms'][0]['openings']) === $doorCount);
+echo "\n";
+
+// LIDAR-10 review finding, confirmed live before this fix: mapOpenings()/
+// mapObjects()/computeHeight() read the WHOLE rawCapture, not anything
+// scoped to a specific floor — a door physically only in floor A leaked into
+// floor B's openings[] too, translated into floor B's own room-local frame,
+// producing a plausible-looking but entirely wrong position. Real per-floor
+// scoping isn't possible with this payload shape (RoomPlan doesn't tag a
+// door/window/object with which floor it belongs to), so a multi-floor
+// capture call is now rejected outright rather than silently mis-attributed
+// — the opposite failure mode from "a door present but missing" above, and
+// the more dangerous one (wrong data that looks right, not absent data).
+echo "== LIDAR-10 review fix: a multi-floor capture call is rejected, not silently mis-attributed ==\n";
+try {
+    $adapter->adapt([
+        'floors' => [
+            ['identifier' => 'floor-A', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]],
+            ['identifier' => 'floor-B', 'confidence' => 'high', 'polygonCorners' => [[10, 0, 10], [13, 0, 10], [13, 0, 13], [10, 0, 13]]],
+        ],
+        'doors' => [
+            ['identifier' => 'door-only-in-room-A', 'confidence' => 'high', 'polygonCorners' => [[1, 0, 0], [2, 0, 0], [2, 2, 0], [1, 2, 0]]],
+        ],
+    ], $identity);
+    t_check('adapt() rejects a capture with more than one floor', false, 'no exception was thrown — this used to silently duplicate the door into floor B\'s openings[] at a wrong position');
+} catch (\InvalidArgumentException) {
+    t_check('adapt() rejects a capture with more than one floor', true);
+}
+
+// The rejection above must be scoped to ambiguous data, not floor count
+// alone — net/verify_exports.php legitimately submits a many-floor,
+// geometry-only capture (no walls/doors/windows/openings/objects at all) to
+// exercise PDF pagination and the PNG canvas-size bound. That capture has
+// nothing cross-floor to misattribute (openings/objects are correctly empty,
+// height_m correctly null, per floor), so it must keep working exactly as
+// before this fix.
+echo "== LIDAR-10 review fix, narrowed: a floors-only multi-floor capture (no ambiguous data) still succeeds ==\n";
+$manyFloorsOnly = ['floors' => array_map(
+    static fn (int $i) => ['identifier' => "floor-many-$i", 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [3, 0, 0], [3, 0, 3], [0, 0, 3]]],
+    range(0, 4)
+)];
+$manyFloorsResult = $adapter->adapt($manyFloorsOnly, $identity);
+t_check('a 5-floor, geometry-only capture (no walls/doors/objects) is still accepted', count($manyFloorsResult['rooms']) === 5);
+t_check('each room in it has empty openings[] (nothing to misattribute)',
+    array_column($manyFloorsResult['rooms'], 'openings') === array_fill(0, 5, []));
+t_check('each room in it has null height_m (no walls[] reported)',
+    array_column($manyFloorsResult['rooms'], 'height_m') === array_fill(0, 5, null));
+
+// Review finding, minor: objects[].dimensions and walls[].dimensions reached
+// mapObjects()/computeHeight()'s `(float) (...)` casts with no numeric/
+// finite/bounds check at all — same silent-corruption/absurd-value shape
+// validatePoints() already closes off for every other coordinate in this
+// file.
+echo "== LIDAR-10 review fix: absurd objects[].dimensions / walls[].dimensions are rejected ==\n";
+try {
+    $adapter->adapt([
+        'floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]],
+        'objects' => [['identifier' => 'o', 'confidence' => 'high', 'position' => [1, 0, 1], 'dimensions' => [99999, 1, 1]]],
+    ], $identity);
+    t_check('adapt() rejects an absurd objects[].dimensions coordinate', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    t_check('adapt() rejects an absurd objects[].dimensions coordinate', true);
+}
+
+try {
+    $adapter->adapt([
+        'floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]],
+        'walls' => [['identifier' => 'w', 'confidence' => 'high', 'dimensions' => [4, 1e400, 0.1]]],
+    ], $identity);
+    t_check('adapt() rejects a non-finite walls[].dimensions height', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    t_check('adapt() rejects a non-finite walls[].dimensions height', true);
+}
+echo "\n";
+
 // Deliberately adversarial: a bounding-box-only implementation would still
 // pass every check above. This is the check that catches it.
 echo "== Adjacent case: L-shaped concave room ==\n";

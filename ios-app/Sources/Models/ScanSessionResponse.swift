@@ -86,6 +86,14 @@ struct FloorPlan: Codable {
         let confidence: String
         let outlineM: [[Double]]
         let coverage: Coverage
+        // LIDAR-10: doors/windows/openings with positions, indicative
+        // height/volume, and real captured objects. No UI consumption yet
+        // (deferred to LIDAR-11's fused 2D/3D view) — the data just needs
+        // somewhere to land.
+        let openings: [Opening]
+        let heightM: Double?
+        let volumeM3Indicative: Double?
+        let objects: [CapturedObject]
 
         enum CodingKeys: String, CodingKey {
             case roomId = "room_id"
@@ -96,6 +104,40 @@ struct FloorPlan: Codable {
             case confidence
             case outlineM = "outline_m"
             case coverage
+            case openings
+            case heightM = "height_m"
+            case volumeM3Indicative = "volume_m3_indicative"
+            case objects
+        }
+    }
+
+    struct Opening: Codable {
+        let openingId: String
+        let category: String
+        let positionM: [Double]
+        let confidence: String
+
+        enum CodingKeys: String, CodingKey {
+            case openingId = "opening_id"
+            case category
+            case positionM = "position_m"
+            case confidence
+        }
+    }
+
+    struct CapturedObject: Codable {
+        let objectId: String
+        let category: String
+        let positionM: [Double]
+        let dimensionsM: [Double]
+        let confidence: String
+
+        enum CodingKeys: String, CodingKey {
+            case objectId = "object_id"
+            case category
+            case positionM = "position_m"
+            case dimensionsM = "dimensions_m"
+            case confidence
         }
     }
 

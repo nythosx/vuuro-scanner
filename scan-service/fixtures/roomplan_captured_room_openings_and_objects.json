@@ -1,0 +1,83 @@
+{
+  "_fixture_note": "LIDAR-10 fixture: exercises multiple doors/windows/objects at once (proving openings[]/objects[] aggregate correctly across groups and items), and deliberately omits walls[] to prove height_m/volume_m3_indicative degrade to null — never a fabricated 0 — when no wall height was reported for the capture call. Rectangular 5.0 x 4.0 floor, area 20.00 m2, perimeter 18.00 m.",
+  "story": 0,
+  "floors": [
+    {
+      "identifier": "floor-0003",
+      "category": "floor",
+      "confidence": "high",
+      "polygonCorners": [
+        [0.0, 0.0, 0.0],
+        [5.0, 0.0, 0.0],
+        [5.0, 0.0, 4.0],
+        [0.0, 0.0, 4.0]
+      ]
+    }
+  ],
+  "walls": [],
+  "doors": [
+    {
+      "identifier": "door-0002",
+      "category": "door",
+      "confidence": "high",
+      "polygonCorners": [
+        [1.0, 0.0, 0.0],
+        [2.0, 0.0, 0.0],
+        [2.0, 2.05, 0.0],
+        [1.0, 2.05, 0.0]
+      ]
+    },
+    {
+      "identifier": "door-0003",
+      "category": "door",
+      "confidence": "medium",
+      "polygonCorners": [
+        [3.0, 0.0, 4.0],
+        [4.0, 0.0, 4.0],
+        [4.0, 2.05, 4.0],
+        [3.0, 2.05, 4.0]
+      ]
+    }
+  ],
+  "windows": [
+    {
+      "identifier": "window-0002",
+      "category": "window",
+      "confidence": "high",
+      "polygonCorners": [
+        [0.0, 0.90, 1.0],
+        [0.0, 0.90, 2.0],
+        [0.0, 1.90, 2.0],
+        [0.0, 1.90, 1.0]
+      ]
+    },
+    {
+      "identifier": "window-0003",
+      "category": "window",
+      "confidence": "high",
+      "polygonCorners": [
+        [5.0, 0.90, 1.0],
+        [5.0, 0.90, 2.0],
+        [5.0, 1.90, 2.0],
+        [5.0, 1.90, 1.0]
+      ]
+    }
+  ],
+  "openings": [],
+  "objects": [
+    {
+      "identifier": "object-0002",
+      "category": "sofa",
+      "confidence": "high",
+      "dimensions": [2.00, 0.80, 0.90],
+      "position": [1.0, 0.40, 3.5]
+    },
+    {
+      "identifier": "object-0003",
+      "category": "table",
+      "confidence": "medium",
+      "dimensions": [1.20, 0.70, 0.70],
+      "position": [4.0, 0.35, 1.0]
+    }
+  ]
+}
