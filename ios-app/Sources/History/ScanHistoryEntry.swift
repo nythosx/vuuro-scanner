@@ -25,4 +25,47 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
     let createdAt: Date
 
     var id: String { sessionId }
+
+    /// LIDAR-4 (multi-room unit story): the real gap this closes is that
+    /// once a landlord leaves the live capture flow — app killed,
+    /// backgrounded past ARKit's tolerance, or they come back a different
+    /// day for a room they missed — there was no way back into that
+    /// session; IdentityIntakeScreen's "Start scan" always creates a brand
+    /// new one, silently orphaning the room(s) already uploaded. This
+    /// reconstructs just enough of ScanSessionResponse to resume: only
+    /// `.id`/`.accessToken` are ever read downstream of the capturing stage
+    /// (confirmed by grep — no call site reads session.status/occupied/
+    /// consentObtained/propertyId/unitId/organisationId/purpose/createdAt),
+    /// so the placeholder values below are never actually consumed.
+    func asResumableSession() -> ScanSessionResponse {
+        ScanSessionResponse(
+            id: sessionId,
+            propertyId: propertyId,
+            unitId: unitId,
+            organisationId: organisationId,
+            purpose: purpose.rawValue,
+            createdAt: ISO8601DateFormatter().string(from: createdAt),
+            status: "unknown",
+            occupied: false,
+            consentObtained: false,
+            accessToken: accessToken
+        )
+    }
+
+    /// Companion to `asResumableSession()`: the capturing stage's `identity`
+    /// carries occupied/consentObtained, which this device never persisted
+    /// (correctly — consent is a one-time gate at session creation, not
+    /// something to re-derive later). Safe as a placeholder for the same
+    /// reason: resuming with a non-nil session skips session creation
+    /// entirely, so `submit()` never reads these two fields off this value.
+    func asResumableIdentity() -> ScanIdentity {
+        ScanIdentity(
+            propertyId: propertyId,
+            unitId: unitId,
+            organisationId: organisationId,
+            purpose: purpose,
+            occupied: false,
+            consentObtained: false
+        )
+    }
 }

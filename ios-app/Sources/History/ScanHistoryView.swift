@@ -17,6 +17,13 @@
 import SwiftUI
 
 struct ScanHistoryView: View {
+    /// LIDAR-4: lets a past session be resumed to add another room instead
+    /// of forcing a brand new one — see ScanHistoryEntry.asResumableSession()
+    /// for why this is the actual gap being closed. Optional so this view's
+    /// existing callers (and any future read-only use) don't have to supply
+    /// a callback they don't need.
+    var onResumeToAddRoom: ((ScanHistoryEntry) -> Void)?
+
     @State private var entries: [ScanHistoryEntry] = ScanHistoryStore.shared.all()
     @State private var perEntryImageURLs: [String: URL] = [:]
     @State private var perEntryPDFURLs: [String: URL] = [:]
@@ -26,6 +33,8 @@ struct ScanHistoryView: View {
     @State private var isBulkFetchingPDFs = false
     @State private var appError: AppError?
     @State private var errorMessage: String?
+
+    @Environment(\.dismiss) private var dismiss
 
     private let client = ScanServiceClient()
 
@@ -74,6 +83,13 @@ struct ScanHistoryView: View {
 
                     NavigationLink("Access log") {
                         AccessLogView(sessionId: entry.sessionId, accessToken: entry.accessToken)
+                    }
+
+                    if let onResumeToAddRoom {
+                        Button("Scan another room") {
+                            dismiss()
+                            onResumeToAddRoom(entry)
+                        }
                     }
 
                     // ScanHistoryStore.remove(sessionId:) already existed but

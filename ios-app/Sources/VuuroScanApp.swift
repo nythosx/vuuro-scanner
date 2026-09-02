@@ -103,7 +103,18 @@ struct ScanFlowView: View {
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         NavigationLink("History") {
-                            ScanHistoryView()
+                            // LIDAR-4: the actual recovery path for "landlord
+                            // left mid multi-room unit and came back" — see
+                            // ScanHistoryEntry.asResumableSession()/
+                            // asResumableIdentity() for why reconstructing
+                            // these two values here is safe.
+                            ScanHistoryView { entry in
+                                stage = .capturing(
+                                    identity: entry.asResumableIdentity(),
+                                    session: entry.asResumableSession(),
+                                    attempt: UUID()
+                                )
+                            }
                         }
                     }
                 }

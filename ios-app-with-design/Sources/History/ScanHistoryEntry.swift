@@ -25,4 +25,36 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
     let createdAt: Date
 
     var id: String { sessionId }
+
+    /// LIDAR-4: reconstructs enough of ScanSessionResponse to resume a past
+    /// session and add another room — see ios-app/'s copy of this file for
+    /// why the placeholder values are safe (only .id/.accessToken are ever
+    /// read downstream of the capturing stage).
+    func asResumableSession() -> ScanSessionResponse {
+        ScanSessionResponse(
+            id: sessionId,
+            propertyId: propertyId,
+            unitId: unitId,
+            organisationId: organisationId,
+            purpose: purpose.rawValue,
+            createdAt: ISO8601DateFormatter().string(from: createdAt),
+            status: "unknown",
+            occupied: false,
+            consentObtained: false,
+            accessToken: accessToken
+        )
+    }
+
+    /// See ios-app/'s copy of this file for why occupied/consentObtained are
+    /// safe placeholders here.
+    func asResumableIdentity() -> ScanIdentity {
+        ScanIdentity(
+            propertyId: propertyId,
+            unitId: unitId,
+            organisationId: organisationId,
+            purpose: purpose,
+            occupied: false,
+            consentObtained: false
+        )
+    }
 }

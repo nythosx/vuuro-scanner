@@ -17,6 +17,9 @@
 import SwiftUI
 
 struct ScanHistoryView: View {
+    /// LIDAR-4: see ios-app/'s copy of this file for why this exists.
+    var onResumeToAddRoom: ((ScanHistoryEntry) -> Void)?
+
     @State private var entries: [ScanHistoryEntry] = ScanHistoryStore.shared.all()
     @State private var perEntryImageURLs: [String: URL] = [:]
     @State private var perEntryPDFURLs: [String: URL] = [:]
@@ -26,6 +29,8 @@ struct ScanHistoryView: View {
     @State private var isBulkFetchingPDFs = false
     @State private var appError: AppError?
     @State private var errorMessage: String?
+
+    @Environment(\.dismiss) private var dismiss
 
     private let client = ScanServiceClient()
 
@@ -83,6 +88,14 @@ struct ScanHistoryView: View {
                     }
                     .font(VuuroFont.body(15))
                     .foregroundStyle(VuuroColor.primary)
+
+                    if let onResumeToAddRoom {
+                        Button("Scan another room") {
+                            dismiss()
+                            onResumeToAddRoom(entry)
+                        }
+                        .buttonStyle(.vuuroSecondary)
+                    }
 
                     // ScanHistoryStore.remove(sessionId:) already existed but
                     // was never called from anywhere in the app — ported

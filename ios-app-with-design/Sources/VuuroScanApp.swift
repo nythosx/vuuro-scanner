@@ -90,7 +90,15 @@ struct ScanFlowView: View {
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         NavigationLink("History") {
-                            ScanHistoryView()
+                            // LIDAR-4: see ios-app/'s copy of this file for
+                            // the full rationale.
+                            ScanHistoryView { entry in
+                                stage = .capturing(
+                                    identity: entry.asResumableIdentity(),
+                                    session: entry.asResumableSession(),
+                                    attempt: UUID()
+                                )
+                            }
                         }
                         .foregroundStyle(VuuroColor.primary)
                     }
