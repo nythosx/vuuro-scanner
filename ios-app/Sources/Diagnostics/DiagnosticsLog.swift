@@ -24,6 +24,7 @@ import Foundation
 
 struct DiagnosticsLogEntry: Identifiable {
     enum Category: String {
+        case info = "INFO"
         case error = "ERROR"
         case state = "STATE"
         case instruction = "INSTRUCTION"
@@ -48,7 +49,11 @@ final class DiagnosticsLog: ObservableObject {
     // isn't), so unbounded growth is a real risk on a long test session.
     private let maxEntries = 300
 
-    private init() {}
+    // First line of every exported log, per Mark's 2026-09-02 request: build
+    // info attached automatically instead of relying on him to ask for it.
+    private init() {
+        record(BuildInfo.summary, category: .info)
+    }
 
     func record(_ message: String, category: DiagnosticsLogEntry.Category) {
         entries.append(DiagnosticsLogEntry(timestamp: Date(), category: category, message: message))

@@ -17,6 +17,13 @@ targets:
       properties:
         CFBundleDisplayName: Vuuro Scan
         NSCameraUsageDescription: Vuuro Scan uses the camera and LiDAR sensor to capture room geometry for floor plans.
+        # Parity fix: this branch never got Mark's 2026-08-31 ATS exception or
+        # his 2026-09-02 Local Network description — ios-app/ has both, this
+        # one would have hit the same cleartext block and generic permission
+        # dialog on a real device. See ios-app/project.yml for the reasoning.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: Vuuro Scan uploads captures to your own Scan Service on this network.
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false

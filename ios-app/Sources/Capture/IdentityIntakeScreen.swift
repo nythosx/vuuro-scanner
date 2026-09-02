@@ -73,6 +73,17 @@ struct IdentityIntakeScreen: View {
                 }
                 .disabled(!canStart)
             }
+
+            #if DEBUG
+            // Mark's 2026-09-02 request: this is the first screen of every
+            // session, so a screenshot of it carries "version plus who am I
+            // talking to" without him having to ask for it separately.
+            Section {
+                Text(BuildInfo.summary)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            #endif
         }
         .navigationTitle("New scan")
     }

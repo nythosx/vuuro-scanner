@@ -17,6 +17,11 @@ targets:
       properties:
         CFBundleDisplayName: Vuuro Scan
         NSCameraUsageDescription: Vuuro Scan uses the camera and LiDAR sensor to capture room geometry for floor plans.
+        # Missing entirely until Mark's 2026-09-02 12:59 report: without a
+        # custom string here, iOS shows its own generic "may find and connect
+        # to devices" text on the Local Network permission dialog instead of
+        # anything explaining why a room-scanning app needs it.
+        NSLocalNetworkUsageDescription: Vuuro Scan uploads captures to your own Scan Service on this network.
         # Without this, iOS blocks plain-HTTP capture uploads to a LAN IP on a
         # real device by default (only localhost is exempt) - this never
         # surfaced on appetize.io (https tunnel) or the Simulator (127.0.0.1)
@@ -51,3 +56,22 @@ targets:
         # of Mark's or the org's team IDs is on hand — see ios-app/README.md's
         # CI checklist for why this can't be filled in here.
         DEVELOPMENT_TEAM: ""
+    # Debug-only: Mark's 2026-09-02 12:59/13:13 request — every screenshot he
+    # sends should carry the commit SHA and build time, since he's the only
+    # runtime with real hardware. XcodeGen's declarative `info.properties`
+    # can't shell out to git, so this edits the already-copied Info.plist in
+    # the build product after normal build phases run, before code signing —
+    # BuildInfo.swift (Debug-only) reads it back via Bundle.main.
+    postbuildScripts:
+      - name: Embed Debug build info (commit SHA, build time)
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "$CONFIGURATION" = "Debug" ]; then
+            GIT_SHA=$(git -C "$SRCROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+            BUILD_TIME=$(date -u +"%Y-%m-%d %H:%M UTC")
+            PLIST_PATH="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+            if [ -f "$PLIST_PATH" ]; then
+              /usr/libexec/PlistBuddy -c "Add :GitCommitSHA string $GIT_SHA" "$PLIST_PATH" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :GitCommitSHA $GIT_SHA" "$PLIST_PATH"
+              /usr/libexec/PlistBuddy -c "Add :BuildTimestamp string $BUILD_TIME" "$PLIST_PATH" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :BuildTimestamp $BUILD_TIME" "$PLIST_PATH"
+            fi
+          fi
