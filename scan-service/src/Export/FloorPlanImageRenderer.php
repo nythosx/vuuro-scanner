@@ -138,23 +138,30 @@ final class FloorPlanImageRenderer
 
         foreach ($rooms as $room) {
             [$originX, $originZ] = $room['structure_origin_m'];
+            $outline = $room['outline_m'];
             $points = [];
-            foreach ($room['outline_m'] as [$mx, $mz]) {
+            foreach ($outline as [$mx, $mz]) {
                 [$px, $py] = $toPx($mx + $originX, $mz + $originZ);
                 $points[] = $px;
                 $points[] = $py;
             }
             imagefilledpolygon($image, $points, $roomFill);
             imagepolygon($image, $points, $roomBorder);
+            $this->drawWallLengths($image, $outline, $originX, $originZ, $toPx, $subtext);
 
             [$labelX, $labelY] = $toPx($originX, $originZ);
             imagestring($image, 3, $labelX + 4, $labelY + 4, $room['label'], $text);
-            // Mark's ask: labels, wall lengths, m2 on the same fused drawing,
-            // not just the room name.
+            // Mark's ask: labels, wall lengths, m2, m3 on the same fused
+            // drawing, not just the room name.
             $metrics = sprintf('%.2f sqm - %.2f m perimeter', $room['floor_area_m2'], $room['perimeter_m']);
             imagestring($image, 2, $labelX + 4, $labelY + 20, $metrics, $subtext);
+            $lineY = $labelY + 32;
             if (($room['height_m'] ?? null) !== null) {
-                imagestring($image, 2, $labelX + 4, $labelY + 32, sprintf('%.2f m height', $room['height_m']), $subtext);
+                imagestring($image, 2, $labelX + 4, $lineY, sprintf('%.2f m height', $room['height_m']), $subtext);
+                $lineY += 12;
+            }
+            if (($room['volume_m3_indicative'] ?? null) !== null) {
+                imagestring($image, 2, $labelX + 4, $lineY, sprintf('%.2f m3 indicative', $room['volume_m3_indicative']), $subtext);
             }
         }
 
@@ -184,6 +191,27 @@ final class FloorPlanImageRenderer
         return (string) $bytes;
     }
 
+    // Mark's ask: wall lengths, not just total perimeter. Each polygon edge
+    // labeled with its own real-world length (room-local outline_m distance
+    // — a rigid translation into the shared frame never changes edge
+    // lengths), at the edge's midpoint.
+    private function drawWallLengths($image, array $outlineM, float $originX, float $originZ, callable $toPx, int $color): void
+    {
+        $n = count($outlineM);
+        for ($i = 0; $i < $n; $i++) {
+            [$ax, $az] = $outlineM[$i];
+            [$bx, $bz] = $outlineM[($i + 1) % $n];
+            $lengthM = sqrt(($bx - $ax) ** 2 + ($bz - $az) ** 2);
+            if ($lengthM < 0.3) {
+                continue; // too short to label without the text overlapping itself
+            }
+            $midX = ($ax + $bx) / 2 + $originX;
+            $midZ = ($az + $bz) / 2 + $originZ;
+            [$px, $py] = $toPx($midX, $midZ);
+            imagestring($image, 1, $px - 10, $py - 5, sprintf('%.2fm', $lengthM), $color);
+        }
+    }
+
     /** @return array{width: int, height: int} */
     private function tileGeometry(array $room): array
     {
@@ -204,6 +232,11 @@ final class FloorPlanImageRenderer
         // it explicitly, so the old $num_points argument is dropped here.
         imagefilledpolygon($image, $points, $fill);
         imagepolygon($image, $points, $border);
+        $tileToPx = fn (float $mx, float $mz): array => [
+            $originX + self::TILE_PADDING + (int) round($mx * self::PIXELS_PER_METER),
+            $originY + self::TILE_PADDING + (int) round($mz * self::PIXELS_PER_METER),
+        ];
+        $this->drawWallLengths($image, $room['outline_m'], 0.0, 0.0, $tileToPx, $subtext);
 
         $labelY = $originY + self::TILE_PADDING + (int) round($room['bounding_dimensions_m']['length_m'] * self::PIXELS_PER_METER) + 8;
         imagestring($image, 4, $originX + self::TILE_PADDING, $labelY, $room['label'], $text);
@@ -211,8 +244,13 @@ final class FloorPlanImageRenderer
         // (m-superscript-2, middot) renders as mojibake.
         $metrics = sprintf('%.2f sqm - %.2f m perimeter - %s confidence', $room['floor_area_m2'], $room['perimeter_m'], $room['confidence']);
         imagestring($image, 2, $originX + self::TILE_PADDING, $labelY + 18, $metrics, $subtext);
+        $lineY = $labelY + 32;
         if (($room['height_m'] ?? null) !== null) {
-            imagestring($image, 2, $originX + self::TILE_PADDING, $labelY + 32, sprintf('%.2f m height', $room['height_m']), $subtext);
+            imagestring($image, 2, $originX + self::TILE_PADDING, $lineY, sprintf('%.2f m height', $room['height_m']), $subtext);
+            $lineY += 12;
+        }
+        if (($room['volume_m3_indicative'] ?? null) !== null) {
+            imagestring($image, 2, $originX + self::TILE_PADDING, $lineY, sprintf('%.2f m3 indicative', $room['volume_m3_indicative']), $subtext);
         }
     }
 }

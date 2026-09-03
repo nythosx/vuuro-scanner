@@ -81,6 +81,29 @@ $single = $renderer->render(build_floor_plan(build_many_rooms(1)));
 x_check('output starts with a PDF header', str_starts_with($single, '%PDF-1.4'));
 x_check('output contains the room label', str_contains($single, 'Room 0'));
 
+echo "\n== LIDAR-5/11: PDF metrics include height/m3/openings when known ==\n";
+$roomWithMetrics = [
+    'label' => 'Room With Metrics',
+    'floor_area_m2' => 12.0,
+    'perimeter_m' => 14.0,
+    'confidence' => 'high',
+    'height_m' => 2.6,
+    'volume_m3_indicative' => 31.2,
+    'openings' => [
+        ['opening_id' => 'o1', 'category' => 'door', 'position_m' => [0, 0], 'confidence' => 'high'],
+        ['opening_id' => 'o2', 'category' => 'window', 'position_m' => [1, 1], 'confidence' => 'high'],
+        ['opening_id' => 'o3', 'category' => 'window', 'position_m' => [2, 2], 'confidence' => 'high'],
+    ],
+];
+$pdfWithMetrics = $renderer->render(build_floor_plan([$roomWithMetrics]));
+x_check('PDF text includes the room height', str_contains($pdfWithMetrics, '2.60 m height'));
+x_check('PDF text includes the indicative m3 capacity', str_contains($pdfWithMetrics, '31.20 m3'));
+x_check('PDF text includes the door/window opening summary', str_contains($pdfWithMetrics, '1 door') && str_contains($pdfWithMetrics, '2 windows'));
+
+$roomWithoutMetrics = ['label' => 'Room Plain', 'floor_area_m2' => 12.0, 'perimeter_m' => 14.0, 'confidence' => 'high'];
+$pdfWithoutMetrics = $renderer->render(build_floor_plan([$roomWithoutMetrics]));
+x_check('a room with no height_m/openings keys at all still renders, no fabricated metrics line', !str_contains($pdfWithoutMetrics, 'm height'));
+
 // buildTextLines() emits 13 fixed lines (header/disclaimer/totals/footer)
 // plus one line per room; paginate() fits 44 lines per page
 // (intdiv(740-50, 16) + 1). 8787 rooms -> 8800 lines -> exactly 200 pages,
