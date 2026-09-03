@@ -38,7 +38,7 @@ scan-service-net:
     - php tests/export_renderer_test.php
     - php tests/concurrency_test.php
     - if (Test-Path data\scan_service.sqlite) { Remove-Item -Force data\scan_service.sqlite }
-    - $server1 = Start-Process -FilePath php -ArgumentList "-d","post_max_size=16M","-d","display_errors=0","-S","127.0.0.1:8089","public/index.php" -WindowStyle Hidden -PassThru
+    - $server1 = Start-Process -FilePath php -ArgumentList "-d","post_max_size=30M","-d","upload_max_filesize=25M","-d","display_errors=0","-S","127.0.0.1:8089","public/index.php" -WindowStyle Hidden -PassThru
     - |
       for ($i = 0; $i -lt 20; $i++) {
         try {
@@ -58,7 +58,7 @@ scan-service-net:
     - php net/verify_enterprise_hardening.php http://127.0.0.1:8089
     - if (-not $server1.HasExited) { Stop-Process -Id $server1.Id -Force }
     - if (Test-Path data\scan_service.sqlite) { Remove-Item -Force data\scan_service.sqlite }
-    - $server2 = Start-Process -FilePath php -ArgumentList "-d","post_max_size=16M","-d","display_errors=0","-S","127.0.0.1:9499","public/index.php" -WindowStyle Hidden -PassThru
+    - $server2 = Start-Process -FilePath php -ArgumentList "-d","post_max_size=30M","-d","upload_max_filesize=25M","-d","display_errors=0","-S","127.0.0.1:9499","public/index.php" -WindowStyle Hidden -PassThru
     - |
       for ($i = 0; $i -lt 20; $i++) {
         try {

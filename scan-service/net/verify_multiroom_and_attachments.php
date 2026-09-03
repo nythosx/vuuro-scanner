@@ -149,6 +149,11 @@ if (is_string($uploadedUrl)) {
     ], $accessToken);
     check('the uploaded photo\'s own url attaches via the existing /photos endpoint unchanged (HTTP 201)', $attachUploadedStatus === 201, "got HTTP $attachUploadedStatus");
     check('attaching it does not disturb the rooms already captured', count($withUploadedPhoto['rooms'] ?? []) === 2);
+
+    [, $accessLogAfterUpload] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId/access-log", null, $accessToken);
+    $uploadOutcomes = array_column(array_filter($accessLogAfterUpload['access_log'] ?? [], fn ($e) => $e['action'] === 'upload_photo'), 'outcome');
+    check('access log records the real upload_photo outcome ("stored"), not just that the token was granted',
+        in_array('stored', $uploadOutcomes, true), 'got ' . json_encode($uploadOutcomes));
 }
 
 $textFilePath = tempnam(sys_get_temp_dir(), 'net_photo_') . '.txt';
@@ -156,6 +161,12 @@ file_put_contents($textFilePath, 'not an image');
 [$wrongTypeStatus, $wrongTypeBody] = net_http_multipart_upload("$baseUrl/scan-sessions/$sessionId/photo-uploads", $textFilePath, 'text/plain', $accessToken);
 check('uploading a non-image file is rejected (HTTP 422), regardless of the claimed Content-Type', $wrongTypeStatus === 422, "got HTTP $wrongTypeStatus");
 check('the rejection names the specific error', ($wrongTypeBody['error'] ?? null) === 'unsupported_photo_type', 'got ' . ($wrongTypeBody['error'] ?? 'null'));
+
+[, $accessLogAfterReject] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId/access-log", null, $accessToken);
+$rejectOutcomes = array_column(array_filter($accessLogAfterReject['access_log'] ?? [], fn ($e) => $e['action'] === 'upload_photo'), 'outcome');
+check('access log records a rejected upload as rejected, not lumped in with "granted"',
+    in_array('rejected_unsupported_type', $rejectOutcomes, true), 'got ' . json_encode($rejectOutcomes));
+
 unlink($textFilePath);
 unlink($testImagePath);
 
@@ -194,6 +205,36 @@ check('a note with NO room_id at all still succeeds (HTTP 201) — this fix must
     'room_id' => 'room-that-does-not-exist',
 ], $accessToken);
 check('a photo with a bogus room_id is ALSO rejected (HTTP 422), not just notes', $bogusRoomIdPhotoStatus === 422, "got HTTP $bogusRoomIdPhotoStatus");
+
+echo "\n== capture_location: session-wide, honest, HTTP round trip ==\n";
+
+[$locStatus, $afterLocCapture] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", [
+    'raw_capture' => $fixtureA,
+    'capture_location' => ['lat' => 52.09, 'lon' => 5.12, 'accuracy_m' => 8.5, 'captured_at' => gmdate('c')],
+], $accessToken);
+check('a capture carrying capture_location is accepted (HTTP 200)', $locStatus === 200, "got HTTP $locStatus");
+check('capture_location round-trips lat/lon/accuracy_m', ($afterLocCapture['capture_location']['lat'] ?? null) === 52.09
+    && ($afterLocCapture['capture_location']['lon'] ?? null) === 5.12
+    && ($afterLocCapture['capture_location']['accuracy_m'] ?? null) === 8.5);
+
+[, $afterNoLocCapture] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $fixtureA], $accessToken);
+check('a later capture with no capture_location does not null out the session\'s already-known location',
+    ($afterNoLocCapture['capture_location']['lat'] ?? null) === 52.09);
+
+[$badLocStatus, $badLocBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", [
+    'raw_capture' => $fixtureA,
+    'capture_location' => ['lat' => 999, 'lon' => 5.12, 'accuracy_m' => 8.5],
+], $accessToken);
+check('an out-of-range lat is rejected (HTTP 422), not silently accepted', $badLocStatus === 422, "got HTTP $badLocStatus");
+check('the rejection names the specific error', ($badLocBody['error'] ?? null) === 'invalid_capture_location', 'got ' . ($badLocBody['error'] ?? 'null'));
+
+[, $freshLocSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
+    'property_id' => 'prop-net-noloc', 'unit_id' => 'unit-net-noloc', 'organisation_id' => 'org-net-noloc',
+    'purpose' => 'listing', 'occupied' => false,
+]);
+[, $freshLocAfter] = net_http_json('POST', "$baseUrl/scan-sessions/{$freshLocSession['id']}/capture", ['raw_capture' => $fixtureA], $freshLocSession['access_token']);
+check('a session that never sent a location gets capture_location: null, never fabricated',
+    array_key_exists('capture_location', $freshLocAfter) && $freshLocAfter['capture_location'] === null);
 
 echo "\n== Adversarial: photos/notes must not attach before any capture exists ==\n";
 

@@ -15,7 +15,8 @@
     "purpose",
     "rooms",
     "photos",
-    "notes"
+    "notes",
+    "capture_location"
   ],
   "properties": {
     "scan_session_id": {
@@ -52,6 +53,17 @@
       "type": "string",
       "description": "Why this scan was taken. First-class per the brief's 'ops memory' principle, not an afterthought tag.",
       "enum": ["listing", "check_in", "check_out", "renovation", "other"]
+    },
+    "capture_location": {
+      "type": ["object", "null"],
+      "description": "Session-wide (not per-room), set once from the first capture call that reported it and never overwritten to null by a later one. Null when location permission was denied or never asked — never fabricated. No public exposure of this exists in this repo (ADR-0003: no public session listing).",
+      "required": ["lat", "lon", "accuracy_m"],
+      "properties": {
+        "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+        "lon": { "type": "number", "minimum": -180, "maximum": 180 },
+        "accuracy_m": { "type": "number", "minimum": 0 },
+        "captured_at": { "type": ["string", "null"], "format": "date-time" }
+      }
     },
     "rooms": {
       "type": "array",

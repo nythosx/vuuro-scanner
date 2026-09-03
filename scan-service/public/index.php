@@ -548,6 +548,27 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         return;
     }
 
+    // capture_location is optional and session-wide, not per-room — honest
+    // (null) when location permission was denied or never asked, never
+    // fabricated. Malformed (present but wrong shape) is a client bug and
+    // rejected outright, same bar as capture_provider above.
+    if (array_key_exists('capture_location', $body) && $body['capture_location'] !== null) {
+        $loc = $body['capture_location'];
+        $locValid = is_array($loc)
+            && isset($loc['lat'], $loc['lon'], $loc['accuracy_m'])
+            && (is_int($loc['lat']) || is_float($loc['lat'])) && is_finite((float) $loc['lat']) && abs((float) $loc['lat']) <= 90
+            && (is_int($loc['lon']) || is_float($loc['lon'])) && is_finite((float) $loc['lon']) && abs((float) $loc['lon']) <= 180
+            && (is_int($loc['accuracy_m']) || is_float($loc['accuracy_m'])) && is_finite((float) $loc['accuracy_m']) && (float) $loc['accuracy_m'] >= 0
+            && (!isset($loc['captured_at']) || is_string($loc['captured_at']));
+        if (!$locValid) {
+            if ($holdsIdempotencyClaim) {
+                $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+            }
+            respondError(422, 'invalid_capture_location', "'capture_location', when present, needs numeric lat (-90..90), lon (-180..180), and accuracy_m (>=0).", ['field' => 'capture_location']);
+            return;
+        }
+    }
+
     $adapter = new RoomPlanSimulatorAdapter();
     try {
         // Offset by rooms already captured this session, so a second or
@@ -561,6 +582,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
             'organisation_id' => $session['organisation_id'],
             'purpose' => $session['purpose'],
             'capture_provider' => $body['capture_provider'] ?? 'roomplan_simulator_fixture',
+            'capture_location' => $body['capture_location'] ?? null,
         ], $roomIndexOffset);
     } catch (\InvalidArgumentException $e) {
         if ($holdsIdempotencyClaim) {
@@ -685,7 +707,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
 // POST /scan-sessions/{id}/photos with that URL exactly as before — the
 // existing photos contract is unchanged, this just gives it something real
 // to point at.
-const MAX_PHOTO_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_PHOTO_UPLOAD_BYTES = 25 * 1024 * 1024;
 const PHOTO_UPLOAD_MIME_EXTENSIONS = [
     'image/jpeg' => 'jpg',
     'image/png' => 'png',
@@ -710,6 +732,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#',
     // route needs its own explicit size check rather than relying on that
     // gate having already run.
     if (!isset($_FILES['photo']) || !is_array($_FILES['photo'])) {
+        $repo->logAccess($sessionId, 'upload_photo', 'rejected_missing_file');
         respondError(422, 'missing_photo_file', "Please include a 'photo' file field (multipart/form-data) with the image to upload.");
         return;
     }
@@ -717,6 +740,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#',
     $file = $_FILES['photo'];
     if ($file['error'] !== UPLOAD_ERR_OK) {
         $tooLarge = in_array($file['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true);
+        $repo->logAccess($sessionId, 'upload_photo', $tooLarge ? 'rejected_too_large' : 'rejected_upload_error');
         respondError(
             422,
             $tooLarge ? 'photo_too_large' : 'photo_upload_failed',
@@ -727,6 +751,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#',
 
     if ($file['size'] > MAX_PHOTO_UPLOAD_BYTES) {
         $maxMb = round(MAX_PHOTO_UPLOAD_BYTES / (1024 * 1024), 1);
+        $repo->logAccess($sessionId, 'upload_photo', 'rejected_too_large');
         respondError(422, 'photo_too_large', "Photos are limited to {$maxMb}MB.", ['max_bytes' => MAX_PHOTO_UPLOAD_BYTES]);
         return;
     }
@@ -736,6 +761,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#',
     // principle as is_http_url()'s scheme check above.
     $mime = (new \finfo(FILEINFO_MIME_TYPE))->file($file['tmp_name']);
     if (!isset(PHOTO_UPLOAD_MIME_EXTENSIONS[$mime])) {
+        $repo->logAccess($sessionId, 'upload_photo', 'rejected_unsupported_type');
         respondError(
             422,
             'unsupported_photo_type',
@@ -749,14 +775,17 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#',
     $filename = $photoUploadId . '.' . PHOTO_UPLOAD_MIME_EXTENSIONS[$mime];
     $storageDir = __DIR__ . '/../data/photos/' . $sessionId;
     if (!is_dir($storageDir) && !mkdir($storageDir, 0755, true) && !is_dir($storageDir)) {
+        $repo->logAccess($sessionId, 'upload_photo', 'failed_storage_error');
         respondError(500, 'internal_error', 'Could not create photo storage for this session.');
         return;
     }
     if (!move_uploaded_file($file['tmp_name'], $storageDir . '/' . $filename)) {
+        $repo->logAccess($sessionId, 'upload_photo', 'failed_storage_error');
         respondError(500, 'internal_error', 'Could not save the uploaded photo.');
         return;
     }
 
+    $repo->logAccess($sessionId, 'upload_photo', 'stored');
     $scheme = (($_SERVER['HTTPS'] ?? 'off') !== 'off') ? 'https' : 'http';
     $url = "{$scheme}://{$_SERVER['HTTP_HOST']}/scan-sessions/{$sessionId}/photo-uploads/{$filename}";
     respond(201, ['url' => $url, 'photo_upload_id' => $photoUploadId]);

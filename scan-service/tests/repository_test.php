@@ -327,6 +327,40 @@ $withNullRoomId = $repo->appendNote($roomIdSession['id'], ['note_id' => 'n3', 't
 r_check('appendNote() still accepts room_id: null (session-wide note) — this fix must not make room_id required', count($withNullRoomId['notes']) === 2);
 echo "\n";
 
+echo "== capture_location: session-wide, set once, never nulled back out ==\n";
+function build_capture_for_location(string $sessionId, ?array $location): array
+{
+    return [
+        'scan_session_id' => $sessionId,
+        'property_id' => 'p', 'unit_id' => 'u', 'organisation_id' => 'o',
+        'capture_provider' => 'test', 'captured_at' => gmdate('c'),
+        'measurement_basis' => 'indicative_nen2580_inspired', 'purpose' => 'listing',
+        'rooms' => [[
+            'room_id' => 'room-loc-1', 'label' => 'Room 1', 'floor_area_m2' => 10.0,
+            'perimeter_m' => 12.0, 'bounding_dimensions_m' => ['width_m' => 3, 'length_m' => 3],
+            'confidence' => 'high', 'outline_m' => [[0, 0], [3, 0], [3, 3], [0, 3]],
+            'coverage' => ['score' => 90, 'confidence_counts' => ['high' => 1, 'medium' => 0, 'low' => 0], 'usable' => true, 'message' => null],
+        ]],
+        'photos' => [], 'notes' => [],
+        'capture_location' => $location,
+    ];
+}
+
+$locSession = fresh_session($repo);
+$afterFirstLoc = $repo->appendCapture($locSession['id'], build_capture_for_location($locSession['id'], ['lat' => 52.09, 'lon' => 5.12, 'accuracy_m' => 8.5, 'captured_at' => gmdate('c')]));
+r_check('first capture with a location stores it', $afterFirstLoc['capture_location']['lat'] === 52.09);
+
+$afterSecondNoLoc = $repo->appendCapture($locSession['id'], build_capture_for_location($locSession['id'], null));
+r_check('a later capture with no location does not null out the session\'s stored location', $afterSecondNoLoc['capture_location']['lat'] === 52.09);
+
+$noLocSession = fresh_session($repo);
+$afterFirstNoLoc = $repo->appendCapture($noLocSession['id'], build_capture_for_location($noLocSession['id'], null));
+r_check('a session that never got a location stays null, not fabricated', $afterFirstNoLoc['capture_location'] === null);
+
+$afterSecondWithLoc = $repo->appendCapture($noLocSession['id'], build_capture_for_location($noLocSession['id'], ['lat' => 1.0, 'lon' => 2.0, 'accuracy_m' => 5.0, 'captured_at' => gmdate('c')]));
+r_check('a later capture CAN fill in a location the first capture missed', $afterSecondWithLoc['capture_location']['lat'] === 1.0);
+echo "\n";
+
 // ACL-surface scan finding: every other repeatable client-supplied array in
 // this codebase has a cap (MAX_SURFACES_PER_GROUP, PDF MAX_PAGES), but
 // photos[]/notes[] never did — only a per-5-minute rate limit on the attach
