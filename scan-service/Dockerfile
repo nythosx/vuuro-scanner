@@ -37,4 +37,4 @@ ENV SCAN_SERVICE_DB_PATH=/app/data/scan_service.sqlite
 # 200 before index.php's own http_response_code(413) call ever runs. See
 # scan-service/README.md's "Known limits" for the same note applied to the
 # native PHP dev server invocation.
-CMD ["php", "-d", "post_max_size=30M", "-d", "upload_max_filesize=25M", "-d", "display_errors=0", "-S", "0.0.0.0:8089", "public/index.php"]
+CMD ["php", "-d", "post_max_size=30M", "-d", "upload_max_filesize=26M", "-d", "display_errors=0", "-S", "0.0.0.0:8089", "public/index.php"]
