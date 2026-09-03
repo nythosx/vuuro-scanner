@@ -9,8 +9,13 @@ COPY . /app
 # (confirmed failing to build without libsqlite3-dev - Mark, 2026-09-01).
 # No --with-jpeg/libjpeg-dev: FloorPlanImageRenderer only ever calls
 # imagepng(), never imagejpeg(), so there is nothing here that needs it.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libpng-dev libsqlite3-dev \
+# Acquire::Retries/Acquire::http::Timeout: apt's own fetch retries a
+# dropped connection instead of failing the whole build on one bad request
+# in the sequence - seen live on this machine's WSL2/Docker network (single
+# requests to the same mirror/IPs always succeeded, only apt's multi-request
+# fetch sequence inside the container timed out).
+RUN apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=30 \
+    && apt-get install -y -o Acquire::Retries=5 -o Acquire::http::Timeout=30 --no-install-recommends libpng-dev libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/* \
     && docker-php-ext-install pdo_sqlite gd
 
