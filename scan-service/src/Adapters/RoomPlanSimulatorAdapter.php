@@ -347,8 +347,7 @@ final class RoomPlanSimulatorAdapter
         return $objects;
     }
 
-    // Already validated (numeric, in-range) by public/index.php before this
-    // runs — passed through as-is, honest null when the client sent none.
+    // Already validated by public/index.php — passed through as-is, honest null when absent.
     private static function normalizeCaptureLocation(?array $loc): ?array
     {
         if ($loc === null) {

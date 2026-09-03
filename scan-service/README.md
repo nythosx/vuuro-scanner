@@ -8,10 +8,10 @@ description, and `docs/adr/0001-scan-service-stack.md` for why this stack.
 
 ```
 cd scan-service
-php -d post_max_size=30M -d upload_max_filesize=25M -d display_errors=0 -S 127.0.0.1:8089 public/index.php
+php -d post_max_size=30M -d upload_max_filesize=26M -d display_errors=0 -S 127.0.0.1:8089 public/index.php
 ```
 
-`post_max_size=30M` (with `upload_max_filesize=25M`) is set intentionally above this app's own `MAX_REQUEST_BODY_BYTES`
+`post_max_size=30M` (with `upload_max_filesize=26M`) is set intentionally above this app's own `MAX_REQUEST_BODY_BYTES`
 cap (8MB, in `public/index.php`) — see "Known limits" below for why the two must not be
 set equal.
 
@@ -39,7 +39,7 @@ If you're pointing a real iOS device at this instance over Wi-Fi rather than tes
 from the same machine, bind to all interfaces instead of loopback:
 
 ```
-php -d post_max_size=30M -d upload_max_filesize=25M -d display_errors=0 -S 0.0.0.0:8089 public/index.php
+php -d post_max_size=30M -d upload_max_filesize=26M -d display_errors=0 -S 0.0.0.0:8089 public/index.php
 ```
 
 See `ios-app/README.md`'s real-device checklist for the full walkthrough.

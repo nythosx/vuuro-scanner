@@ -288,9 +288,7 @@ final class ScanSessionRepository
             $merged['rooms'] = array_merge($existing['rooms'], $newFloorPlan['rooms']);
             $merged['captured_at'] = $newFloorPlan['captured_at'];
             $merged['capture_provider'] = $newFloorPlan['capture_provider'];
-            // Session-wide, set once: keep the first real location this
-            // session ever reported rather than letting a later capture
-            // call with no permission null it back out.
+            // Session-wide, set once — a later capture with no location never nulls out an earlier real one.
             $merged['capture_location'] = $existing['capture_location'] ?? ($newFloorPlan['capture_location'] ?? null);
 
             $this->saveFloorPlan($sessionId, $merged);

@@ -40,7 +40,7 @@ jobs:
         working-directory: scan-service
         run: |
           rm -f data/scan_service.sqlite
-          php -d post_max_size=30M -d upload_max_filesize=25M -d display_errors=0 -S 127.0.0.1:8089 public/index.php &
+          php -d post_max_size=30M -d upload_max_filesize=26M -d display_errors=0 -S 127.0.0.1:8089 public/index.php &
           for i in $(seq 1 20); do
             curl -sf http://127.0.0.1:8089/health > /dev/null && break
             sleep 0.5
@@ -71,7 +71,7 @@ jobs:
         working-directory: scan-service
         run: |
           rm -f data/scan_service.sqlite
-          php -d post_max_size=30M -d upload_max_filesize=25M -d display_errors=0 -S 127.0.0.1:9499 public/index.php &
+          php -d post_max_size=30M -d upload_max_filesize=26M -d display_errors=0 -S 127.0.0.1:9499 public/index.php &
           for i in $(seq 1 20); do
             curl -sf http://127.0.0.1:9499/health > /dev/null && break
             sleep 0.5

@@ -107,12 +107,10 @@ final class FloorPlanPdfRenderer
             );
             $heightM = $room['height_m'] ?? null;
             $volumeM3 = $room['volume_m3_indicative'] ?? null;
-            if ($heightM !== null) {
-                $lines[] = sprintf(
-                    '             %8.2f m height   %8.2f m3 indicative capacity',
-                    $heightM,
-                    $volumeM3 ?? 0.0
-                );
+            if ($heightM !== null && $volumeM3 !== null) {
+                $lines[] = sprintf('             %8.2f m height   %8.2f m3 indicative capacity', $heightM, $volumeM3);
+            } elseif ($heightM !== null) {
+                $lines[] = sprintf('             %8.2f m height', $heightM);
             }
             $openings = $room['openings'] ?? [];
             if ($openings !== []) {

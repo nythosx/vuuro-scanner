@@ -59,7 +59,7 @@ same-tree, opt-in change instead of a second app to maintain.
    separate physical device):
    ```
    cd scan-service
-   php -d post_max_size=16M -d display_errors=0 -S 0.0.0.0:8089 public/index.php
+   php -d post_max_size=30M -d upload_max_filesize=26M -d display_errors=0 -S 0.0.0.0:8089 public/index.php
    ```
    Find your Mac's LAN IP: `ipconfig getifaddr en0` (try `en1` if that's blank).
 6. In Xcode, **Edit Scheme -> Run -> Arguments -> Environment Variables**, add:

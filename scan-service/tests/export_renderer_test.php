@@ -104,6 +104,13 @@ $roomWithoutMetrics = ['label' => 'Room Plain', 'floor_area_m2' => 12.0, 'perime
 $pdfWithoutMetrics = $renderer->render(build_floor_plan([$roomWithoutMetrics]));
 x_check('a room with no height_m/openings keys at all still renders, no fabricated metrics line', !str_contains($pdfWithoutMetrics, 'm height'));
 
+// Review finding: height_m present but volume_m3_indicative null used to
+// print a fabricated "0.00 m3 indicative capacity" instead of omitting it.
+$roomHeightNoVolume = ['label' => 'Room HeightOnly', 'floor_area_m2' => 12.0, 'perimeter_m' => 14.0, 'confidence' => 'high', 'height_m' => 2.5, 'volume_m3_indicative' => null];
+$pdfHeightNoVolume = $renderer->render(build_floor_plan([$roomHeightNoVolume]));
+x_check('height with no volume still prints the height line', str_contains($pdfHeightNoVolume, '2.50 m height'));
+x_check('height with no volume does NOT fabricate a 0.00 m3 line', !str_contains($pdfHeightNoVolume, 'm3'));
+
 // buildTextLines() emits 13 fixed lines (header/disclaimer/totals/footer)
 // plus one line per room; paginate() fits 44 lines per page
 // (intdiv(740-50, 16) + 1). 8787 rooms -> 8800 lines -> exactly 200 pages,

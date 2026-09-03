@@ -548,10 +548,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         return;
     }
 
-    // capture_location is optional and session-wide, not per-room — honest
-    // (null) when location permission was denied or never asked, never
-    // fabricated. Malformed (present but wrong shape) is a client bug and
-    // rejected outright, same bar as capture_provider above.
+    // capture_location: honest null when not sent; malformed is rejected, same bar as capture_provider.
     if (array_key_exists('capture_location', $body) && $body['capture_location'] !== null) {
         $loc = $body['capture_location'];
         $locValid = is_array($loc)

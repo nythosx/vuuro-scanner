@@ -198,7 +198,7 @@ Description: The single backend in this repo. Plain PHP, no framework — `publi
 
 Technologies: PHP 8.1+ (`declare(strict_types=1)` throughout), PDO/SQLite, no framework, no Composer dependency (hand-rolled `autoload.php`).
 
-Deployment: `php -d post_max_size=16M -d display_errors=0 -S 127.0.0.1:8089 public/index.php` locally, or the repo's `Dockerfile` for a host-independent run (the brief's "no silent production leap" constraint: "local plus CI... prove slices" — not tied to this one Windows machine).
+Deployment: `php -d post_max_size=30M -d upload_max_filesize=26M -d display_errors=0 -S 127.0.0.1:8089 public/index.php` locally, or the repo's `Dockerfile` for a host-independent run (the brief's "no silent production leap" constraint: "local plus CI... prove slices" — not tied to this one Windows machine).
 
 #### 3.2.2. Capture Adapter (`src/Adapters/RoomPlanSimulatorAdapter.php`)
 
