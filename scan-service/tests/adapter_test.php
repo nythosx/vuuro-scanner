@@ -474,6 +474,18 @@ t_check("omitting 'identifier' entirely still works (falls back to 'floor-N')", 
 $stringIdentifier = $adapter->adapt(['floors' => [['identifier' => 'my-floor', 'polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]]], $identity);
 t_check("a real string 'identifier' still works normally", $stringIdentifier['rooms'][0]['room_id'] === 'room-01-my-floor');
 
+echo "\n== capture_location ==\n";
+$noLocation = $adapter->adapt(['floors' => [['polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]]], $identity);
+t_check('capture_location is null when absent from identity', $noLocation['capture_location'] === null);
+
+$withLocation = $adapter->adapt(
+    ['floors' => [['polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]]],
+    $identity + ['capture_location' => ['lat' => 52.09, 'lon' => 5.12, 'accuracy_m' => 8.5, 'captured_at' => '2026-09-03T13:08:18+00:00']]
+);
+t_check('capture_location round-trips lat/lon/accuracy_m/captured_at', $withLocation['capture_location'] === [
+    'lat' => 52.09, 'lon' => 5.12, 'accuracy_m' => 8.5, 'captured_at' => '2026-09-03T13:08:18+00:00',
+]);
+
 echo count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

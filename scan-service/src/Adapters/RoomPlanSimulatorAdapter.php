@@ -141,6 +141,7 @@ final class RoomPlanSimulatorAdapter
             'rooms' => $rooms,
             'photos' => [],
             'notes' => [],
+            'capture_location' => self::normalizeCaptureLocation($identity['capture_location'] ?? null),
         ];
     }
 
@@ -342,6 +343,22 @@ final class RoomPlanSimulatorAdapter
         }
         return $objects;
     }
+
+    // Already validated (numeric, in-range) by public/index.php before this
+    // runs — passed through as-is, honest null when the client sent none.
+    private static function normalizeCaptureLocation(?array $loc): ?array
+    {
+        if ($loc === null) {
+            return null;
+        }
+        return [
+            'lat' => (float) $loc['lat'],
+            'lon' => (float) $loc['lon'],
+            'accuracy_m' => (float) $loc['accuracy_m'],
+            'captured_at' => isset($loc['captured_at']) ? (string) $loc['captured_at'] : null,
+        ];
+    }
+
 
     /**
      * Rejects an untrusted raw_capture body that would otherwise crash
