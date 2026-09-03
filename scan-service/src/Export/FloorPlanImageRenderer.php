@@ -122,24 +122,58 @@ final class FloorPlanImageRenderer
         $roomBorder = imagecolorallocate($image, 30, 64, 110);
         $text = imagecolorallocate($image, 20, 20, 20);
         $subtext = imagecolorallocate($image, 90, 90, 90);
+        $doorColor = imagecolorallocate($image, 210, 105, 30);
+        $windowColor = imagecolorallocate($image, 70, 130, 180);
         imagefilledrectangle($image, 0, 0, imagesx($image), imagesy($image), $white);
 
         imagestring($image, 5, self::MARGIN, 8, 'Vuuro Scan - fused floor plan (rooms captured together in one visit)', $text);
         imagestring($image, 2, self::MARGIN, 26, 'Room positions relative to each other, not independently verified beyond this capture (see docs/proposals/multi-room-fusion.md).', $subtext);
 
+        $toPx = function (float $worldX, float $worldZ) use ($minX, $minZ): array {
+            return [
+                self::MARGIN + (int) round(($worldX - $minX) * self::PIXELS_PER_METER),
+                self::MARGIN + self::LABEL_HEIGHT + (int) round(($worldZ - $minZ) * self::PIXELS_PER_METER),
+            ];
+        };
+
         foreach ($rooms as $room) {
             [$originX, $originZ] = $room['structure_origin_m'];
             $points = [];
             foreach ($room['outline_m'] as [$mx, $mz]) {
-                $points[] = self::MARGIN + (int) round((($mx + $originX) - $minX) * self::PIXELS_PER_METER);
-                $points[] = self::MARGIN + self::LABEL_HEIGHT + (int) round((($mz + $originZ) - $minZ) * self::PIXELS_PER_METER);
+                [$px, $py] = $toPx($mx + $originX, $mz + $originZ);
+                $points[] = $px;
+                $points[] = $py;
             }
             imagefilledpolygon($image, $points, $roomFill);
             imagepolygon($image, $points, $roomBorder);
 
-            $labelX = self::MARGIN + (int) round((($originX) - $minX) * self::PIXELS_PER_METER) + 4;
-            $labelY = self::MARGIN + self::LABEL_HEIGHT + (int) round((($originZ) - $minZ) * self::PIXELS_PER_METER) + 4;
-            imagestring($image, 3, $labelX, $labelY, $room['label'], $text);
+            [$labelX, $labelY] = $toPx($originX, $originZ);
+            imagestring($image, 3, $labelX + 4, $labelY + 4, $room['label'], $text);
+            // Mark's ask: labels, wall lengths, m2 on the same fused drawing,
+            // not just the room name.
+            $metrics = sprintf('%.2f sqm - %.2f m perimeter', $room['floor_area_m2'], $room['perimeter_m']);
+            imagestring($image, 2, $labelX + 4, $labelY + 20, $metrics, $subtext);
+            if (($room['height_m'] ?? null) !== null) {
+                imagestring($image, 2, $labelX + 4, $labelY + 32, sprintf('%.2f m height', $room['height_m']), $subtext);
+            }
+        }
+
+        // Doors/windows mark where one room's captured space actually meets
+        // the next — this is what the tiled sheet above can never show
+        // (ADR-0002). Only a position is known (LIDAR-10's opening centroid,
+        // now translated into this shared frame), not a real wall-gap width
+        // or swing direction, so this draws an honest marker at that point,
+        // not a fabricated doorway shape.
+        foreach ($rooms as $room) {
+            [$originX, $originZ] = $room['structure_origin_m'];
+            foreach ($room['openings'] ?? [] as $opening) {
+                [$mx, $mz] = $opening['position_m'];
+                [$px, $py] = $toPx($mx + $originX, $mz + $originZ);
+                $isDoor = $opening['category'] === 'door';
+                $color = $isDoor ? $doorColor : $windowColor;
+                imagefilledellipse($image, $px, $py, 10, 10, $color);
+                imagestring($image, 1, $px + 6, $py - 6, $isDoor ? 'door' : $opening['category'], $color);
+            }
         }
 
         ob_start();
@@ -177,5 +211,8 @@ final class FloorPlanImageRenderer
         // (m-superscript-2, middot) renders as mojibake.
         $metrics = sprintf('%.2f sqm - %.2f m perimeter - %s confidence', $room['floor_area_m2'], $room['perimeter_m'], $room['confidence']);
         imagestring($image, 2, $originX + self::TILE_PADDING, $labelY + 18, $metrics, $subtext);
+        if (($room['height_m'] ?? null) !== null) {
+            imagestring($image, 2, $originX + self::TILE_PADDING, $labelY + 32, sprintf('%.2f m height', $room['height_m']), $subtext);
+        }
     }
 }

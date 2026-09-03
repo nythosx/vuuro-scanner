@@ -122,7 +122,7 @@ try {
 
 $imageRenderer = new FloorPlanImageRenderer();
 
-function build_room_with_outline(string $label, array $outlineM, ?array $structureOriginM): array
+function build_room_with_outline(string $label, array $outlineM, ?array $structureOriginM, array $openings = [], ?float $heightM = null): array
 {
     return [
         'label' => $label,
@@ -132,6 +132,8 @@ function build_room_with_outline(string $label, array $outlineM, ?array $structu
         'bounding_dimensions_m' => ['width_m' => 4.0, 'length_m' => 3.0],
         'outline_m' => $outlineM,
         'structure_origin_m' => $structureOriginM,
+        'openings' => $openings,
+        'height_m' => $heightM,
     ];
 }
 
@@ -165,6 +167,19 @@ $singleFusedPlan = build_floor_plan([
 ]);
 $singleFusedPng = $imageRenderer->render($singleFusedPlan);
 x_check('a single room with structure_origin_m still renders (tiled path, fusion needs 2+ rooms)', str_contains($singleFusedPng, "\x89PNG"));
+
+$fusedWithJoinPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0], [
+        ['opening_id' => 'o1', 'category' => 'door', 'position_m' => [4.0, 1.5], 'confidence' => 'high'],
+    ], 2.6),
+    build_room_with_outline('Room B', $squareOutline, [5.0, 0.0], [
+        ['opening_id' => 'o2', 'category' => 'window', 'position_m' => [0.0, 1.5], 'confidence' => 'high'],
+    ], 2.4),
+]);
+$fusedWithJoinPng = $imageRenderer->render($fusedWithJoinPlan);
+x_check('a fused plan with door/window openings and room height renders without throwing', str_contains($fusedWithJoinPng, "\x89PNG"));
+x_check('the door/window/height drawing adds real bytes over the same plan with no openings',
+    strlen($fusedWithJoinPng) > strlen($fusedPng));
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
