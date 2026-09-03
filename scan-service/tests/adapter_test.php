@@ -212,6 +212,29 @@ $truncatedDimsResult = $adapter->adapt([
 ], $identity);
 t_check('a truncated or missing objects[].dimensions drops the object instead of fabricating [0,0,0]',
     array_column($truncatedDimsResult['rooms'][0]['objects'], 'object_id') === ['real']);
+
+echo "\n== LIDAR-5/11: structure_origin_m ==\n";
+$noOriginResult = $adapter->adapt([
+    'floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]],
+], $identity);
+t_check('structure_origin_m is null when absent from raw_capture', $noOriginResult['rooms'][0]['structure_origin_m'] === null);
+
+$withOriginResult = $adapter->adapt([
+    'floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]],
+    'structure_origin_m' => [1.5, 2.25],
+], $identity);
+t_check('structure_origin_m passes through when present', $withOriginResult['rooms'][0]['structure_origin_m'] === [1.5, 2.25]);
+
+try {
+    $adapter->adapt([
+        'floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]],
+        'structure_origin_m' => [1e400, 0],
+    ], $identity);
+    t_check('adapt() rejects a non-finite structure_origin_m coordinate', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    t_check('adapt() rejects a non-finite structure_origin_m coordinate', true);
+}
+echo "\n";
 echo "\n";
 
 // Deliberately adversarial: a bounding-box-only implementation would still

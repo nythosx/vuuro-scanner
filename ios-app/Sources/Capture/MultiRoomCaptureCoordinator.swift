@@ -26,7 +26,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         case roomFinished(roomAvailable: Bool)
         case failed(String, partialRoomAvailable: Bool)
         case merging
-        case unitFinished(CapturedStructure)
+        case unitFinished
         case mergeFailed(String)
     }
 
@@ -46,6 +46,8 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
 
     /// Set only on partialRoomAvailable — not committed until the user chooses to keep it.
     private(set) var pendingPartialRoom: CapturedRoom?
+
+    private(set) var mergedStructure: CapturedStructure?
 
     /// Owned here, not by the view, so it survives across rooms.
     let arSession = ARSession()
@@ -90,7 +92,8 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
             do {
                 // Merge accuracy on a real walk is unverified — see proposal doc.
                 let structure = try await StructureBuilder(options: [.beautifyObjects]).capturedStructure(from: capturedRooms)
-                self.state = .unitFinished(structure)
+                self.mergedStructure = structure
+                self.state = .unitFinished
             } catch {
                 self.state = .mergeFailed(error.localizedDescription)
             }

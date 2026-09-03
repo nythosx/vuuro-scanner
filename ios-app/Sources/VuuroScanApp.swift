@@ -29,6 +29,7 @@ struct ScanFlowView: View {
     private enum Stage {
         case intake
         case capturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
+        case multiRoomCapturing(identity: ScanIdentity, attempt: UUID)
         case attachments(session: ScanSessionResponse, floorPlan: FloorPlan)
         case summary(session: ScanSessionResponse, floorPlan: FloorPlan)
         // Carries identity/existingSession, not just the error, so "Try
@@ -38,6 +39,7 @@ struct ScanFlowView: View {
         // failure would silently orphan room 1's already-created session
         // instead of letting him retry room 2 into it.
         case error(AppError, identity: ScanIdentity, existingSession: ScanSessionResponse?)
+        case multiRoomError(AppError, identity: ScanIdentity)
     }
 
     @State private var stage: Stage = .intake
@@ -58,6 +60,7 @@ struct ScanFlowView: View {
     // it is paused, not capturing it.
     private var isCapturingStage: Bool {
         if case .capturing = stage { return true }
+        if case .multiRoomCapturing = stage { return true }
         return false
     }
     #endif
@@ -97,9 +100,11 @@ struct ScanFlowView: View {
         Group {
             switch stage {
             case .intake:
-                IdentityIntakeScreen { identity in
+                IdentityIntakeScreen(onStart: { identity in
                     stage = .capturing(identity: identity, session: nil, attempt: UUID())
-                }
+                }, onStartMultiRoom: { identity in
+                    stage = .multiRoomCapturing(identity: identity, attempt: UUID())
+                })
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         NavigationLink("History") {
@@ -149,6 +154,15 @@ struct ScanFlowView: View {
                     }
                 }
                 .id(attempt)
+            case .multiRoomCapturing(let identity, let attempt):
+                MultiRoomCaptureFlowView(identity: identity) { session, floorPlan in
+                    stage = .attachments(session: session, floorPlan: floorPlan)
+                } onError: { appError in
+                    stage = .multiRoomError(appError, identity: identity)
+                } onGoBack: {
+                    stage = .intake
+                }
+                .id(attempt)
             case .attachments(let session, let floorPlan):
                 AttachmentsScreen(session: session, floorPlan: floorPlan) { updated in
                     stage = .summary(session: session, floorPlan: updated)
@@ -160,6 +174,10 @@ struct ScanFlowView: View {
             case .error(let appError, let identity, let existingSession):
                 ErrorView(error: appError) {
                     stage = .capturing(identity: identity, session: existingSession, attempt: UUID())
+                }
+            case .multiRoomError(let appError, let identity):
+                ErrorView(error: appError) {
+                    stage = .multiRoomCapturing(identity: identity, attempt: UUID())
                 }
             }
         }
@@ -560,7 +578,7 @@ private struct PartialCaptureFailureView: View {
 // Mark's 2026-09-02 ask (b): a local, pre-upload rejection — no VS code,
 // no server round trip, since RoomBuilder finished normally and there was
 // simply nothing usable in the outline it produced.
-private struct DegenerateCaptureView: View {
+struct DegenerateCaptureView: View {
     let onRescan: () -> Void
 
     var body: some View {
