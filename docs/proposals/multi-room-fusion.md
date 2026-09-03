@@ -1,9 +1,22 @@
 # Proposal: real multi-room fusion (LIDAR-5 / LIDAR-11)
 
-Research + design only — no capture-flow code changed by this doc. Written before touching
-`CaptureCoordinator`/`RoomCaptureScreen` because the real architecture required is bigger
-than either card's own description states, and one finding below changes what LIDAR-4
-("resume a session to add a room") can honestly promise going forward.
+Started 2026-09-03 as research/design only; implementation followed once the approach was
+confirmed. Status as of the last commit on this branch: coordinator/session layer, full app
+flow, additive `structure_origin_m` schema/adapter, fused PNG rendering, and an independent
+net check are all built and green (unit tests, and a real Docker Scan Service round trip).
+Not yet done: PDF export has no fused-specific treatment (still a per-room metrics table,
+which is honest either way since it never claimed spatial layout); nothing pushed/compiled
+against real Xcode yet, same standing limit as every other iOS file in this repo.
+
+One finding below changes what LIDAR-4 ("resume a session to add a room") can honestly
+promise going forward — see "The real constraint LIDAR-4 needs to inherit."
+
+One risk flagged below turned out not to apply: the POI-transform-not-carried-through-merge
+bug (Apple forums thread 760952) is real, but this product never gives photos/notes a
+spatial x/y/z position in the first place — `contracts/floorplan.schema.json`'s
+`photos[]`/`notes[]` only carry `room_id`, never a coordinate. LIDAR-6's existing
+`AttachmentsScreen` already works unmodified against a fused session's `ScanSessionResponse`
+— no new code was needed there.
 
 ## What's blocking LIDAR-5 (fused 2D) and LIDAR-11 (3D dollhouse) today
 
@@ -103,36 +116,26 @@ a way to add another independently-tiled room to the same unit later — and sho
 extended to claim fused coordinates for those later-added rooms, consistent with ADR-0002's
 "never fabricate room adjacency/orientation that was never actually captured."
 
-## Proposed shape (not yet built)
+## Proposed shape (built — status per item below)
 
-1. **A continuous multi-room capture flow, separate from single-room capture and from
-   LIDAR-4's resume-a-past-session flow.** One `CaptureCoordinator` instance owns one
-   explicit `ARSession` (not the view's default) and one `RoomCaptureView(frame:arSession:)`
-   for the whole walkthrough. "Add another room" calls `captureSession.stop(pauseARSession: false)`
-   then re-runs the session for the next room — the screen itself stays presented across
-   rooms; it is never dismissed and re-presented mid-walkthrough (that dismiss/recreate step
-   is exactly what broke the forum example above).
-2. `CaptureCoordinator` accumulates `[CapturedRoom]` across the walkthrough instead of one
-   `capturedRoom`. Only when the user says "Done with this unit" does it call
-   `StructureBuilder().capturedStructure(from:)` once, over the full array.
-3. **New export shape needed**: today's `FloorPlanExporter`/`CapturedRoomExporter` maps one
-   `CapturedRoom` at a time. A `CapturedStructure` carries its own merged geometry — the
-   export/adapter boundary needs a second, additive path for structure-level export (fused
-   `outline_m` per room but in one shared frame) without breaking today's per-room contract
-   that photos/notes/history/LIDAR-6 all depend on.
-4. **Schema**: additive only, same convention as LIDAR-10 — a per-room `origin_m: [x, z]`
-   (this room's placement within the unit's shared frame) alongside the existing room-local
-   `outline_m`, so today's consumers (PNG/PDF renderers, History) keep working unchanged
-   until they're deliberately updated to draw the fused view.
-5. **LIDAR-4 stays as-is** for the separate-visit case; its resume flow is not wired into
-   this new continuous flow. A unit can have both: some rooms fused (captured together in
-   one walkthrough) and some tiled (added later via resume) — the UI needs to be honest
-   about which rooms in a unit got which treatment, not present a false single fused map.
-6. **Photo/note position remapping after merge** needs to be its own explicit, separately-
-   verified step (see the POI-transform gap above) — not assumed to fall out of adopting
-   `StructureBuilder` for free.
-7. **A defensive room-count warning/cap** in the walkthrough UI (see the scene-size-limit
-   risk above), so hitting that ceiling mid-scan is a handled state, not a crash.
+1. **Built.** `MultiRoomCaptureCoordinator` owns one explicit `ARSession` and one
+   `RoomCaptureView(frame:arSession:)` (`MultiRoomCaptureScreen`) for the whole walkthrough,
+   separate from `CaptureCoordinator`/`RoomCaptureScreen`, which stay untouched.
+2. **Built.** `MultiRoomCaptureCoordinator.capturedRooms: [CapturedRoom]` accumulates across
+   the walkthrough; `finishUnit()` calls `StructureBuilder().capturedStructure(from:)` once.
+3. **Built.** `CapturedStructureExporter` maps each room of a merged `CapturedStructure`
+   through the existing `CapturedRoomExporter`, plus a `structure_origin_m` field.
+4. **Built.** `structure_origin_m` (not `origin_m` — named to make clear it's the structure's
+   shared-frame placement, not a generic origin) added additively to the schema, PHP adapter,
+   and iOS response model, same convention as LIDAR-10.
+5. **Built as designed.** LIDAR-4's resume flow is untouched and not wired into the new
+   continuous flow — `MultiRoomCaptureFlowView` is a separate entry point from
+   `IdentityIntakeScreen`. UI distinction between fused/tiled rooms in History is not yet
+   built (real gap — a unit with both today has no visual indicator of which rooms are which).
+6. **Turned out not to apply** — see the note at the top of this doc. This product's
+   photos/notes carry no spatial position, only `room_id`.
+7. **Built.** `MultiRoomCaptureCoordinator.roomCountWarningThreshold` (8) surfaces a warning
+   in the walkthrough UI.
 
 ## Explicitly unverified without hardware
 

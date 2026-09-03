@@ -782,7 +782,14 @@ private struct ResultSummaryView: View {
         List {
             ForEach(floorPlan.rooms, id: \.roomId) { room in
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(room.label).font(.headline)
+                    HStack {
+                        Text(room.label).font(.headline)
+                        if room.structureOriginM != nil {
+                            Label("Fused", systemImage: "square.on.square")
+                                .font(.caption2)
+                                .foregroundStyle(.blue)
+                        }
+                    }
                     Text(String(format: "%.2f m²", room.floorAreaM2))
                     Text(String(format: "%.2f m perimeter", room.perimeterM))
                     Text("Indicative — NEN2580-inspired, not certified")
