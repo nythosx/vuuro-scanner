@@ -46,6 +46,7 @@ struct FloorPlan: Codable {
     let rooms: [Room]
     let photos: [Photo]
     let notes: [Note]
+    let captureLocation: CaptureLocation?
 
     struct Photo: Codable {
         let photoId: String
@@ -207,5 +208,6 @@ struct FloorPlan: Codable {
         case rooms
         case photos
         case notes
+        case captureLocation = "capture_location"
     }
 }

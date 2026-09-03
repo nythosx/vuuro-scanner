@@ -213,8 +213,10 @@ private struct RoomCaptureFlowStep: View {
     // this would fall through to that branch, remounting it and re-firing its
     // .onAppear { coordinator.start() } on an already-ended RoomCaptureSession.
     @State private var isRetryingUpload = false
+    @State private var capturedLocation: CaptureLocation?
 
     private let client = ScanServiceClient()
+    private let locationProvider = LocationProvider()
 
     private var debugFakeCaptureActive: Bool {
         #if DEBUG
@@ -397,7 +399,10 @@ private struct RoomCaptureFlowStep: View {
                         }
                     }
                 }
-                .onAppear { coordinator.start() }
+                .onAppear {
+                    coordinator.start()
+                    Task { capturedLocation = await locationProvider.currentLocation() }
+                }
                 .onChange(of: coordinator.state) { _, state in
                     handle(state)
                 }
@@ -485,7 +490,7 @@ private struct RoomCaptureFlowStep: View {
             ))
         }
         do {
-            let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export)
+            let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export, location: capturedLocation)
             justCaptured = (session, floorPlan)
         } catch {
             // Mark's 2026-09-02 ask (c): kept in place instead of routed to
@@ -502,7 +507,7 @@ private struct RoomCaptureFlowStep: View {
     private func retryUpload(session: ScanSessionResponse, export: RoomPlanCaptureExport) async {
         defer { isRetryingUpload = false }
         do {
-            let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export)
+            let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export, location: capturedLocation)
             justCaptured = (session, floorPlan)
         } catch {
             uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session)

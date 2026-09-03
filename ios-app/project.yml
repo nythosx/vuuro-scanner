@@ -17,6 +17,7 @@ targets:
       properties:
         CFBundleDisplayName: Vuuro Scan
         NSCameraUsageDescription: Vuuro Scan uses the camera and LiDAR sensor to capture room geometry for floor plans.
+        NSLocationWhenInUseUsageDescription: Vuuro Scan can record the approximate location of a scan so it's attached to the right property. Denying this only skips the location - the scan still works.
         # Missing entirely until Mark's 2026-09-02 12:59 report: without a
         # custom string here, iOS shows its own generic "may find and connect
         # to devices" text on the Local Network permission dialog instead of

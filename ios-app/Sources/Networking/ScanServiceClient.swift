@@ -62,17 +62,19 @@ struct ScanServiceClient {
         try await post(path: "/scan-sessions", body: identity, accessToken: nil)
     }
 
-    func uploadCapture(sessionId: String, accessToken: String, capture: RoomPlanCaptureExport, provider: String = "roomplan") async throws -> FloorPlan {
+    func uploadCapture(sessionId: String, accessToken: String, capture: RoomPlanCaptureExport, provider: String = "roomplan", location: CaptureLocation? = nil) async throws -> FloorPlan {
         struct Body: Encodable {
             let rawCapture: RoomPlanCaptureExport
             let captureProvider: String
+            let captureLocation: CaptureLocation?
 
             enum CodingKeys: String, CodingKey {
                 case rawCapture = "raw_capture"
                 case captureProvider = "capture_provider"
+                case captureLocation = "capture_location"
             }
         }
-        return try await post(path: "/scan-sessions/\(sessionId)/capture", body: Body(rawCapture: capture, captureProvider: provider), accessToken: accessToken)
+        return try await post(path: "/scan-sessions/\(sessionId)/capture", body: Body(rawCapture: capture, captureProvider: provider, captureLocation: location), accessToken: accessToken)
     }
 
     func fetchSession(sessionId: String, accessToken: String) async throws -> FloorPlan {
