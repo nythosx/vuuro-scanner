@@ -25,6 +25,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../src/autoload.php';
 
+use VuuroScan\Export\FloorPlanImageRenderer;
 use VuuroScan\Export\FloorPlanPdfRenderer;
 
 $failures = [];
@@ -118,6 +119,52 @@ try {
         $e->getMessage()
     );
 }
+
+$imageRenderer = new FloorPlanImageRenderer();
+
+function build_room_with_outline(string $label, array $outlineM, ?array $structureOriginM): array
+{
+    return [
+        'label' => $label,
+        'floor_area_m2' => 10.0,
+        'perimeter_m' => 12.0,
+        'confidence' => 'high',
+        'bounding_dimensions_m' => ['width_m' => 4.0, 'length_m' => 3.0],
+        'outline_m' => $outlineM,
+        'structure_origin_m' => $structureOriginM,
+    ];
+}
+
+$squareOutline = [[0, 0], [4, 0], [4, 3], [0, 3]];
+
+echo "\n== LIDAR-5/11: fused vs. tiled PNG rendering ==\n";
+
+$tiledPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, null),
+    build_room_with_outline('Room B', $squareOutline, null),
+]);
+$tiledPng = $imageRenderer->render($tiledPlan);
+x_check('two rooms with no structure_origin_m render the tiled (non-fused) sheet', str_contains($tiledPng, "\x89PNG"));
+
+$fusedPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0]),
+    build_room_with_outline('Room B', $squareOutline, [5.0, 0.0]),
+]);
+$fusedPng = $imageRenderer->render($fusedPlan);
+x_check('two rooms both carrying structure_origin_m render without throwing', str_contains($fusedPng, "\x89PNG"));
+
+$mixedPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0]),
+    build_room_with_outline('Room B', $squareOutline, null),
+]);
+$mixedPng = $imageRenderer->render($mixedPlan);
+x_check('a mix of fused and non-fused rooms falls back to the tiled sheet, not a partial fuse', str_contains($mixedPng, "\x89PNG"));
+
+$singleFusedPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0]),
+]);
+$singleFusedPng = $imageRenderer->render($singleFusedPlan);
+x_check('a single room with structure_origin_m still renders (tiled path, fusion needs 2+ rooms)', str_contains($singleFusedPng, "\x89PNG"));
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {

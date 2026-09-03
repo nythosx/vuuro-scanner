@@ -34,6 +34,15 @@ final class FloorPlanImageRenderer
             throw new \InvalidArgumentException('Cannot render a floor plan sheet with zero rooms.');
         }
 
+        $isFused = count($rooms) > 1 && array_reduce(
+            $rooms,
+            fn (bool $carry, array $room) => $carry && isset($room['structure_origin_m']),
+            true
+        );
+        if ($isFused) {
+            return $this->renderFused($rooms);
+        }
+
         $tiles = array_map([$this, 'tileGeometry'], $rooms);
 
         $canvasWidth = self::MARGIN * 2 + array_sum(array_column($tiles, 'width'))
@@ -68,6 +77,69 @@ final class FloorPlanImageRenderer
             $tile = $tiles[$i];
             $this->drawRoomTile($image, $room, $x, $y, $roomFill, $roomBorder, $text, $subtext);
             $x += $tile['width'] + self::TILE_GAP;
+        }
+
+        ob_start();
+        imagepng($image);
+        $bytes = ob_get_clean();
+        imagedestroy($image);
+
+        return (string) $bytes;
+    }
+
+    private function renderFused(array $rooms): string
+    {
+        $minX = INF;
+        $minZ = INF;
+        $maxX = -INF;
+        $maxZ = -INF;
+        foreach ($rooms as $room) {
+            [$originX, $originZ] = $room['structure_origin_m'];
+            foreach ($room['outline_m'] as [$mx, $mz]) {
+                $worldX = $mx + $originX;
+                $worldZ = $mz + $originZ;
+                $minX = min($minX, $worldX);
+                $minZ = min($minZ, $worldZ);
+                $maxX = max($maxX, $worldX);
+                $maxZ = max($maxZ, $worldZ);
+            }
+        }
+
+        $canvasWidth = self::MARGIN * 2 + (int) round(($maxX - $minX) * self::PIXELS_PER_METER);
+        $canvasHeight = self::MARGIN * 2 + self::LABEL_HEIGHT + (int) round(($maxZ - $minZ) * self::PIXELS_PER_METER);
+        if ($canvasWidth > self::MAX_CANVAS_DIMENSION_PX || $canvasHeight > self::MAX_CANVAS_DIMENSION_PX) {
+            throw new \InvalidArgumentException(sprintf(
+                'Fused floor plan would be %dx%d px, exceeding the %d px sanity bound — refusing to allocate it.',
+                $canvasWidth,
+                $canvasHeight,
+                self::MAX_CANVAS_DIMENSION_PX
+            ));
+        }
+
+        $image = imagecreatetruecolor(max($canvasWidth, 400), $canvasHeight + 40);
+        $white = imagecolorallocate($image, 255, 255, 255);
+        $roomFill = imagecolorallocate($image, 214, 231, 245);
+        $roomBorder = imagecolorallocate($image, 30, 64, 110);
+        $text = imagecolorallocate($image, 20, 20, 20);
+        $subtext = imagecolorallocate($image, 90, 90, 90);
+        imagefilledrectangle($image, 0, 0, imagesx($image), imagesy($image), $white);
+
+        imagestring($image, 5, self::MARGIN, 8, 'Vuuro Scan - fused floor plan (rooms captured together in one visit)', $text);
+        imagestring($image, 2, self::MARGIN, 26, 'Room positions relative to each other, not independently verified beyond this capture (see docs/proposals/multi-room-fusion.md).', $subtext);
+
+        foreach ($rooms as $room) {
+            [$originX, $originZ] = $room['structure_origin_m'];
+            $points = [];
+            foreach ($room['outline_m'] as [$mx, $mz]) {
+                $points[] = self::MARGIN + (int) round((($mx + $originX) - $minX) * self::PIXELS_PER_METER);
+                $points[] = self::MARGIN + self::LABEL_HEIGHT + (int) round((($mz + $originZ) - $minZ) * self::PIXELS_PER_METER);
+            }
+            imagefilledpolygon($image, $points, $roomFill);
+            imagepolygon($image, $points, $roomBorder);
+
+            $labelX = self::MARGIN + (int) round((($originX) - $minX) * self::PIXELS_PER_METER) + 4;
+            $labelY = self::MARGIN + self::LABEL_HEIGHT + (int) round((($originZ) - $minZ) * self::PIXELS_PER_METER) + 4;
+            imagestring($image, 3, $labelX, $labelY, $room['label'], $text);
         }
 
         ob_start();
