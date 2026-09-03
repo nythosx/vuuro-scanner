@@ -25,8 +25,16 @@ final class FloorPlanPdfRenderer
     // render can build. Generous; thousands of rooms is not a real unit.
     private const MAX_PAGES = 200;
 
-    public function render(array $floorPlan): string
+    /** @param string|null $roomId When set, the metrics table covers only that one room. */
+    public function render(array $floorPlan, ?string $roomId = null): string
     {
+        if ($roomId !== null) {
+            $rooms = array_values(array_filter($floorPlan['rooms'], static fn (array $room) => $room['room_id'] === $roomId));
+            if ($rooms === []) {
+                throw new \InvalidArgumentException("No room with room_id '{$roomId}' in this floor plan.");
+            }
+            $floorPlan = [...$floorPlan, 'rooms' => $rooms];
+        }
         $lines = $this->buildTextLines($floorPlan);
         $pages = $this->paginate($lines);
 
@@ -93,6 +101,15 @@ final class FloorPlanPdfRenderer
             ? 'Indicative, NEN2580-inspired measurements. This is NOT a certified survey.'
             : 'Measurement basis: ' . $floorPlan['measurement_basis'];
         $lines[] = '';
+        $isFused = count($floorPlan['rooms']) > 1 && array_reduce(
+            $floorPlan['rooms'],
+            fn (bool $carry, array $room) => $carry && isset($room['structure_origin_m']),
+            true
+        );
+        if ($isFused && FusionOverlapDetector::detect($floorPlan['rooms']) !== []) {
+            $lines[] = 'WARNING: some rooms below overlap in captured position — verify against the real layout before use.';
+            $lines[] = '';
+        }
         $lines[] = 'Rooms';
         $lines[] = '-----';
         $totalArea = 0.0;

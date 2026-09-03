@@ -751,12 +751,22 @@ struct AttachmentsScreen: View {
     }
 
     @MainActor
+    // Same pattern as the zero-area guard: catch what the server would
+    // reject, client-side, so the user isn't sent through a round trip
+    // just to learn the photo was too big. Kept in sync with the server's
+    // MAX_PHOTO_UPLOAD_BYTES (scan-service/public/index.php).
+    private static let maxPhotoUploadBytes = 25 * 1024 * 1024
+
     private func uploadSelectedPhoto(_ item: PhotosPickerItem) async {
         isUploadingPhoto = true
         defer { isUploadingPhoto = false }
         do {
             guard let data = try await item.loadTransferable(type: Data.self) else {
                 appError = AppError(site: .photoUpload, underlying: nil)
+                return
+            }
+            if data.count > Self.maxPhotoUploadBytes {
+                appError = AppError(site: .photoTooLarge, underlying: nil)
                 return
             }
             let (mime, ext) = detectedMimeType(for: data)

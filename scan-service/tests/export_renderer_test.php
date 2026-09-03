@@ -27,6 +27,7 @@ require __DIR__ . '/../src/autoload.php';
 
 use VuuroScan\Export\FloorPlanImageRenderer;
 use VuuroScan\Export\FloorPlanPdfRenderer;
+use VuuroScan\Export\FusionOverlapDetector;
 
 $failures = [];
 $checks = 0;
@@ -152,9 +153,10 @@ try {
 
 $imageRenderer = new FloorPlanImageRenderer();
 
-function build_room_with_outline(string $label, array $outlineM, ?array $structureOriginM, array $openings = [], ?float $heightM = null): array
+function build_room_with_outline(string $label, array $outlineM, ?array $structureOriginM, array $openings = [], ?float $heightM = null, ?string $roomId = null): array
 {
     return [
+        'room_id' => $roomId ?? strtolower(str_replace(' ', '-', $label)),
         'label' => $label,
         'floor_area_m2' => 10.0,
         'perimeter_m' => 12.0,
@@ -210,6 +212,62 @@ $fusedWithJoinPng = $imageRenderer->render($fusedWithJoinPlan);
 x_check('a fused plan with door/window openings and room height renders without throwing', str_contains($fusedWithJoinPng, "\x89PNG"));
 x_check('the door/window/height drawing adds real bytes over the same plan with no openings',
     strlen($fusedWithJoinPng) > strlen($fusedPng));
+
+echo "\n== FusionOverlapDetector: catches a mispositioned room, not a shared wall ==\n";
+
+$sharedWallRooms = [
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0]),
+    build_room_with_outline('Room B', $squareOutline, [4.0, 0.0]),
+];
+x_check('two rooms sharing an edge (adjacent, not overlapping) are not flagged', FusionOverlapDetector::detect($sharedWallRooms) === []);
+
+$overlappingRooms = [
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0]),
+    build_room_with_outline('Room B', $squareOutline, [1.0, 0.0]),
+];
+$flagged = FusionOverlapDetector::detect($overlappingRooms);
+x_check('two rooms mostly on top of each other are flagged, both indices', $flagged === [0, 1] || $flagged === [1, 0], 'got ' . json_encode($flagged));
+
+$threeRoomsOneOverlap = [
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0]),
+    build_room_with_outline('Room B', $squareOutline, [0.5, 0.0]),
+    build_room_with_outline('Room C', $squareOutline, [20.0, 20.0]),
+];
+$flaggedThree = FusionOverlapDetector::detect($threeRoomsOneOverlap);
+sort($flaggedThree);
+x_check('a clean third room is not swept into the flag with the two that overlap', $flaggedThree === [0, 1], 'got ' . json_encode($flaggedThree));
+
+echo "\n== Fused PNG: an overlap flags the plan instead of silently drawing it clean ==\n";
+$overlapPlan = build_floor_plan($overlappingRooms);
+$overlapPng = $imageRenderer->render($overlapPlan);
+x_check('a fused plan with overlapping rooms still renders (flagged, not refused)', str_contains($overlapPng, "\x89PNG"));
+x_check('FusionOverlapDetector agrees this plan has an overlap (same source of truth the renderer uses)', FusionOverlapDetector::detect($overlapPlan['rooms']) !== []);
+$cleanFusedPlan = build_floor_plan($sharedWallRooms);
+$cleanFusedPng = $imageRenderer->render($cleanFusedPlan);
+
+echo "\n== FloorPlanPdfRenderer: same overlap warning surfaces in the text export ==\n";
+$overlapPdf = $renderer->render($overlapPlan);
+x_check('PDF text includes the overlap warning when rooms overlap', str_contains($overlapPdf, 'WARNING: some rooms below overlap'));
+$cleanFusedPdf = $renderer->render($cleanFusedPlan);
+x_check('PDF text has no overlap warning when rooms are merely adjacent', !str_contains($cleanFusedPdf, 'WARNING'));
+
+echo "\n== Viewing one room individually: ?layout=tiles and ?room_id ==\n";
+$forcedTilesPng = $imageRenderer->render($fusedPlan, 'tiles');
+x_check('layout=tiles forces the per-room sheet even when fusion is available', str_contains($forcedTilesPng, "\x89PNG"));
+x_check('forcing tiles produces a different image than the default fused render', $forcedTilesPng !== $fusedPng);
+
+$oneRoomPng = $imageRenderer->render($fusedPlan, 'auto', 'room-a');
+x_check('room_id isolates a single room\'s PNG without throwing', str_contains($oneRoomPng, "\x89PNG"));
+
+try {
+    $imageRenderer->render($fusedPlan, 'auto', 'no-such-room');
+    x_check('an unknown room_id is rejected, not silently ignored', false, 'no exception was thrown');
+} catch (\InvalidArgumentException $e) {
+    x_check('an unknown room_id is rejected, not silently ignored', str_contains($e->getMessage(), 'no-such-room'));
+}
+
+$oneRoomPdf = $renderer->render(build_floor_plan([$fusedPlan['rooms'][0], $fusedPlan['rooms'][1]]), 'room-a');
+x_check('room_id narrows the PDF metrics table to that room\'s label only', str_contains($oneRoomPdf, 'Room A') && !str_contains($oneRoomPdf, 'Room B'));
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {

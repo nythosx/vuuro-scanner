@@ -112,6 +112,53 @@ check('a multi-floor capture carrying structure_origin_m is rejected with HTTP 4
 [, $afterRejection] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId", null, $accessToken);
 check('the rejected multi-floor capture left the session at 3 rooms, not partially applied', count($afterRejection['rooms'] ?? []) === 3, 'got ' . count($afterRejection['rooms'] ?? []));
 
+echo "\n== Viewing one room individually: ?layout=tiles and ?room_id ==\n";
+
+[$tilesStatus, $tilesContentType, $tilesBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png?layout=tiles", null, $accessToken);
+check('layout=tiles succeeds on a fusion-eligible session (HTTP 200)', $tilesStatus === 200, "got HTTP $tilesStatus");
+check('layout=tiles PNG has the real magic bytes', str_starts_with($tilesBytes, "\x89PNG"));
+check('forcing tiles produces different bytes than the default fused render', $tilesBytes !== $pngBytes);
+
+$firstRoomId = $afterThird['rooms'][0]['room_id'];
+[$oneRoomStatus, , $oneRoomBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png?room_id=$firstRoomId", null, $accessToken);
+check('room_id isolates a single room (HTTP 200)', $oneRoomStatus === 200, "got HTTP $oneRoomStatus");
+check('room_id PNG has the real magic bytes', str_starts_with($oneRoomBytes, "\x89PNG"));
+
+[$badRoomStatus, ] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png?room_id=no-such-room", null, $accessToken);
+check('an unknown room_id is rejected with HTTP 422, not silently ignored', $badRoomStatus === 422, "got HTTP $badRoomStatus");
+
+[$onePdfStatus, , $onePdfBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.pdf?room_id=$firstRoomId", null, $accessToken);
+check('room_id also narrows the PDF export (HTTP 200)', $onePdfStatus === 200, "got HTTP $onePdfStatus");
+check('the narrowed PDF still has a real PDF header', str_starts_with($onePdfBytes, '%PDF-1.4'));
+
+echo "\n== A fully-fused session with a mispositioned room is flagged, not silently drawn as a clean fuse ==\n";
+
+[, $overlapSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
+    'property_id' => 'prop-net-fusion-overlap', 'unit_id' => 'unit-net-fusion-overlap', 'organisation_id' => 'org-net-fusion',
+    'purpose' => 'listing', 'occupied' => false,
+]);
+$overlapSessionId = $overlapSession['id'];
+$overlapToken = $overlapSession['access_token'];
+
+$overlapCaptureA = $fixture;
+$overlapCaptureA['structure_origin_m'] = [0.0, 0.0];
+net_http_json('POST', "$baseUrl/scan-sessions/$overlapSessionId/capture", ['raw_capture' => $overlapCaptureA], $overlapToken);
+
+$overlapCaptureB = $fixture;
+$overlapCaptureB['structure_origin_m'] = [1.0, 0.5];
+[$overlapCaptureStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$overlapSessionId/capture", ['raw_capture' => $overlapCaptureB], $overlapToken);
+check('the overlapping capture is still accepted (HTTP 200)', $overlapCaptureStatus === 200, "got HTTP $overlapCaptureStatus");
+
+[$overlapPngStatus, , $overlapPngBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$overlapSessionId/export/floorplan.png", null, $overlapToken);
+check('the fused PNG still renders with an overlapping room present (HTTP 200)', $overlapPngStatus === 200, "got HTTP $overlapPngStatus");
+check('overlap PNG has the real magic bytes', str_starts_with($overlapPngBytes, "\x89PNG"));
+
+[$overlapPdfStatus, , $overlapPdfBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$overlapSessionId/export/floorplan.pdf", null, $overlapToken);
+check('the PDF export text carries the overlap warning', str_contains($overlapPdfBytes, 'WARNING: some rooms below overlap'));
+
+[$cleanPdfStatus, , $cleanPdfBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.pdf", null, $accessToken);
+check('the earlier, non-overlapping session\'s PDF has no overlap warning', !str_contains($cleanPdfBytes, 'WARNING'));
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

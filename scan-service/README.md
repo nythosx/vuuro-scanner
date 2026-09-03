@@ -59,8 +59,8 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
 | POST | `/scan-sessions/{id}/photo-uploads` | Upload real image bytes (multipart), content-sniffed via `finfo`, stored under `data/photos/{session_id}/`. Returns a `url` to pass into `/photos`. |
 | GET | `/scan-sessions/{id}/photo-uploads/{filename}` | Fetch a previously uploaded photo. |
 | POST | `/scan-sessions/{id}/notes` | Attach a text note, with optional room id. |
-| GET | `/scan-sessions/{id}/export/floorplan.png` | Per-room PNG tile(s) — see `docs/adr/0002-export-coordinate-frame.md` for why these aren't a fused layout. |
-| GET | `/scan-sessions/{id}/export/floorplan.pdf` | Per-room metrics-table PDF. |
+| GET | `/scan-sessions/{id}/export/floorplan.png` | Fused single-layout PNG when every room in the session carries `structure_origin_m` (see `docs/adr/0002-export-coordinate-frame.md`); per-room tiles otherwise, or always with `?layout=tiles`. `?room_id=<id>` isolates one room's own tile. |
+| GET | `/scan-sessions/{id}/export/floorplan.pdf` | Per-room metrics-table PDF, all rooms unless narrowed with `?room_id=<id>`. |
 | GET | `/scan-sessions/{id}/access-log` | This session's `action`/`outcome`/`occurred_at` audit trail — never the token or caller IP. |
 | GET | `/scan-sessions/{id}` | Fetch the current `FloorPlan` state for the session. |
 

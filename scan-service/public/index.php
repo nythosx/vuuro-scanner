@@ -247,7 +247,11 @@ function authorizeSession(ScanSessionRepository $repo, string $sessionId, string
         }
     }
 
-    if ($session !== null) {
+    // upload_photo always logs its own, more specific outcome below
+    // (stored/rejected_*/failed_*) once granted, so logging a generic
+    // 'granted' row here too would double-count every successful attempt.
+    // Denials still log here — they never reach that downstream log.
+    if ($session !== null && !($granted && $action === 'upload_photo')) {
         $repo->logAccess($session['id'], $action, $granted ? 'granted' : 'denied');
     }
 
@@ -884,8 +888,15 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         return;
     }
 
+    $layout = $_GET['layout'] ?? 'auto';
+    if (!in_array($layout, ['auto', 'tiles'], true)) {
+        respondError(422, 'invalid_layout', "'layout' must be 'auto' or 'tiles' if given.");
+        return;
+    }
+    $roomId = isset($_GET['room_id']) ? (string) $_GET['room_id'] : null;
+
     try {
-        $png = (new FloorPlanImageRenderer())->render($floorPlan);
+        $png = (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;
@@ -913,8 +924,10 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         return;
     }
 
+    $roomId = isset($_GET['room_id']) ? (string) $_GET['room_id'] : null;
+
     try {
-        $pdf = (new FloorPlanPdfRenderer())->render($floorPlan);
+        $pdf = (new FloorPlanPdfRenderer())->render($floorPlan, $roomId);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;

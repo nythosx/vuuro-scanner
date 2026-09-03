@@ -51,6 +51,7 @@ struct AppError {
         case captureFailed = "CAPTURE_FAILED"
         case photoAdd = "PHOTO_ADD"
         case photoUpload = "PHOTO_UPLOAD"
+        case photoTooLarge = "PHOTO_TOO_LARGE"
         case noteAdd = "NOTE_ADD"
         case resultImageLoad = "RESULT_IMAGE_LOAD"
         case resultImageDecode = "RESULT_IMAGE_DECODE"
@@ -71,6 +72,8 @@ struct AppError {
                 return "The floor plan image couldn't be decoded."
             case .photoUpload:
                 return "Couldn't read the selected photo."
+            case .photoTooLarge:
+                return "Photos are limited to 25MB. Please choose a smaller photo."
             default:
                 return "Something went wrong."
             }

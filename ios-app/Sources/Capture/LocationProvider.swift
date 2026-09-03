@@ -11,7 +11,10 @@ struct CaptureLocation: Codable {
     let lat: Double
     let lon: Double
     let accuracyM: Double
-    let capturedAt: String
+    // Optional: the server allows capture_location.captured_at to be null
+    // (floorplan.schema.json), so decoding a fetched session must tolerate
+    // it even though a freshly-captured CaptureLocation always sets it.
+    let capturedAt: String?
 
     enum CodingKeys: String, CodingKey {
         case lat, lon
