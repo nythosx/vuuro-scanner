@@ -197,6 +197,21 @@ try {
 } catch (\InvalidArgumentException) {
     t_check('adapt() rejects a non-finite walls[].dimensions height', true);
 }
+
+// Review finding: a truncated (<3 elements) objects[].dimensions used to
+// fabricate [0.0, 0.0, 0.0] instead of dropping the object, the same
+// invented-data shape validatePoints()/mapObjects() already reject for
+// position. dimensions_m entirely absent must behave the same as truncated.
+$truncatedDimsResult = $adapter->adapt([
+    'floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]],
+    'objects' => [
+        ['identifier' => 'truncated', 'confidence' => 'high', 'position' => [1, 0, 1], 'dimensions' => [1, 1]],
+        ['identifier' => 'missing', 'confidence' => 'high', 'position' => [2, 0, 1]],
+        ['identifier' => 'real', 'confidence' => 'high', 'position' => [3, 0, 1], 'dimensions' => [0.5, 0.5, 0.5]],
+    ],
+], $identity);
+t_check('a truncated or missing objects[].dimensions drops the object instead of fabricating [0,0,0]',
+    array_column($truncatedDimsResult['rooms'][0]['objects'], 'object_id') === ['real']);
 echo "\n";
 
 // Deliberately adversarial: a bounding-box-only implementation would still

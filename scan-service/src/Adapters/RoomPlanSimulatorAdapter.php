@@ -323,9 +323,15 @@ final class RoomPlanSimulatorAdapter
                 continue;
             }
             $dims = $item['dimensions'] ?? null;
-            $dimensions = is_array($dims) && count($dims) >= 3
-                ? [(float) ($dims[0] ?? 0), (float) ($dims[1] ?? 0), (float) ($dims[2] ?? 0)]
-                : [0.0, 0.0, 0.0];
+            if (!is_array($dims) || count($dims) < 3) {
+                // Same drop-not-fabricate rule as position above: a
+                // missing/truncated dimensions array is unknown size, not a
+                // real 0x0x0 object. Review finding — this used to fall back
+                // to [0.0, 0.0, 0.0], fabricating a size the capture never
+                // reported.
+                continue;
+            }
+            $dimensions = [(float) $dims[0], (float) $dims[1], (float) $dims[2]];
             $objects[] = [
                 'object_id' => (string) ($item['identifier'] ?? ('object-' . count($objects))),
                 'category' => is_string($item['category'] ?? null) ? $item['category'] : 'object',

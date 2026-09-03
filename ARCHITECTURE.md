@@ -111,10 +111,8 @@ This document serves as a critical, living template designed to equip agents wit
 │   │   │                                  # default, since a cloud simulator
 │   │   │                                  # (appetize.io) can't reach loopback
 │   │   └── Design/
-│   │       └── VuuroDesign.swift  # LIDAR-7: brand tokens/button styles
-│   │                               # folded in from the now-retired
-│   │                               # ios-app-with-design/ tree, unwired by
-│   │                               # default — see its own file header
+│   │       └── VuuroDesign.swift  # Brand tokens/button styles, unwired
+│   │                               # by default (LIDAR-7)
 │   └── README.md               # Local-only (gitignored) — verification
 │                                # status, checklist for whoever opens this
 │                                # in Xcode first

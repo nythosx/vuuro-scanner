@@ -90,6 +90,14 @@ struct FloorPlan: Codable {
         // height/volume, and real captured objects. No UI consumption yet
         // (deferred to LIDAR-11's fused 2D/3D view) — the data just needs
         // somewhere to land.
+        //
+        // Review finding: a session captured before LIDAR-10 shipped has a
+        // stored contract_json with no openings/objects keys at all (the
+        // server returns it as-is, never regenerated — see
+        // ScanSessionRepository::findFloorPlan()). openings/objects need a
+        // custom decode defaulting to [] for that case, same as
+        // heightM/volumeM3Indicative already get for free from being
+        // Optional.
         let openings: [Opening]
         let heightM: Double?
         let volumeM3Indicative: Double?
@@ -108,6 +116,22 @@ struct FloorPlan: Codable {
             case heightM = "height_m"
             case volumeM3Indicative = "volume_m3_indicative"
             case objects
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            roomId = try c.decode(String.self, forKey: .roomId)
+            label = try c.decode(String.self, forKey: .label)
+            floorAreaM2 = try c.decode(Double.self, forKey: .floorAreaM2)
+            perimeterM = try c.decode(Double.self, forKey: .perimeterM)
+            boundingDimensionsM = try c.decode(BoundingDimensions.self, forKey: .boundingDimensionsM)
+            confidence = try c.decode(String.self, forKey: .confidence)
+            outlineM = try c.decode([[Double]].self, forKey: .outlineM)
+            coverage = try c.decode(Coverage.self, forKey: .coverage)
+            heightM = try c.decodeIfPresent(Double.self, forKey: .heightM)
+            volumeM3Indicative = try c.decodeIfPresent(Double.self, forKey: .volumeM3Indicative)
+            openings = try c.decodeIfPresent([Opening].self, forKey: .openings) ?? []
+            objects = try c.decodeIfPresent([CapturedObject].self, forKey: .objects) ?? []
         }
     }
 
