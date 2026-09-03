@@ -70,7 +70,7 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["room_id", "label", "floor_area_m2", "perimeter_m", "bounding_dimensions_m", "confidence", "outline_m", "coverage", "openings", "height_m", "volume_m3_indicative", "objects"],
+        "required": ["room_id", "label", "floor_area_m2", "perimeter_m", "bounding_dimensions_m", "confidence", "outline_m", "coverage", "openings", "height_m", "volume_m3_indicative", "objects", "structure_origin_m"],
         "properties": {
           "room_id": { "type": "string" },
           "label": { "type": "string" },
@@ -95,6 +95,13 @@
               "maxItems": 2,
               "items": { "type": "number" }
             }
+          },
+          "structure_origin_m": {
+            "type": ["array", "null"],
+            "minItems": 2,
+            "maxItems": 2,
+            "items": { "type": "number" },
+            "description": "LIDAR-5/11: this room's [x, z] placement in a multi-room fused structure's shared frame, only when captured together with other rooms via StructureBuilder in one continuous visit. Null for every room captured the ordinary way (single-room, or LIDAR-4 resume-later) — never fabricated. outline_m itself stays room-local regardless; this is an additive offset, not a replacement (see docs/proposals/multi-room-fusion.md)."
           },
           "openings": {
             "type": "array",

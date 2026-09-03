@@ -14,6 +14,13 @@ struct RoomPlanCaptureExport: Encodable {
     let windows: [SurfaceExport]
     let openings: [SurfaceExport]
     let objects: [SurfaceExport]
+    // Set only by CapturedStructureExporter, for a room merged via StructureBuilder.
+    var structureOriginM: [Double]? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case story, floors, walls, doors, windows, openings, objects
+        case structureOriginM = "structure_origin_m"
+    }
 
     struct SurfaceExport: Encodable {
         let identifier: String

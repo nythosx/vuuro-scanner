@@ -34,6 +34,15 @@ final class FloorPlanImageRenderer
             throw new \InvalidArgumentException('Cannot render a floor plan sheet with zero rooms.');
         }
 
+        $isFused = count($rooms) > 1 && array_reduce(
+            $rooms,
+            fn (bool $carry, array $room) => $carry && isset($room['structure_origin_m']),
+            true
+        );
+        if ($isFused) {
+            return $this->renderFused($rooms);
+        }
+
         $tiles = array_map([$this, 'tileGeometry'], $rooms);
 
         $canvasWidth = self::MARGIN * 2 + array_sum(array_column($tiles, 'width'))
@@ -78,6 +87,125 @@ final class FloorPlanImageRenderer
         return (string) $bytes;
     }
 
+    private function renderFused(array $rooms): string
+    {
+        $minX = INF;
+        $minZ = INF;
+        $maxX = -INF;
+        $maxZ = -INF;
+        foreach ($rooms as $room) {
+            [$originX, $originZ] = $room['structure_origin_m'];
+            foreach ($room['outline_m'] as [$mx, $mz]) {
+                $worldX = $mx + $originX;
+                $worldZ = $mz + $originZ;
+                $minX = min($minX, $worldX);
+                $minZ = min($minZ, $worldZ);
+                $maxX = max($maxX, $worldX);
+                $maxZ = max($maxZ, $worldZ);
+            }
+        }
+
+        $canvasWidth = self::MARGIN * 2 + (int) round(($maxX - $minX) * self::PIXELS_PER_METER);
+        $canvasHeight = self::MARGIN * 2 + self::LABEL_HEIGHT + (int) round(($maxZ - $minZ) * self::PIXELS_PER_METER);
+        if ($canvasWidth > self::MAX_CANVAS_DIMENSION_PX || $canvasHeight > self::MAX_CANVAS_DIMENSION_PX) {
+            throw new \InvalidArgumentException(sprintf(
+                'Fused floor plan would be %dx%d px, exceeding the %d px sanity bound — refusing to allocate it.',
+                $canvasWidth,
+                $canvasHeight,
+                self::MAX_CANVAS_DIMENSION_PX
+            ));
+        }
+
+        $image = imagecreatetruecolor(max($canvasWidth, 400), $canvasHeight + 40);
+        $white = imagecolorallocate($image, 255, 255, 255);
+        $roomFill = imagecolorallocate($image, 214, 231, 245);
+        $roomBorder = imagecolorallocate($image, 30, 64, 110);
+        $text = imagecolorallocate($image, 20, 20, 20);
+        $subtext = imagecolorallocate($image, 90, 90, 90);
+        $doorColor = imagecolorallocate($image, 210, 105, 30);
+        $windowColor = imagecolorallocate($image, 70, 130, 180);
+        $otherOpeningColor = imagecolorallocate($image, 120, 120, 120);
+        imagefilledrectangle($image, 0, 0, imagesx($image), imagesy($image), $white);
+
+        imagestring($image, 5, self::MARGIN, 8, 'Vuuro Scan - fused floor plan (rooms captured together in one visit)', $text);
+        imagestring($image, 2, self::MARGIN, 26, 'Room positions relative to each other, not independently verified beyond this capture (see docs/proposals/multi-room-fusion.md).', $subtext);
+
+        $toPx = function (float $worldX, float $worldZ) use ($minX, $minZ): array {
+            return [
+                self::MARGIN + (int) round(($worldX - $minX) * self::PIXELS_PER_METER),
+                self::MARGIN + self::LABEL_HEIGHT + (int) round(($worldZ - $minZ) * self::PIXELS_PER_METER),
+            ];
+        };
+
+        foreach ($rooms as $room) {
+            [$originX, $originZ] = $room['structure_origin_m'];
+            $outline = $room['outline_m'];
+            $points = [];
+            foreach ($outline as [$mx, $mz]) {
+                [$px, $py] = $toPx($mx + $originX, $mz + $originZ);
+                $points[] = $px;
+                $points[] = $py;
+            }
+            imagefilledpolygon($image, $points, $roomFill);
+            imagepolygon($image, $points, $roomBorder);
+            $this->drawWallLengths($image, $outline, $originX, $originZ, $toPx, $subtext);
+
+            [$labelX, $labelY] = $toPx($originX, $originZ);
+            imagestring($image, 3, $labelX + 4, $labelY + 4, $room['label'], $text);
+            $metrics = sprintf('%.2f sqm - %.2f m perimeter', $room['floor_area_m2'], $room['perimeter_m']);
+            imagestring($image, 2, $labelX + 4, $labelY + 20, $metrics, $subtext);
+            $lineY = $labelY + 32;
+            if (($room['height_m'] ?? null) !== null) {
+                imagestring($image, 2, $labelX + 4, $lineY, sprintf('%.2f m height', $room['height_m']), $subtext);
+                $lineY += 12;
+            }
+            if (($room['volume_m3_indicative'] ?? null) !== null) {
+                imagestring($image, 2, $labelX + 4, $lineY, sprintf('%.2f m3 indicative', $room['volume_m3_indicative']), $subtext);
+            }
+        }
+
+        // Only a position is known (LIDAR-10's opening centroid) — no fabricated wall-gap width or swing.
+        foreach ($rooms as $room) {
+            [$originX, $originZ] = $room['structure_origin_m'];
+            foreach ($room['openings'] ?? [] as $opening) {
+                [$mx, $mz] = $opening['position_m'];
+                [$px, $py] = $toPx($mx + $originX, $mz + $originZ);
+                $color = match ($opening['category']) {
+                    'door' => $doorColor,
+                    'window' => $windowColor,
+                    default => $otherOpeningColor,
+                };
+                imagefilledellipse($image, $px, $py, 10, 10, $color);
+                imagestring($image, 1, $px + 6, $py - 6, $opening['category'], $color);
+            }
+        }
+
+        ob_start();
+        imagepng($image);
+        $bytes = ob_get_clean();
+        imagedestroy($image);
+
+        return (string) $bytes;
+    }
+
+    // Each polygon edge labeled with its own real-world length, at its midpoint.
+    private function drawWallLengths($image, array $outlineM, float $originX, float $originZ, callable $toPx, int $color): void
+    {
+        $n = count($outlineM);
+        for ($i = 0; $i < $n; $i++) {
+            [$ax, $az] = $outlineM[$i];
+            [$bx, $bz] = $outlineM[($i + 1) % $n];
+            $lengthM = sqrt(($bx - $ax) ** 2 + ($bz - $az) ** 2);
+            if ($lengthM < 0.3) {
+                continue; // too short to label without the text overlapping itself
+            }
+            $midX = ($ax + $bx) / 2 + $originX;
+            $midZ = ($az + $bz) / 2 + $originZ;
+            [$px, $py] = $toPx($midX, $midZ);
+            imagestring($image, 1, $px - 10, $py - 5, sprintf('%.2fm', $lengthM), $color);
+        }
+    }
+
     /** @return array{width: int, height: int} */
     private function tileGeometry(array $room): array
     {
@@ -98,6 +226,11 @@ final class FloorPlanImageRenderer
         // it explicitly, so the old $num_points argument is dropped here.
         imagefilledpolygon($image, $points, $fill);
         imagepolygon($image, $points, $border);
+        $tileToPx = fn (float $mx, float $mz): array => [
+            $originX + self::TILE_PADDING + (int) round($mx * self::PIXELS_PER_METER),
+            $originY + self::TILE_PADDING + (int) round($mz * self::PIXELS_PER_METER),
+        ];
+        $this->drawWallLengths($image, $room['outline_m'], 0.0, 0.0, $tileToPx, $subtext);
 
         $labelY = $originY + self::TILE_PADDING + (int) round($room['bounding_dimensions_m']['length_m'] * self::PIXELS_PER_METER) + 8;
         imagestring($image, 4, $originX + self::TILE_PADDING, $labelY, $room['label'], $text);
@@ -105,5 +238,13 @@ final class FloorPlanImageRenderer
         // (m-superscript-2, middot) renders as mojibake.
         $metrics = sprintf('%.2f sqm - %.2f m perimeter - %s confidence', $room['floor_area_m2'], $room['perimeter_m'], $room['confidence']);
         imagestring($image, 2, $originX + self::TILE_PADDING, $labelY + 18, $metrics, $subtext);
+        $lineY = $labelY + 32;
+        if (($room['height_m'] ?? null) !== null) {
+            imagestring($image, 2, $originX + self::TILE_PADDING, $lineY, sprintf('%.2f m height', $room['height_m']), $subtext);
+            $lineY += 12;
+        }
+        if (($room['volume_m3_indicative'] ?? null) !== null) {
+            imagestring($image, 2, $originX + self::TILE_PADDING, $lineY, sprintf('%.2f m3 indicative', $room['volume_m3_indicative']), $subtext);
+        }
     }
 }

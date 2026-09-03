@@ -125,6 +125,9 @@ final class RoomPlanSimulatorAdapter
                 'height_m' => $height,
                 'volume_m3_indicative' => $volume,
                 'objects' => self::mapObjects($rawCapture, $minX, $minZ),
+                // LIDAR-5/11: additive, null unless this capture came from a
+                // StructureBuilder-merged multi-room visit (docs/proposals/multi-room-fusion.md).
+                'structure_origin_m' => self::structureOriginM($rawCapture),
             ];
         }
 
@@ -358,6 +361,16 @@ final class RoomPlanSimulatorAdapter
         ];
     }
 
+    // LIDAR-5/11: passes structure_origin_m through as-is (already
+    // validated numeric/finite in validateRawCapture) — null when absent.
+    private static function structureOriginM(array $rawCapture): ?array
+    {
+        $origin = $rawCapture['structure_origin_m'] ?? null;
+        if (!is_array($origin) || count($origin) < 2) {
+            return null;
+        }
+        return [(float) $origin[0], (float) $origin[1]];
+    }
 
     /**
      * Rejects an untrusted raw_capture body that would otherwise crash
@@ -418,7 +431,7 @@ final class RoomPlanSimulatorAdapter
         // silently relied on. Revisit when LIDAR-4 (multi-room) defines a
         // real per-floor association for these groups.
         if (count($floors) > 1) {
-            $hasAmbiguousData = false;
+            $hasAmbiguousData = isset($rawCapture['structure_origin_m']);
             foreach (['walls', 'doors', 'windows', 'openings', 'objects'] as $group) {
                 $items = $rawCapture[$group] ?? [];
                 if (is_array($items) && !empty($items)) {
@@ -536,6 +549,13 @@ final class RoomPlanSimulatorAdapter
                     self::validatePoints("objects[$objectIndex].dimensions", [$dimensions]);
                 }
             }
+        }
+
+        // LIDAR-5/11: structure_origin_m is just as untrusted as any other
+        // client-supplied coordinate.
+        $structureOrigin = $rawCapture['structure_origin_m'] ?? null;
+        if (is_array($structureOrigin)) {
+            self::validatePoints('structure_origin_m', [$structureOrigin]);
         }
 
         // computeHeight() reads walls[].dimensions[1] with no prior bounds

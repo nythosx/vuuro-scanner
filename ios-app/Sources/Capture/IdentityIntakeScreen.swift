@@ -9,6 +9,7 @@ import SwiftUI
 
 struct IdentityIntakeScreen: View {
     var onStart: (ScanIdentity) -> Void
+    var onStartMultiRoom: ((ScanIdentity) -> Void)? = nil
 
     @State private var propertyId = ""
     @State private var unitId = ""
@@ -72,6 +73,20 @@ struct IdentityIntakeScreen: View {
                     ))
                 }
                 .disabled(!canStart)
+
+                if let onStartMultiRoom {
+                    Button("Start multi-room scan (fused, experimental)") {
+                        onStartMultiRoom(ScanIdentity(
+                            propertyId: propertyId,
+                            unitId: unitId,
+                            organisationId: organisationId,
+                            purpose: purpose,
+                            occupied: occupied,
+                            consentObtained: occupied ? consentObtained : false
+                        ))
+                    }
+                    .disabled(!canStart)
+                }
             }
 
             #if DEBUG

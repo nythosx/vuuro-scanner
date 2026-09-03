@@ -105,6 +105,26 @@ final class FloorPlanPdfRenderer
                 $room['perimeter_m'],
                 $room['confidence']
             );
+            $heightM = $room['height_m'] ?? null;
+            $volumeM3 = $room['volume_m3_indicative'] ?? null;
+            if ($heightM !== null && $volumeM3 !== null) {
+                $lines[] = sprintf('             %8.2f m height   %8.2f m3 indicative capacity', $heightM, $volumeM3);
+            } elseif ($heightM !== null) {
+                $lines[] = sprintf('             %8.2f m height', $heightM);
+            }
+            $openings = $room['openings'] ?? [];
+            if ($openings !== []) {
+                $counts = [];
+                foreach ($openings as $opening) {
+                    $counts[$opening['category']] = ($counts[$opening['category']] ?? 0) + 1;
+                }
+                $summary = implode(', ', array_map(
+                    static fn (string $category, int $count) => "{$count} {$category}" . ($count === 1 ? '' : 's'),
+                    array_keys($counts),
+                    array_values($counts)
+                ));
+                $lines[] = "             {$summary}";
+            }
         }
         $lines[] = '';
         $lines[] = sprintf('Total indicative area: %.2f m2 across %d room(s)', $totalArea, count($floorPlan['rooms']));

@@ -103,6 +103,7 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
   ```
   php net/verify_capture_geometry.php http://127.0.0.1:8089
   php net/verify_multiroom_and_attachments.php http://127.0.0.1:8089
+  php net/verify_multiroom_fusion.php http://127.0.0.1:8089
   php net/verify_exports.php http://127.0.0.1:8089
   php net/verify_acl.php http://127.0.0.1:8089
   php net/verify_coverage.php http://127.0.0.1:8089
