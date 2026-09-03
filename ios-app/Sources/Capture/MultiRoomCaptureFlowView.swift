@@ -3,8 +3,9 @@ import SwiftUI
 
 struct MultiRoomCaptureFlowView: View {
     let identity: ScanIdentity
+    let existingSession: ScanSessionResponse?
     let onFinished: (ScanSessionResponse, FloorPlan) -> Void
-    let onError: (AppError) -> Void
+    let onError: (AppError, ScanSessionResponse?) -> Void
     let onGoBack: () -> Void
 
     @StateObject private var coordinator = MultiRoomCaptureCoordinator()
@@ -13,6 +14,8 @@ struct MultiRoomCaptureFlowView: View {
     @State private var isFinishingUnit = false
     @State private var isDegenerateCapture = false
     @State private var showFinishConfirmation = false
+    @State private var pendingFinishUnit = false
+    @State private var partialRoomFailureMessage: String?
 
     private let client = ScanServiceClient()
 
@@ -29,6 +32,20 @@ struct MultiRoomCaptureFlowView: View {
                     isDegenerateCapture = false
                     coordinator.start()
                 }
+            } else if let partialRoomFailureMessage {
+                PartialRoomChoiceView(
+                    message: partialRoomFailureMessage,
+                    onKeep: {
+                        self.partialRoomFailureMessage = nil
+                        coordinator.keepPendingPartialRoom()
+                        continueAfterRoomResolved()
+                    },
+                    onDiscard: {
+                        self.partialRoomFailureMessage = nil
+                        coordinator.discardPendingPartialRoom()
+                        continueAfterRoomResolved()
+                    }
+                )
             } else {
                 ZStack {
                     MultiRoomCaptureScreen(coordinator: coordinator)
@@ -80,9 +97,9 @@ struct MultiRoomCaptureFlowView: View {
                             .padding(.bottom, 40)
                             .alert("Finish this unit?", isPresented: $showFinishConfirmation) {
                                 Button("Finish") {
+                                    pendingFinishUnit = true
                                     didRequestStopRoom = true
                                     coordinator.stopCurrentRoom()
-                                    coordinator.finishUnit()
                                 }
                                 Button("Keep scanning", role: .cancel) {}
                             } message: {
@@ -105,14 +122,21 @@ struct MultiRoomCaptureFlowView: View {
             break
         case .roomFinished(roomAvailable: true):
             didRequestStopRoom = false
-            coordinator.start()
+            continueAfterRoomResolved()
         case .roomFinished(roomAvailable: false):
             didRequestStopRoom = false
-            isDegenerateCapture = true
-        case .failed:
+            if pendingFinishUnit {
+                continueAfterRoomResolved()
+            } else {
+                isDegenerateCapture = true
+            }
+        case .failed(let message, let partialRoomAvailable):
             didRequestStopRoom = false
-            coordinator.discardPendingPartialRoom()
-            coordinator.start()
+            if partialRoomAvailable {
+                partialRoomFailureMessage = message
+            } else {
+                continueAfterRoomResolved()
+            }
         case .merging:
             isFinishingUnit = true
         case .unitFinished:
@@ -120,7 +144,20 @@ struct MultiRoomCaptureFlowView: View {
             Task { await submit(structure) }
         case .mergeFailed(let message):
             isFinishingUnit = false
-            onError(AppError(site: .captureFailed, underlying: PlainError(message: message)))
+            onError(AppError(site: .captureFailed, underlying: PlainError(message: message)), existingSession)
+        }
+    }
+
+    private func continueAfterRoomResolved() {
+        if pendingFinishUnit {
+            pendingFinishUnit = false
+            if coordinator.capturedRooms.isEmpty {
+                onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
+            } else {
+                coordinator.finishUnit()
+            }
+        } else {
+            coordinator.start()
         }
     }
 
@@ -131,41 +168,71 @@ struct MultiRoomCaptureFlowView: View {
         defer { isUploading = false }
 
         let exports = CapturedStructureExporter.export(structure)
+        guard !exports.isEmpty else {
+            onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
+            return
+        }
         guard exports.allSatisfy({ $0.hasUsableFloorOutline }) else {
-            onError(AppError(site: .captureFailed, underlying: PlainError(message: "One or more merged rooms had a degenerate floor outline.")))
+            onError(AppError(site: .captureFailed, underlying: PlainError(message: "One or more merged rooms had a degenerate floor outline.")), existingSession)
             return
         }
 
         let session: ScanSessionResponse
-        do {
-            session = try await client.createSession(identity: identity)
-        } catch {
-            onError(AppError(site: .sessionCreate, underlying: error))
-            return
+        if let existingSession {
+            session = existingSession
+        } else {
+            do {
+                session = try await client.createSession(identity: identity)
+            } catch {
+                onError(AppError(site: .sessionCreate, underlying: error), nil)
+                return
+            }
+            ScanHistoryStore.shared.add(ScanHistoryEntry(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                propertyId: identity.propertyId,
+                unitId: identity.unitId,
+                organisationId: identity.organisationId,
+                purpose: identity.purpose,
+                createdAt: Date()
+            ))
         }
-        ScanHistoryStore.shared.add(ScanHistoryEntry(
-            sessionId: session.id,
-            accessToken: session.accessToken,
-            propertyId: identity.propertyId,
-            unitId: identity.unitId,
-            organisationId: identity.organisationId,
-            purpose: identity.purpose,
-            createdAt: Date()
-        ))
 
         var floorPlan: FloorPlan?
         for export in exports {
             do {
                 floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export)
             } catch {
-                onError(AppError(site: .captureUpload, underlying: error))
+                onError(AppError(site: .captureUpload, underlying: error), session)
                 return
             }
         }
         guard let floorPlan else {
-            onError(AppError(site: .captureNoRoom, underlying: nil))
+            onError(AppError(site: .captureNoRoom, underlying: nil), session)
             return
         }
         onFinished(session, floorPlan)
+    }
+}
+
+struct PartialRoomChoiceView: View {
+    let message: String
+    let onKeep: () -> Void
+    let onDiscard: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Scan interrupted").font(.headline)
+            Text(message)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Text("Some of this room was captured before the interruption. You can keep it and continue, or discard it and rescan this room.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Keep this room", action: onKeep).buttonStyle(.borderedProminent)
+            Button("Discard and rescan", role: .destructive, action: onDiscard)
+        }
+        .padding()
     }
 }

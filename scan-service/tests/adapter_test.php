@@ -234,6 +234,19 @@ try {
 } catch (\InvalidArgumentException) {
     t_check('adapt() rejects a non-finite structure_origin_m coordinate', true);
 }
+
+try {
+    $adapter->adapt([
+        'floors' => [
+            ['identifier' => 'f1', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]],
+            ['identifier' => 'f2', 'confidence' => 'high', 'polygonCorners' => [[10, 0, 0], [14, 0, 0], [14, 0, 3], [10, 0, 3]]],
+        ],
+        'structure_origin_m' => [1.5, 2.25],
+    ], $identity);
+    t_check('adapt() rejects a multi-floor capture carrying structure_origin_m', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    t_check('adapt() rejects a multi-floor capture carrying structure_origin_m', true);
+}
 echo "\n";
 echo "\n";
 

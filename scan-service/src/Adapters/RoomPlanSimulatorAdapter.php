@@ -416,7 +416,7 @@ final class RoomPlanSimulatorAdapter
         // silently relied on. Revisit when LIDAR-4 (multi-room) defines a
         // real per-floor association for these groups.
         if (count($floors) > 1) {
-            $hasAmbiguousData = false;
+            $hasAmbiguousData = isset($rawCapture['structure_origin_m']);
             foreach (['walls', 'doors', 'windows', 'openings', 'objects'] as $group) {
                 $items = $rawCapture[$group] ?? [];
                 if (is_array($items) && !empty($items)) {

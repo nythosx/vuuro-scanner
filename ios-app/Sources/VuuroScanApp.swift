@@ -29,7 +29,7 @@ struct ScanFlowView: View {
     private enum Stage {
         case intake
         case capturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
-        case multiRoomCapturing(identity: ScanIdentity, attempt: UUID)
+        case multiRoomCapturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
         case attachments(session: ScanSessionResponse, floorPlan: FloorPlan)
         case summary(session: ScanSessionResponse, floorPlan: FloorPlan)
         // Carries identity/existingSession, not just the error, so "Try
@@ -39,7 +39,7 @@ struct ScanFlowView: View {
         // failure would silently orphan room 1's already-created session
         // instead of letting him retry room 2 into it.
         case error(AppError, identity: ScanIdentity, existingSession: ScanSessionResponse?)
-        case multiRoomError(AppError, identity: ScanIdentity)
+        case multiRoomError(AppError, identity: ScanIdentity, existingSession: ScanSessionResponse?)
     }
 
     @State private var stage: Stage = .intake
@@ -103,7 +103,7 @@ struct ScanFlowView: View {
                 IdentityIntakeScreen(onStart: { identity in
                     stage = .capturing(identity: identity, session: nil, attempt: UUID())
                 }, onStartMultiRoom: { identity in
-                    stage = .multiRoomCapturing(identity: identity, attempt: UUID())
+                    stage = .multiRoomCapturing(identity: identity, session: nil, attempt: UUID())
                 })
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
@@ -154,11 +154,11 @@ struct ScanFlowView: View {
                     }
                 }
                 .id(attempt)
-            case .multiRoomCapturing(let identity, let attempt):
-                MultiRoomCaptureFlowView(identity: identity) { session, floorPlan in
+            case .multiRoomCapturing(let identity, let session, let attempt):
+                MultiRoomCaptureFlowView(identity: identity, existingSession: session) { session, floorPlan in
                     stage = .attachments(session: session, floorPlan: floorPlan)
-                } onError: { appError in
-                    stage = .multiRoomError(appError, identity: identity)
+                } onError: { appError, sessionToResume in
+                    stage = .multiRoomError(appError, identity: identity, existingSession: sessionToResume)
                 } onGoBack: {
                     stage = .intake
                 }
@@ -175,9 +175,9 @@ struct ScanFlowView: View {
                 ErrorView(error: appError) {
                     stage = .capturing(identity: identity, session: existingSession, attempt: UUID())
                 }
-            case .multiRoomError(let appError, let identity):
+            case .multiRoomError(let appError, let identity, let existingSession):
                 ErrorView(error: appError) {
-                    stage = .multiRoomCapturing(identity: identity, attempt: UUID())
+                    stage = .multiRoomCapturing(identity: identity, session: existingSession, attempt: UUID())
                 }
             }
         }
