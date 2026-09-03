@@ -31,6 +31,8 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
     }
 
     func currentLocation() async -> CaptureLocation? {
+        finish(nil)
+
         let status = manager.authorizationStatus
         if status == .denied || status == .restricted {
             return nil
