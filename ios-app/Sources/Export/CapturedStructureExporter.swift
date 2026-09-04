@@ -16,7 +16,7 @@ enum CapturedStructureExporter {
     /// One export per room, each carrying origin_m — its own bounding-box
     /// min corner in the shared frame, computed before any per-room
     /// re-normalization (kept server-side, additive to origin_m per LIDAR-10's convention).
-    static func export(_ structure: CapturedStructure, roomTypeConfirmationsByIdentifier: [UUID: String] = [:]) -> [RoomPlanCaptureExport] {
+    static func export(_ structure: CapturedStructure, roomTypeConfirmationsByIdentifier: [UUID: RoomTypeConfirmation] = [:]) -> [RoomPlanCaptureExport] {
         structure.rooms.map { room in
             let confirmation = roomTypeConfirmationsByIdentifier[room.identifier]
             var export = CapturedRoomExporter.export(room, roomTypeConfirmation: confirmation)

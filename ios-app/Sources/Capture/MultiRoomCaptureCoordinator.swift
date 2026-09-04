@@ -43,10 +43,10 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     }
 
     private(set) var capturedRooms: [CapturedRoom] = []
-    private(set) var roomTypeConfirmations: [String?] = []
+    private(set) var roomTypeConfirmations: [RoomTypeConfirmation?] = []
 
-    var roomTypeConfirmationsByIdentifier: [UUID: String] {
-        var result: [UUID: String] = [:]
+    var roomTypeConfirmationsByIdentifier: [UUID: RoomTypeConfirmation] {
+        var result: [UUID: RoomTypeConfirmation] = [:]
         for (room, confirmation) in zip(capturedRooms, roomTypeConfirmations) {
             if let confirmation {
                 result[room.identifier] = confirmation
@@ -57,13 +57,20 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
 
     @Published private(set) var liveRoomTypeGuess: RoomTypeClassifier.Guess?
     private(set) var roomTypeConfirmation: String?
+    private(set) var roomTypeConfirmedForGuessType: String?
+
+    var roomTypeConfirmationForExport: RoomTypeConfirmation? {
+        roomTypeConfirmation.map { RoomTypeConfirmation(value: $0, answeredForGuessType: roomTypeConfirmedForGuessType) }
+    }
 
     func confirmRoomTypeGuess() {
         roomTypeConfirmation = liveRoomTypeGuess?.type
+        roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
     }
 
     func rejectRoomTypeGuess(correctedTo type: String?) {
         roomTypeConfirmation = type
+        roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
     }
 
     /// Set only on partialRoomAvailable — not committed until the user chooses to keep it.
@@ -86,6 +93,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         state = .scanning
         liveRoomTypeGuess = nil
         roomTypeConfirmation = nil
+        roomTypeConfirmedForGuessType = nil
         captureSession.run(configuration: RoomCaptureSession.Configuration())
     }
 
@@ -97,7 +105,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     func keepPendingPartialRoom() {
         guard let pendingPartialRoom else { return }
         capturedRooms.append(pendingPartialRoom)
-        roomTypeConfirmations.append(roomTypeConfirmation)
+        roomTypeConfirmations.append(roomTypeConfirmationForExport)
         self.pendingPartialRoom = nil
     }
 
@@ -153,7 +161,7 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
                     // walkthrough over one bad room.
                     if CapturedRoomExporter.export(room).hasUsableFloorOutline {
                         self.capturedRooms.append(room)
-                        self.roomTypeConfirmations.append(self.roomTypeConfirmation)
+                        self.roomTypeConfirmations.append(self.roomTypeConfirmationForExport)
                         self.state = .roomFinished(roomAvailable: true)
                     } else {
                         self.state = .roomFinished(roomAvailable: false)

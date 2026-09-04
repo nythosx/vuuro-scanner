@@ -287,7 +287,7 @@ private struct RoomCaptureFlowStep: View {
                     onUsePartial: {
                         let room = coordinator.capturedRoom!
                         isUploadingPartialCapture = true
-                        Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmation)) }
+                        Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport)) }
                     },
                     onDiscard: {
                         // No session was created for this attempt (it failed
@@ -447,7 +447,7 @@ private struct RoomCaptureFlowStep: View {
             // The degenerate-outline guard lives inside submit(), not here —
             // "Upload what was captured" (below) calls submit() directly too,
             // and needs the same guard.
-            Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmation)) }
+            Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport)) }
         case .finished(roomAvailable: false):
             // No session created for this attempt yet (submit() never ran),
             // so existingSession is the right value to resume with.

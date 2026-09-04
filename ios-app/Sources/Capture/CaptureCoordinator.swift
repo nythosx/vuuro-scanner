@@ -48,13 +48,20 @@ final class CaptureCoordinator: NSObject, ObservableObject {
 
     @Published private(set) var liveRoomTypeGuess: RoomTypeClassifier.Guess?
     private(set) var roomTypeConfirmation: String?
+    private(set) var roomTypeConfirmedForGuessType: String?
+
+    var roomTypeConfirmationForExport: RoomTypeConfirmation? {
+        roomTypeConfirmation.map { RoomTypeConfirmation(value: $0, answeredForGuessType: roomTypeConfirmedForGuessType) }
+    }
 
     func confirmRoomTypeGuess() {
         roomTypeConfirmation = liveRoomTypeGuess?.type
+        roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
     }
 
     func rejectRoomTypeGuess(correctedTo type: String?) {
         roomTypeConfirmation = type
+        roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
     }
 
     /// RoomCaptureView.captureSession is get-only — confirmed live via the
@@ -74,6 +81,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
         state = .scanning
         liveRoomTypeGuess = nil
         roomTypeConfirmation = nil
+        roomTypeConfirmedForGuessType = nil
         // RoomCaptureSession.Configuration() with defaults matches Apple's
         // documented single-room guided capture. Multi-room stitching
         // (Phase 2) needs a real look at RoomCaptureSession's multi-room

@@ -55,13 +55,18 @@ struct RoomPlanCaptureExport: Encodable {
     }
 }
 
+struct RoomTypeConfirmation {
+    let value: String
+    let answeredForGuessType: String?
+}
+
 enum CapturedRoomExporter {
     /// `roomTypeConfirmation` is whatever the live capture-screen ✓/✗ prompt
     /// resolved to for this room (see CaptureCoordinator/RoomTypeGuess) — the
     /// exporter itself only ever re-derives the guess, never the
     /// confirmation, since confirming is a user action that happens live,
     /// not something recoverable from the final CapturedRoom alone.
-    static func export(_ room: CapturedRoom, roomTypeConfirmation: String? = nil) -> RoomPlanCaptureExport {
+    static func export(_ room: CapturedRoom, roomTypeConfirmation: RoomTypeConfirmation? = nil) -> RoomPlanCaptureExport {
         var export = RoomPlanCaptureExport(
             story: 0,
             floors: room.floors.map { mapSurface($0, category: "floor") },
@@ -74,10 +79,11 @@ enum CapturedRoomExporter {
             objects: room.objects.map(mapObject)
         )
         if RoomTypeGuessSettings.isEnabled, let guess = RoomTypeClassifier.guess(for: room) {
+            let confirmedValue = roomTypeConfirmation?.answeredForGuessType == guess.type ? roomTypeConfirmation?.value : nil
             export.roomType = RoomPlanCaptureExport.RoomTypeExport(
                 guess: guess.type,
                 guessSource: guess.source,
-                confirmed: roomTypeConfirmation
+                confirmed: confirmedValue
             )
         }
         return export
