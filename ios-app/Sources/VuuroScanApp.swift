@@ -680,6 +680,7 @@ struct AttachmentsScreen: View {
     @State private var isUploadingPhoto = false
     @State private var selectedRoomId: String?
     @State private var showCamera = false
+    @State private var batchUploadMessage: String?
 
     private let client = ScanServiceClient()
 
@@ -722,12 +723,22 @@ struct AttachmentsScreen: View {
                     guard !newItems.isEmpty else { return }
                     Task {
                         isUploadingPhoto = true
+                        var failureCount = 0
                         for item in newItems {
-                            await uploadSelectedPhoto(item)
+                            if await uploadSelectedPhoto(item) == false {
+                                failureCount += 1
+                            }
                         }
                         selectedPhotoItems = []
                         isUploadingPhoto = false
+                        batchUploadMessage = failureCount > 0 ? "\(failureCount) of \(newItems.count) photo(s) failed to upload." : nil
                     }
+                }
+
+                if let batchUploadMessage {
+                    Text(batchUploadMessage)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
 
                 if UIImagePickerController.isSourceTypeAvailable(.camera) {
@@ -822,30 +833,35 @@ struct AttachmentsScreen: View {
     // MAX_PHOTO_UPLOAD_BYTES (scan-service/public/index.php).
     private static let maxPhotoUploadBytes = 25 * 1024 * 1024
 
-    private func uploadSelectedPhoto(_ item: PhotosPickerItem) async {
+    @discardableResult
+    private func uploadSelectedPhoto(_ item: PhotosPickerItem) async -> Bool {
         do {
             guard let data = try await item.loadTransferable(type: Data.self) else {
                 appError = AppError(site: .photoUpload, underlying: nil)
-                return
+                return false
             }
-            await uploadPhotoData(data)
+            return await uploadPhotoData(data)
         } catch {
             appError = AppError(site: .photoUpload, underlying: error)
+            return false
         }
     }
 
-    private func uploadPhotoData(_ data: Data) async {
+    @discardableResult
+    private func uploadPhotoData(_ data: Data) async -> Bool {
         if data.count > Self.maxPhotoUploadBytes {
             appError = AppError(site: .photoTooLarge, underlying: nil)
-            return
+            return false
         }
         do {
             let (mime, ext) = detectedMimeType(for: data)
             let uploaded = try await client.uploadPhoto(sessionId: session.id, accessToken: session.accessToken, imageData: data, filename: "photo.\(ext)", mimeType: mime)
             current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: uploaded.url, roomId: selectedRoomId)
             appError = nil
+            return true
         } catch {
             appError = AppError(site: .photoUpload, underlying: error)
+            return false
         }
     }
 }

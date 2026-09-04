@@ -151,19 +151,28 @@ final class ScanSessionRepository
 
     public function deleteSession(string $id): void
     {
-        $this->db->prepare('DELETE FROM floor_plans WHERE scan_session_id = :id')->execute(['id' => $id]);
-        $this->db->prepare('DELETE FROM idempotency_keys WHERE scan_session_id = :id')->execute(['id' => $id]);
-        $this->db->prepare('DELETE FROM access_log WHERE scan_session_id = :id')->execute(['id' => $id]);
-        $this->db->prepare('DELETE FROM scan_sessions WHERE id = :id')->execute(['id' => $id]);
+        $this->withWriteLock(function () use ($id) {
+            $this->db->prepare('DELETE FROM floor_plans WHERE scan_session_id = :id')->execute(['id' => $id]);
+            $this->db->prepare('DELETE FROM idempotency_keys WHERE scan_session_id = :id')->execute(['id' => $id]);
+            $this->db->prepare('DELETE FROM access_log WHERE scan_session_id = :id')->execute(['id' => $id]);
+            $this->db->prepare('DELETE FROM scan_sessions WHERE id = :id')->execute(['id' => $id]);
+        });
     }
 
     /** @return array<int, string> session ids whose token expired more than ROTATE_GRACE_PERIOD_SECONDS ago — permanently unreachable, since rotate-token itself is hard-blocked past that point. */
-    public function findExpiredBeyondGracePeriod(): array
+    public function findExpiredBeyondGracePeriod(int $limit = 20): array
     {
         $cutoff = gmdate('c', time() - self::ROTATE_GRACE_PERIOD_SECONDS);
-        $stmt = $this->db->prepare("SELECT id FROM scan_sessions WHERE expires_at != '' AND expires_at < :cutoff");
-        $stmt->execute(['cutoff' => $cutoff]);
+        $stmt = $this->db->prepare("SELECT id FROM scan_sessions WHERE expires_at != '' AND expires_at < :cutoff LIMIT :limit");
+        $stmt->bindValue(':cutoff', $cutoff, PDO::PARAM_STR);
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
         return array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'id');
+    }
+
+    public function lastInsertRowId(): int
+    {
+        return (int) $this->db->lastInsertId();
     }
 
     /**

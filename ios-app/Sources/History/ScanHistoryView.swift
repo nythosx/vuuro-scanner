@@ -120,22 +120,16 @@ struct ScanHistoryView: View {
                         .disabled(isFetchingToAttach.contains(entry.sessionId))
                     }
 
-                    Button("Delete permanently from server", role: .destructive) {
-                        pendingServerDeleteEntry = entry
-                    }
-
-                    // ScanHistoryStore.remove(sessionId:) already existed but
-                    // was never called from anywhere in the app — same
-                    // designed-but-unwired pattern as this project's other
-                    // real findings. This is what actually wires it.
-                    //
-                    // Labeled "Forget", not "Delete" — this only removes the
-                    // local ScanHistoryStore entry (see its header: there's
-                    // no server-side listing to delete from, and the session
-                    // itself still exists with its data intact). "Delete"
-                    // would overclaim what this button actually does.
                     Button("Forget this scan (device only)", role: .destructive) {
                         pendingDeleteEntry = entry
+                    }
+
+                    Divider()
+
+                    Button(role: .destructive) {
+                        pendingServerDeleteEntry = entry
+                    } label: {
+                        Label("Delete permanently from server", systemImage: "exclamationmark.triangle.fill")
                     }
                 }
             }
@@ -237,9 +231,9 @@ struct ScanHistoryView: View {
     // right before the token is actually used again.
     @MainActor
     private func rotateTokenIfNeeded(_ entry: ScanHistoryEntry) async -> ScanHistoryEntry {
-        guard let expiresAtString = entry.expiresAt, !expiresAtString.isEmpty,
-              let expiresAt = ISO8601DateFormatter().date(from: expiresAtString),
-              expiresAt.timeIntervalSinceNow < 14 * 24 * 60 * 60 else {
+        if let expiresAtString = entry.expiresAt, !expiresAtString.isEmpty,
+           let expiresAt = ISO8601DateFormatter().date(from: expiresAtString),
+           expiresAt.timeIntervalSinceNow >= 14 * 24 * 60 * 60 {
             return entry
         }
         do {

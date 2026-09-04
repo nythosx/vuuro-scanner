@@ -143,7 +143,7 @@ struct IdentityIntakeScreen: View {
             healthCheckError = nil
             start(currentIdentity)
         } catch {
-            healthCheckError = AppError(site: .sessionCreate, underlying: error)
+            healthCheckError = AppError(site: .healthCheck, underlying: error)
         }
     }
 }

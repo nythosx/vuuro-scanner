@@ -412,13 +412,6 @@ if ($method === 'POST' && $path === '/scan-sessions') {
         return;
     }
 
-    if (random_int(1, 100) === 1) {
-        foreach ($repo->findExpiredBeyondGracePeriod() as $expiredId) {
-            $repo->deleteSession($expiredId);
-            deleteSessionPhotoDir($expiredId);
-        }
-    }
-
     $session = $repo->create(
         $body['property_id'],
         $body['unit_id'],
@@ -428,6 +421,13 @@ if ($method === 'POST' && $path === '/scan-sessions') {
         $consentObtained,
         $tokenTtlSeconds
     );
+
+    if ($repo->lastInsertRowId() % 10 === 0) {
+        foreach ($repo->findExpiredBeyondGracePeriod() as $expiredId) {
+            $repo->deleteSession($expiredId);
+            deleteSessionPhotoDir($expiredId);
+        }
+    }
     // access_token is returned here and only here — the one moment a client
     // is expected to learn it. Every later call must present it explicitly.
     respond(201, [

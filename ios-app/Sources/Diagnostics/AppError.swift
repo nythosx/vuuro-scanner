@@ -45,6 +45,7 @@ struct AppError {
     }
 
     enum Site: String {
+        case healthCheck = "HEALTH_CHECK"
         case sessionCreate = "SESSION_CREATE"
         case captureUpload = "CAPTURE_UPLOAD"
         case captureNoRoom = "CAPTURE_NO_ROOM"

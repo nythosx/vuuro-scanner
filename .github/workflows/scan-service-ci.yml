@@ -49,7 +49,7 @@ jobs:
       # Chained on purpose, one shared server/DB — see scan-service/README.md
       # for why the order isn't arbitrary (verify_enterprise_hardening.php's
       # rate-limit check must run last).
-      - name: The independent net (9-script merge gate)
+      - name: The independent net (10-script merge gate)
         working-directory: scan-service
         run: |
           php net/verify_capture_geometry.php http://127.0.0.1:8089
@@ -61,6 +61,7 @@ jobs:
           php net/verify_openings_and_objects.php http://127.0.0.1:8089
           php net/verify_security_fixes.php http://127.0.0.1:8089
           php net/verify_error_messages.php http://127.0.0.1:8089
+          php net/verify_session_delete.php http://127.0.0.1:8089
           php net/verify_enterprise_hardening.php http://127.0.0.1:8089
 
       # Deliberately its own server/DB on a different port — see this
