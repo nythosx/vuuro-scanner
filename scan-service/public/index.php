@@ -340,6 +340,11 @@ if ($method === 'POST' && $path === '/scan-sessions') {
     }
 
     $body = json_body($rawRequestBody);
+    foreach (['property_id', 'unit_id', 'organisation_id'] as $identityField) {
+        if (is_string($body[$identityField] ?? null)) {
+            $body[$identityField] = trim($body[$identityField]);
+        }
+    }
     // Hard constraint #1: identity-native captures. A session cannot be
     // created without property/unit/organisation — no orphan captures by
     // construction, not by convention.

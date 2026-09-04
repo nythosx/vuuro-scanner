@@ -178,7 +178,6 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
         Task { @MainActor in
             if self.liveRoomTypeGuess?.type != guess.type {
                 self.liveRoomTypeGuess = guess
-                self.roomTypeConfirmation = nil
             }
         }
     }

@@ -40,6 +40,7 @@ struct ScanHistoryView: View {
     @State private var isBulkFetchingPDFs = false
     @State private var appError: AppError?
     @State private var errorMessage: String?
+    @State private var pendingDeleteEntry: ScanHistoryEntry?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -123,7 +124,7 @@ struct ScanHistoryView: View {
                     // itself still exists with its data intact). "Delete"
                     // would overclaim what this button actually does.
                     Button("Forget this scan (device only)", role: .destructive) {
-                        deleteEntry(entry)
+                        pendingDeleteEntry = entry
                     }
                 }
             }
@@ -177,6 +178,20 @@ struct ScanHistoryView: View {
         .navigationTitle("Scan history")
         .onAppear { entries = ScanHistoryStore.shared.all() }
         .onDisappear { cleanUpTempFiles() }
+        .alert("Forget this scan?", isPresented: Binding(
+            get: { pendingDeleteEntry != nil },
+            set: { if !$0 { pendingDeleteEntry = nil } }
+        )) {
+            Button("Forget", role: .destructive) {
+                if let pendingDeleteEntry {
+                    deleteEntry(pendingDeleteEntry)
+                }
+                pendingDeleteEntry = nil
+            }
+            Button("Cancel", role: .cancel) { pendingDeleteEntry = nil }
+        } message: {
+            Text("This removes the local record on this device only — the session data itself isn't deleted, but you won't be able to reopen it from History again.")
+        }
     }
 
     // Every download below writes into the shared tmp directory, which iOS

@@ -19,10 +19,12 @@ struct IdentityIntakeScreen: View {
     @State private var consentObtained = false
     @State private var roomTypeGuessEnabled = RoomTypeGuessSettings.isEnabled
 
+    private var trimmedPropertyId: String { propertyId.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedUnitId: String { unitId.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedOrganisationId: String { organisationId.trimmingCharacters(in: .whitespacesAndNewlines) }
+
     private var identityFieldsFilled: Bool {
-        !propertyId.trimmingCharacters(in: .whitespaces).isEmpty
-            && !unitId.trimmingCharacters(in: .whitespaces).isEmpty
-            && !organisationId.trimmingCharacters(in: .whitespaces).isEmpty
+        !trimmedPropertyId.isEmpty && !trimmedUnitId.isEmpty && !trimmedOrganisationId.isEmpty
     }
 
     /// Mirrors the Scan Service's own gate (hard constraint #3): if occupied,
@@ -51,6 +53,11 @@ struct IdentityIntakeScreen: View {
 
             Section("Occupancy") {
                 Toggle("This unit is currently occupied", isOn: $occupied)
+                    .onChange(of: occupied) { _, newValue in
+                        if !newValue {
+                            consentObtained = false
+                        }
+                    }
 
                 if occupied {
                     Toggle("Tenant consent obtained for this scan", isOn: $consentObtained)
@@ -75,9 +82,9 @@ struct IdentityIntakeScreen: View {
             Section {
                 Button("Start scan") {
                     onStart(ScanIdentity(
-                        propertyId: propertyId,
-                        unitId: unitId,
-                        organisationId: organisationId,
+                        propertyId: trimmedPropertyId,
+                        unitId: trimmedUnitId,
+                        organisationId: trimmedOrganisationId,
                         purpose: purpose,
                         occupied: occupied,
                         consentObtained: occupied ? consentObtained : false
@@ -88,9 +95,9 @@ struct IdentityIntakeScreen: View {
                 if let onStartMultiRoom {
                     Button("Start multi-room scan (fused, experimental)") {
                         onStartMultiRoom(ScanIdentity(
-                            propertyId: propertyId,
-                            unitId: unitId,
-                            organisationId: organisationId,
+                            propertyId: trimmedPropertyId,
+                            unitId: trimmedUnitId,
+                            organisationId: trimmedOrganisationId,
                             purpose: purpose,
                             occupied: occupied,
                             consentObtained: occupied ? consentObtained : false

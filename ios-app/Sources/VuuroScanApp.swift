@@ -661,6 +661,7 @@ struct AttachmentsScreen: View {
     @State private var appError: AppError?
     @State private var isSaving = false
     @State private var isUploadingPhoto = false
+    @State private var selectedRoomId: String?
 
     private let client = ScanServiceClient()
 
@@ -673,6 +674,17 @@ struct AttachmentsScreen: View {
 
     var body: some View {
         Form {
+            if current.rooms.count > 1 {
+                Section("Applies to") {
+                    Picker("Room", selection: $selectedRoomId) {
+                        Text("Whole unit").tag(String?.none)
+                        ForEach(current.rooms, id: \.roomId) { room in
+                            Text(room.label).tag(String?.some(room.roomId))
+                        }
+                    }
+                }
+            }
+
             Section("Add a note (optional)") {
                 TextField("Note text", text: $noteText, axis: .vertical)
                 Button("Add note") { Task { await addNote() } }
@@ -724,7 +736,7 @@ struct AttachmentsScreen: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            current = try await client.addNote(sessionId: session.id, accessToken: session.accessToken, text: noteText)
+            current = try await client.addNote(sessionId: session.id, accessToken: session.accessToken, text: noteText, roomId: selectedRoomId)
             noteText = ""
             appError = nil
         } catch {
@@ -737,7 +749,7 @@ struct AttachmentsScreen: View {
         isSaving = true
         defer { isSaving = false }
         do {
-            current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: photoUrl)
+            current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: photoUrl, roomId: selectedRoomId)
             photoUrl = ""
             appError = nil
         } catch {
@@ -783,7 +795,7 @@ struct AttachmentsScreen: View {
             }
             let (mime, ext) = detectedMimeType(for: data)
             let uploaded = try await client.uploadPhoto(sessionId: session.id, accessToken: session.accessToken, imageData: data, filename: "photo.\(ext)", mimeType: mime)
-            current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: uploaded.url)
+            current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: uploaded.url, roomId: selectedRoomId)
             appError = nil
         } catch {
             appError = AppError(site: .photoUpload, underlying: error)

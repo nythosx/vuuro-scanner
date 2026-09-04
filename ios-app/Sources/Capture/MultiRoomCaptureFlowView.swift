@@ -16,6 +16,11 @@ struct MultiRoomCaptureFlowView: View {
     @State private var showFinishConfirmation = false
     @State private var pendingFinishUnit = false
     @State private var partialRoomFailureMessage: String?
+    // Shared by the scanning back-button and the merging-screen Cancel
+    // button — both mean the same thing (leave the flow, lose every room
+    // captured so far), unlike single-room's discard confirmation which
+    // this mirrors, see VuuroScanApp.swift's RoomCaptureFlowStep.
+    @State private var showDiscardConfirmation = false
 
     private let client = ScanServiceClient()
 
@@ -24,9 +29,19 @@ struct MultiRoomCaptureFlowView: View {
             if !DeviceCapability.isRoomPlanSupported {
                 UnsupportedDeviceScreen(onGoBack: onGoBack)
             } else if isFinishingUnit {
-                ProgressView("Merging rooms…")
-                    .padding()
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                // Real dead-end found in review: StructureBuilder's merge
+                // duration on a real multi-room walkthrough is unverified
+                // (Apple forum reports of exceedSceneSizeLimit around 10-11
+                // rooms), and this was the one long-running step in the app
+                // with no way out short of force-quitting.
+                VStack(spacing: 16) {
+                    ProgressView("Merging rooms…")
+                    Button("Cancel", role: .destructive) {
+                        showDiscardConfirmation = true
+                    }
+                }
+                .padding()
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             } else {
                 // MultiRoomCaptureScreen must stay mounted for the entire
                 // walkthrough, including through a degenerate or partial-
@@ -93,8 +108,16 @@ struct MultiRoomCaptureFlowView: View {
                         VStack {
                             HStack {
                                 Spacer()
+                                // Review finding: this used to call onGoBack()
+                                // directly — a stray tap silently discarded
+                                // every already-captured room in this
+                                // walkthrough, with LESS friction than the
+                                // single-room flow's equivalent button
+                                // despite a worse consequence (many rooms,
+                                // not one). Now confirms first, same as that
+                                // one does.
                                 Button {
-                                    onGoBack()
+                                    showDiscardConfirmation = true
                                 } label: {
                                     Image(systemName: "chevron.backward")
                                         .font(.headline)
@@ -143,6 +166,12 @@ struct MultiRoomCaptureFlowView: View {
                     handle(state)
                 }
             }
+        }
+        .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
+            Button("Discard", role: .destructive) { onGoBack() }
+            Button("Keep scanning", role: .cancel) {}
+        } message: {
+            Text("\(coordinator.capturedRooms.count) room(s) captured so far will be lost.")
         }
     }
 

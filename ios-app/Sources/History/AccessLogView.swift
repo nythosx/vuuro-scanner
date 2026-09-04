@@ -35,7 +35,7 @@ struct AccessLogView: View {
                     Text(record.action).font(.headline)
                     Text(record.outcome)
                         .font(.caption)
-                        .foregroundStyle(record.outcome == "granted" ? .green : .orange)
+                        .foregroundStyle(Self.isSuccessOutcome(record.outcome) ? .green : .orange)
                     Text(record.occurredAt)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -48,6 +48,10 @@ struct AccessLogView: View {
         }
         .navigationTitle("Access log")
         .task { await load() }
+    }
+
+    private static func isSuccessOutcome(_ outcome: String) -> Bool {
+        ["granted", "granted_grace_rotation", "stored"].contains(outcome)
     }
 
     @MainActor
