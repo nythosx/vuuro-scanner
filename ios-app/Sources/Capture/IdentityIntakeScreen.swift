@@ -17,6 +17,7 @@ struct IdentityIntakeScreen: View {
     @State private var purpose: ScanPurpose = .listing
     @State private var occupied = false
     @State private var consentObtained = false
+    @State private var roomTypeGuessEnabled = RoomTypeGuessSettings.isEnabled
 
     private var identityFieldsFilled: Bool {
         !propertyId.trimmingCharacters(in: .whitespaces).isEmpty
@@ -59,6 +60,16 @@ struct IdentityIntakeScreen: View {
                             .foregroundStyle(.orange)
                     }
                 }
+            }
+
+            Section {
+                Toggle("Guess room type while scanning", isOn: $roomTypeGuessEnabled)
+                    .onChange(of: roomTypeGuessEnabled) { _, newValue in
+                        RoomTypeGuessSettings.isEnabled = newValue
+                    }
+                Text("Shows a quick bathroom/bedroom/kitchen/… guess on screen during capture — tap ✓ or ✗, or turn this off entirely.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section {

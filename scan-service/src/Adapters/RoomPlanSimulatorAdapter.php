@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace VuuroScan\Adapters;
 
+use VuuroScan\RoomType;
+
 /**
  * Converts a RoomPlan-shaped capture payload (CapturedRoom-style JSON: a
  * `floors` array of surfaces with `polygonCorners`) into the vendor-neutral
@@ -128,6 +130,7 @@ final class RoomPlanSimulatorAdapter
                 // LIDAR-5/11: additive, null unless this capture came from a
                 // StructureBuilder-merged multi-room visit (docs/proposals/multi-room-fusion.md).
                 'structure_origin_m' => self::structureOriginM($rawCapture),
+                'room_type' => self::mapRoomType($rawCapture),
             ];
         }
 
@@ -372,6 +375,29 @@ final class RoomPlanSimulatorAdapter
         return [(float) $origin[0], (float) $origin[1]];
     }
 
+    private static function mapRoomType(array $rawCapture): ?array
+    {
+        $roomType = $rawCapture['room_type'] ?? null;
+        if (!is_array($roomType)) {
+            return null;
+        }
+        $guess = $roomType['guess'] ?? null;
+        $guessSource = $roomType['guess_source'] ?? null;
+        if (!is_string($guess) || !in_array($guess, RoomType::VALUES, true)
+            || !is_string($guessSource) || !in_array($guessSource, RoomType::GUESS_SOURCES, true)) {
+            return null;
+        }
+        $confirmed = $roomType['confirmed'] ?? null;
+        if ($confirmed !== null && (!is_string($confirmed) || !in_array($confirmed, RoomType::CONFIRMED_VALUES, true))) {
+            $confirmed = null;
+        }
+        return [
+            'guess' => $guess,
+            'guess_source' => $guessSource,
+            'confirmed' => $confirmed,
+        ];
+    }
+
     /**
      * Rejects an untrusted raw_capture body that would otherwise crash
      * downstream (non-finite/oversized coordinates) or let one capture call
@@ -431,7 +457,7 @@ final class RoomPlanSimulatorAdapter
         // silently relied on. Revisit when LIDAR-4 (multi-room) defines a
         // real per-floor association for these groups.
         if (count($floors) > 1) {
-            $hasAmbiguousData = isset($rawCapture['structure_origin_m']);
+            $hasAmbiguousData = isset($rawCapture['structure_origin_m']) || isset($rawCapture['room_type']);
             foreach (['walls', 'doors', 'windows', 'openings', 'objects'] as $group) {
                 $items = $rawCapture[$group] ?? [];
                 if (is_array($items) && !empty($items)) {

@@ -47,6 +47,11 @@
     }
   ],
   "openings": [],
+  "room_type": {
+    "guess": "bedroom",
+    "guess_source": "roomplan_section",
+    "confirmed": "bedroom"
+  },
   "objects": [
     {
       "identifier": "object-0001",

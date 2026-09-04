@@ -105,6 +105,7 @@ struct FloorPlan: Codable {
         let objects: [CapturedObject]
         // LIDAR-5/11: this room's placement in a fused structure's shared frame. Nil for every ordinary (non-fused) room.
         let structureOriginM: [Double]?
+        let roomType: RoomType?
 
         enum CodingKeys: String, CodingKey {
             case roomId = "room_id"
@@ -120,6 +121,7 @@ struct FloorPlan: Codable {
             case volumeM3Indicative = "volume_m3_indicative"
             case objects
             case structureOriginM = "structure_origin_m"
+            case roomType = "room_type"
         }
 
         init(from decoder: Decoder) throws {
@@ -137,6 +139,19 @@ struct FloorPlan: Codable {
             openings = try c.decodeIfPresent([Opening].self, forKey: .openings) ?? []
             objects = try c.decodeIfPresent([CapturedObject].self, forKey: .objects) ?? []
             structureOriginM = try c.decodeIfPresent([Double].self, forKey: .structureOriginM)
+            roomType = try c.decodeIfPresent(RoomType.self, forKey: .roomType)
+        }
+    }
+
+    struct RoomType: Codable {
+        let guess: String
+        let guessSource: String
+        let confirmed: String?
+
+        enum CodingKeys: String, CodingKey {
+            case guess
+            case guessSource = "guess_source"
+            case confirmed
         }
     }
 

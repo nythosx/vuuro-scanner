@@ -51,6 +51,18 @@ struct MultiRoomCaptureFlowView: View {
                     MultiRoomCaptureScreen(coordinator: coordinator)
                         .ignoresSafeArea()
 
+                    if let guess = coordinator.liveRoomTypeGuess {
+                        VStack {
+                            RoomTypeGuessOverlay(
+                                guess: guess,
+                                onConfirm: { coordinator.confirmRoomTypeGuess() },
+                                onReject: { picked in coordinator.rejectRoomTypeGuess(correctedTo: picked) }
+                            )
+                            .id(guess.type)
+                            Spacer()
+                        }
+                    }
+
                     if isUploading {
                         ProgressView("Uploading rooms…")
                             .padding()
@@ -167,7 +179,7 @@ struct MultiRoomCaptureFlowView: View {
         isUploading = true
         defer { isUploading = false }
 
-        let exports = CapturedStructureExporter.export(structure)
+        let exports = CapturedStructureExporter.export(structure, roomTypeConfirmationsByIdentifier: coordinator.roomTypeConfirmationsByIdentifier)
         guard !exports.isEmpty else {
             onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
             return

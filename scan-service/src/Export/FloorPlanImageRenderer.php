@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace VuuroScan\Export;
 
+use VuuroScan\RoomType;
+
 /**
  * Renders a FloorPlan contract array to a PNG "floor plan sheet": each
  * room's own outline drawn to scale, tiled left-to-right with its label,
@@ -33,6 +35,33 @@ final class FloorPlanImageRenderer
         [237, 220, 240, 111, 66, 120],
         [216, 240, 238, 40, 110, 105],
     ];
+    // Funda-style semantic room coloring (Mark's 2026-09-03 visual bar) —
+    // only used when a room carries a room_type guess; unknown/no-guess
+    // rooms keep cycling through ROOM_PALETTE by index, same as before.
+    private const ROOM_TYPE_PALETTE = [
+        'kitchen' => [199, 236, 239, 28, 59, 63],
+        'living_room' => [251, 215, 174, 92, 61, 24],
+        'bedroom' => [199, 194, 224, 44, 38, 80],
+        'bathroom' => [214, 224, 194, 61, 80, 38],
+        'dining_room' => [246, 221, 142, 90, 74, 16],
+    ];
+    private const WALL_THICKNESS_PX = 3;
+    private const DEFAULT_LINE_THICKNESS_PX = 1;
+    private const FONT_SMALL = 1;
+    private const DOOR_SWING_RADIUS_M = 0.8;
+    private const WINDOW_TICK_LENGTH_M = 0.5;
+    private const FOOTER_TEXT = 'Indicative measurements - NEN2580-inspired, not certified. No rights can be derived from this plan.';
+    private const WALL_LABEL_INSET_M = 0.35;
+    private const OPENING_LABEL_INSET_M = 0.35;
+
+    private static function roomTypeValue(array $room): ?string
+    {
+        $roomType = $room['room_type'] ?? null;
+        if ($roomType === null) {
+            return null;
+        }
+        return $roomType['confirmed'] ?? $roomType['guess'] ?? null;
+    }
 
     /** @param array $floorPlan Decoded FloorPlan contract (see contracts/floorplan.schema.json) */
     public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null): string
@@ -72,15 +101,22 @@ final class FloorPlanImageRenderer
             ));
         }
 
-        $image = imagecreatetruecolor(max($canvasWidth, 400), $canvasHeight + 40);
+        $image = imagecreatetruecolor(max($canvasWidth, 400), $canvasHeight + 72);
         $white = imagecolorallocate($image, 255, 255, 255);
-        $roomFill = imagecolorallocate($image, 214, 231, 245);
-        $roomBorder = imagecolorallocate($image, 30, 64, 110);
+        $defaultFill = imagecolorallocate($image, 214, 231, 245);
+        $defaultBorder = imagecolorallocate($image, 30, 64, 110);
         $text = imagecolorallocate($image, 20, 20, 20);
         $subtext = imagecolorallocate($image, 90, 90, 90);
         $doorColor = imagecolorallocate($image, 210, 105, 30);
         $windowColor = imagecolorallocate($image, 70, 130, 180);
         $otherOpeningColor = imagecolorallocate($image, 120, 120, 120);
+        $typePalette = [];
+        foreach (self::ROOM_TYPE_PALETTE as $type => $c) {
+            $typePalette[$type] = [
+                imagecolorallocate($image, $c[0], $c[1], $c[2]),
+                imagecolorallocate($image, $c[3], $c[4], $c[5]),
+            ];
+        }
         imagefilledrectangle($image, 0, 0, imagesx($image), imagesy($image), $white);
 
         // GD's built-in bitmap fonts are Latin-1 only — stay ASCII to avoid
@@ -92,9 +128,14 @@ final class FloorPlanImageRenderer
         $y = self::MARGIN + self::LABEL_HEIGHT;
         foreach ($rooms as $i => $room) {
             $tile = $tiles[$i];
+            $roomTypeValue = self::roomTypeValue($room);
+            [$roomFill, $roomBorder] = $typePalette[$roomTypeValue] ?? [$defaultFill, $defaultBorder];
             $this->drawRoomTile($image, $room, $x, $y, $roomFill, $roomBorder, $text, $subtext, $doorColor, $windowColor, $otherOpeningColor);
             $x += $tile['width'] + self::TILE_GAP;
         }
+
+        $this->drawRoomTypeLegend($image, $rooms, $typePalette, imagesy($image) - 28, $text);
+        $this->drawFooter($image, $subtext);
 
         ob_start();
         imagepng($image);
@@ -102,6 +143,12 @@ final class FloorPlanImageRenderer
         imagedestroy($image);
 
         return (string) $bytes;
+    }
+
+    private function drawFooter($image, int $color): void
+    {
+        $footerWidth = imagefontwidth(self::FONT_SMALL) * strlen(self::FOOTER_TEXT);
+        imagestring($image, self::FONT_SMALL, (int) ((imagesx($image) - $footerWidth) / 2), imagesy($image) - 14, self::FOOTER_TEXT, $color);
     }
 
     private function renderFused(array $rooms): string
@@ -135,7 +182,7 @@ final class FloorPlanImageRenderer
             ));
         }
 
-        $image = imagecreatetruecolor(max($canvasWidth, 400), $canvasHeight + 40);
+        $image = imagecreatetruecolor(max($canvasWidth, 400), $canvasHeight + 72);
         $white = imagecolorallocate($image, 255, 255, 255);
         $text = imagecolorallocate($image, 20, 20, 20);
         $subtext = imagecolorallocate($image, 90, 90, 90);
@@ -152,6 +199,13 @@ final class FloorPlanImageRenderer
             ],
             self::ROOM_PALETTE
         );
+        $typePalette = [];
+        foreach (self::ROOM_TYPE_PALETTE as $type => $c) {
+            $typePalette[$type] = [
+                imagecolorallocate($image, $c[0], $c[1], $c[2]),
+                imagecolorallocate($image, $c[3], $c[4], $c[5]),
+            ];
+        }
         imagefilledrectangle($image, 0, 0, imagesx($image), imagesy($image), $white);
 
         imagestring($image, 5, self::MARGIN, 8, 'Vuuro Scan - fused floor plan (rooms captured together in one visit)', $text);
@@ -202,14 +256,17 @@ final class FloorPlanImageRenderer
             if (in_array($i, $overlapping, true)) {
                 [$roomFill, $roomBorder] = [$warnFill, $warnBorder];
             } else {
-                [$roomFill, $roomBorder] = $palette[$i % count($palette)];
+                $roomTypeValue = self::roomTypeValue($room);
+                [$roomFill, $roomBorder] = $typePalette[$roomTypeValue] ?? $palette[$i % count($palette)];
             }
             imagefilledpolygon($image, $points, $roomFill);
+            imagesetthickness($image, self::WALL_THICKNESS_PX);
             imagepolygon($image, $points, $roomBorder);
+            imagesetthickness($image, self::DEFAULT_LINE_THICKNESS_PX);
             $this->drawWallLengths($image, $outline, $originX, $originZ, $toPx, $subtext);
 
             [$labelX, $labelY] = $toPx($originX, $originZ);
-            imagestring($image, 3, $labelX + 4, $labelY + 4, $room['label'], $text);
+            imagestring($image, 3, $labelX + 4, $labelY + 4, $this->displayLabel($room), $text);
             $metrics = sprintf('%.2f sqm - %.2f m perimeter', $room['floor_area_m2'], $room['perimeter_m']);
             imagestring($image, 2, $labelX + 4, $labelY + 20, $metrics, $subtext);
             $lineY = $labelY + 32;
@@ -224,16 +281,19 @@ final class FloorPlanImageRenderer
 
         foreach ($rooms as $room) {
             [$originX, $originZ] = $room['structure_origin_m'];
-            $this->drawOpenings($image, $room, $originX, $originZ, $toPx, $doorColor, $windowColor, $otherOpeningColor);
+            $this->drawOpenings($image, $room, $originX, $originZ, $toPx, $doorColor, $windowColor, $otherOpeningColor, $text);
         }
 
-        $legendY = imagesy($image) - 16;
+        $legendY = imagesy($image) - 30;
         imagefilledellipse($image, self::MARGIN + 4, $legendY, 8, 8, $doorColor);
         imagestring($image, 1, self::MARGIN + 12, $legendY - 6, 'door', $text);
         imagefilledellipse($image, self::MARGIN + 60, $legendY, 8, 8, $windowColor);
         imagestring($image, 1, self::MARGIN + 68, $legendY - 6, 'window', $text);
         imagefilledellipse($image, self::MARGIN + 130, $legendY, 8, 8, $otherOpeningColor);
         imagestring($image, 1, self::MARGIN + 138, $legendY - 6, 'other opening', $text);
+
+        $this->drawRoomTypeLegend($image, $rooms, $typePalette, $legendY - 14, $text);
+        $this->drawFooter($image, $subtext);
 
         ob_start();
         imagepng($image);
@@ -243,20 +303,161 @@ final class FloorPlanImageRenderer
         return (string) $bytes;
     }
 
-    // Only a position is known (LIDAR-10's opening centroid) — no fabricated wall-gap width or swing.
-    private function drawOpenings($image, array $room, float $originX, float $originZ, callable $toPx, int $doorColor, int $windowColor, int $otherOpeningColor): void
+    private function drawRoomTypeLegend($image, array $rooms, array $typePalette, int $y, int $textColor): void
     {
+        $typesPresent = [];
+        foreach ($rooms as $room) {
+            $type = self::roomTypeValue($room);
+            if ($type !== null && isset(RoomType::LABELS[$type]) && !in_array($type, $typesPresent, true)) {
+                $typesPresent[] = $type;
+            }
+        }
+        if ($typesPresent === []) {
+            return;
+        }
+        $x = self::MARGIN;
+        foreach ($typesPresent as $type) {
+            [$fill, ] = $typePalette[$type];
+            imagefilledrectangle($image, $x, $y - 4, $x + 8, $y + 4, $fill);
+            $label = RoomType::LABELS[$type];
+            imagestring($image, self::FONT_SMALL, $x + 12, $y - 6, $label, $textColor);
+            $x += 12 + imagefontwidth(self::FONT_SMALL) * strlen($label) + 16;
+        }
+    }
+
+    private function displayLabel(array $room): string
+    {
+        $roomType = self::roomTypeValue($room);
+        $typeName = $roomType !== null ? (RoomType::LABELS[$roomType] ?? null) : null;
+        return $typeName !== null ? sprintf('%s (%s)', $room['label'], $typeName) : $room['label'];
+    }
+
+    // Only a position is known (LIDAR-10's opening centroid) — no captured
+    // swing direction or wall-gap width, so a door draws a fixed-size quarter-
+    // arc "swing" and a window draws a fixed-size wall tick, both centered on
+    // that position — stylized to Mark's Funda visual bar, not a fabricated
+    // physical measurement.
+    private function drawOpenings($image, array $room, float $originX, float $originZ, callable $toPx, int $doorColor, int $windowColor, int $otherOpeningColor, int $textColor): void
+    {
+        $outline = $room['outline_m'] ?? [];
+        $n = count($outline);
+        $centroidX = $n > 0 ? array_sum(array_column($outline, 0)) / $n : 0.0;
+        $centroidZ = $n > 0 ? array_sum(array_column($outline, 1)) / $n : 0.0;
+
         foreach ($room['openings'] ?? [] as $opening) {
             [$mx, $mz] = $opening['position_m'];
             [$px, $py] = $toPx($mx + $originX, $mz + $originZ);
-            $color = match ($opening['category']) {
+            $category = $opening['category'];
+            $color = match ($category) {
                 'door' => $doorColor,
                 'window' => $windowColor,
                 default => $otherOpeningColor,
             };
-            imagefilledellipse($image, $px, $py, 10, 10, $color);
-            imagestring($image, 1, $px + 6, $py - 6, $opening['category'], $color);
+            // The opening's position_m is a real captured point, but nothing
+            // in the contract says which wall it sits on or which way it
+            // faces — so the marker itself is aligned to the nearest edge of
+            // this room's own outline_m, not drawn at a fixed orientation.
+            // A fixed orientation looked right by accident on the fixtures
+            // used so far (both openings happened to sit on a horizontal
+            // wall) and was visibly wrong once tested on a vertical one.
+            [$wallDx, $wallDz, $normalDx, $normalDz] = $this->nearestWallOrientation($outline, $mx, $mz, $centroidX, $centroidZ);
+            if ($category === 'door') {
+                $radius = self::DOOR_SWING_RADIUS_M * self::PIXELS_PER_METER;
+                $steps = 8;
+                $prevX = $px + $wallDx * $radius;
+                $prevY = $py + $wallDz * $radius;
+                imageline($image, $px, $py, (int) round($prevX), (int) round($prevY), $color);
+                for ($step = 1; $step <= $steps; $step++) {
+                    $t = (M_PI / 2) * ($step / $steps);
+                    $curX = $px + $radius * (cos($t) * $wallDx + sin($t) * $normalDx);
+                    $curY = $py + $radius * (cos($t) * $wallDz + sin($t) * $normalDz);
+                    imageline($image, (int) round($prevX), (int) round($prevY), (int) round($curX), (int) round($curY), $color);
+                    $prevX = $curX;
+                    $prevY = $curY;
+                }
+                imageline($image, $px, $py, (int) round($prevX), (int) round($prevY), $color);
+            } elseif ($category === 'window') {
+                $half = self::WINDOW_TICK_LENGTH_M * self::PIXELS_PER_METER / 2;
+                imagesetthickness($image, self::WALL_THICKNESS_PX);
+                imageline(
+                    $image,
+                    (int) round($px - $wallDx * $half),
+                    (int) round($py - $wallDz * $half),
+                    (int) round($px + $wallDx * $half),
+                    (int) round($py + $wallDz * $half),
+                    $windowColor
+                );
+                imagesetthickness($image, self::DEFAULT_LINE_THICKNESS_PX);
+            } else {
+                imagefilledellipse($image, $px, $py, 10, 10, $color);
+            }
+
+            // Same problem the wall-length labels had: a fixed 6px nudge
+            // used to land the category text right on top of the (now
+            // thick, dark) wall line. Nudged toward the room's centroid
+            // instead, onto the room's own fill color, using the same
+            // dark/readable text color the rest of the labels use rather
+            // than the opening's own marker color.
+            [$labelMx, $labelMz] = $this->insetTowardCentroid($mx, $mz, $centroidX, $centroidZ, self::OPENING_LABEL_INSET_M);
+            [$labelX, $labelY] = $toPx($labelMx + $originX, $labelMz + $originZ);
+            imagestring($image, self::FONT_SMALL, $labelX + 4, $labelY - 6, $category, $textColor);
         }
+    }
+
+    /**
+     * Finds the outline edge closest to (x, z) and returns its unit
+     * direction vector plus the unit normal perpendicular to it, flipped to
+     * point toward the room's centroid (i.e. inward, into the room).
+     *
+     * @return array{0: float, 1: float, 2: float, 3: float}
+     */
+    private function nearestWallOrientation(array $outlineM, float $x, float $z, float $centroidX, float $centroidZ): array
+    {
+        $n = count($outlineM);
+        $bestDist = INF;
+        $wallDx = 1.0;
+        $wallDz = 0.0;
+        for ($i = 0; $i < $n; $i++) {
+            [$ax, $az] = $outlineM[$i];
+            [$bx, $bz] = $outlineM[($i + 1) % $n];
+            $edgeDx = $bx - $ax;
+            $edgeDz = $bz - $az;
+            $lengthSq = $edgeDx ** 2 + $edgeDz ** 2;
+            if ($lengthSq < 1e-9) {
+                continue;
+            }
+            $t = max(0.0, min(1.0, (($x - $ax) * $edgeDx + ($z - $az) * $edgeDz) / $lengthSq));
+            $projX = $ax + $t * $edgeDx;
+            $projZ = $az + $t * $edgeDz;
+            $dist = sqrt(($x - $projX) ** 2 + ($z - $projZ) ** 2);
+            if ($dist < $bestDist) {
+                $bestDist = $dist;
+                $edgeLength = sqrt($lengthSq);
+                $wallDx = $edgeDx / $edgeLength;
+                $wallDz = $edgeDz / $edgeLength;
+            }
+        }
+        $normalDx = -$wallDz;
+        $normalDz = $wallDx;
+        $towardCentroidX = $centroidX - $x;
+        $towardCentroidZ = $centroidZ - $z;
+        if ($normalDx * $towardCentroidX + $normalDz * $towardCentroidZ < 0) {
+            $normalDx = -$normalDx;
+            $normalDz = -$normalDz;
+        }
+        return [$wallDx, $wallDz, $normalDx, $normalDz];
+    }
+
+    /** @return array{0: float, 1: float} */
+    private function insetTowardCentroid(float $x, float $z, float $centroidX, float $centroidZ, float $insetM): array
+    {
+        $dx = $centroidX - $x;
+        $dz = $centroidZ - $z;
+        $dist = sqrt($dx ** 2 + $dz ** 2);
+        if ($dist < 0.001) {
+            return [$x, $z];
+        }
+        return [$x + ($dx / $dist) * $insetM, $z + ($dz / $dist) * $insetM];
     }
 
     private function drawDimensionLine($image, int $x1, int $y1, int $x2, int $y2, string $label, int $color, bool $horizontal): void
@@ -273,10 +474,19 @@ final class FloorPlanImageRenderer
         }
     }
 
-    // Each polygon edge labeled with its own real-world length, at its midpoint.
+    // Each polygon edge labeled with its own real-world length, at its
+    // midpoint — nudged inward toward the room's centroid by
+    // WALL_LABEL_INSET_M so the text lands on the room's own fill color
+    // instead of sitting directly on top of the (now much thicker,
+    // dark-colored) wall line it would otherwise be unreadable against.
     private function drawWallLengths($image, array $outlineM, float $originX, float $originZ, callable $toPx, int $color): void
     {
         $n = count($outlineM);
+        if ($n === 0) {
+            return;
+        }
+        $centroidX = array_sum(array_column($outlineM, 0)) / $n;
+        $centroidZ = array_sum(array_column($outlineM, 1)) / $n;
         for ($i = 0; $i < $n; $i++) {
             [$ax, $az] = $outlineM[$i];
             [$bx, $bz] = $outlineM[($i + 1) % $n];
@@ -284,9 +494,10 @@ final class FloorPlanImageRenderer
             if ($lengthM < 0.3) {
                 continue; // too short to label without the text overlapping itself
             }
-            $midX = ($ax + $bx) / 2 + $originX;
-            $midZ = ($az + $bz) / 2 + $originZ;
-            [$px, $py] = $toPx($midX, $midZ);
+            $midX = ($ax + $bx) / 2;
+            $midZ = ($az + $bz) / 2;
+            [$midX, $midZ] = $this->insetTowardCentroid($midX, $midZ, $centroidX, $centroidZ, self::WALL_LABEL_INSET_M);
+            [$px, $py] = $toPx($midX + $originX, $midZ + $originZ);
             imagestring($image, 1, $px - 10, $py - 5, sprintf('%.2fm', $lengthM), $color);
         }
     }
@@ -310,16 +521,18 @@ final class FloorPlanImageRenderer
         // PHP 8.1+ infers point count from $points and deprecates passing
         // it explicitly, so the old $num_points argument is dropped here.
         imagefilledpolygon($image, $points, $fill);
+        imagesetthickness($image, self::WALL_THICKNESS_PX);
         imagepolygon($image, $points, $border);
+        imagesetthickness($image, self::DEFAULT_LINE_THICKNESS_PX);
         $tileToPx = fn (float $mx, float $mz): array => [
             $originX + self::TILE_PADDING + (int) round($mx * self::PIXELS_PER_METER),
             $originY + self::TILE_PADDING + (int) round($mz * self::PIXELS_PER_METER),
         ];
         $this->drawWallLengths($image, $room['outline_m'], 0.0, 0.0, $tileToPx, $subtext);
-        $this->drawOpenings($image, $room, 0.0, 0.0, $tileToPx, $doorColor, $windowColor, $otherOpeningColor);
+        $this->drawOpenings($image, $room, 0.0, 0.0, $tileToPx, $doorColor, $windowColor, $otherOpeningColor, $text);
 
         $labelY = $originY + self::TILE_PADDING + (int) round($room['bounding_dimensions_m']['length_m'] * self::PIXELS_PER_METER) + 8;
-        imagestring($image, 4, $originX + self::TILE_PADDING, $labelY, $room['label'], $text);
+        imagestring($image, 4, $originX + self::TILE_PADDING, $labelY, $this->displayLabel($room), $text);
         // ASCII only — GD's built-in bitmap fonts are Latin-1, so raw UTF-8
         // (m-superscript-2, middot) renders as mojibake.
         $metrics = sprintf('%.2f sqm - %.2f m perimeter - %s confidence', $room['floor_area_m2'], $room['perimeter_m'], $room['confidence']);

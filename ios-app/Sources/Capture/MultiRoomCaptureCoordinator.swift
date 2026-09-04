@@ -43,6 +43,28 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     }
 
     private(set) var capturedRooms: [CapturedRoom] = []
+    private(set) var roomTypeConfirmations: [String?] = []
+
+    var roomTypeConfirmationsByIdentifier: [UUID: String] {
+        var result: [UUID: String] = [:]
+        for (room, confirmation) in zip(capturedRooms, roomTypeConfirmations) {
+            if let confirmation {
+                result[room.identifier] = confirmation
+            }
+        }
+        return result
+    }
+
+    @Published private(set) var liveRoomTypeGuess: RoomTypeClassifier.Guess?
+    private(set) var roomTypeConfirmation: String?
+
+    func confirmRoomTypeGuess() {
+        roomTypeConfirmation = liveRoomTypeGuess?.type
+    }
+
+    func rejectRoomTypeGuess(correctedTo type: String?) {
+        roomTypeConfirmation = type
+    }
 
     /// Set only on partialRoomAvailable — not committed until the user chooses to keep it.
     private(set) var pendingPartialRoom: CapturedRoom?
@@ -62,6 +84,8 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     func start() {
         guard let captureSession else { return }
         state = .scanning
+        liveRoomTypeGuess = nil
+        roomTypeConfirmation = nil
         captureSession.run(configuration: RoomCaptureSession.Configuration())
     }
 
@@ -73,6 +97,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     func keepPendingPartialRoom() {
         guard let pendingPartialRoom else { return }
         capturedRooms.append(pendingPartialRoom)
+        roomTypeConfirmations.append(roomTypeConfirmation)
         self.pendingPartialRoom = nil
     }
 
@@ -112,6 +137,7 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
                     self.state = .failed(error.localizedDescription, partialRoomAvailable: hasUsableGeometry)
                 } else {
                     self.capturedRooms.append(room)
+                    self.roomTypeConfirmations.append(self.roomTypeConfirmation)
                     self.state = .roomFinished(roomAvailable: true)
                 }
             } catch {
@@ -126,5 +152,15 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
             DiagnosticsLog.shared.record("RoomPlan instruction (multi-room): \(instruction)", category: .instruction)
         }
         #endif
+    }
+
+    nonisolated func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
+        guard RoomTypeGuessSettings.isEnabled, let guess = RoomTypeClassifier.guess(for: room) else { return }
+        Task { @MainActor in
+            if self.liveRoomTypeGuess?.type != guess.type {
+                self.liveRoomTypeGuess = guess
+                self.roomTypeConfirmation = nil
+            }
+        }
     }
 }

@@ -153,7 +153,7 @@ try {
 
 $imageRenderer = new FloorPlanImageRenderer();
 
-function build_room_with_outline(string $label, array $outlineM, ?array $structureOriginM, array $openings = [], ?float $heightM = null, ?string $roomId = null): array
+function build_room_with_outline(string $label, array $outlineM, ?array $structureOriginM, array $openings = [], ?float $heightM = null, ?string $roomId = null, ?array $roomType = null): array
 {
     return [
         'room_id' => $roomId ?? strtolower(str_replace(' ', '-', $label)),
@@ -166,7 +166,33 @@ function build_room_with_outline(string $label, array $outlineM, ?array $structu
         'structure_origin_m' => $structureOriginM,
         'openings' => $openings,
         'height_m' => $heightM,
+        'room_type' => $roomType,
     ];
+}
+
+/** Scans every pixel of a decoded PNG for an exact RGB match — avoids
+ * coupling to the renderer's internal layout math (unlike the MAX_PAGES
+ * boundary math above, which is deliberately coupled to it). */
+function png_contains_color(string $pngBytes, int $r, int $g, int $b): bool
+{
+    $img = imagecreatefromstring($pngBytes);
+    if ($img === false) {
+        return false;
+    }
+    $width = imagesx($img);
+    $height = imagesy($img);
+    $found = false;
+    for ($y = 0; $y < $height && !$found; $y++) {
+        for ($x = 0; $x < $width; $x++) {
+            $rgb = imagecolorat($img, $x, $y);
+            if ((($rgb >> 16) & 0xFF) === $r && (($rgb >> 8) & 0xFF) === $g && ($rgb & 0xFF) === $b) {
+                $found = true;
+                break;
+            }
+        }
+    }
+    imagedestroy($img);
+    return $found;
 }
 
 $squareOutline = [[0, 0], [4, 0], [4, 3], [0, 3]];
@@ -212,6 +238,46 @@ $fusedWithJoinPng = $imageRenderer->render($fusedWithJoinPlan);
 x_check('a fused plan with door/window openings and room height renders without throwing', str_contains($fusedWithJoinPng, "\x89PNG"));
 x_check('the door/window/height drawing adds real bytes over the same plan with no openings',
     strlen($fusedWithJoinPng) > strlen($fusedPng));
+
+echo "\n== Room-type coloring, legend, and label text ==\n";
+
+// Mirrors FloorPlanImageRenderer::ROOM_TYPE_PALETTE (private) — the fill
+// colors bedroom/bathroom/kitchen actually render with. If that palette
+// ever regresses back to two types sharing a color (as bedroom/bathroom
+// once did), this test catches it directly rather than relying on a manual
+// visual check.
+$bedroomFill = [199, 194, 224];
+$bathroomFill = [214, 224, 194];
+$kitchenFill = [199, 236, 239];
+
+$roomTypedPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0], [], null, null, ['guess' => 'bedroom', 'guess_source' => 'roomplan_section', 'confirmed' => 'bedroom']),
+    build_room_with_outline('Room B', $squareOutline, [5.0, 0.0], [], null, null, ['guess' => 'bathroom', 'guess_source' => 'roomplan_section', 'confirmed' => 'bathroom']),
+]);
+$roomTypedPng = $imageRenderer->render($roomTypedPlan);
+x_check('bedroom fill color actually appears in the rendered PNG', png_contains_color($roomTypedPng, ...$bedroomFill));
+x_check('bathroom fill color actually appears in the rendered PNG', png_contains_color($roomTypedPng, ...$bathroomFill));
+x_check('bedroom and bathroom do not share the same fill color', $bedroomFill !== $bathroomFill);
+x_check('kitchen fill color does NOT appear when no room is a kitchen', !png_contains_color($roomTypedPng, ...$kitchenFill));
+
+$untypedPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0]),
+    build_room_with_outline('Room B', $squareOutline, [5.0, 0.0]),
+]);
+$untypedPng = $imageRenderer->render($untypedPlan);
+x_check('label text and the room-type legend add real bytes over the same plan with no room_type',
+    strlen($roomTypedPng) > strlen($untypedPng));
+
+$roomTypedTilePlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, null, [], null, null, ['guess' => 'kitchen', 'guess_source' => 'object_heuristic', 'confirmed' => null]),
+]);
+$roomTypedTilePng = $imageRenderer->render($roomTypedTilePlan);
+x_check('the tiled (non-fused) render path also colors by room_type, not just the fused path', png_contains_color($roomTypedTilePng, ...$kitchenFill));
+
+$roomTypedPdf = $renderer->render(build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, null, [], null, null, ['guess' => 'dining_room', 'guess_source' => 'roomplan_section', 'confirmed' => 'dining_room']),
+]));
+x_check('room_type also reaches the PDF metrics table, not just the PNG', str_contains($roomTypedPdf, 'Dining room'));
 
 echo "\n== FusionOverlapDetector: catches a mispositioned room, not a shared wall ==\n";
 

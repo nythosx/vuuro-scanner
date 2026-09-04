@@ -287,7 +287,7 @@ private struct RoomCaptureFlowStep: View {
                     onUsePartial: {
                         let room = coordinator.capturedRoom!
                         isUploadingPartialCapture = true
-                        Task { await submit(CapturedRoomExporter.export(room)) }
+                        Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmation)) }
                     },
                     onDiscard: {
                         // No session was created for this attempt (it failed
@@ -343,6 +343,18 @@ private struct RoomCaptureFlowStep: View {
                 ZStack {
                     RoomCaptureScreen(coordinator: coordinator)
                         .ignoresSafeArea()
+
+                    if let guess = coordinator.liveRoomTypeGuess {
+                        VStack {
+                            RoomTypeGuessOverlay(
+                                guess: guess,
+                                onConfirm: { coordinator.confirmRoomTypeGuess() },
+                                onReject: { picked in coordinator.rejectRoomTypeGuess(correctedTo: picked) }
+                            )
+                            .id(guess.type)
+                            Spacer()
+                        }
+                    }
 
                     if isUploading {
                         ProgressView("Uploading capture…")
@@ -435,7 +447,7 @@ private struct RoomCaptureFlowStep: View {
             // The degenerate-outline guard lives inside submit(), not here —
             // "Upload what was captured" (below) calls submit() directly too,
             // and needs the same guard.
-            Task { await submit(CapturedRoomExporter.export(room)) }
+            Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmation)) }
         case .finished(roomAvailable: false):
             // No session created for this attempt yet (submit() never ran),
             // so existingSession is the right value to resume with.

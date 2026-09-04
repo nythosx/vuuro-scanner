@@ -94,6 +94,25 @@ t_check('objects has 1 entry (the fixture bed)', count($room['objects']) === 1);
 t_check('objects[0].category is "bed", passed through as the fixture reported it', $room['objects'][0]['category'] === 'bed');
 t_check('objects[0].position_m is room-local (3.00, 2.20)', $room['objects'][0]['position_m'] === [3.0, 2.2]);
 t_check('objects[0].dimensions_m matches the fixture (1.60, 0.55, 2.00)', $room['objects'][0]['dimensions_m'] === [1.6, 0.55, 2.0]);
+t_check('room_type round-trips the fixture\'s guess/guess_source/confirmed',
+    $room['room_type'] === ['guess' => 'bedroom', 'guess_source' => 'roomplan_section', 'confirmed' => 'bedroom']);
+echo "\n";
+
+echo "== Room-type guess: absent, invalid, and heuristic-only cases ==\n";
+$noRoomType = $fixture;
+unset($noRoomType['room_type']);
+t_check('room_type is null when the capture reported none',
+    $adapter->adapt($noRoomType, $identity)['rooms'][0]['room_type'] === null);
+
+$invalidGuess = $fixture;
+$invalidGuess['room_type'] = ['guess' => 'garage', 'guess_source' => 'roomplan_section', 'confirmed' => null];
+t_check('room_type is null when guess is not one of the known section labels',
+    $adapter->adapt($invalidGuess, $identity)['rooms'][0]['room_type'] === null);
+
+$invalidConfirmed = $fixture;
+$invalidConfirmed['room_type'] = ['guess' => 'kitchen', 'guess_source' => 'object_heuristic', 'confirmed' => 'not-a-real-answer'];
+t_check('an invalid confirmed value is dropped to null rather than stored as-is, guess/source still pass through',
+    $adapter->adapt($invalidConfirmed, $identity)['rooms'][0]['room_type'] === ['guess' => 'kitchen', 'guess_source' => 'object_heuristic', 'confirmed' => null]);
 echo "\n";
 
 // LIDAR-10, adjacent case: a capture call with no walls[] at all must give

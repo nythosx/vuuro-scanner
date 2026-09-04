@@ -14,11 +14,16 @@ struct RoomPlanCaptureExport: Encodable {
     let windows: [SurfaceExport]
     let openings: [SurfaceExport]
     let objects: [SurfaceExport]
+    // Room-type guess (RoomTypeClassifier) plus whatever the live on-screen
+    // ✓/✗ prompt resolved to, if anything. Omitted entirely when the on/off
+    // toggle (RoomTypeGuessSettings) is off — see CapturedRoomExporter.export.
+    var roomType: RoomTypeExport? = nil
     // Set only by CapturedStructureExporter, for a room merged via StructureBuilder.
     var structureOriginM: [Double]? = nil
 
     enum CodingKeys: String, CodingKey {
         case story, floors, walls, doors, windows, openings, objects
+        case roomType = "room_type"
         case structureOriginM = "structure_origin_m"
     }
 
@@ -33,11 +38,31 @@ struct RoomPlanCaptureExport: Encodable {
         // floors/walls/doors/windows/openings.
         var position: [Double]? = nil
     }
+
+    struct RoomTypeExport: Encodable {
+        let guess: String
+        let guessSource: String
+        // What the live ✓/✗ prompt resolved to during capture — the guessed
+        // value if the user tapped ✓, a picked correction if ✗, or nil if the
+        // prompt timed out/auto-hid before either was tapped.
+        var confirmed: String? = nil
+
+        enum CodingKeys: String, CodingKey {
+            case guess
+            case guessSource = "guess_source"
+            case confirmed
+        }
+    }
 }
 
 enum CapturedRoomExporter {
-    static func export(_ room: CapturedRoom) -> RoomPlanCaptureExport {
-        RoomPlanCaptureExport(
+    /// `roomTypeConfirmation` is whatever the live capture-screen ✓/✗ prompt
+    /// resolved to for this room (see CaptureCoordinator/RoomTypeGuess) — the
+    /// exporter itself only ever re-derives the guess, never the
+    /// confirmation, since confirming is a user action that happens live,
+    /// not something recoverable from the final CapturedRoom alone.
+    static func export(_ room: CapturedRoom, roomTypeConfirmation: String? = nil) -> RoomPlanCaptureExport {
+        var export = RoomPlanCaptureExport(
             story: 0,
             floors: room.floors.map { mapSurface($0, category: "floor") },
             walls: room.walls.map { mapSurface($0, category: "wall") },
@@ -48,6 +73,14 @@ enum CapturedRoomExporter {
             // hardcoded `[]` — empty only when RoomPlan itself saw none.
             objects: room.objects.map(mapObject)
         )
+        if RoomTypeGuessSettings.isEnabled, let guess = RoomTypeClassifier.guess(for: room) {
+            export.roomType = RoomPlanCaptureExport.RoomTypeExport(
+                guess: guess.type,
+                guessSource: guess.source,
+                confirmed: roomTypeConfirmation
+            )
+        }
+        return export
     }
 
     // Real bug found by Mark on the first real RoomPlan capture (2026-09-02):

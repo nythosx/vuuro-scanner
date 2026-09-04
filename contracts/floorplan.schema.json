@@ -70,7 +70,7 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["room_id", "label", "floor_area_m2", "perimeter_m", "bounding_dimensions_m", "confidence", "outline_m", "coverage", "openings", "height_m", "volume_m3_indicative", "objects", "structure_origin_m"],
+        "required": ["room_id", "label", "floor_area_m2", "perimeter_m", "bounding_dimensions_m", "confidence", "outline_m", "coverage", "openings", "height_m", "volume_m3_indicative", "objects", "structure_origin_m", "room_type"],
         "properties": {
           "room_id": { "type": "string" },
           "label": { "type": "string" },
@@ -158,6 +158,16 @@
                 },
                 "confidence": { "type": "string", "enum": ["low", "medium", "high"] }
               }
+            }
+          },
+          "room_type": {
+            "type": ["object", "null"],
+            "description": "A guess at what kind of room this is, live-classified on-device during capture. Primary source is RoomPlan's own CapturedRoom.Section.label (iOS 17+); falls back to a simple fixture heuristic (a toilet means a bathroom, ...) only when RoomPlan reported no sections. Never certified — confirmed only reflects what the on-screen ✓/✗ prompt during capture resolved to, not a verified fact. Null when the on/off toggle was off or neither source produced a guess.",
+            "required": ["guess", "guess_source", "confirmed"],
+            "properties": {
+              "guess": { "type": "string", "enum": ["living_room", "bedroom", "bathroom", "kitchen", "dining_room"] },
+              "guess_source": { "type": "string", "enum": ["roomplan_section", "object_heuristic"] },
+              "confirmed": { "type": ["string", "null"], "enum": ["living_room", "bedroom", "bathroom", "kitchen", "dining_room", "other", null], "description": "What the live ✓/✗ prompt resolved to — the guess itself if ✓, a picked correction if ✗, or null if dismissed/timed out unanswered." }
             }
           },
           "coverage": {

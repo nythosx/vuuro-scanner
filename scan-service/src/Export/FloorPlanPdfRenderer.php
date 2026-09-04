@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace VuuroScan\Export;
 
+use VuuroScan\RoomType;
+
 /**
  * Renders a FloorPlan contract array to a minimal, hand-built PDF: identity,
  * honest-measurement disclaimer, and a per-room metrics table, paginated
@@ -115,9 +117,13 @@ final class FloorPlanPdfRenderer
         $totalArea = 0.0;
         foreach ($floorPlan['rooms'] as $room) {
             $totalArea += $room['floor_area_m2'];
+            $roomType = $room['room_type'] ?? null;
+            $roomTypeValue = $roomType !== null ? ($roomType['confirmed'] ?? $roomType['guess'] ?? null) : null;
+            $roomTypeName = $roomTypeValue !== null ? (RoomType::LABELS[$roomTypeValue] ?? null) : null;
+            $label = $roomTypeName !== null ? "{$room['label']} ({$roomTypeName})" : $room['label'];
             $lines[] = sprintf(
-                '%-12s %8.2f m2   %8.2f m perimeter   confidence: %s',
-                $room['label'],
+                '%-20s %8.2f m2   %8.2f m perimeter   confidence: %s',
+                $label,
                 $room['floor_area_m2'],
                 $room['perimeter_m'],
                 $room['confidence']
