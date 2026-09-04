@@ -27,31 +27,26 @@ struct MultiRoomCaptureFlowView: View {
                 ProgressView("Merging rooms…")
                     .padding()
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-            } else if isDegenerateCapture {
-                DegenerateCaptureView {
-                    isDegenerateCapture = false
-                    coordinator.start()
-                }
-            } else if let partialRoomFailureMessage {
-                PartialRoomChoiceView(
-                    message: partialRoomFailureMessage,
-                    onKeep: {
-                        self.partialRoomFailureMessage = nil
-                        coordinator.keepPendingPartialRoom()
-                        continueAfterRoomResolved()
-                    },
-                    onDiscard: {
-                        self.partialRoomFailureMessage = nil
-                        coordinator.discardPendingPartialRoom()
-                        continueAfterRoomResolved()
-                    }
-                )
             } else {
+                // MultiRoomCaptureScreen must stay mounted for the entire
+                // walkthrough, including through a degenerate or partial-
+                // failure room — confirmed via Apple developer forum reports
+                // (forums.developer.apple.com/forums/thread/769230):
+                // recreating RoomCaptureView, even against the same shared
+                // ARSession, loses world tracking. That's exactly the
+                // alignment MultiRoomCaptureCoordinator's shared ARSession
+                // exists to preserve across rooms, so isDegenerateCapture and
+                // partialRoomFailureMessage used to be their own top-level
+                // Group cases here — which unmounted this ZStack (and the
+                // RoomCaptureView inside MultiRoomCaptureScreen) every time
+                // either one showed, then rebuilt it from scratch on
+                // "Rescan"/"Keep this room". Both are now overlays on top of
+                // the still-running capture screen instead.
                 ZStack {
                     MultiRoomCaptureScreen(coordinator: coordinator)
                         .ignoresSafeArea()
 
-                    if let guess = coordinator.liveRoomTypeGuess {
+                    if coordinator.state == .scanning, let guess = coordinator.liveRoomTypeGuess {
                         VStack {
                             RoomTypeGuessOverlay(
                                 guess: guess,
@@ -63,7 +58,30 @@ struct MultiRoomCaptureFlowView: View {
                         }
                     }
 
-                    if isUploading {
+                    if isDegenerateCapture {
+                        resolutionOverlay {
+                            DegenerateCaptureView {
+                                isDegenerateCapture = false
+                                coordinator.start()
+                            }
+                        }
+                    } else if let partialRoomFailureMessage {
+                        resolutionOverlay {
+                            PartialRoomChoiceView(
+                                message: partialRoomFailureMessage,
+                                onKeep: {
+                                    self.partialRoomFailureMessage = nil
+                                    coordinator.keepPendingPartialRoom()
+                                    continueAfterRoomResolved()
+                                },
+                                onDiscard: {
+                                    self.partialRoomFailureMessage = nil
+                                    coordinator.discardPendingPartialRoom()
+                                    continueAfterRoomResolved()
+                                }
+                            )
+                        }
+                    } else if isUploading {
                         ProgressView("Uploading rooms…")
                             .padding()
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
@@ -125,6 +143,21 @@ struct MultiRoomCaptureFlowView: View {
                     handle(state)
                 }
             }
+        }
+    }
+
+    // Dimmed backdrop + floating card, since these overlays now draw on top
+    // of the still-running (visually live) camera feed instead of replacing
+    // it with an opaque screen — see the comment above this file's ZStack
+    // for why the capture screen can no longer be swapped out here.
+    @ViewBuilder
+    private func resolutionOverlay<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        ZStack {
+            Color.black.opacity(0.35).ignoresSafeArea()
+            content()
+                .padding()
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .padding(24)
         }
     }
 
