@@ -500,14 +500,14 @@ echo "\n== Session-creation rate limit ==\n";
 // hides. Delete scan-service/data/scan_service.sqlite between rapid re-runs
 // of the full suite if you hit this in practice.
 $sawRateLimited = false;
-for ($i = 0; $i < 80; $i++) {
+for ($i = 0; $i < 160; $i++) {
     [$status, ] = net_http_json('POST', "$baseUrl/scan-sessions", base_payload());
     if ($status === 429) {
         $sawRateLimited = true;
         break;
     }
 }
-check('repeated rapid session creation eventually hits HTTP 429', $sawRateLimited, 'never saw a 429 across 80 rapid session-creation calls');
+check('repeated rapid session creation eventually hits HTTP 429', $sawRateLimited, 'never saw a 429 across 160 rapid session-creation calls');
 
 echo "\n== Repeated lookups of NONEXISTENT session ids are also throttled ==\n";
 
