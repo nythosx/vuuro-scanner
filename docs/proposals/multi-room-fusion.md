@@ -163,6 +163,27 @@ world-origin-shift report has no confirmed fix, the very first same-visit two-ro
 should specifically check room 2's position relative to room 1, not just that both rooms
 individually captured cleanly.
 
+## Diagnostics added for the next real-device test
+
+`CapturedStructureExporter.export()` now logs one `DiagnosticsLog` line per room (category
+`.state`, DEBUG-only, same floater/export path as everything else in that log):
+`Fusion geometry room N: origin_m (x, z), heading θ deg, floors K`. `origin_m` is the same
+value already sent to the server as `structure_origin_m` (this just surfaces it locally,
+full precision, without needing a server round trip to inspect it). `heading` is new — there
+is no rotation value anywhere else in this pipeline — derived from the room's first floor
+surface's `transform.columns.0` (the local X axis mapped into the shared frame) via `atan2`.
+
+This heading extraction is unverified: it assumes the floor surface's local X axis is a
+meaningful "forward" for the room, which is not something Apple's docs state explicitly for
+`CapturedRoom.Surface.transform` on a floor. Treat the logged number as a diagnostic hint,
+not ground truth, until checked against a room whose real-world orientation is known.
+
+This alone is not sufficient to diagnose a fusion bug — it only gives self-consistent
+numbers. Getting real value out of it on the next test requires Mark to also note the actual
+physical layout he walked (a rough sketch or "room B's door is directly across from room A's,
+about one room-width apart" is enough) so the logged origin/heading can be checked against
+something real, not just against each other.
+
 ## Open questions for Mark
 
 1. Does "multi-room" for LIDAR-5/11 mean one continuous in-person walkthrough only (per
