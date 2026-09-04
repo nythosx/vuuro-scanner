@@ -36,7 +36,7 @@ header('X-Content-Type-Options: nosniff');
 $corsOrigin = getenv('SCAN_SERVICE_CORS_ORIGIN') ?: 'http://127.0.0.1:8090';
 if (($_SERVER['HTTP_ORIGIN'] ?? null) === $corsOrigin) {
     header("Access-Control-Allow-Origin: $corsOrigin");
-    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+    header('Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS');
     header('Access-Control-Allow-Headers: Content-Type, X-Scan-Access-Token, Idempotency-Key');
 }
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -122,6 +122,20 @@ function idempotencyFingerprint(array $body): string
     } catch (\JsonException $e) {
         return hash('sha256', serialize($relevant));
     }
+}
+
+function deleteSessionPhotoDir(string $sessionId): void
+{
+    $photoDir = __DIR__ . '/../data/photos/' . $sessionId;
+    if (!is_dir($photoDir)) {
+        return;
+    }
+    foreach (glob($photoDir . '/*') ?: [] as $file) {
+        if (is_file($file)) {
+            unlink($file);
+        }
+    }
+    rmdir($photoDir);
 }
 
 function clientIp(): string
@@ -396,6 +410,13 @@ if ($method === 'POST' && $path === '/scan-sessions') {
             ['min' => ScanSessionRepository::MIN_TOKEN_TTL_SECONDS, 'max' => ScanSessionRepository::MAX_TOKEN_TTL_SECONDS]
         );
         return;
+    }
+
+    if (random_int(1, 100) === 1) {
+        foreach ($repo->findExpiredBeyondGracePeriod() as $expiredId) {
+            $repo->deleteSession($expiredId);
+            deleteSessionPhotoDir($expiredId);
+        }
     }
 
     $session = $repo->create(
@@ -953,6 +974,23 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/access-log$#', $pa
     }
 
     respond(200, ['scan_session_id' => $session['id'], 'access_log' => $repo->accessLog($session['id'])]);
+    return;
+}
+
+if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'delete_session');
+    if ($session === null) {
+        return;
+    }
+
+    if (rateLimited($repo, $session['id'] . ':delete_session', 10, 300)) {
+        return;
+    }
+
+    $repo->deleteSession($session['id']);
+    deleteSessionPhotoDir($session['id']);
+
+    respond(200, ['deleted' => true]);
     return;
 }
 

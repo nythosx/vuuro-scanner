@@ -45,6 +45,24 @@ struct PhotoUploadResponse: Decodable {
     }
 }
 
+struct HealthResponse: Decodable {
+    let status: String
+}
+
+struct RotateTokenResponse: Decodable {
+    let id: String
+    let accessToken: String
+    let expiresAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case accessToken = "access_token"
+        case expiresAt = "expires_at"
+    }
+}
+
+private struct EmptyBody: Encodable {}
+
 struct ScanServiceClient {
     var baseURL: URL = {
         #if DEBUG
@@ -60,6 +78,22 @@ struct ScanServiceClient {
         // The only call with no access token to present yet — the Scan
         // Service issues one in the response.
         try await post(path: "/scan-sessions", body: identity, accessToken: nil)
+    }
+
+    func checkHealth() async throws {
+        let _: HealthResponse = try await get(path: "/health", accessToken: nil)
+    }
+
+    func rotateToken(sessionId: String, accessToken: String) async throws -> RotateTokenResponse {
+        try await post(path: "/scan-sessions/\(sessionId)/rotate-token", body: EmptyBody(), accessToken: accessToken)
+    }
+
+    func deleteSession(sessionId: String, accessToken: String) async throws {
+        var request = URLRequest(url: baseURL.appendingPathComponent("/scan-sessions/\(sessionId)"))
+        request.httpMethod = "DELETE"
+        request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
+        struct DeleteResponse: Decodable { let deleted: Bool }
+        let _: DeleteResponse = try await send(request)
     }
 
     func uploadCapture(sessionId: String, accessToken: String, capture: RoomPlanCaptureExport, provider: String = "roomplan", location: CaptureLocation? = nil) async throws -> FloorPlan {
@@ -155,9 +189,11 @@ struct ScanServiceClient {
         return try await send(request)
     }
 
-    private func get<Response: Decodable>(path: String, accessToken: String) async throws -> Response {
+    private func get<Response: Decodable>(path: String, accessToken: String?) async throws -> Response {
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
-        request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
+        if let accessToken {
+            request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
+        }
         return try await send(request)
     }
 

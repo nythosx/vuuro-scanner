@@ -19,6 +19,7 @@ struct ScanSessionResponse: Codable {
     let occupied: Bool
     let consentObtained: Bool
     let accessToken: String
+    let expiresAt: String
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -31,6 +32,7 @@ struct ScanSessionResponse: Codable {
         case occupied
         case consentObtained = "consent_obtained"
         case accessToken = "access_token"
+        case expiresAt = "expires_at"
     }
 }
 

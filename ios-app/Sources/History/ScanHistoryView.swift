@@ -41,6 +41,7 @@ struct ScanHistoryView: View {
     @State private var appError: AppError?
     @State private var errorMessage: String?
     @State private var pendingDeleteEntry: ScanHistoryEntry?
+    @State private var pendingServerDeleteEntry: ScanHistoryEntry?
 
     @Environment(\.dismiss) private var dismiss
 
@@ -95,14 +96,20 @@ struct ScanHistoryView: View {
 
                     if let onResumeToAddRoom {
                         Button("Scan another room") {
-                            dismiss()
-                            onResumeToAddRoom(entry)
+                            Task {
+                                let refreshed = await rotateTokenIfNeeded(entry)
+                                dismiss()
+                                onResumeToAddRoom(refreshed)
+                            }
                         }
                     }
 
                     if let onAttachToSession {
                         Button {
-                            Task { await attach(entry, using: onAttachToSession) }
+                            Task {
+                                let refreshed = await rotateTokenIfNeeded(entry)
+                                await attach(refreshed, using: onAttachToSession)
+                            }
                         } label: {
                             if isFetchingToAttach.contains(entry.sessionId) {
                                 ProgressView()
@@ -111,6 +118,10 @@ struct ScanHistoryView: View {
                             }
                         }
                         .disabled(isFetchingToAttach.contains(entry.sessionId))
+                    }
+
+                    Button("Delete permanently from server", role: .destructive) {
+                        pendingServerDeleteEntry = entry
                     }
 
                     // ScanHistoryStore.remove(sessionId:) already existed but
@@ -191,6 +202,63 @@ struct ScanHistoryView: View {
             Button("Cancel", role: .cancel) { pendingDeleteEntry = nil }
         } message: {
             Text("This removes the local record on this device only — the session data itself isn't deleted, but you won't be able to reopen it from History again.")
+        }
+        .alert("Delete this scan from the server?", isPresented: Binding(
+            get: { pendingServerDeleteEntry != nil },
+            set: { if !$0 { pendingServerDeleteEntry = nil } }
+        )) {
+            Button("Delete", role: .destructive) {
+                if let pendingServerDeleteEntry {
+                    Task { await deleteFromServer(pendingServerDeleteEntry) }
+                }
+                pendingServerDeleteEntry = nil
+            }
+            Button("Cancel", role: .cancel) { pendingServerDeleteEntry = nil }
+        } message: {
+            Text("This permanently deletes the session's rooms, photos, and notes from the Scan Service. This cannot be undone.")
+        }
+    }
+
+    @MainActor
+    private func deleteFromServer(_ entry: ScanHistoryEntry) async {
+        do {
+            try await client.deleteSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
+            appError = nil
+            deleteEntry(entry)
+        } catch {
+            appError = AppError(site: .historyServerDelete, underlying: error)
+        }
+    }
+
+    // A resumed/attached session's stored token can be close to (or past) its
+    // 90-day expiry with no other path to renew it (see AppError.swift's
+    // header and ScanSessionRepository.php's ROTATE_GRACE_PERIOD_SECONDS) —
+    // this device never proactively rotates otherwise, so the only chance is
+    // right before the token is actually used again.
+    @MainActor
+    private func rotateTokenIfNeeded(_ entry: ScanHistoryEntry) async -> ScanHistoryEntry {
+        guard let expiresAtString = entry.expiresAt, !expiresAtString.isEmpty,
+              let expiresAt = ISO8601DateFormatter().date(from: expiresAtString),
+              expiresAt.timeIntervalSinceNow < 14 * 24 * 60 * 60 else {
+            return entry
+        }
+        do {
+            let rotated = try await client.rotateToken(sessionId: entry.sessionId, accessToken: entry.accessToken)
+            let updated = ScanHistoryEntry(
+                sessionId: entry.sessionId,
+                accessToken: rotated.accessToken,
+                propertyId: entry.propertyId,
+                unitId: entry.unitId,
+                organisationId: entry.organisationId,
+                purpose: entry.purpose,
+                createdAt: entry.createdAt,
+                expiresAt: rotated.expiresAt
+            )
+            ScanHistoryStore.shared.add(updated)
+            entries = ScanHistoryStore.shared.all()
+            return updated
+        } catch {
+            return entry
         }
     }
 

@@ -21,6 +21,7 @@ struct MultiRoomCaptureFlowView: View {
     // captured so far), unlike single-room's discard confirmation which
     // this mirrors, see VuuroScanApp.swift's RoomCaptureFlowStep.
     @State private var showDiscardConfirmation = false
+    @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
 
@@ -134,6 +135,14 @@ struct MultiRoomCaptureFlowView: View {
                                     .foregroundStyle(.orange)
                                     .padding(.bottom, 8)
                             }
+                            if coordinator.isApproachingSizeLimit {
+                                Text("This room looks larger than RoomPlan's practical scanning range (~9m) — accuracy may degrade beyond this size.")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal)
+                                    .padding(.bottom, 8)
+                            }
                             HStack(spacing: 16) {
                                 Button("Done with this room") {
                                     didRequestStopRoom = true
@@ -164,6 +173,13 @@ struct MultiRoomCaptureFlowView: View {
                 .onAppear { coordinator.start() }
                 .onChange(of: coordinator.state) { _, state in
                     handle(state)
+                }
+                .onChange(of: scenePhase) { _, newPhase in
+                    if newPhase == .background, coordinator.state == .scanning {
+                        #if DEBUG
+                        DiagnosticsLog.shared.record("App backgrounded mid-scan (multi-room) — ARKit/RoomPlan behavior here is unverified.", category: .state)
+                        #endif
+                    }
                 }
             }
         }
@@ -268,7 +284,8 @@ struct MultiRoomCaptureFlowView: View {
                 unitId: identity.unitId,
                 organisationId: identity.organisationId,
                 purpose: identity.purpose,
-                createdAt: Date()
+                createdAt: Date(),
+                expiresAt: session.expiresAt
             ))
         }
 

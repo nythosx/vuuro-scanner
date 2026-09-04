@@ -18,6 +18,21 @@ struct IdentityIntakeScreen: View {
     @State private var occupied = false
     @State private var consentObtained = false
     @State private var roomTypeGuessEnabled = RoomTypeGuessSettings.isEnabled
+    @State private var isCheckingHealth = false
+    @State private var healthCheckError: AppError?
+
+    private let client = ScanServiceClient()
+
+    private var currentIdentity: ScanIdentity {
+        ScanIdentity(
+            propertyId: trimmedPropertyId,
+            unitId: trimmedUnitId,
+            organisationId: trimmedOrganisationId,
+            purpose: purpose,
+            occupied: occupied,
+            consentObtained: occupied ? consentObtained : false
+        )
+    }
 
     private var trimmedPropertyId: String { propertyId.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var trimmedUnitId: String { unitId.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -80,30 +95,28 @@ struct IdentityIntakeScreen: View {
             }
 
             Section {
-                Button("Start scan") {
-                    onStart(ScanIdentity(
-                        propertyId: trimmedPropertyId,
-                        unitId: trimmedUnitId,
-                        organisationId: trimmedOrganisationId,
-                        purpose: purpose,
-                        occupied: occupied,
-                        consentObtained: occupied ? consentObtained : false
-                    ))
+                Button {
+                    Task { await startIfHealthy(onStart) }
+                } label: {
+                    if isCheckingHealth {
+                        ProgressView()
+                    } else {
+                        Text("Start scan")
+                    }
                 }
-                .disabled(!canStart)
+                .disabled(!canStart || isCheckingHealth)
 
                 if let onStartMultiRoom {
-                    Button("Start multi-room scan (fused, experimental)") {
-                        onStartMultiRoom(ScanIdentity(
-                            propertyId: trimmedPropertyId,
-                            unitId: trimmedUnitId,
-                            organisationId: trimmedOrganisationId,
-                            purpose: purpose,
-                            occupied: occupied,
-                            consentObtained: occupied ? consentObtained : false
-                        ))
+                    Button {
+                        Task { await startIfHealthy(onStartMultiRoom) }
+                    } label: {
+                        Text("Start multi-room scan (fused, experimental)")
                     }
-                    .disabled(!canStart)
+                    .disabled(!canStart || isCheckingHealth)
+                }
+
+                if let healthCheckError {
+                    ErrorCodeView(error: healthCheckError)
                 }
             }
 
@@ -119,5 +132,18 @@ struct IdentityIntakeScreen: View {
             #endif
         }
         .navigationTitle("New scan")
+    }
+
+    @MainActor
+    private func startIfHealthy(_ start: (ScanIdentity) -> Void) async {
+        isCheckingHealth = true
+        defer { isCheckingHealth = false }
+        do {
+            try await client.checkHealth()
+            healthCheckError = nil
+            start(currentIdentity)
+        } catch {
+            healthCheckError = AppError(site: .sessionCreate, underlying: error)
+        }
     }
 }

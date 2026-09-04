@@ -60,6 +60,7 @@ struct AppError {
         case historyImageDownload = "HISTORY_IMAGE_DOWNLOAD"
         case historyPDFDownload = "HISTORY_PDF_DOWNLOAD"
         case historySessionFetch = "HISTORY_SESSION_FETCH"
+        case historyServerDelete = "HISTORY_SERVER_DELETE"
 
         /// Only used when there's no thrown Error to describe the failure
         /// (e.g. capture finished but RoomPlan reported no usable room) —
@@ -123,6 +124,9 @@ struct AppError {
     var isLikelyRetryable: Bool {
         guard let scanError = underlying as? ScanServiceError,
               case .unexpectedStatus(let status, _) = scanError else { return true }
+        if status == 429 {
+            return true
+        }
         return !(400...499).contains(status)
     }
 

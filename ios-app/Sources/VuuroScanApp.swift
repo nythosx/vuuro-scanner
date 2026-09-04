@@ -232,6 +232,7 @@ private struct RoomCaptureFlowStep: View {
     // .onAppear { coordinator.start() } on an already-ended RoomCaptureSession.
     @State private var isRetryingUpload = false
     @State private var capturedLocation: CaptureLocation?
+    @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
     private let locationProvider = LocationProvider()
@@ -420,6 +421,14 @@ private struct RoomCaptureFlowStep: View {
                                 }
                             }
                             Spacer()
+                            if coordinator.isApproachingSizeLimit {
+                                Text("This room looks larger than RoomPlan's practical scanning range (~9m) — accuracy may degrade beyond this size.")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal)
+                                    .padding(.bottom, 8)
+                            }
                             Button("Done") {
                                 didRequestStop = true
                                 coordinator.stop()
@@ -435,6 +444,13 @@ private struct RoomCaptureFlowStep: View {
                 }
                 .onChange(of: coordinator.state) { _, state in
                     handle(state)
+                }
+                .onChange(of: scenePhase) { _, newPhase in
+                    if newPhase == .background, coordinator.state == .scanning {
+                        #if DEBUG
+                        DiagnosticsLog.shared.record("App backgrounded mid-scan — ARKit/RoomPlan behavior here is unverified.", category: .state)
+                        #endif
+                    }
                 }
             }
         }
@@ -516,7 +532,8 @@ private struct RoomCaptureFlowStep: View {
                 unitId: identity.unitId,
                 organisationId: identity.organisationId,
                 purpose: identity.purpose,
-                createdAt: Date()
+                createdAt: Date(),
+                expiresAt: session.expiresAt
             ))
         }
         do {
@@ -656,12 +673,13 @@ struct AttachmentsScreen: View {
 
     @State private var noteText = ""
     @State private var photoUrl = ""
-    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var current: FloorPlan
     @State private var appError: AppError?
     @State private var isSaving = false
     @State private var isUploadingPhoto = false
     @State private var selectedRoomId: String?
+    @State private var showCamera = false
 
     private let client = ScanServiceClient()
 
@@ -692,7 +710,7 @@ struct AttachmentsScreen: View {
             }
 
             Section("Add a photo (optional)") {
-                PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 10, matching: .images) {
                     if isUploadingPhoto {
                         ProgressView()
                     } else {
@@ -700,11 +718,34 @@ struct AttachmentsScreen: View {
                     }
                 }
                 .disabled(isUploadingPhoto)
-                .onChange(of: selectedPhotoItem) { _, newItem in
-                    guard let newItem else { return }
+                .onChange(of: selectedPhotoItems) { _, newItems in
+                    guard !newItems.isEmpty else { return }
                     Task {
-                        await uploadSelectedPhoto(newItem)
-                        selectedPhotoItem = nil
+                        isUploadingPhoto = true
+                        for item in newItems {
+                            await uploadSelectedPhoto(item)
+                        }
+                        selectedPhotoItems = []
+                        isUploadingPhoto = false
+                    }
+                }
+
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    Button("Take a photo") {
+                        showCamera = true
+                    }
+                    .disabled(isUploadingPhoto)
+                    .sheet(isPresented: $showCamera) {
+                        CameraCaptureView(onCaptured: { data in
+                            showCamera = false
+                            Task {
+                                isUploadingPhoto = true
+                                await uploadPhotoData(data)
+                                isUploadingPhoto = false
+                            }
+                        }, onCancel: {
+                            showCamera = false
+                        })
                     }
                 }
 
@@ -782,23 +823,67 @@ struct AttachmentsScreen: View {
     private static let maxPhotoUploadBytes = 25 * 1024 * 1024
 
     private func uploadSelectedPhoto(_ item: PhotosPickerItem) async {
-        isUploadingPhoto = true
-        defer { isUploadingPhoto = false }
         do {
             guard let data = try await item.loadTransferable(type: Data.self) else {
                 appError = AppError(site: .photoUpload, underlying: nil)
                 return
             }
-            if data.count > Self.maxPhotoUploadBytes {
-                appError = AppError(site: .photoTooLarge, underlying: nil)
-                return
-            }
+            await uploadPhotoData(data)
+        } catch {
+            appError = AppError(site: .photoUpload, underlying: error)
+        }
+    }
+
+    private func uploadPhotoData(_ data: Data) async {
+        if data.count > Self.maxPhotoUploadBytes {
+            appError = AppError(site: .photoTooLarge, underlying: nil)
+            return
+        }
+        do {
             let (mime, ext) = detectedMimeType(for: data)
             let uploaded = try await client.uploadPhoto(sessionId: session.id, accessToken: session.accessToken, imageData: data, filename: "photo.\(ext)", mimeType: mime)
             current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: uploaded.url, roomId: selectedRoomId)
             appError = nil
         } catch {
             appError = AppError(site: .photoUpload, underlying: error)
+        }
+    }
+}
+
+struct CameraCaptureView: UIViewControllerRepresentable {
+    let onCaptured: (Data) -> Void
+    let onCancel: () -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: CameraCaptureView
+
+        init(_ parent: CameraCaptureView) {
+            self.parent = parent
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage, let data = image.jpegData(compressionQuality: 0.9) {
+                parent.onCaptured(data)
+            } else {
+                parent.onCancel()
+            }
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.onCancel()
         }
     }
 }

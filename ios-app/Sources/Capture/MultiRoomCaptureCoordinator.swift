@@ -55,6 +55,8 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         return result
     }
 
+    @Published private(set) var isApproachingSizeLimit = false
+
     @Published private(set) var liveRoomTypeGuess: RoomTypeClassifier.Guess?
     private(set) var roomTypeConfirmation: String?
     private(set) var roomTypeConfirmedForGuessType: String?
@@ -94,6 +96,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         liveRoomTypeGuess = nil
         roomTypeConfirmation = nil
         roomTypeConfirmedForGuessType = nil
+        isApproachingSizeLimit = false
         captureSession.run(configuration: RoomCaptureSession.Configuration())
     }
 
@@ -182,6 +185,10 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
     }
 
     nonisolated func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
+        let exceedsSizeLimit = RoomSizeGuard.exceedsPracticalLimit(room)
+        Task { @MainActor in
+            self.isApproachingSizeLimit = exceedsSizeLimit
+        }
         guard RoomTypeGuessSettings.isEnabled, let guess = RoomTypeClassifier.guess(for: room) else { return }
         Task { @MainActor in
             if self.liveRoomTypeGuess?.type != guess.type {

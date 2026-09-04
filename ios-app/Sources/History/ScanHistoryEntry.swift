@@ -23,6 +23,7 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
     let organisationId: String
     let purpose: ScanPurpose
     let createdAt: Date
+    let expiresAt: String?
 
     var id: String { sessionId }
 
@@ -48,7 +49,8 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
             status: "unknown",
             occupied: false,
             consentObtained: false,
-            accessToken: accessToken
+            accessToken: accessToken,
+            expiresAt: expiresAt ?? ""
         )
     }
 
