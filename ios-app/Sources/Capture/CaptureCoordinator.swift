@@ -46,7 +46,14 @@ final class CaptureCoordinator: NSObject, ObservableObject {
 
     private(set) var capturedRoom: CapturedRoom?
 
-    @Published private(set) var isApproachingSizeLimit = false
+    @Published private(set) var isApproachingSizeLimit = false {
+        didSet {
+            guard oldValue != isApproachingSizeLimit else { return }
+            #if DEBUG
+            DiagnosticsLog.shared.record("Room size warning -> \(isApproachingSizeLimit)", category: .state)
+            #endif
+        }
+    }
 
     @Published private(set) var liveRoomTypeGuess: RoomTypeClassifier.Guess?
     private(set) var roomTypeConfirmation: String?
@@ -59,11 +66,17 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     func confirmRoomTypeGuess() {
         roomTypeConfirmation = liveRoomTypeGuess?.type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
+        #if DEBUG
+        DiagnosticsLog.shared.record("Room type confirmed: \(liveRoomTypeGuess?.type ?? "nil")", category: .info)
+        #endif
     }
 
     func rejectRoomTypeGuess(correctedTo type: String?) {
         roomTypeConfirmation = type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
+        #if DEBUG
+        DiagnosticsLog.shared.record("Room type corrected: guess=\(liveRoomTypeGuess?.type ?? "nil") -> \(type ?? "nil")", category: .info)
+        #endif
     }
 
     /// RoomCaptureView.captureSession is get-only — confirmed live via the

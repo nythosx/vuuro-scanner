@@ -55,7 +55,14 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         return result
     }
 
-    @Published private(set) var isApproachingSizeLimit = false
+    @Published private(set) var isApproachingSizeLimit = false {
+        didSet {
+            guard oldValue != isApproachingSizeLimit else { return }
+            #if DEBUG
+            DiagnosticsLog.shared.record("Room size warning (multi-room) -> \(isApproachingSizeLimit)", category: .state)
+            #endif
+        }
+    }
 
     @Published private(set) var liveRoomTypeGuess: RoomTypeClassifier.Guess?
     private(set) var roomTypeConfirmation: String?
@@ -68,11 +75,17 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     func confirmRoomTypeGuess() {
         roomTypeConfirmation = liveRoomTypeGuess?.type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
+        #if DEBUG
+        DiagnosticsLog.shared.record("Room type confirmed (multi-room): \(liveRoomTypeGuess?.type ?? "nil")", category: .info)
+        #endif
     }
 
     func rejectRoomTypeGuess(correctedTo type: String?) {
         roomTypeConfirmation = type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
+        #if DEBUG
+        DiagnosticsLog.shared.record("Room type corrected (multi-room): guess=\(liveRoomTypeGuess?.type ?? "nil") -> \(type ?? "nil")", category: .info)
+        #endif
     }
 
     /// Set only on partialRoomAvailable — not committed until the user chooses to keep it.

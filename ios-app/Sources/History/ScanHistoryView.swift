@@ -217,6 +217,9 @@ struct ScanHistoryView: View {
     private func deleteFromServer(_ entry: ScanHistoryEntry) async {
         do {
             try await client.deleteSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
+            #if DEBUG
+            DiagnosticsLog.shared.record("Session \(entry.sessionId) deleted from server", category: .info)
+            #endif
             appError = nil
             deleteEntry(entry)
         } catch {
@@ -234,10 +237,16 @@ struct ScanHistoryView: View {
         if let expiresAtString = entry.expiresAt, !expiresAtString.isEmpty,
            let expiresAt = ISO8601DateFormatter().date(from: expiresAtString),
            expiresAt.timeIntervalSinceNow >= 14 * 24 * 60 * 60 {
+            #if DEBUG
+            DiagnosticsLog.shared.record("Token rotation skipped for session \(entry.sessionId): still valid until \(expiresAtString)", category: .info)
+            #endif
             return entry
         }
         do {
             let rotated = try await client.rotateToken(sessionId: entry.sessionId, accessToken: entry.accessToken)
+            #if DEBUG
+            DiagnosticsLog.shared.record("Token rotated for session \(entry.sessionId), new expiry \(rotated.expiresAt)", category: .info)
+            #endif
             let updated = ScanHistoryEntry(
                 sessionId: entry.sessionId,
                 accessToken: rotated.accessToken,
@@ -252,6 +261,9 @@ struct ScanHistoryView: View {
             entries = ScanHistoryStore.shared.all()
             return updated
         } catch {
+            #if DEBUG
+            DiagnosticsLog.shared.record("Token rotation failed for session \(entry.sessionId): \(error.localizedDescription)", category: .error)
+            #endif
             return entry
         }
     }
