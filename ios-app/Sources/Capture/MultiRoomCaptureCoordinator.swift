@@ -136,9 +136,28 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
                     self.pendingPartialRoom = hasUsableGeometry ? room : nil
                     self.state = .failed(error.localizedDescription, partialRoomAvailable: hasUsableGeometry)
                 } else {
-                    self.capturedRooms.append(room)
-                    self.roomTypeConfirmations.append(self.roomTypeConfirmation)
-                    self.state = .roomFinished(roomAvailable: true)
+                    // Mark's original Sept 2 bug class (a degenerate/zero-
+                    // area floor outline) can reach here without RoomBuilder
+                    // throwing at all — confirmed against RoomBuilder.
+                    // BuildError's documented cases (insufficientInput,
+                    // invalidInput, exceedSceneSizeLimit, internalError,
+                    // deviceNotSupported): none of them mean "the floor
+                    // polygon it built is unusable," only "not enough/valid
+                    // input to build one." Reuses CapturedRoomExporter's own
+                    // shoelace-area check — the same one that already gates
+                    // a single-room upload — so one bad room is caught and
+                    // can be rescanned right here, instead of silently
+                    // riding along in capturedRooms and only surfacing after
+                    // the whole unit is merged and submit()'s own
+                    // hasUsableFloorOutline guard discards the entire
+                    // walkthrough over one bad room.
+                    if CapturedRoomExporter.export(room).hasUsableFloorOutline {
+                        self.capturedRooms.append(room)
+                        self.roomTypeConfirmations.append(self.roomTypeConfirmation)
+                        self.state = .roomFinished(roomAvailable: true)
+                    } else {
+                        self.state = .roomFinished(roomAvailable: false)
+                    }
                 }
             } catch {
                 self.state = .failed(error.localizedDescription, partialRoomAvailable: false)
