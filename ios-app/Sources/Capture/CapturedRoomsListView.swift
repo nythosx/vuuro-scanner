@@ -1,11 +1,7 @@
 import RoomPlan
 import SwiftUI
 
-// LIDAR retry/delete: shown mid-walkthrough from the "Rooms (N)" button so
-// the user can drop a room they're not happy with (Delete) or drop it and
-// walk back to redo it before finishing the unit (Retry). Both just remove
-// the room from the coordinator's committed list — capture itself stays
-// live underneath this sheet, same as the other overlays in this flow.
+// LIDAR retry/delete/add: shown mid-walkthrough from the "Rooms (N)" button.
 struct CapturedRoomsListView: View {
     @ObservedObject var coordinator: MultiRoomCaptureCoordinator
     @Environment(\.dismiss) private var dismiss
@@ -15,19 +11,31 @@ struct CapturedRoomsListView: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(Array(coordinator.capturedRooms.enumerated()), id: \.offset) { index, room in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(label(for: index))
-                            Text("\(room.walls.count) wall(s), \(room.floors.count) floor(s)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                Section {
+                    ForEach(Array(coordinator.capturedRooms.enumerated()), id: \.offset) { index, room in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(label(for: index))
+                                Text("\(room.walls.count) wall(s), \(room.floors.count) floor(s)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("Retry") { retryTargetIndex = index }
+                                .buttonStyle(.bordered)
+                            Button("Delete", role: .destructive) { pendingDeleteIndex = index }
+                                .buttonStyle(.bordered)
                         }
-                        Spacer()
-                        Button("Retry") { retryTargetIndex = index }
-                            .buttonStyle(.bordered)
-                        Button("Delete", role: .destructive) { pendingDeleteIndex = index }
-                            .buttonStyle(.bordered)
+                    }
+                }
+                Section {
+                    Button {
+                        #if DEBUG
+                        DiagnosticsLog.shared.record("Add room tapped from captured-rooms list (multi-room)", category: .info)
+                        #endif
+                        dismiss()
+                    } label: {
+                        Label("Scan Another Room", systemImage: "plus.circle")
                     }
                 }
             }
