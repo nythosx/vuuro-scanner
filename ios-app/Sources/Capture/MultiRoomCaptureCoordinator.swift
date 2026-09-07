@@ -42,8 +42,11 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         }
     }
 
-    private(set) var capturedRooms: [CapturedRoom] = []
-    private(set) var roomTypeConfirmations: [RoomTypeConfirmation?] = []
+    // @Published, not plain private(set): CapturedRoomsListView reads these
+    // directly and needs SwiftUI to refresh when removeCapturedRoom mutates
+    // them on their own, not just as a side effect of `state` changing.
+    @Published private(set) var capturedRooms: [CapturedRoom] = []
+    @Published private(set) var roomTypeConfirmations: [RoomTypeConfirmation?] = []
 
     var roomTypeConfirmationsByIdentifier: [UUID: RoomTypeConfirmation] {
         var result: [UUID: RoomTypeConfirmation] = [:]
@@ -127,6 +130,19 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
 
     func discardPendingPartialRoom() {
         pendingPartialRoom = nil
+    }
+
+    /// Removes an already-committed room (LIDAR retry/delete list). Used both
+    /// for a permanent delete and for "retry" (delete, then the user walks
+    /// back and scans a replacement — appended at the end, not reinserted at
+    /// this index, since capture order follows the physical walkthrough).
+    func removeCapturedRoom(at index: Int) {
+        guard capturedRooms.indices.contains(index) else { return }
+        capturedRooms.remove(at: index)
+        roomTypeConfirmations.remove(at: index)
+        #if DEBUG
+        DiagnosticsLog.shared.record("Captured room removed at index \(index) (multi-room)", category: .info)
+        #endif
     }
 
     func finishUnit() {

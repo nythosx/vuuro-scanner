@@ -16,6 +16,7 @@ struct MultiRoomCaptureFlowView: View {
     @State private var showFinishConfirmation = false
     @State private var pendingFinishUnit = false
     @State private var partialRoomFailureMessage: String?
+    @State private var showCapturedRoomsList = false
     // Shared by the scanning back-button and the merging-screen Cancel
     // button — both mean the same thing (leave the flow, lose every room
     // captured so far), unlike single-room's discard confirmation which
@@ -150,6 +151,10 @@ struct MultiRoomCaptureFlowView: View {
                                 }
                                 .buttonStyle(.borderedProminent)
                                 if !coordinator.capturedRooms.isEmpty {
+                                    Button("Rooms (\(coordinator.capturedRooms.count))") {
+                                        showCapturedRoomsList = true
+                                    }
+                                    .buttonStyle(.bordered)
                                     Button("Finish unit") {
                                         showFinishConfirmation = true
                                     }
@@ -188,6 +193,9 @@ struct MultiRoomCaptureFlowView: View {
             Button("Keep scanning", role: .cancel) {}
         } message: {
             Text("\(coordinator.capturedRooms.count) room(s) captured so far will be lost.")
+        }
+        .sheet(isPresented: $showCapturedRoomsList) {
+            CapturedRoomsListView(coordinator: coordinator)
         }
     }
 
