@@ -45,6 +45,13 @@ final class ScanHistoryStore {
         save(all().filter { $0.sessionId != sessionId })
     }
 
+    func updateNickname(sessionId: String, nickname: String?) {
+        var entries = all()
+        guard let index = entries.firstIndex(where: { $0.sessionId == sessionId }) else { return }
+        entries[index].nickname = nickname
+        save(entries)
+    }
+
     private func save(_ entries: [ScanHistoryEntry]) {
         guard let data = try? JSONEncoder().encode(entries) else { return }
         defaults.set(data, forKey: key)

@@ -335,6 +335,36 @@ try {
 $oneRoomPdf = $renderer->render(build_floor_plan([$fusedPlan['rooms'][0], $fusedPlan['rooms'][1]]), 'room-a');
 x_check('room_id narrows the PDF metrics table to that room\'s label only', str_contains($oneRoomPdf, 'Room A') && !str_contains($oneRoomPdf, 'Room B'));
 
+echo "\n== Unit-level total area on the PDF and PNG exports ==\n";
+$twoRoomPlan = build_floor_plan([
+    [...build_room_with_outline('Room A', $squareOutline, null), 'floor_area_m2' => 10.0],
+    [...build_room_with_outline('Room B', $squareOutline, null), 'floor_area_m2' => 15.5],
+]);
+$totalPdf = $renderer->render($twoRoomPlan);
+x_check('PDF prints the unit-level total across both rooms', str_contains($totalPdf, 'Total indicative area: 25.50 sqm across 2 room'));
+$totalPngTiled = $imageRenderer->render($twoRoomPlan);
+x_check('PNG (tiled path) renders without throwing now that a total-area line is drawn', str_contains($totalPngTiled, "\x89PNG"));
+
+echo "\n== Metric/imperial unit toggle ==\n";
+$imperialPdf = $renderer->render($twoRoomPlan, null, \VuuroScan\Export\UnitFormatter::IMPERIAL);
+x_check('imperial PDF converts the total area to sqft, not sqm', str_contains($imperialPdf, 'sqft') && !str_contains($imperialPdf, '25.50 sqm'));
+$metricPdf = $renderer->render($twoRoomPlan, null, \VuuroScan\Export\UnitFormatter::METRIC);
+x_check('metric (default) PDF still says sqm', str_contains($metricPdf, 'sqm'));
+$imperialPng = $imageRenderer->render($twoRoomPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::IMPERIAL);
+x_check('imperial PNG renders without throwing', str_contains($imperialPng, "\x89PNG"));
+x_check('imperial PNG produces different bytes than the metric render (unit text actually changed)', $imperialPng !== $totalPngTiled);
+
+echo "\n== Optional branding/label line on the export ==\n";
+$labeledPdf = $renderer->render($twoRoomPlan, null, \VuuroScan\Export\UnitFormatter::METRIC, 'Prepared for Acme Rentals');
+x_check('PDF includes the caller-supplied label line', str_contains($labeledPdf, 'Prepared for Acme Rentals'));
+$unlabeledPdf = $renderer->render($twoRoomPlan);
+x_check('PDF omits the label line entirely when none is given', !str_contains($unlabeledPdf, 'Prepared for'));
+$labeledPng = $imageRenderer->render($twoRoomPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, 'Prepared for Acme Rentals');
+x_check('PNG with a label renders without throwing and differs from the unlabeled render', str_contains($labeledPng, "\x89PNG") && $labeledPng !== $totalPngTiled);
+$labeledFusedPng = $imageRenderer->render($fusedPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, 'Prepared for Acme Rentals');
+$unlabeledFusedPng = $imageRenderer->render($fusedPlan);
+x_check('fused PNG with a label renders without throwing and differs from the unlabeled render', str_contains($labeledFusedPng, "\x89PNG") && $labeledFusedPng !== $unlabeledFusedPng);
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

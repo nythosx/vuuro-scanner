@@ -70,6 +70,12 @@ struct ScanServiceClient {
             return debugURL
         }
         #endif
+        if let plistValue = Bundle.main.object(forInfoDictionaryKey: "ScanServiceBaseURL") as? String,
+           !plistValue.isEmpty,
+           let plistURL = URL(string: plistValue),
+           plistURL.scheme != nil {
+            return plistURL
+        }
         return URL(string: "http://127.0.0.1:8089")!
     }()
     var session: URLSession = .shared
@@ -115,12 +121,39 @@ struct ScanServiceClient {
         try await get(path: "/scan-sessions/\(sessionId)", accessToken: accessToken)
     }
 
-    func fetchFloorPlanImage(sessionId: String, accessToken: String) async throws -> Data {
-        try await getData(path: "/scan-sessions/\(sessionId)/export/floorplan.png", accessToken: accessToken)
+    func fetchFloorPlanImage(sessionId: String, accessToken: String, unit: MeasurementUnit = .metric, label: String? = nil) async throws -> Data {
+        try await getData(path: "/scan-sessions/\(sessionId)/export/floorplan.png\(exportQuery(unit: unit, label: label))", accessToken: accessToken)
     }
 
-    func fetchFloorPlanPDF(sessionId: String, accessToken: String) async throws -> Data {
-        try await getData(path: "/scan-sessions/\(sessionId)/export/floorplan.pdf", accessToken: accessToken)
+    func fetchFloorPlanPDF(sessionId: String, accessToken: String, unit: MeasurementUnit = .metric, label: String? = nil) async throws -> Data {
+        try await getData(path: "/scan-sessions/\(sessionId)/export/floorplan.pdf\(exportQuery(unit: unit, label: label))", accessToken: accessToken)
+    }
+
+    private func exportQuery(unit: MeasurementUnit, label: String?) -> String {
+        var items = [URLQueryItem(name: "unit", value: unit.rawValue)]
+        if let label, !label.isEmpty {
+            items.append(URLQueryItem(name: "label", value: label))
+        }
+        var components = URLComponents()
+        components.queryItems = items
+        let query = (components.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B")
+        return "?" + query
+    }
+
+    func updateRoomType(sessionId: String, accessToken: String, roomId: String, roomType: String?) async throws -> FloorPlan {
+        struct Body: Encodable {
+            let roomType: String?
+
+            enum CodingKeys: String, CodingKey {
+                case roomType = "room_type"
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(roomType, forKey: .roomType)
+            }
+        }
+        return try await post(path: "/scan-sessions/\(sessionId)/rooms/\(roomId)/room-type", body: Body(roomType: roomType), accessToken: accessToken)
     }
 
     func fetchAccessLog(sessionId: String, accessToken: String) async throws -> AccessLogResponse {
@@ -178,8 +211,12 @@ struct ScanServiceClient {
         return try await post(path: "/scan-sessions/\(sessionId)/notes", body: Body(text: text, roomId: roomId), accessToken: accessToken)
     }
 
+    private func url(for path: String) -> URL {
+        URL(string: path, relativeTo: baseURL)?.absoluteURL ?? baseURL.appendingPathComponent(path)
+    }
+
     private func post<Body: Encodable, Response: Decodable>(path: String, body: Body, accessToken: String?) async throws -> Response {
-        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        var request = URLRequest(url: url(for: path))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let accessToken {
@@ -190,7 +227,7 @@ struct ScanServiceClient {
     }
 
     private func get<Response: Decodable>(path: String, accessToken: String?) async throws -> Response {
-        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        var request = URLRequest(url: url(for: path))
         if let accessToken {
             request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
         }
@@ -200,7 +237,7 @@ struct ScanServiceClient {
     /// Like `get`, but for the two export routes, which return image/png or
     /// application/pdf bytes rather than JSON — nothing here to decode.
     private func getData(path: String, accessToken: String) async throws -> Data {
-        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        var request = URLRequest(url: url(for: path))
         request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
 
         let data: Data

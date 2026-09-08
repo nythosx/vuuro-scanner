@@ -28,7 +28,7 @@ final class FloorPlanPdfRenderer
     private const MAX_PAGES = 200;
 
     /** @param string|null $roomId When set, the metrics table covers only that one room. */
-    public function render(array $floorPlan, ?string $roomId = null): string
+    public function render(array $floorPlan, ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null): string
     {
         if ($roomId !== null) {
             $rooms = array_values(array_filter($floorPlan['rooms'], static fn (array $room) => $room['room_id'] === $roomId));
@@ -37,7 +37,7 @@ final class FloorPlanPdfRenderer
             }
             $floorPlan = [...$floorPlan, 'rooms' => $rooms];
         }
-        $lines = $this->buildTextLines($floorPlan);
+        $lines = $this->buildTextLines($floorPlan, $unit, $label);
         $pages = $this->paginate($lines);
 
         if (count($pages) > self::MAX_PAGES) {
@@ -91,10 +91,13 @@ final class FloorPlanPdfRenderer
     }
 
     /** @return string[] */
-    private function buildTextLines(array $floorPlan): array
+    private function buildTextLines(array $floorPlan, string $unit = UnitFormatter::METRIC, ?string $label = null): array
     {
         $lines = [];
         $lines[] = 'Vuuro Scan — Floor Plan Metrics';
+        if ($label !== null && $label !== '') {
+            $lines[] = $label;
+        }
         $lines[] = '';
         $lines[] = sprintf('Property: %s   Unit: %s   Organisation: %s', $floorPlan['property_id'], $floorPlan['unit_id'], $floorPlan['organisation_id']);
         $lines[] = sprintf('Purpose: %s   Captured: %s   Provider: %s', $floorPlan['purpose'], $floorPlan['captured_at'], $floorPlan['capture_provider']);
@@ -120,20 +123,20 @@ final class FloorPlanPdfRenderer
             $roomType = $room['room_type'] ?? null;
             $roomTypeValue = $roomType !== null ? ($roomType['confirmed'] ?? $roomType['guess'] ?? null) : null;
             $roomTypeName = $roomTypeValue !== null ? (RoomType::LABELS[$roomTypeValue] ?? null) : null;
-            $label = $roomTypeName !== null ? "{$room['label']} ({$roomTypeName})" : $room['label'];
+            $roomLabel = $roomTypeName !== null ? "{$room['label']} ({$roomTypeName})" : $room['label'];
             $lines[] = sprintf(
-                '%-20s %8.2f m2   %8.2f m perimeter   confidence: %s',
-                $label,
-                $room['floor_area_m2'],
-                $room['perimeter_m'],
+                '%-20s %12s   %14s   confidence: %s',
+                $roomLabel,
+                UnitFormatter::area($room['floor_area_m2'], $unit),
+                UnitFormatter::length($room['perimeter_m'], $unit) . ' perimeter',
                 $room['confidence']
             );
             $heightM = $room['height_m'] ?? null;
             $volumeM3 = $room['volume_m3_indicative'] ?? null;
             if ($heightM !== null && $volumeM3 !== null) {
-                $lines[] = sprintf('             %8.2f m height   %8.2f m3 indicative capacity', $heightM, $volumeM3);
+                $lines[] = sprintf('             %s height   %s indicative capacity', UnitFormatter::length($heightM, $unit), UnitFormatter::volume($volumeM3, $unit));
             } elseif ($heightM !== null) {
-                $lines[] = sprintf('             %8.2f m height', $heightM);
+                $lines[] = sprintf('             %s height', UnitFormatter::length($heightM, $unit));
             }
             $openings = $room['openings'] ?? [];
             if ($openings !== []) {
@@ -150,7 +153,7 @@ final class FloorPlanPdfRenderer
             }
         }
         $lines[] = '';
-        $lines[] = sprintf('Total indicative area: %.2f m2 across %d room(s)', $totalArea, count($floorPlan['rooms']));
+        $lines[] = sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalArea, $unit), count($floorPlan['rooms']));
         $lines[] = '';
         $lines[] = sprintf('Photos attached: %d   Notes attached: %d', count($floorPlan['photos']), count($floorPlan['notes']));
 

@@ -66,6 +66,19 @@ same-tree, opt-in change instead of a second app to maintain.
    - `SCAN_SERVICE_BASE_URL` = `http://<your-mac-lan-ip>:8089`
    - Leave `FAKE_LIDAR_MODE` unset (or set it to `0`) — this is what forces the app
      down the real RoomPlan path instead of `FakeCaptureGenerator`'s synthetic data.
+
+   This env var only works for a Debug build run directly from Xcode
+   (`Sources/Debug/DebugScanServiceURL.swift`, compiled out of Release). Any build
+   that isn't launched through Xcode Run — TestFlight, an ad-hoc `.ipa`, an App Store
+   build — instead reads the `SCAN_SERVICE_BASE_URL` **build setting** in
+   `project.yml` (baked into Info.plist as `ScanServiceBaseURL` at build time). To
+   point one of those at a real server: override that build setting per
+   configuration (an `.xcconfig` file, a CI env var passed to `xcodebuild`, or an
+   Xcode Cloud environment variable), pointing at an HTTPS host — `NSAppTransportSecurity`
+   here only exempts local/private network ranges and loopback
+   (`NSAllowsLocalNetworking`), not arbitrary internet cleartext, so a real deployed
+   Scan Service needs TLS or its own ATS exception added first. Until one of those is
+   set, every build defaults to `http://127.0.0.1:8089`, same as today.
 7. Build and run on the device. If prompted, trust the developer certificate on the
    device itself (Settings -> General -> VPN & Device Management).
 8. Walk through the real flow on the device: identity/consent intake -> guided RoomPlan

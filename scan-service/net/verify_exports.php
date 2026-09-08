@@ -221,6 +221,36 @@ if ($unicodeSessionId === null || $unicodeSessionToken === null) {
     check('PDF still ends with %%EOF', str_ends_with(rtrim($unicodePdfBytes), '%%EOF'));
 }
 
+echo "\n== Export unit toggle and optional label, over real HTTP ==\n";
+[$imperialPdfStatus, , $imperialPdfBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.pdf?unit=imperial", null, $accessToken);
+check('imperial PDF export returns HTTP 200', $imperialPdfStatus === 200, "got HTTP $imperialPdfStatus");
+check('imperial PDF export uses sqft, not sqm', str_contains($imperialPdfBytes, 'sqft') && !str_contains($imperialPdfBytes, 'sqm'));
+
+[$invalidUnitStatus, $invalidUnitBody] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png?unit=bogus", null, $accessToken);
+check('an invalid ?unit= value is rejected with 422', $invalidUnitStatus === 422 && ($invalidUnitBody['error'] ?? null) === 'invalid_unit', "got HTTP $invalidUnitStatus: " . json_encode($invalidUnitBody));
+
+[$plusLabelStatus, , $plusLabelPdfBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.pdf?label=Unit%203%2B1", null, $accessToken);
+check('a %2B-escaped literal plus in ?label= survives as a real plus, not a space', $plusLabelStatus === 200 && str_contains($plusLabelPdfBytes, 'Unit 3+1'), 'label text was mangled');
+
+echo "\n== Room type correction (set/clear/reject) over real HTTP ==\n";
+$roomTypeRoomId = $floorPlan['rooms'][0]['room_id'] ?? null;
+[$setStatus, $setBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms/$roomTypeRoomId/room-type", ['room_type' => 'kitchen'], $accessToken);
+check('setting a valid room_type returns 200', $setStatus === 200, "got HTTP $setStatus");
+$settedRoom = array_values(array_filter($setBody['rooms'] ?? [], static fn (array $r) => $r['room_id'] === $roomTypeRoomId))[0] ?? null;
+check('the room now carries the confirmed type', ($settedRoom['room_type']['confirmed'] ?? null) === 'kitchen');
+
+[$clearStatus, $clearBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms/$roomTypeRoomId/room-type", ['room_type' => null], $accessToken);
+check('clearing a room_type (explicit null) returns 200, not a 422', $clearStatus === 200, "got HTTP $clearStatus");
+
+[$missingKeyStatus, $missingKeyBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms/$roomTypeRoomId/room-type", [], $accessToken);
+check('an absent room_type key is rejected as missing_required_fields', $missingKeyStatus === 422 && ($missingKeyBody['error'] ?? null) === 'missing_required_fields', "got HTTP $missingKeyStatus: " . json_encode($missingKeyBody));
+
+[$falseStatus, $falseBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms/$roomTypeRoomId/room-type", ['room_type' => false], $accessToken);
+check('room_type: false (present, wrong type) is rejected as invalid_room_type, not confused with a missing key', $falseStatus === 422 && ($falseBody['error'] ?? null) === 'invalid_room_type', "got HTTP $falseStatus: " . json_encode($falseBody));
+
+[$unknownRoomStatus, $unknownRoomBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms/no-such-room/room-type", ['room_type' => 'bedroom'], $accessToken);
+check('an unknown room_id is rejected as unknown_room_id', $unknownRoomStatus === 422 && ($unknownRoomBody['error'] ?? null) === 'unknown_room_id', "got HTTP $unknownRoomStatus: " . json_encode($unknownRoomBody));
+
 echo "\n== Adversarial: exports before any capture must not silently return an empty/broken file ==\n";
 [, $emptySession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-exports-empty',

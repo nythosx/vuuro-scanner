@@ -42,8 +42,32 @@ struct ScanHistoryView: View {
     @State private var errorMessage: String?
     @State private var pendingDeleteEntry: ScanHistoryEntry?
     @State private var pendingServerDeleteEntry: ScanHistoryEntry?
+    @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
+    @FocusState private var focusedNicknameSessionId: String?
 
     @Environment(\.dismiss) private var dismiss
+
+    private var exportUnit: MeasurementUnit {
+        MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
+    }
+
+    private func nicknameBinding(for entry: ScanHistoryEntry) -> Binding<String> {
+        Binding(
+            get: { entry.nickname ?? "" },
+            set: { newValue in
+                guard let index = entries.firstIndex(where: { $0.sessionId == entry.sessionId }) else { return }
+                entries[index].nickname = newValue.isEmpty ? nil : newValue
+            }
+        )
+    }
+
+    private func commitNickname(sessionId: String) {
+        guard let index = entries.firstIndex(where: { $0.sessionId == sessionId }) else { return }
+        let trimmed = entries[index].nickname?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stored = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        entries[index].nickname = stored
+        ScanHistoryStore.shared.updateNickname(sessionId: sessionId, nickname: stored)
+    }
 
     private let client = ScanServiceClient()
 
@@ -54,10 +78,22 @@ struct ScanHistoryView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Export unit") {
+                Picker("Measurement unit", selection: $exportUnitRaw) {
+                    ForEach(MeasurementUnit.allCases) { unit in
+                        Text(unit.displayName).tag(unit.rawValue)
+                    }
+                }
+            }
+
             ForEach(entries) { entry in
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("\(entry.propertyId) — \(entry.unitId)").font(.headline)
+                        Text(entry.nickname?.isEmpty == false ? entry.nickname! : "\(entry.propertyId) — \(entry.unitId)").font(.headline)
+                        TextField("Label this scan (optional)", text: nicknameBinding(for: entry))
+                            .font(.caption)
+                            .focused($focusedNicknameSessionId, equals: entry.sessionId)
+                            .onSubmit { commitNickname(sessionId: entry.sessionId) }
                         Text(entry.purpose.displayName)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -182,7 +218,17 @@ struct ScanHistoryView: View {
         }
         .navigationTitle("Scan history")
         .onAppear { entries = ScanHistoryStore.shared.all() }
-        .onDisappear { cleanUpTempFiles() }
+        .onDisappear {
+            if let focusedNicknameSessionId {
+                commitNickname(sessionId: focusedNicknameSessionId)
+            }
+            cleanUpTempFiles()
+        }
+        .onChange(of: focusedNicknameSessionId) { oldValue, _ in
+            if let oldValue {
+                commitNickname(sessionId: oldValue)
+            }
+        }
         .alert("Forget this scan?", isPresented: Binding(
             get: { pendingDeleteEntry != nil },
             set: { if !$0 { pendingDeleteEntry = nil } }
@@ -255,7 +301,8 @@ struct ScanHistoryView: View {
                 organisationId: entry.organisationId,
                 purpose: entry.purpose,
                 createdAt: entry.createdAt,
-                expiresAt: rotated.expiresAt
+                expiresAt: rotated.expiresAt,
+                nickname: entry.nickname
             )
             ScanHistoryStore.shared.add(updated)
             entries = ScanHistoryStore.shared.all()
@@ -332,7 +379,7 @@ struct ScanHistoryView: View {
     @MainActor
     private func downloadImage(for entry: ScanHistoryEntry) async {
         do {
-            let data = try await client.fetchFloorPlanImage(sessionId: entry.sessionId, accessToken: entry.accessToken)
+            let data = try await client.fetchFloorPlanImage(sessionId: entry.sessionId, accessToken: entry.accessToken, unit: exportUnit, label: entry.nickname)
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(entry.sessionId).png")
             try data.write(to: url)
             perEntryImageURLs[entry.sessionId] = url
@@ -345,7 +392,7 @@ struct ScanHistoryView: View {
     @MainActor
     private func downloadPDF(for entry: ScanHistoryEntry) async {
         do {
-            let data = try await client.fetchFloorPlanPDF(sessionId: entry.sessionId, accessToken: entry.accessToken)
+            let data = try await client.fetchFloorPlanPDF(sessionId: entry.sessionId, accessToken: entry.accessToken, unit: exportUnit, label: entry.nickname)
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(entry.sessionId).pdf")
             try data.write(to: url)
             perEntryPDFURLs[entry.sessionId] = url
@@ -363,7 +410,7 @@ struct ScanHistoryView: View {
         var skipped = 0
         for entry in entries {
             do {
-                let data = try await client.fetchFloorPlanImage(sessionId: entry.sessionId, accessToken: entry.accessToken)
+                let data = try await client.fetchFloorPlanImage(sessionId: entry.sessionId, accessToken: entry.accessToken, unit: exportUnit, label: entry.nickname)
                 let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(entry.sessionId).png")
                 try data.write(to: url)
                 urls.append(url)
@@ -387,7 +434,7 @@ struct ScanHistoryView: View {
         var skipped = 0
         for entry in entries {
             do {
-                let data = try await client.fetchFloorPlanPDF(sessionId: entry.sessionId, accessToken: entry.accessToken)
+                let data = try await client.fetchFloorPlanPDF(sessionId: entry.sessionId, accessToken: entry.accessToken, unit: exportUnit, label: entry.nickname)
                 let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(entry.sessionId).pdf")
                 try data.write(to: url)
                 urls.append(url)

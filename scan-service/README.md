@@ -59,8 +59,9 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
 | POST | `/scan-sessions/{id}/photo-uploads` | Upload real image bytes (multipart), content-sniffed via `finfo`, stored under `data/photos/{session_id}/`. Returns a `url` to pass into `/photos`. |
 | GET | `/scan-sessions/{id}/photo-uploads/{filename}` | Fetch a previously uploaded photo. |
 | POST | `/scan-sessions/{id}/notes` | Attach a text note, with optional room id. |
-| GET | `/scan-sessions/{id}/export/floorplan.png` | Fused single-layout PNG when every room in the session carries `structure_origin_m` (see `docs/adr/0002-export-coordinate-frame.md`); per-room tiles otherwise, or always with `?layout=tiles`. `?room_id=<id>` isolates one room's own tile. |
-| GET | `/scan-sessions/{id}/export/floorplan.pdf` | Per-room metrics-table PDF, all rooms unless narrowed with `?room_id=<id>`. |
+| POST | `/scan-sessions/{id}/rooms/{room_id}/room-type` | Set or clear a room's `room_type.confirmed` after capture — body `{"room_type": "kitchen"}` or `{"room_type": null}` to clear. Independent of the live ✓/✗ capture-time prompt; works even on a room that never had a guess. |
+| GET | `/scan-sessions/{id}/export/floorplan.png` | Fused single-layout PNG when every room in the session carries `structure_origin_m` (see `docs/adr/0002-export-coordinate-frame.md`); per-room tiles otherwise, or always with `?layout=tiles`. `?room_id=<id>` isolates one room's own tile. `?unit=metric\|imperial` (default `metric`) controls displayed measurement units. `?label=<text>` (120 chars max) adds an optional branding/caption line. |
+| GET | `/scan-sessions/{id}/export/floorplan.pdf` | Per-room metrics-table PDF, all rooms unless narrowed with `?room_id=<id>`. Same `?unit=` and `?label=` params as the PNG export above. |
 | GET | `/scan-sessions/{id}/access-log` | This session's `action`/`outcome`/`occurred_at` audit trail — never the token or caller IP. |
 | GET | `/scan-sessions/{id}` | Fetch the current `FloorPlan` state for the session. |
 

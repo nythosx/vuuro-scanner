@@ -162,12 +162,12 @@
           },
           "room_type": {
             "type": ["object", "null"],
-            "description": "A guess at what kind of room this is, live-classified on-device during capture. Primary source is RoomPlan's own CapturedRoom.Section.label (iOS 17+); falls back to a simple fixture heuristic (a toilet means a bathroom, ...) only when RoomPlan reported no sections. Never certified — confirmed only reflects what the on-screen ✓/✗ prompt during capture resolved to, not a verified fact. Null when the on/off toggle was off or neither source produced a guess.",
-            "required": ["guess", "guess_source", "confirmed"],
+            "description": "A guess at what kind of room this is, live-classified on-device during capture. Primary source is RoomPlan's own CapturedRoom.Section.label (iOS 17+); falls back to a simple fixture heuristic (a toilet means a bathroom, ...) only when RoomPlan reported no sections. Never certified. Null when the on/off toggle was off or neither source produced a guess AND the room type has never been set manually either — guess/guess_source are omitted (not present, not null) rather than fabricated when confirmed was set through POST .../room-type on a room with no live guess.",
+            "required": ["confirmed"],
             "properties": {
               "guess": { "type": "string", "enum": ["living_room", "bedroom", "bathroom", "kitchen", "dining_room"] },
               "guess_source": { "type": "string", "enum": ["roomplan_section", "object_heuristic"] },
-              "confirmed": { "type": ["string", "null"], "enum": ["living_room", "bedroom", "bathroom", "kitchen", "dining_room", "other", null], "description": "What the live ✓/✗ prompt resolved to — the guess itself if ✓, a picked correction if ✗, or null if dismissed/timed out unanswered." }
+              "confirmed": { "type": ["string", "null"], "enum": ["living_room", "bedroom", "bathroom", "kitchen", "dining_room", "other", null], "description": "The room's actual type as far as a human has said so: the live ✓/✗ prompt during capture, or a later correction via POST .../rooms/{room_id}/room-type. Null if dismissed/timed out unanswered, or explicitly cleared." }
             }
           },
           "coverage": {

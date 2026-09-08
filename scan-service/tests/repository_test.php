@@ -327,6 +327,54 @@ $withNullRoomId = $repo->appendNote($roomIdSession['id'], ['note_id' => 'n3', 't
 r_check('appendNote() still accepts room_id: null (session-wide note) — this fix must not make room_id required', count($withNullRoomId['notes']) === 2);
 echo "\n";
 
+echo "== updateRoomType(): post-capture room-type correction ==\n";
+$afterCorrection = $repo->updateRoomType($roomIdSession['id'], 'room-real-1', 'kitchen');
+r_check('updateRoomType() sets confirmed on the matching room', $afterCorrection['rooms'][0]['room_type']['confirmed'] === 'kitchen');
+
+$afterClear = $repo->updateRoomType($roomIdSession['id'], 'room-real-1', null);
+r_check('updateRoomType() can clear a previously-set confirmation back to null', $afterClear['rooms'][0]['room_type']['confirmed'] === null);
+
+try {
+    $repo->updateRoomType($roomIdSession['id'], 'room-does-not-exist', 'bedroom');
+    r_check('updateRoomType() rejects a room_id that matches no real room', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    r_check('updateRoomType() rejects a room_id that matches no real room', true);
+}
+
+$noFloorPlanSession = fresh_session($repo);
+try {
+    $repo->updateRoomType($noFloorPlanSession['id'], 'any-room', 'bedroom');
+    r_check('updateRoomType() rejects a session with no captured FloorPlan yet', false, 'no exception was thrown');
+} catch (\RuntimeException) {
+    r_check('updateRoomType() rejects a session with no captured FloorPlan yet', true);
+}
+
+$noGuessSession = fresh_session($repo);
+$repo->appendCapture($noGuessSession['id'], [
+    'scan_session_id' => $noGuessSession['id'],
+    'property_id' => 'p', 'unit_id' => 'u', 'organisation_id' => 'o',
+    'capture_provider' => 'test', 'captured_at' => gmdate('c'),
+    'measurement_basis' => 'indicative_nen2580_inspired', 'purpose' => 'listing',
+    'rooms' => [[
+        'room_id' => 'room-no-guess', 'label' => 'Room 1', 'floor_area_m2' => 10.0,
+        'perimeter_m' => 12.0, 'bounding_dimensions_m' => ['width_m' => 3, 'length_m' => 3],
+        'confidence' => 'high', 'outline_m' => [[0, 0], [3, 0], [3, 3], [0, 3]],
+        'coverage' => ['score' => 90, 'confidence_counts' => ['high' => 1, 'medium' => 0, 'low' => 0], 'usable' => true, 'message' => null],
+    ]],
+    'photos' => [], 'notes' => [],
+]);
+$afterNoGuessConfirm = $repo->updateRoomType($noGuessSession['id'], 'room-no-guess', 'kitchen');
+r_check(
+    'updateRoomType() on a room with no prior guess does not fabricate guess/guess_source as JSON null',
+    !array_key_exists('guess', $afterNoGuessConfirm['rooms'][0]['room_type'])
+        && !array_key_exists('guess_source', $afterNoGuessConfirm['rooms'][0]['room_type'])
+);
+r_check(
+    'that same call still sets confirmed correctly',
+    $afterNoGuessConfirm['rooms'][0]['room_type']['confirmed'] === 'kitchen'
+);
+echo "\n";
+
 echo "== capture_location: session-wide, set once, never nulled back out ==\n";
 function build_capture_for_location(string $sessionId, ?array $location): array
 {

@@ -21,6 +21,7 @@ struct VuuroScanApp: App {
             NavigationStack {
                 ScanFlowView()
             }
+            .tint(VuuroColor.primary)
         }
     }
 }
@@ -681,8 +682,11 @@ struct AttachmentsScreen: View {
     @State private var selectedRoomId: String?
     @State private var showCamera = false
     @State private var batchUploadMessage: String?
+    @State private var isUpdatingRoomType: Set<String> = []
 
     private let client = ScanServiceClient()
+
+    private static let roomTypeOptions = RoomTypeClassifier.allTypes + ["other"]
 
     init(session: ScanSessionResponse, floorPlan: FloorPlan, onDone: @escaping (FloorPlan) -> Void) {
         self.session = session
@@ -699,6 +703,28 @@ struct AttachmentsScreen: View {
                         Text("Whole unit").tag(String?.none)
                         ForEach(current.rooms, id: \.roomId) { room in
                             Text(room.label).tag(String?.some(room.roomId))
+                        }
+                    }
+                }
+            }
+
+            Section("Room type") {
+                ForEach(current.rooms, id: \.roomId) { room in
+                    VStack(alignment: .leading) {
+                        Picker(room.label, selection: Binding(
+                            get: { room.roomType?.confirmed },
+                            set: { newValue in Task { await updateRoomType(roomId: room.roomId, to: newValue) } }
+                        )) {
+                            Text("Unset").tag(String?.none)
+                            ForEach(Self.roomTypeOptions, id: \.self) { type in
+                                Text(RoomTypeClassifier.displayName(for: type)).tag(String?.some(type))
+                            }
+                        }
+                        .disabled(isUpdatingRoomType.contains(room.roomId))
+                        if room.roomType?.confirmed == nil, let guess = room.roomType?.guess {
+                            Text("Auto-detected: \(RoomTypeClassifier.displayName(for: guess))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -781,6 +807,18 @@ struct AttachmentsScreen: View {
             }
         }
         .navigationTitle("Notes & photos")
+    }
+
+    @MainActor
+    private func updateRoomType(roomId: String, to newValue: String?) async {
+        isUpdatingRoomType.insert(roomId)
+        defer { isUpdatingRoomType.remove(roomId) }
+        do {
+            current = try await client.updateRoomType(sessionId: session.id, accessToken: session.accessToken, roomId: roomId, roomType: newValue)
+            appError = nil
+        } catch {
+            appError = AppError(site: .roomTypeUpdate, underlying: error)
+        }
     }
 
     @MainActor

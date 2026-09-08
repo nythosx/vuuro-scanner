@@ -54,6 +54,7 @@ struct AppError {
         case photoUpload = "PHOTO_UPLOAD"
         case photoTooLarge = "PHOTO_TOO_LARGE"
         case noteAdd = "NOTE_ADD"
+        case roomTypeUpdate = "ROOM_TYPE_UPDATE"
         case resultImageLoad = "RESULT_IMAGE_LOAD"
         case resultImageDecode = "RESULT_IMAGE_DECODE"
         case resultPDFLoad = "RESULT_PDF_LOAD"

@@ -146,8 +146,8 @@ struct FloorPlan: Codable {
     }
 
     struct RoomType: Codable {
-        let guess: String
-        let guessSource: String
+        let guess: String?
+        let guessSource: String?
         let confirmed: String?
 
         enum CodingKeys: String, CodingKey {

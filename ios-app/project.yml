@@ -35,6 +35,7 @@ targets:
         # with INFOPLIST_PREPROCESS/#ifdef instead of this declarative block.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        ScanServiceBaseURL: $(SCAN_SERVICE_BASE_URL)
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -44,6 +45,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vuuro.scan
         TARGETED_DEVICE_FAMILY: "1,2"
+        SCAN_SERVICE_BASE_URL: http://127.0.0.1:8089
         # Manual, not Automatic: automatic signing needs a logged-in Apple ID
         # session inside Xcode to resolve/create a provisioning profile, which
         # a fresh GitHub Actions runner never has. .github/workflows/ios-build.yml's

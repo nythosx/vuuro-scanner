@@ -24,6 +24,7 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
     let purpose: ScanPurpose
     let createdAt: Date
     let expiresAt: String?
+    var nickname: String? = nil
 
     var id: String { sessionId }
 

@@ -895,6 +895,43 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, 
     return;
 }
 
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)/room-type$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'update_room_type');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+    $roomId = $m[2];
+
+    if (rateLimited($repo, $sessionId . ':update_room_type', 60, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    if (!array_key_exists('room_type', $body)) {
+        respondError(422, 'missing_required_fields', "Please include a 'room_type' field (or null to clear it).", ['fields' => ['room_type']]);
+        return;
+    }
+    $confirmed = $body['room_type'];
+    if ($confirmed !== null && (!is_string($confirmed) || !in_array($confirmed, \VuuroScan\RoomType::CONFIRMED_VALUES, true))) {
+        respondError(422, 'invalid_room_type', 'room_type must be one of the known values, or null to clear it.', ['allowed' => \VuuroScan\RoomType::CONFIRMED_VALUES]);
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->updateRoomType($sessionId, $roomId, $confirmed);
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unknown_room_id', $e->getMessage());
+        return;
+    }
+
+    respond(200, $floorPlan);
+    return;
+}
+
 if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.png$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'export_png');
     if ($session === null) {
@@ -920,9 +957,19 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         return;
     }
     $roomId = isset($_GET['room_id']) ? (string) $_GET['room_id'] : null;
+    $unit = $_GET['unit'] ?? \VuuroScan\Export\UnitFormatter::METRIC;
+    if (!in_array($unit, \VuuroScan\Export\UnitFormatter::VALID, true)) {
+        respondError(422, 'invalid_unit', "'unit' must be 'metric' or 'imperial' if given.");
+        return;
+    }
+    $label = isset($_GET['label']) ? trim((string) $_GET['label']) : null;
+    if ($label !== null && mb_strlen($label, 'UTF-8') > 120) {
+        respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
+        return;
+    }
 
     try {
-        $png = (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId);
+        $png = (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;
@@ -951,9 +998,19 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     }
 
     $roomId = isset($_GET['room_id']) ? (string) $_GET['room_id'] : null;
+    $unit = $_GET['unit'] ?? \VuuroScan\Export\UnitFormatter::METRIC;
+    if (!in_array($unit, \VuuroScan\Export\UnitFormatter::VALID, true)) {
+        respondError(422, 'invalid_unit', "'unit' must be 'metric' or 'imperial' if given.");
+        return;
+    }
+    $label = isset($_GET['label']) ? trim((string) $_GET['label']) : null;
+    if ($label !== null && mb_strlen($label, 'UTF-8') > 120) {
+        respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
+        return;
+    }
 
     try {
-        $pdf = (new FloorPlanPdfRenderer())->render($floorPlan, $roomId);
+        $pdf = (new FloorPlanPdfRenderer())->render($floorPlan, $roomId, $unit, $label);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;
