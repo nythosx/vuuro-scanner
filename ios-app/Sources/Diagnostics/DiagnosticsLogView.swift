@@ -1,15 +1,4 @@
-//
-//  DiagnosticsLogView.swift
-//  VuuroScan
-//
-//  Toggled from the floating button in ScanFlowView. Shows DiagnosticsLog's
-//  entries newest-first and exports them as a plain-text file through the
-//  standard share sheet — same "one-tap copy details, exactly as generated,
-//  no retyping it by hand" principle as ErrorCodeView, extended from one
-//  error to the whole session's activity.
-//
-//  #if DEBUG on the whole file — see DiagnosticsLog.swift's header for why.
-//
+
 
 #if DEBUG
 import SwiftUI
@@ -48,18 +37,7 @@ struct DiagnosticsLogView: View {
                     }
                 }
             }
-            // Same lesson as every other export in this app (ResultSummaryView,
-            // ScanHistoryView): the tmp file this writes doesn't get cleared by
-            // iOS on any predictable schedule, so it's cleaned up on dismiss.
-            //
-            // Real bug caught in review: this used to only write the file on
-            // the first "Export" tap, then cache that URL for the sheet's
-            // whole lifetime — a .sheet doesn't pause in-flight Tasks, so
-            // tapping Export right as e.g. a capture error lands could export
-            // (and then share) a snapshot missing the very thing that made
-            // someone open this screen. Refreshing on every entries change,
-            // not just once, is what actually keeps "the lead-up to a
-            // failure" true.
+
             .onAppear { refreshExport() }
             .onChange(of: log.entries.count) { _, _ in refreshExport() }
             .onDisappear { cleanUpExport() }

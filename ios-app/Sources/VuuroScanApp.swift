@@ -1,14 +1,3 @@
-//
-//  VuuroScanApp.swift
-//  VuuroScan
-//
-//  Real-device confirmed for the core flow through Mark's 2026-09-01 test
-//  (feature/vuuro-scan @ a3c6284): identity intake, RoomCaptureScreen with
-//  live AR wireframe/coaching, and the error screen all ran for real. The
-//  Done/Stop button, Cancel button, and partial-capture recovery in this
-//  file were added after that test and are compiled-via-CI only so far —
-//  not yet run on real hardware, see Models/ScanIdentity.swift header for
-//  what that distinction means generally.
 import PhotosUI
 import RoomPlan
 import SwiftUI
@@ -16,6 +5,10 @@ import UIKit
 
 @main
 struct VuuroScanApp: App {
+    init() {
+        KeychainTokenStore.resetIfReinstalled()
+    }
+
     var body: some Scene {
         WindowGroup {
             NavigationStack {
@@ -29,36 +22,26 @@ struct VuuroScanApp: App {
 struct ScanFlowView: View {
     private enum Stage {
         case intake
+        case resumingUpload(PendingUploadState)
         case capturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
         case multiRoomCapturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
         case attachments(session: ScanSessionResponse, floorPlan: FloorPlan)
         case summary(session: ScanSessionResponse, floorPlan: FloorPlan)
-        // Carries identity/existingSession, not just the error, so "Try
-        // again" can resume the same multi-room session instead of resetting
-        // to blank intake. Real gap this closes: Mark's actual test was a
-        // 2-room session (attic, then bathroom) — without this, a room 2
-        // failure would silently orphan room 1's already-created session
-        // instead of letting him retry room 2 into it.
         case error(AppError, identity: ScanIdentity, existingSession: ScanSessionResponse?)
         case multiRoomError(AppError, identity: ScanIdentity, existingSession: ScanSessionResponse?)
     }
 
-    @State private var stage: Stage = .intake
+    @State private var stage: Stage
+
+    init() {
+        if let pending = PendingUploadStore.load() {
+            _stage = State(initialValue: .resumingUpload(pending))
+        } else {
+            _stage = State(initialValue: .intake)
+        }
+    }
     #if DEBUG
     @State private var showDiagnostics = false
-
-    // Whether presenting a full-screen .sheet over an active RoomCaptureView/
-    // ARSession is actually safe (does iOS pause/interrupt ARKit tracking
-    // when its hosting view stops being frontmost?) is genuinely unverified
-    // here — no Xcode/device to check it against, same category as every
-    // other "unverified against real SDK behavior" note in this codebase.
-    // Hiding the button for the whole capturing stage, not just while
-    // coordinator.state == .scanning specifically, is the conservative
-    // choice until that's confirmed: this tool exists to help diagnose
-    // problems, it should not risk causing the exact class of problem
-    // (a world-tracking failure) it was built to help diagnose. The log
-    // itself keeps recording underneath regardless — only viewing/exporting
-    // it is paused, not capturing it.
     private var isCapturingStage: Bool {
         if case .capturing = stage { return true }
         if case .multiRoomCapturing = stage { return true }
@@ -100,6 +83,12 @@ struct ScanFlowView: View {
     private var content: some View {
         Group {
             switch stage {
+            case .resumingUpload(let pending):
+                PendingUploadRecoveryView(state: pending) { session, floorPlan in
+                    stage = .attachments(session: session, floorPlan: floorPlan)
+                } onDiscarded: {
+                    stage = .intake
+                }
             case .intake:
                 IdentityIntakeScreen(onStart: { identity in
                     stage = .capturing(identity: identity, session: nil, attempt: UUID())
@@ -109,11 +98,6 @@ struct ScanFlowView: View {
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
                         NavigationLink("History") {
-                            // LIDAR-4: the actual recovery path for "landlord
-                            // left mid multi-room unit and came back" — see
-                            // ScanHistoryEntry.asResumableSession()/
-                            // asResumableIdentity() for why reconstructing
-                            // these two values here is safe.
                             ScanHistoryView(onResumeToAddRoom: { entry in
                                 stage = .capturing(
                                     identity: entry.asResumableIdentity(),
@@ -136,18 +120,10 @@ struct ScanFlowView: View {
                 } onError: { appError, sessionToResume in
                     stage = .error(appError, identity: identity, existingSession: sessionToResume)
                 } onGoBack: {
+                    PendingUploadStore.clear()
                     stage = .intake
                 } onDiscardRoom: {
-                    // Real bug fixed here: this used to always call onGoBack,
-                    // which resets straight to .intake — for room 2+ of a
-                    // multi-room unit, that wiped identity AND session,
-                    // silently orphaning every already-uploaded room (no
-                    // idempotency key on POST /scan-sessions to catch the
-                    // duplicate a retry would then create). Discarding THIS
-                    // room's in-progress capture should only ever cost this
-                    // room, matching what the confirmation alert promises —
-                    // so with an existing session, resume a fresh attempt
-                    // against it instead of leaving the flow entirely.
+                    PendingUploadStore.clear()
                     if let session {
                         stage = .capturing(identity: identity, session: session, attempt: UUID())
                     } else {
@@ -161,6 +137,7 @@ struct ScanFlowView: View {
                 } onError: { appError, sessionToResume in
                     stage = .multiRoomError(appError, identity: identity, existingSession: sessionToResume)
                 } onGoBack: {
+                    PendingUploadStore.clear()
                     stage = .intake
                 }
                 .id(attempt)
@@ -174,11 +151,19 @@ struct ScanFlowView: View {
                 }
             case .error(let appError, let identity, let existingSession):
                 ErrorView(error: appError) {
-                    stage = .capturing(identity: identity, session: existingSession, attempt: UUID())
+                    if let pending = PendingUploadStore.load() {
+                        stage = .resumingUpload(pending)
+                    } else {
+                        stage = .capturing(identity: identity, session: existingSession, attempt: UUID())
+                    }
                 }
             case .multiRoomError(let appError, let identity, let existingSession):
                 ErrorView(error: appError) {
-                    stage = .multiRoomCapturing(identity: identity, session: existingSession, attempt: UUID())
+                    if let pending = PendingUploadStore.load() {
+                        stage = .resumingUpload(pending)
+                    } else {
+                        stage = .multiRoomCapturing(identity: identity, session: existingSession, attempt: UUID())
+                    }
                 }
             }
         }
@@ -189,21 +174,8 @@ private struct RoomCaptureFlowStep: View {
     let identity: ScanIdentity
     let existingSession: ScanSessionResponse?
     let onRoomCaptured: (ScanSessionResponse, FloorPlan, _ addAnotherRoom: Bool) -> Void
-    // The second parameter is the session to resume with on retry, not
-    // necessarily existingSession: if submit() gets far enough to create a
-    // new session before failing (createSession succeeds, uploadCapture then
-    // fails on a network blip), retrying with existingSession (still nil at
-    // that point) would silently create a second orphaned session server-
-    // side instead of reusing the one that already exists. Real gap — POST
-    // /scan-sessions has no idempotency key the way /capture does, so
-    // nothing on the server catches this either.
     let onError: (AppError, ScanSessionResponse?) -> Void
     let onGoBack: () -> Void
-    // Separate from onGoBack on purpose: onGoBack means "leave the flow
-    // entirely" (only ever correct when nothing has been created server-side
-    // yet). Discarding a mid-scan room needs its own callback so the parent
-    // can resume with existingSession instead, rather than conflating "exit"
-    // and "abandon this one room" into the same action.
     let onDiscardRoom: () -> Void
 
     @StateObject private var coordinator = CaptureCoordinator()
@@ -213,24 +185,8 @@ private struct RoomCaptureFlowStep: View {
     @State private var partialCaptureFailureMessage: String?
     @State private var isUploadingPartialCapture = false
     @State private var showDiscardConfirmation = false
-    // Mark's 2026-09-02 ask (b): caught locally, before ever reaching the
-    // server — RoomBuilder produced a room, but its floor outline is
-    // degenerate (see CapturedRoomExporter.hasUsableFloorOutline). Nothing
-    // to upload here; only a rescan can fix it, so there's no export value
-    // worth holding onto.
     @State private var isDegenerateCapture = false
-    // Mark's 2026-09-02 ask (c): a rejected upload (network blip or a
-    // server-side validation reject) used to route straight to onError,
-    // which always started a brand new capture attempt — throwing away
-    // geometry that was already captured even when only the upload itself
-    // needed retrying. Keeping it here instead lets "Retry upload" resubmit
-    // the exact same export with no rescan required.
-    @State private var uploadRejection: (error: AppError, export: RoomPlanCaptureExport, session: ScanSessionResponse)?
-    // Same reasoning as isUploadingPartialCapture: a dedicated top-level flag,
-    // not a reuse of isUploading, because isUploading is only checked *inside*
-    // the bare-capture ZStack branch below — clearing uploadRejection without
-    // this would fall through to that branch, remounting it and re-firing its
-    // .onAppear { coordinator.start() } on an already-ended RoomCaptureSession.
+    @State private var uploadRejection: (error: AppError, export: RoomPlanCaptureExport, session: ScanSessionResponse, idempotencyKey: String, bodyJSON: Data)?
     @State private var isRetryingUpload = false
     @State private var capturedLocation: CaptureLocation?
     @Environment(\.scenePhase) private var scenePhase
@@ -249,52 +205,24 @@ private struct RoomCaptureFlowStep: View {
     var body: some View {
         Group {
             if !DeviceCapability.isRoomPlanSupported && !debugFakeCaptureActive {
-                // Real dead-end bug found on this pass, same class as the
-                // results-screen one fixed earlier this window: this screen
-                // is hard constraint #5's required "designed fallback path"
-                // for unsupported devices, but its go-back button was never
-                // wired to anything at this call site — a user landing here
-                // had literally no way forward without force-quitting the
-                // app.
                 UnsupportedDeviceScreen(onGoBack: onGoBack)
             } else if let justCaptured {
                 AnotherRoomPromptView(roomCount: justCaptured.floorPlan.rooms.count) { addAnother in
                     onRoomCaptured(justCaptured.session, justCaptured.floorPlan, addAnother)
                 }
             } else if isUploadingPartialCapture {
-                // Checked ahead of partialCaptureFailureMessage and the real-
-                // capture branch below, on purpose: real bug caught in review
-                // before this ever reached Mark — clearing
-                // partialCaptureFailureMessage synchronously while submit()
-                // only sets isUploading = true one Task{} hop later left a
-                // render frame where every guard here was false, which fell
-                // through to the bare capture branch and fired
-                // coordinator.start() again on an already-ended session
-                // (flashing the live camera back on mid-upload). Setting this
-                // flag synchronously, in the same scope that clears
-                // partialCaptureFailureMessage, closes that gap.
                 ProgressView("Uploading capture…")
                     .padding()
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             } else if let partialCaptureFailureMessage {
-                // Answers Mark's real-device question directly: RoomPlan can
-                // still hand back reconstructable geometry after a session-
-                // ending error like world tracking failure (see
-                // CaptureCoordinator.didEndWith) — so discard-and-retry isn't
-                // the only honest option when that happens. Only reachable
-                // when coordinator.capturedRoom is actually set (see handle
-                // below), so the force-unwrap in onUsePartial is safe.
                 PartialCaptureFailureView(
                     message: partialCaptureFailureMessage,
                     onUsePartial: {
                         let room = coordinator.capturedRoom!
                         isUploadingPartialCapture = true
-                        Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport)) }
+                        Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport, walkPath: coordinator.capturedRoomWalkPath)) }
                     },
                     onDiscard: {
-                        // No session was created for this attempt (it failed
-                        // before ever reaching submit()), so existingSession
-                        // is still the right value to resume with.
                         onError(AppError(site: .captureFailed, underlying: PlainError(message: partialCaptureFailureMessage)), existingSession)
                     }
                 )
@@ -310,35 +238,20 @@ private struct RoomCaptureFlowStep: View {
                 UploadRejectedView(
                     error: uploadRejection.error,
                     onRetryUpload: {
-                        // isRetryingUpload must flip synchronously, in the
-                        // same scope that clears uploadRejection — same class
-                        // of gap isUploadingPartialCapture's comment
-                        // documents elsewhere in this file.
                         let pending = uploadRejection
                         self.uploadRejection = nil
                         isRetryingUpload = true
-                        Task { await retryUpload(session: pending.session, export: pending.export) }
+                        Task { await retryUpload(session: pending.session, export: pending.export, idempotencyKey: pending.idempotencyKey, bodyJSON: pending.bodyJSON) }
                     },
                     onRescan: {
                         onDiscardRoom()
                     }
                 )
             } else if !DeviceCapability.isRoomPlanSupported {
-                // debugFakeCaptureActive must be true to reach here (see the
-                // first branch) — real hardware doesn't support RoomPlan, but
-                // the Debug fake-LiDAR override is on. RoomCaptureView/ARKit
-                // need real LiDAR and would just hang or crash on a device/
-                // simulator without one (e.g. appetize.io), so this skips
-                // straight to submitting synthetic data through the exact
-                // same upload pipeline instead.
                 #if DEBUG
                 ProgressView("Generating fake capture (Debug)…")
                     .onAppear { Task { await submit(FakeCaptureGenerator.random()) } }
                 #else
-                // Unreachable in a Release build: debugFakeCaptureActive is
-                // always false there, so the first branch above already
-                // catches !isRoomPlanSupported. Only here so this branch
-                // still returns a View and compiles.
                 EmptyView()
                 #endif
             } else {
@@ -363,35 +276,11 @@ private struct RoomCaptureFlowStep: View {
                             .padding()
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                     } else if didRequestStop {
-                        // Gap between tapping Done and RoomPlan actually
-                        // delivering didEndWith (real bug Mark found on a
-                        // real device: without this, and without isUploading
-                        // yet true, there was no way to end a scan at all —
-                        // start() ran on appear but nothing ever called
-                        // coordinator.stop()).
                         ProgressView("Finishing scan…")
                             .padding()
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                     } else if coordinator.state == .scanning {
                         VStack {
-                            // Same bug class as the missing Done button, other
-                            // direction: without this, a user who entered
-                            // capture by mistake (wrong unit, changed their
-                            // mind) had no way back except forcing an error —
-                            // there's no automatic nav-bar back button here
-                            // since this stage swaps in via @State, not a
-                            // NavigationStack push. .ignoresSafeArea() below
-                            // is on RoomCaptureScreen alone, not this VStack
-                            // or the ZStack — this button already lays out
-                            // respecting the safe area on its own, so 8pt is
-                            // a buffer past the notch/status bar inset, not
-                            // flush against it (corrected here after an
-                            // earlier pass bumped this to 50, on a wrong
-                            // assumption that it was overlapping — that
-                            // would have stacked 50pt past the safe area
-                            // inset too, risking crowding RoomPlan's own
-                            // coaching UI. Still unverified either way
-                            // without a real device — flag to Mark).
                             HStack {
                                 Spacer()
                                 Button {
@@ -404,17 +293,10 @@ private struct RoomCaptureFlowStep: View {
                                 }
                                 .padding(.trailing, 20)
                                 .padding(.top, 8)
-                                // chevron.backward reads as "go back, nothing
-                                // lost" (iOS's standard non-destructive-nav
-                                // symbol), but the action is a full abandon —
-                                // this confirmation is what makes that icon
-                                // honest instead of misleading, matching this
-                                // project's own "don't claim more than what
-                                // actually happens" standard.
                                 .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
                                     Button("Discard", role: .destructive) {
                                         coordinator.stop()
-                                        onDiscardRoom()
+                                        onGoBack()
                                     }
                                     Button("Keep Scanning", role: .cancel) {}
                                 } message: {
@@ -461,28 +343,13 @@ private struct RoomCaptureFlowStep: View {
         switch state {
         case .finished(roomAvailable: true):
             guard let room = coordinator.capturedRoom else { return }
-            // The degenerate-outline guard lives inside submit(), not here —
-            // "Upload what was captured" (below) calls submit() directly too,
-            // and needs the same guard.
-            Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport)) }
+            Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport, walkPath: coordinator.capturedRoomWalkPath)) }
         case .finished(roomAvailable: false):
-            // No session created for this attempt yet (submit() never ran),
-            // so existingSession is the right value to resume with.
             onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
         case .failed(let message, let partialRoomAvailable):
             if partialRoomAvailable {
-                // Route through the local partial-capture choice, not
-                // straight to onError — see the body's dedicated branch.
                 partialCaptureFailureMessage = message
             } else if didRequestStop {
-                // The Done button (new, untested on real hardware until
-                // Mark's next run) has no minimum-scan-time guard, so an
-                // experimental tap right after appearing is a real scenario
-                // — RoomBuilder throwing on essentially-empty data here isn't
-                // a crash/error, it's "nothing to build yet." Same case
-                // .finished(roomAvailable: false) already has a friendly
-                // message for; use it here too instead of RoomBuilder's raw
-                // (likely cryptic) thrown-error text.
                 onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
             } else {
                 onError(AppError(site: .captureFailed, underlying: PlainError(message: message)), existingSession)
@@ -495,14 +362,6 @@ private struct RoomCaptureFlowStep: View {
     @MainActor
     private func submit(_ export: RoomPlanCaptureExport) async {
         guard export.hasUsableFloorOutline else {
-            // Mark's 2026-09-02 ask (b): refuse locally instead of round-
-            // tripping to the server for the same deterministic reject.
-            // Checked here, not at each call site, so "Upload what was
-            // captured" (the partial-capture recovery path) gets the same
-            // guard as a normal finished capture — isUploadingPartialCapture
-            // must be cleared too, or it would keep showing its own
-            // "Uploading capture…" screen over this one (it's checked first
-            // in the view's if-else chain).
             isUploadingPartialCapture = false
             #if DEBUG
             DiagnosticsLog.shared.record("Local reject: floor outline too small/degenerate, upload skipped", category: .error)
@@ -512,20 +371,24 @@ private struct RoomCaptureFlowStep: View {
         }
         isUploading = true
         defer { isUploading = false }
+
+        let idempotencyKey = UUID().uuidString
+        guard let bodyJSON = try? client.encodeCaptureBody(capture: export, location: capturedLocation) else {
+            onError(AppError(site: .captureFailed, underlying: PlainError(message: "Could not prepare this capture for upload.")), existingSession)
+            return
+        }
+
         let session: ScanSessionResponse
         if let existingSession {
             session = existingSession
         } else {
+            PendingUploadStore.save(PendingUploadState(session: nil, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)]))
             do {
                 session = try await client.createSession(identity: identity)
             } catch {
-                // No session exists yet — nil is correct here, retry should
-                // create one, same as this attempt just tried to.
                 onError(AppError(site: .sessionCreate, underlying: error), nil)
                 return
             }
-            // Local-only scan history — see History/ScanHistoryEntry.swift's
-            // header for why this can't be a server-side listing.
             ScanHistoryStore.shared.add(ScanHistoryEntry(
                 sessionId: session.id,
                 accessToken: session.accessToken,
@@ -537,28 +400,27 @@ private struct RoomCaptureFlowStep: View {
                 expiresAt: session.expiresAt
             ))
         }
+
+        PendingUploadStore.save(PendingUploadState(session: session, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)]))
         do {
-            let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export, location: capturedLocation)
+            let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
+            PendingUploadStore.clear()
             justCaptured = (session, floorPlan)
         } catch {
-            // Mark's 2026-09-02 ask (c): kept in place instead of routed to
-            // onError, which always started a whole new capture attempt —
-            // `session` here (not existingSession) is whatever this attempt
-            // actually ended up with, same reasoning as the comment this
-            // replaced, so "Retry upload" resubmits into the right session
-            // without a duplicate create.
-            uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session)
+            uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)
         }
     }
 
     @MainActor
-    private func retryUpload(session: ScanSessionResponse, export: RoomPlanCaptureExport) async {
+    private func retryUpload(session: ScanSessionResponse, export: RoomPlanCaptureExport, idempotencyKey: String, bodyJSON: Data) async {
         defer { isRetryingUpload = false }
+        PendingUploadStore.save(PendingUploadState(session: session, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)]))
         do {
-            let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export, location: capturedLocation)
+            let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
+            PendingUploadStore.clear()
             justCaptured = (session, floorPlan)
         } catch {
-            uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session)
+            uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)
         }
     }
 }
@@ -580,13 +442,6 @@ private struct AnotherRoomPromptView: View {
         .padding()
     }
 }
-
-// Real-device finding (Mark, 2026-09-01): a session-ending error like
-// CaptureError.worldTrackingFailure doesn't necessarily mean nothing was
-// captured — RoomBuilder can still reconstruct a room from the partial
-// CapturedRoomData RoomPlan hands back alongside the error (see
-// CaptureCoordinator.didEndWith). This view is what turns that into an
-// actual choice instead of forcing discard-and-retry every time.
 private struct PartialCaptureFailureView: View {
     let message: String
     let onUsePartial: () -> Void
@@ -610,9 +465,6 @@ private struct PartialCaptureFailureView: View {
     }
 }
 
-// Mark's 2026-09-02 ask (b): a local, pre-upload rejection — no VS code,
-// no server round trip, since RoomBuilder finished normally and there was
-// simply nothing usable in the outline it produced.
 struct DegenerateCaptureView: View {
     let onRescan: () -> Void
 
@@ -628,10 +480,6 @@ struct DegenerateCaptureView: View {
     }
 }
 
-// Mark's 2026-09-02 ask (c): keeps the already-captured export in place
-// instead of forcing a full rescan for what might just be a network blip —
-// "Rescan this room" is still offered for when the geometry itself is the
-// problem.
 private struct UploadRejectedView: View {
     let error: AppError
     let onRetryUpload: () -> Void
@@ -650,10 +498,6 @@ private struct UploadRejectedView: View {
                 Button("Retry upload", action: onRetryUpload).buttonStyle(.borderedProminent)
                 Button("Rescan this room", role: .destructive, action: onRescan)
             } else {
-                // The server looked at this exact data and rejected it (a
-                // 4xx, e.g. a degenerate-outline reject) — retrying the same
-                // bytes would just fail the same way again, so only rescan
-                // is offered, not a pointless retry.
                 Text("The server rejected this capture's data — retrying the same upload won't change that. Rescanning this room is the way forward.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -665,8 +509,6 @@ private struct UploadRejectedView: View {
     }
 }
 
-// Not private: LIDAR-6 reuses this from ScanHistoryView to attach a photo/
-// note to a past session without a new room capture.
 struct AttachmentsScreen: View {
     let session: ScanSessionResponse
     let floorPlan: FloorPlan
@@ -794,6 +636,41 @@ struct AttachmentsScreen: View {
                     .disabled(photoUrl.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
             }
 
+            if !current.photos.isEmpty {
+                Section("Photos attached") {
+                    ForEach(current.photos, id: \.photoId) { photo in
+                        HStack(alignment: .top, spacing: 12) {
+                            AttachedPhotoThumbnail(session: session, url: photo.url)
+                            VStack(alignment: .leading, spacing: 2) {
+                                if let roomId = photo.roomId, let room = current.rooms.first(where: { $0.roomId == roomId }) {
+                                    Text(room.label).font(.caption).foregroundStyle(.secondary)
+                                } else {
+                                    Text("Whole unit").font(.caption).foregroundStyle(.secondary)
+                                }
+                                if !photo.caption.isEmpty {
+                                    Text(photo.caption).font(.caption2)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !current.notes.isEmpty {
+                Section("Notes attached") {
+                    ForEach(current.notes, id: \.noteId) { note in
+                        VStack(alignment: .leading, spacing: 2) {
+                            if let roomId = note.roomId, let room = current.rooms.first(where: { $0.roomId == roomId }) {
+                                Text(room.label).font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Text("Whole unit").font(.caption).foregroundStyle(.secondary)
+                            }
+                            Text(note.text)
+                        }
+                    }
+                }
+            }
+
             if let appError {
                 ErrorCodeView(error: appError)
             }
@@ -847,10 +724,6 @@ struct AttachmentsScreen: View {
         }
     }
 
-    // Sniffs the actual bytes rather than trusting whatever the Photos
-    // library labels the item as — same "don't trust the client's own
-    // label" principle the Scan Service itself applies server-side
-    // (finfo, not the claimed Content-Type) to this same upload.
     private func detectedMimeType(for data: Data) -> (mime: String, extension: String) {
         if data.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
             return ("image/png", "png")
@@ -865,10 +738,7 @@ struct AttachmentsScreen: View {
     }
 
     @MainActor
-    // Same pattern as the zero-area guard: catch what the server would
-    // reject, client-side, so the user isn't sent through a round trip
-    // just to learn the photo was too big. Kept in sync with the server's
-    // MAX_PHOTO_UPLOAD_BYTES (scan-service/public/index.php).
+
     private static let maxPhotoUploadBytes = 25 * 1024 * 1024
 
     @discardableResult
@@ -904,6 +774,44 @@ struct AttachmentsScreen: View {
     }
 }
 
+private struct AttachedPhotoThumbnail: View {
+    let session: ScanSessionResponse
+    let url: String
+
+    @State private var image: UIImage?
+    @State private var failed = false
+
+    private let client = ScanServiceClient()
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else if failed {
+                Image(systemName: "photo.badge.exclamationmark")
+                    .foregroundStyle(.secondary)
+            } else {
+                ProgressView()
+            }
+        }
+        .frame(width: 60, height: 60)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+        .task {
+            guard image == nil else { return }
+            do {
+                let data = try await client.fetchPhotoData(url: url, accessToken: session.accessToken)
+                image = UIImage(data: data)
+                failed = image == nil
+            } catch {
+                failed = true
+            }
+        }
+    }
+}
+
 struct CameraCaptureView: UIViewControllerRepresentable {
     let onCaptured: (Data) -> Void
     let onCancel: () -> Void
@@ -929,10 +837,19 @@ struct CameraCaptureView: UIViewControllerRepresentable {
         }
 
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let image = info[.originalImage] as? UIImage, let data = image.jpegData(compressionQuality: 0.9) {
-                parent.onCaptured(data)
-            } else {
+            guard let image = info[.originalImage] as? UIImage else {
                 parent.onCancel()
+                return
+            }
+            Task.detached(priority: .userInitiated) {
+                let data = image.jpegData(compressionQuality: 0.9)
+                await MainActor.run {
+                    if let data {
+                        self.parent.onCaptured(data)
+                    } else {
+                        self.parent.onCancel()
+                    }
+                }
             }
         }
 
@@ -953,6 +870,11 @@ private struct ResultSummaryView: View {
     @State private var floorPlanImageURL: URL?
     @State private var floorPlanPDFURL: URL?
     @State private var appError: AppError?
+    @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
+
+    private var exportUnit: MeasurementUnit {
+        MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
+    }
 
     private let client = ScanServiceClient()
 
@@ -987,16 +909,6 @@ private struct ResultSummaryView: View {
                 }
             }
 
-            // Vuuro Scan direction brief, "Export priority for early value":
-            // floor plan image/PDF through the Scan Service API. The server
-            // already renders both (FloorPlanImageRenderer/PdfRenderer,
-            // GET .../export/floorplan.png|.pdf) — this is what actually
-            // fetches and surfaces them client-side.
-            // Per-session, not per-room: the Scan Service renders one PNG
-            // (rooms tiled on one sheet) and one PDF (one metrics table) per
-            // session, not a separate file per room — see
-            // ../../docs/adr/0002-export-coordinate-frame.md for why. Same
-            // per-session shape as History/ScanHistoryView.swift's rows.
             Section("Floor plan exports") {
                 Button {
                     Task { await loadImage() }
@@ -1062,10 +974,6 @@ private struct ResultSummaryView: View {
         .onDisappear { cleanUpExportedFiles() }
     }
 
-    // loadImage()/loadPDF() write into the shared tmp directory, which iOS
-    // doesn't clear on any predictable schedule — without this, every
-    // "Download image"/"Download PDF" tap leaves a file behind for the life
-    // of the app install.
     @MainActor
     private func cleanUpExportedFiles() {
         for url in [floorPlanImageURL, floorPlanPDFURL].compactMap({ $0 }) {
@@ -1080,7 +988,7 @@ private struct ResultSummaryView: View {
         isFetchingImage = true
         defer { isFetchingImage = false }
         do {
-            let data = try await client.fetchFloorPlanImage(sessionId: session.id, accessToken: session.accessToken)
+            let data = try await client.fetchFloorPlanImage(sessionId: session.id, accessToken: session.accessToken, unit: exportUnit)
             guard let image = UIImage(data: data) else {
                 appError = AppError(site: .resultImageDecode, underlying: nil)
                 return
@@ -1100,7 +1008,7 @@ private struct ResultSummaryView: View {
         isFetchingPDF = true
         defer { isFetchingPDF = false }
         do {
-            let data = try await client.fetchFloorPlanPDF(sessionId: session.id, accessToken: session.accessToken)
+            let data = try await client.fetchFloorPlanPDF(sessionId: session.id, accessToken: session.accessToken, unit: exportUnit)
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(session.id).pdf")
             try data.write(to: url)
             floorPlanPDFURL = url

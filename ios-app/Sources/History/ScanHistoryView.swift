@@ -1,37 +1,13 @@
-//
-//  ScanHistoryView.swift
-//  VuuroScan
-//
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
-//
-//  Lists scan sessions this device remembers creating (ScanHistoryStore —
-//  local-only, see its header for why), with per-session floor plan
-//  image/PDF download and a link to that session's access log, plus a
-//  bulk "download all" action across the whole local history.
-//
-//  Per-session, not per-room: the Scan Service renders one PNG (rooms tiled
-//  on one sheet) and one PDF (one metrics table) per session, not a separate
-//  file per room — see ../../docs/adr/0002-export-coordinate-frame.md for why.
-//
 
 import SwiftUI
 
 struct ScanHistoryView: View {
-    /// LIDAR-4: lets a past session be resumed to add another room instead
-    /// of forcing a brand new one — see ScanHistoryEntry.asResumableSession()
-    /// for why this is the actual gap being closed. Optional so this view's
-    /// existing callers (and any future read-only use) don't have to supply
-    /// a callback they don't need.
     var onResumeToAddRoom: ((ScanHistoryEntry) -> Void)?
-    /// LIDAR-6: attaching a photo/note (e.g. later check-in evidence) has no
-    /// path once you leave the live capture flow — same class of gap as
-    /// LIDAR-4's missing room-resume. Fetches this session's current
-    /// FloorPlan fresh, then hands it back so the caller can enter the same
-    /// AttachmentsScreen the live flow already uses.
     var onAttachToSession: ((ScanHistoryEntry, FloorPlan) -> Void)?
 
     @State private var entries: [ScanHistoryEntry] = ScanHistoryStore.shared.all()
     @State private var isFetchingToAttach: Set<String> = []
+    @State private var attachErrors: [String: AppError] = [:]
     @State private var perEntryImageURLs: [String: URL] = [:]
     @State private var perEntryPDFURLs: [String: URL] = [:]
     @State private var bulkImageURLs: [URL] = []
@@ -42,6 +18,9 @@ struct ScanHistoryView: View {
     @State private var errorMessage: String?
     @State private var pendingDeleteEntry: ScanHistoryEntry?
     @State private var pendingServerDeleteEntry: ScanHistoryEntry?
+    @State private var showImportSheet = false
+    @State private var importCode = ""
+    @State private var importError: String?
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
     @FocusState private var focusedNicknameSessionId: String?
 
@@ -69,6 +48,13 @@ struct ScanHistoryView: View {
         ScanHistoryStore.shared.updateNickname(sessionId: sessionId, nickname: stored)
     }
 
+    private func reloadEntries() {
+        if let focusedNicknameSessionId {
+            commitNickname(sessionId: focusedNicknameSessionId)
+        }
+        entries = ScanHistoryStore.shared.all()
+    }
+
     private let client = ScanServiceClient()
 
     var body: some View {
@@ -76,6 +62,14 @@ struct ScanHistoryView: View {
             if entries.isEmpty {
                 Text("No scans yet on this device.")
                     .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Button("Add a scan someone shared with you") {
+                    importCode = ""
+                    importError = nil
+                    showImportSheet = true
+                }
             }
 
             Section("Export unit") {
@@ -154,6 +148,22 @@ struct ScanHistoryView: View {
                             }
                         }
                         .disabled(isFetchingToAttach.contains(entry.sessionId))
+
+                        if let attachError = attachErrors[entry.sessionId] {
+                            ErrorCodeView(error: attachError)
+                                .font(.caption)
+                        }
+                    }
+
+                    if let code = ScanShareCode.encode(entry) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ShareLink(item: code) {
+                                Label("Share access with someone else", systemImage: "person.badge.plus")
+                            }
+                            Text("Anyone who receives this code gets full access to this scan — view, export, and delete. Only send it somewhere secure.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
 
                     Button("Forget this scan (device only)", role: .destructive) {
@@ -217,7 +227,7 @@ struct ScanHistoryView: View {
             }
         }
         .navigationTitle("Scan history")
-        .onAppear { entries = ScanHistoryStore.shared.all() }
+        .onAppear { reloadEntries() }
         .onDisappear {
             if let focusedNicknameSessionId {
                 commitNickname(sessionId: focusedNicknameSessionId)
@@ -257,10 +267,49 @@ struct ScanHistoryView: View {
         } message: {
             Text("This permanently deletes the session's rooms, photos, and notes from the Scan Service. This cannot be undone.")
         }
+        .sheet(isPresented: $showImportSheet) {
+            NavigationStack {
+                Form {
+                    Section {
+                        TextEditor(text: $importCode)
+                            .font(.system(.footnote, design: .monospaced))
+                            .frame(minHeight: 120)
+                    } header: {
+                        Text("Paste the code")
+                    } footer: {
+                        Text("Ask the other person to open this scan in their own History, tap \"Share access with someone else\", and send you the code.")
+                    }
+                    if let importError {
+                        Text(importError).foregroundStyle(.red).font(.caption)
+                    }
+                    Section {
+                        Button("Add this scan") { importScan() }
+                            .disabled(importCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+                .navigationTitle("Add a shared scan")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { showImportSheet = false }
+                    }
+                }
+            }
+        }
+    }
+
+    private func importScan() {
+        guard let decoded = ScanShareCode.decode(importCode) else {
+            importError = "That code doesn't look right — check that you copied the whole thing."
+            return
+        }
+        ScanHistoryStore.shared.add(decoded)
+        reloadEntries()
+        showImportSheet = false
     }
 
     @MainActor
     private func deleteFromServer(_ entry: ScanHistoryEntry) async {
+        let entry = await rotateTokenIfNeeded(entry)
         do {
             try await client.deleteSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
             #if DEBUG
@@ -305,7 +354,7 @@ struct ScanHistoryView: View {
                 nickname: entry.nickname
             )
             ScanHistoryStore.shared.add(updated)
-            entries = ScanHistoryStore.shared.all()
+            reloadEntries()
             return updated
         } catch {
             #if DEBUG
@@ -315,10 +364,6 @@ struct ScanHistoryView: View {
         }
     }
 
-    // Every download below writes into the shared tmp directory, which iOS
-    // doesn't clear on any predictable schedule — same lesson as
-    // ResultSummaryView's cleanUpExportedFiles(). Cleaned up together here
-    // since this screen can accumulate many more files than that one did.
     private func cleanUpTempFiles() {
         let all = Array(perEntryImageURLs.values) + Array(perEntryPDFURLs.values) + bulkImageURLs + bulkPDFURLs
         for url in all {
@@ -340,13 +385,7 @@ struct ScanHistoryView: View {
         }
         perEntryImageURLs[entry.sessionId] = nil
         perEntryPDFURLs[entry.sessionId] = nil
-
-        // Real bug fixed here: bulk downloads ("Download all images/PDFs")
-        // use the same filename shape (floorplan-<sessionId>.ext) but live in
-        // a flat array, not keyed by session — without this, "Forget" only
-        // cleared the per-entry dictionaries, leaving this entry's file
-        // untouched in bulkImageURLs/bulkPDFURLs and still shareable via
-        // "Save all images/PDFs", contradicting what "Forget" claims to do.
+        attachErrors[entry.sessionId] = nil
         let imageFilename = "floorplan-\(entry.sessionId).png"
         let pdfFilename = "floorplan-\(entry.sessionId).pdf"
         for url in bulkImageURLs where url.lastPathComponent == imageFilename {
@@ -359,7 +398,7 @@ struct ScanHistoryView: View {
         bulkPDFURLs.removeAll { $0.lastPathComponent == pdfFilename }
 
         ScanHistoryStore.shared.remove(sessionId: entry.sessionId)
-        entries = ScanHistoryStore.shared.all()
+        reloadEntries()
     }
 
     @MainActor
@@ -368,11 +407,11 @@ struct ScanHistoryView: View {
         defer { isFetchingToAttach.remove(entry.sessionId) }
         do {
             let floorPlan = try await client.fetchSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
-            appError = nil
+            attachErrors[entry.sessionId] = nil
             dismiss()
             onAttachToSession(entry, floorPlan)
         } catch {
-            appError = AppError(site: .historySessionFetch, underlying: error)
+            attachErrors[entry.sessionId] = AppError(site: .historySessionFetch, underlying: error)
         }
     }
 
@@ -415,9 +454,6 @@ struct ScanHistoryView: View {
                 try data.write(to: url)
                 urls.append(url)
             } catch {
-                // A session with no capture yet has no image to export —
-                // skip it rather than failing the whole batch over one
-                // not-yet-captured session.
                 skipped += 1
             }
         }

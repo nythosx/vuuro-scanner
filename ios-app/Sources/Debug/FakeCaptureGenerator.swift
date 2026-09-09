@@ -1,17 +1,3 @@
-//
-//  FakeCaptureGenerator.swift
-//  VuuroScan
-//
-//  DEBUG-ONLY, gated behind FakeLidarMode.isEnabled. Produces a random-but-
-//  server-valid RoomPlanCaptureExport so the post-capture flow can be
-//  exercised on a device/simulator with no LiDAR at all (e.g. appetize.io),
-//  without ever touching RoomCaptureView/ARKit — those need real hardware
-//  and would just hang or crash there. Mirrors the same RoomPlan-shaped
-//  contract scan-service/fixtures/*.json already uses server-side, and
-//  stays within the server's own sanity bounds (RoomPlanSimulatorAdapter.php:
-//  0.25m2 minimum floor area, well inside the 1000m coordinate cap) so it's
-//  exercising the real upload/validation path, not dodging it.
-//
 
 #if DEBUG
 import Foundation

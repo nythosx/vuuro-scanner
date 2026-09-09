@@ -1,13 +1,6 @@
-//
-//  ScanSessionResponse.swift
-//  VuuroScan
-//
-//  WRITTEN, NOT COMPILED OR RUN — see ScanIdentity.swift header.
-//
 
 import Foundation
 
-/// Response shape from `POST /scan-sessions` (scan-service/public/index.php).
 struct ScanSessionResponse: Codable {
     let id: String
     let propertyId: String
@@ -89,23 +82,10 @@ struct FloorPlan: Codable {
         let confidence: String
         let outlineM: [[Double]]
         let coverage: Coverage
-        // LIDAR-10: doors/windows/openings with positions, indicative
-        // height/volume, and real captured objects. No UI consumption yet
-        // (deferred to LIDAR-11's fused 2D/3D view) — the data just needs
-        // somewhere to land.
-        //
-        // Review finding: a session captured before LIDAR-10 shipped has a
-        // stored contract_json with no openings/objects keys at all (the
-        // server returns it as-is, never regenerated — see
-        // ScanSessionRepository::findFloorPlan()). openings/objects need a
-        // custom decode defaulting to [] for that case, same as
-        // heightM/volumeM3Indicative already get for free from being
-        // Optional.
         let openings: [Opening]
         let heightM: Double?
         let volumeM3Indicative: Double?
         let objects: [CapturedObject]
-        // LIDAR-5/11: this room's placement in a fused structure's shared frame. Nil for every ordinary (non-fused) room.
         let structureOriginM: [Double]?
         let roomType: RoomType?
 

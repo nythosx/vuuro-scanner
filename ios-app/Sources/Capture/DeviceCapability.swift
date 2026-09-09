@@ -1,7 +1,3 @@
-//
-//  DeviceCapability.swift
-//  VuuroScan
-
 
 import RoomPlan
 

@@ -1,20 +1,3 @@
-//
-//  RoomTypeClassifier.swift
-//  VuuroScan
-//
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
-//
-//  Guesses a room's type from a live or final CapturedRoom. Primary source
-//  is RoomPlan's own classification (CapturedRoom.Section.label, iOS 17+,
-//  confirmed via web research to ship as livingRoom/bedroom/bathroom/
-//  kitchen/diningRoom — https://developer.apple.com/documentation/roomplan/
-//  capturedroom/section/label-swift.enum). Falls back to a simple
-//  fixture-based heuristic (a toilet means a bathroom, a bed means a
-//  bedroom, ...) only when RoomPlan reported no sections at all — sections
-//  are always preferred since they're Apple's own model output, not a guess
-//  built on top of a guess. Shared by the live capture-screen prompt and the
-//  final export so both use the exact same rule.
-//
 
 import RoomPlan
 
@@ -38,11 +21,6 @@ enum RoomTypeClassifier {
         }
     }
 
-    // Checked in this order when falling back to objects — most distinctive
-    // fixture first, so a bathroom (toilet) never gets mislabeled kitchen
-    // just because it also has a small sink-like fixture. Keyed by string,
-    // not CapturedRoom.Object.Category directly — RoomPlan's enum isn't
-    // documented as Hashable, so this sidesteps that risk entirely.
     private static let objectHeuristics: [(categories: Set<String>, type: String)] = [
         (categories: ["toilet", "bathtub"], type: "bathroom"),
         (categories: ["stove", "oven", "dishwasher", "refrigerator"], type: "kitchen"),
@@ -59,9 +37,7 @@ enum RoomTypeClassifier {
 
     private static func guessFromSections(_ sections: [CapturedRoom.Section]) -> Guess? {
         guard !sections.isEmpty else { return nil }
-        // Tally labels rather than just taking sections.first — a room can
-        // report more than one section, and the most-repeated label is a
-        // steadier signal than whichever happened to be captured first.
+  
         var counts: [String: Int] = [:]
         for section in sections {
             guard let label = mapSectionLabel(section.label) else { continue }
@@ -92,9 +68,6 @@ enum RoomTypeClassifier {
         return nil
     }
 
-    // Mirrors CapturedRoomExporter.mapObjectCategory's known-category list —
-    // duplicated rather than shared across files since that one is private
-    // to its own enum and this only needs the string, not the export shape.
     private static func mapObjectCategory(_ object: CapturedRoom.Object) -> String {
         switch object.category {
         case .storage: return "storage"

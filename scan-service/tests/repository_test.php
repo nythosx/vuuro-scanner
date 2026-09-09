@@ -135,6 +135,28 @@ r_check('a token that has not expired at all is NOT beyond the grace period', $r
 r_check('an empty expires_at reads as NOT beyond the grace period', $repo->isBeyondRotateGracePeriod($noExpirySession) === false);
 echo "\n";
 
+echo "== findEarlyPurgeCandidates() ==\n";
+$oldCheckoutSession = $repo->create('prop-purge-test', 'unit-purge-test', 'org-purge-test', 'check_out', false, false);
+$db->prepare("UPDATE scan_sessions SET created_at = :created_at WHERE id = :id")->execute([
+    'created_at' => gmdate('c', time() - 40 * 86400),
+    'id' => $oldCheckoutSession['id'],
+]);
+$recentCheckoutSession = $repo->create('prop-purge-test', 'unit-purge-test', 'org-purge-test', 'check_out', false, false);
+$oldListingSession = $repo->create('prop-purge-test', 'unit-purge-test', 'org-purge-test', 'listing', false, false);
+$db->prepare("UPDATE scan_sessions SET created_at = :created_at WHERE id = :id")->execute([
+    'created_at' => gmdate('c', time() - 40 * 86400),
+    'id' => $oldListingSession['id'],
+]);
+
+$checkoutCandidates = $repo->findEarlyPurgeCandidates('check_out', 30);
+r_check('a check_out session older than the retention window is a purge candidate', in_array($oldCheckoutSession['id'], $checkoutCandidates, true));
+r_check('a check_out session within the retention window is NOT a purge candidate', !in_array($recentCheckoutSession['id'], $checkoutCandidates, true));
+r_check('an old session of a DIFFERENT purpose is not returned when querying check_out', !in_array($oldListingSession['id'], $checkoutCandidates, true));
+
+$listingCandidates = $repo->findEarlyPurgeCandidates('listing', 30);
+r_check('an old listing session is a purge candidate when queried under its own purpose', in_array($oldListingSession['id'], $listingCandidates, true));
+echo "\n";
+
 echo "== Idempotency key storage ==\n";
 $idemSession = fresh_session($repo);
 $otherSession = fresh_session($repo);

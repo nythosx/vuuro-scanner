@@ -1,14 +1,3 @@
-//
-//  VuuroDesign.swift
-//  VuuroScan
-//
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
-//
-//  LIDAR-7: folded in from the retired ios-app-with-design/ tree
-//  (2026-09-03) — CI never compiled that tree, so it drifted. Not applied
-//  to any view by default; wire a screen to .vuuroPrimary/.vuuroSecondary/
-//  .vuuroCard() to use it. Tokens pulled from vuuro.com's live styles.
-//
 
 import SwiftUI
 
@@ -30,11 +19,6 @@ enum VuuroMetrics {
     static let cardShadowColor = Color(red: 131 / 255, green: 137 / 255, blue: 149 / 255).opacity(0.1)
 }
 
-/// "Space Grotesk" is vuuro.com's body/heading font. It isn't bundled here
-/// (no Mac/Xcode to add the font file + Info.plist UIAppFonts entry and
-/// verify it actually loads), so this resolves to the closest system
-/// equivalent — a rounded, geometric system font — rather than silently
-/// claiming a font family that may not actually be registered at runtime.
 enum VuuroFont {
     static func display(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
         .system(size: size, weight: weight, design: .rounded)

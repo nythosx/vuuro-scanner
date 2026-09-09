@@ -28,7 +28,7 @@ final class FloorPlanPdfRenderer
     private const MAX_PAGES = 200;
 
     /** @param string|null $roomId When set, the metrics table covers only that one room. */
-    public function render(array $floorPlan, ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null): string
+    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null): string
     {
         if ($roomId !== null) {
             $rooms = array_values(array_filter($floorPlan['rooms'], static fn (array $room) => $room['room_id'] === $roomId));
@@ -37,7 +37,7 @@ final class FloorPlanPdfRenderer
             }
             $floorPlan = [...$floorPlan, 'rooms' => $rooms];
         }
-        $lines = $this->buildTextLines($floorPlan, $unit, $label);
+        $lines = $this->buildTextLines($floorPlan, $layout, $unit, $label);
         $pages = $this->paginate($lines);
 
         if (count($pages) > self::MAX_PAGES) {
@@ -91,7 +91,7 @@ final class FloorPlanPdfRenderer
     }
 
     /** @return string[] */
-    private function buildTextLines(array $floorPlan, string $unit = UnitFormatter::METRIC, ?string $label = null): array
+    private function buildTextLines(array $floorPlan, string $layout = 'auto', string $unit = UnitFormatter::METRIC, ?string $label = null): array
     {
         $lines = [];
         $lines[] = 'Vuuro Scan — Floor Plan Metrics';
@@ -106,7 +106,7 @@ final class FloorPlanPdfRenderer
             ? 'Indicative, NEN2580-inspired measurements. This is NOT a certified survey.'
             : 'Measurement basis: ' . $floorPlan['measurement_basis'];
         $lines[] = '';
-        $isFused = count($floorPlan['rooms']) > 1 && array_reduce(
+        $isFused = $layout !== 'tiles' && count($floorPlan['rooms']) > 1 && array_reduce(
             $floorPlan['rooms'],
             fn (bool $carry, array $room) => $carry && isset($room['structure_origin_m']),
             true
@@ -150,6 +150,10 @@ final class FloorPlanPdfRenderer
                     array_values($counts)
                 ));
                 $lines[] = "             {$summary}";
+            }
+            $walkPath = $room['walk_path_m'] ?? [];
+            if (count($walkPath) >= 2) {
+                $lines[] = sprintf('             walk path: %d point(s) recorded', count($walkPath));
             }
         }
         $lines[] = '';

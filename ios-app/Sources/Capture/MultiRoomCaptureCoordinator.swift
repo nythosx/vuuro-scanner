@@ -1,19 +1,3 @@
-//
-//  MultiRoomCaptureCoordinator.swift
-//  VuuroScan
-//
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
-//
-//  LIDAR-5/11 groundwork (docs/proposals/multi-room-fusion.md). Separate
-//  from CaptureCoordinator on purpose — that class's "scan another room"
-//  path recreates its RoomCaptureView/ARSession per room, which breaks
-//  StructureBuilder alignment. This one owns one ARSession across the
-//  whole multi-room visit instead. Unverified on real hardware, and a
-//  world-origin-shift bug on room 2+ has been reported even with this
-//  exact pattern (Apple forums thread 763244, unresolved) — first real
-//  test must check room 2's position relative to room 1, not just that
-//  both captured cleanly.
-//
 
 import ARKit
 import Combine
@@ -28,10 +12,12 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         case merging
         case unitFinished
         case mergeFailed(String)
+        case mergeTimedOut
+        case mergeCancelled
     }
 
-    // ~10-11 rooms reportedly throws exceedSceneSizeLimit (Apple forums);
-    // warn two rooms early.
+    private struct MergeTimeoutError: Error {}
+
     static let roomCountWarningThreshold = 8
 
     @Published private(set) var state: State = .scanning {
@@ -42,9 +28,6 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         }
     }
 
-    // @Published, not plain private(set): CapturedRoomsListView reads these
-    // directly and needs SwiftUI to refresh when removeCapturedRoom mutates
-    // them on their own, not just as a side effect of `state` changing.
     @Published private(set) var capturedRooms: [CapturedRoom] = []
     @Published private(set) var roomTypeConfirmations: [RoomTypeConfirmation?] = []
 
@@ -53,6 +36,16 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         for (room, confirmation) in zip(capturedRooms, roomTypeConfirmations) {
             if let confirmation {
                 result[room.identifier] = confirmation
+            }
+        }
+        return result
+    }
+
+    var roomWalkPathsByIdentifier: [UUID: [[Double]]] {
+        var result: [UUID: [[Double]]] = [:]
+        for (room, walkPath) in zip(capturedRooms, roomWalkPaths) {
+            if !walkPath.isEmpty {
+                result[room.identifier] = walkPath
             }
         }
         return result
@@ -91,12 +84,21 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         #endif
     }
 
-    /// Set only on partialRoomAvailable — not committed until the user chooses to keep it.
     private(set) var pendingPartialRoom: CapturedRoom?
+    private var pendingPartialRoomWalkPath: [[Double]] = []
 
     private(set) var mergedStructure: CapturedStructure?
 
-    /// Owned here, not by the view, so it survives across rooms.
+    private(set) var roomWalkPaths: [[[Double]]] = []
+    private var currentRoomWalkPath: [[Double]] = []
+    private var walkPathTask: Task<Void, Never>?
+    private static let walkPathSampleIntervalNanoseconds: UInt64 = 500_000_000
+    private static let walkPathMaxPoints = 400
+
+    static let mergeTimeoutSeconds: Double = 45
+    private var mergeTask: Task<Void, Never>?
+    private var heartbeatTask: Task<Void, Never>?
+
     let arSession = ARSession()
 
     private var captureSession: RoomCaptureSession?
@@ -113,11 +115,13 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         roomTypeConfirmation = nil
         roomTypeConfirmedForGuessType = nil
         isApproachingSizeLimit = false
+        startWalkPathTracking()
         captureSession.run(configuration: RoomCaptureSession.Configuration())
     }
 
     /// pauseARSession: false — required for the next room to share this one's frame.
     func stopCurrentRoom() {
+        stopWalkPathTracking()
         captureSession?.stop(pauseARSession: false)
     }
 
@@ -125,27 +129,53 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         guard let pendingPartialRoom else { return }
         capturedRooms.append(pendingPartialRoom)
         roomTypeConfirmations.append(roomTypeConfirmationForExport)
+        roomWalkPaths.append(pendingPartialRoomWalkPath)
         self.pendingPartialRoom = nil
+        pendingPartialRoomWalkPath = []
     }
 
     func discardPendingPartialRoom() {
         pendingPartialRoom = nil
+        pendingPartialRoomWalkPath = []
     }
 
-    /// Removes an already-committed room (LIDAR retry/delete list). Used both
-    /// for a permanent delete and for "retry" (delete, then the user walks
-    /// back and scans a replacement — appended at the end, not reinserted at
-    /// this index, since capture order follows the physical walkthrough).
     func removeCapturedRoom(at index: Int) {
         guard capturedRooms.indices.contains(index) else { return }
         capturedRooms.remove(at: index)
         roomTypeConfirmations.remove(at: index)
+        if roomWalkPaths.indices.contains(index) {
+            roomWalkPaths.remove(at: index)
+        }
         #if DEBUG
         DiagnosticsLog.shared.record("Captured room removed at index \(index) (multi-room)", category: .info)
         #endif
     }
 
+    private func startWalkPathTracking() {
+        stopWalkPathTracking()
+        currentRoomWalkPath = []
+        walkPathTask = Task {
+            while !Task.isCancelled {
+                if let transform = self.arSession.currentFrame?.camera.transform,
+                   self.currentRoomWalkPath.count < Self.walkPathMaxPoints {
+                    let t = transform.columns.3
+                    self.currentRoomWalkPath.append([Double(t.x), Double(t.y), Double(t.z)])
+                }
+                try? await Task.sleep(nanoseconds: Self.walkPathSampleIntervalNanoseconds)
+            }
+        }
+    }
+
+    private func stopWalkPathTracking() {
+        walkPathTask?.cancel()
+        walkPathTask = nil
+        #if DEBUG
+        DiagnosticsLog.shared.record("Walk path tracking stopped — \(currentRoomWalkPath.count) point(s) recorded for this room", category: .info)
+        #endif
+    }
+
     func finishUnit() {
+        stopWalkPathTracking()
         captureSession?.stop(pauseARSession: false)
         arSession.pause()
         guard !capturedRooms.isEmpty else {
@@ -153,16 +183,76 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
             return
         }
         state = .merging
-        Task {
+        startMergeHeartbeat()
+        let rooms = capturedRooms
+        mergeTask = Task {
             do {
-                // Merge accuracy on a real walk is unverified — see proposal doc.
-                let structure = try await StructureBuilder(options: [.beautifyObjects]).capturedStructure(from: capturedRooms)
+                let structure = try await Self.runMerge(rooms: rooms, timeoutSeconds: Self.mergeTimeoutSeconds)
+                guard !Task.isCancelled else { return }
+                self.stopMergeHeartbeat()
                 self.mergedStructure = structure
                 self.state = .unitFinished
+            } catch is CancellationError {
+                self.stopMergeHeartbeat()
+            } catch is MergeTimeoutError {
+                self.stopMergeHeartbeat()
+                #if DEBUG
+                DiagnosticsLog.shared.record("Merge timed out after \(Int(Self.mergeTimeoutSeconds))s — falling back to unmerged rooms", category: .error)
+                #endif
+                self.state = .mergeTimedOut
             } catch {
+                self.stopMergeHeartbeat()
                 self.state = .mergeFailed(error.localizedDescription)
             }
         }
+    }
+
+    func cancelMerge() {
+        mergeTask?.cancel()
+        mergeTask = nil
+        stopMergeHeartbeat()
+        #if DEBUG
+        DiagnosticsLog.shared.record("Merge cancelled by user — keeping \(capturedRooms.count) captured room(s)", category: .info)
+        #endif
+        state = .mergeCancelled
+    }
+
+    private static func runMerge(rooms: [CapturedRoom], timeoutSeconds: Double) async throws -> CapturedStructure {
+        try await withThrowingTaskGroup(of: CapturedStructure.self) { group in
+            group.addTask {
+                try await StructureBuilder(options: [.beautifyObjects]).capturedStructure(from: rooms)
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+                throw MergeTimeoutError()
+            }
+            guard let result = try await group.next() else {
+                throw MergeTimeoutError()
+            }
+            group.cancelAll()
+            return result
+        }
+    }
+
+    private func startMergeHeartbeat() {
+        let start = Date()
+        heartbeatTask = Task {
+            var step = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled else { return }
+                step += 1
+                let elapsed = Int(Date().timeIntervalSince(start))
+                #if DEBUG
+                DiagnosticsLog.shared.record("Merging rooms — step \(step), elapsed \(elapsed)s", category: .state)
+                #endif
+            }
+        }
+    }
+
+    private func stopMergeHeartbeat() {
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
     }
 }
 
@@ -174,26 +264,13 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
                 if let error {
                     let hasUsableGeometry = !room.walls.isEmpty || !room.floors.isEmpty
                     self.pendingPartialRoom = hasUsableGeometry ? room : nil
+                    self.pendingPartialRoomWalkPath = hasUsableGeometry ? self.currentRoomWalkPath : []
                     self.state = .failed(error.localizedDescription, partialRoomAvailable: hasUsableGeometry)
                 } else {
-                    // Mark's original Sept 2 bug class (a degenerate/zero-
-                    // area floor outline) can reach here without RoomBuilder
-                    // throwing at all — confirmed against RoomBuilder.
-                    // BuildError's documented cases (insufficientInput,
-                    // invalidInput, exceedSceneSizeLimit, internalError,
-                    // deviceNotSupported): none of them mean "the floor
-                    // polygon it built is unusable," only "not enough/valid
-                    // input to build one." Reuses CapturedRoomExporter's own
-                    // shoelace-area check — the same one that already gates
-                    // a single-room upload — so one bad room is caught and
-                    // can be rescanned right here, instead of silently
-                    // riding along in capturedRooms and only surfacing after
-                    // the whole unit is merged and submit()'s own
-                    // hasUsableFloorOutline guard discards the entire
-                    // walkthrough over one bad room.
                     if CapturedRoomExporter.export(room).hasUsableFloorOutline {
                         self.capturedRooms.append(room)
                         self.roomTypeConfirmations.append(self.roomTypeConfirmationForExport)
+                        self.roomWalkPaths.append(self.currentRoomWalkPath)
                         self.state = .roomFinished(roomAvailable: true)
                     } else {
                         self.state = .roomFinished(roomAvailable: false)
@@ -216,7 +293,9 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
     nonisolated func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
         let exceedsSizeLimit = RoomSizeGuard.exceedsPracticalLimit(room)
         Task { @MainActor in
-            self.isApproachingSizeLimit = exceedsSizeLimit
+            if self.isApproachingSizeLimit != exceedsSizeLimit {
+                self.isApproachingSizeLimit = exceedsSizeLimit
+            }
         }
         guard RoomTypeGuessSettings.isEnabled, let guess = RoomTypeClassifier.guess(for: room) else { return }
         Task { @MainActor in

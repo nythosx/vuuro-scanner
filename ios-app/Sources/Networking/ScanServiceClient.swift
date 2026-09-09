@@ -10,6 +10,7 @@ import Foundation
 enum ScanServiceError: Error {
     case unexpectedStatus(Int, body: String)
     case transport(Error)
+    case noFloorPlanYet
 }
 
 extension ScanServiceError: LocalizedError {
@@ -24,6 +25,25 @@ extension ScanServiceError: LocalizedError {
             return "The Scan Service returned an unexpected response (HTTP \(status))."
         case .transport(let underlying):
             return "Couldn't reach the Scan Service: \(underlying.localizedDescription)"
+        case .noFloorPlanYet:
+            return "This session hasn't captured a room yet. Capture a room before attaching photos or notes."
+        }
+    }
+}
+
+private struct SessionOrFloorPlanResponse: Decodable {
+    let floorPlan: FloorPlan?
+
+    private enum RootKeys: String, CodingKey {
+        case floorPlan = "floor_plan"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: RootKeys.self)
+        if container.contains(.floorPlan) {
+            floorPlan = try container.decodeIfPresent(FloorPlan.self, forKey: .floorPlan)
+        } else {
+            floorPlan = try FloorPlan(from: decoder)
         }
     }
 }
@@ -102,23 +122,59 @@ struct ScanServiceClient {
         let _: DeleteResponse = try await send(request)
     }
 
-    func uploadCapture(sessionId: String, accessToken: String, capture: RoomPlanCaptureExport, provider: String = "roomplan", location: CaptureLocation? = nil) async throws -> FloorPlan {
-        struct Body: Encodable {
-            let rawCapture: RoomPlanCaptureExport
-            let captureProvider: String
-            let captureLocation: CaptureLocation?
+    struct CaptureBody: Encodable {
+        let rawCapture: RoomPlanCaptureExport
+        let captureProvider: String
+        let captureLocation: CaptureLocation?
 
-            enum CodingKeys: String, CodingKey {
-                case rawCapture = "raw_capture"
-                case captureProvider = "capture_provider"
-                case captureLocation = "capture_location"
-            }
+        enum CodingKeys: String, CodingKey {
+            case rawCapture = "raw_capture"
+            case captureProvider = "capture_provider"
+            case captureLocation = "capture_location"
         }
-        return try await post(path: "/scan-sessions/\(sessionId)/capture", body: Body(rawCapture: capture, captureProvider: provider, captureLocation: location), accessToken: accessToken)
+    }
+
+    func encodeCaptureBody(capture: RoomPlanCaptureExport, provider: String = "roomplan", location: CaptureLocation? = nil) throws -> Data {
+        try JSONEncoder().encode(CaptureBody(rawCapture: capture, captureProvider: provider, captureLocation: location))
+    }
+
+    func uploadCapture(sessionId: String, accessToken: String, idempotencyKey: String, bodyJSON: Data) async throws -> FloorPlan {
+        var request = URLRequest(url: url(for: "/scan-sessions/\(sessionId)/capture"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
+        request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
+        request.httpBody = bodyJSON
+        return try await send(request)
+    }
+
+    struct ReplaceRoomsBody: Encodable {
+        let captures: [CaptureBody]
+    }
+
+    func replaceRooms(sessionId: String, accessToken: String, exports: [RoomPlanCaptureExport], provider: String = "roomplan", location: CaptureLocation?) async throws -> FloorPlan {
+        let body = ReplaceRoomsBody(captures: exports.map { CaptureBody(rawCapture: $0, captureProvider: provider, captureLocation: location) })
+        return try await post(path: "/scan-sessions/\(sessionId)/rooms", body: body, accessToken: accessToken)
     }
 
     func fetchSession(sessionId: String, accessToken: String) async throws -> FloorPlan {
-        try await get(path: "/scan-sessions/\(sessionId)", accessToken: accessToken)
+        let response: SessionOrFloorPlanResponse = try await get(path: "/scan-sessions/\(sessionId)", accessToken: accessToken)
+        guard let floorPlan = response.floorPlan else {
+            throw ScanServiceError.noFloorPlanYet
+        }
+        return floorPlan
+    }
+
+    func fetchPhotoData(url: String, accessToken: String) async throws -> Data {
+        let resolved = URL(string: url, relativeTo: baseURL)?.absoluteURL ?? baseURL.appendingPathComponent(url)
+        guard resolved.scheme == baseURL.scheme, resolved.host == baseURL.host, resolved.port == baseURL.port else {
+            let (data, response) = try await session.data(from: resolved)
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+                throw ScanServiceError.unexpectedStatus((response as? HTTPURLResponse)?.statusCode ?? -1, body: "")
+            }
+            return data
+        }
+        return try await getData(path: url, accessToken: accessToken)
     }
 
     func fetchFloorPlanImage(sessionId: String, accessToken: String, unit: MeasurementUnit = .metric, label: String? = nil) async throws -> Data {
@@ -286,14 +342,6 @@ struct ScanServiceClient {
 
         return try JSONDecoder().decode(Response.self, from: data)
     }
-
-    // Per Mark's 2026-09-01 request: "each request with its response code and
-    // the VS code on failure." AppError already provides the VS code half —
-    // this is the other half, logged here (not at each call site) so no
-    // request path can add a new call without this coming along for free.
-    // Logs every request, success or failure, not just failures: a report
-    // with only failure entries can't show what a healthy run's request
-    // pattern even looks like for comparison.
     #if DEBUG
     private func logRequest(_ request: URLRequest, status: Int?) async {
         let method = request.httpMethod ?? "GET"

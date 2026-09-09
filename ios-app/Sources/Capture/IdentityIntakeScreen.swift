@@ -1,9 +1,3 @@
-//
-//  IdentityIntakeScreen.swift
-//  VuuroScan
-//
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
-//
 
 import SwiftUI
 
@@ -42,10 +36,6 @@ struct IdentityIntakeScreen: View {
         !trimmedPropertyId.isEmpty && !trimmedUnitId.isEmpty && !trimmedOrganisationId.isEmpty
     }
 
-    /// Mirrors the Scan Service's own gate (hard constraint #3): if occupied,
-    /// consent must be explicitly recorded here, not assumed. This is the
-    /// client-side half of the same rule `public/index.php` enforces with a
-    /// `403 consent_required` — belt and suspenders, not a substitute for it.
     private var canStart: Bool {
         identityFieldsFilled && (!occupied || consentObtained)
     }
@@ -121,9 +111,7 @@ struct IdentityIntakeScreen: View {
             }
 
             #if DEBUG
-            // Mark's 2026-09-02 request: this is the first screen of every
-            // session, so a screenshot of it carries "version plus who am I
-            // talking to" without him having to ask for it separately.
+  
             Section {
                 Text(BuildInfo.summary)
                     .font(.caption2)

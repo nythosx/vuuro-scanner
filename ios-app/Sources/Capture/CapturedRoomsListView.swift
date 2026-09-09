@@ -1,7 +1,6 @@
 import RoomPlan
 import SwiftUI
 
-// LIDAR retry/delete/add: shown mid-walkthrough from the "Rooms (N)" button.
 struct CapturedRoomsListView: View {
     @ObservedObject var coordinator: MultiRoomCaptureCoordinator
     @Environment(\.dismiss) private var dismiss
@@ -86,8 +85,6 @@ struct CapturedRoomsListView: View {
         }
     }
 
-    // .sheet(item:) needs an Identifiable — wraps the plain Int index so the
-    // sheet still knows which room it's retrying without a second state var.
     private struct RetryTarget: Identifiable {
         let index: Int
         var id: Int { index }
@@ -109,12 +106,6 @@ struct CapturedRoomsListView: View {
     }
 }
 
-// Optional reason for retrying a room, per Mark's debugging ask: if left
-// blank, Cancel and Retry both proceed with no input required (Cancel backs
-// out entirely, Retry drops the room with no reason logged). A filled-in
-// reason gets written to DiagnosticsLog so it's sitting in the bug-icon
-// export already, not something Mark has to separately ask about after the
-// fact when he's testing multi-room fusion and isn't satisfied with a result.
 private struct RetryReasonSheet: View {
     let roomLabel: String
     let onCancel: () -> Void

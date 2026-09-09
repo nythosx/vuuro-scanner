@@ -168,14 +168,6 @@ if ($throttleSessionId !== null && $throttleSessionToken !== null) {
         );
     }
 }
-
-// The nonexistent-session-id branch of the denied-attempt throttle (bound
-// per caller IP, not per session) is deliberately NOT tested here — that
-// bucket is shared across the whole suite by caller IP, and exhausting it
-// here would break verify_security_fixes.php's own nonexistent-session
-// check. See verify_enterprise_hardening.php, run last in the suite for the
-// same reason.
-
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 
 if ($failures !== []) {

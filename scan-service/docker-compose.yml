@@ -1,0 +1,25 @@
+services:
+  scan-service:
+    build: .
+    volumes:
+      - ./data:/app/data
+    expose:
+      - "8089"
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - scan-service
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SCAN_SERVICE_DOMAIN: ${SCAN_SERVICE_DOMAIN:?set SCAN_SERVICE_DOMAIN to a real domain pointed at this host before running}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

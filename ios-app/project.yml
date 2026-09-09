@@ -18,21 +18,7 @@ targets:
         CFBundleDisplayName: Vuuro Scan
         NSCameraUsageDescription: Vuuro Scan uses the camera and LiDAR sensor to capture room geometry for floor plans.
         NSLocationWhenInUseUsageDescription: Vuuro Scan can record the approximate location of a scan so it's attached to the right property. Denying this only skips the location - the scan still works.
-        # Missing entirely until Mark's 2026-09-02 12:59 report: without a
-        # custom string here, iOS shows its own generic "may find and connect
-        # to devices" text on the Local Network permission dialog instead of
-        # anything explaining why a room-scanning app needs it.
         NSLocalNetworkUsageDescription: Vuuro Scan uploads captures to your own Scan Service on this network.
-        # Without this, iOS blocks plain-HTTP capture uploads to a LAN IP on a
-        # real device by default (only localhost is exempt) - this never
-        # surfaced on appetize.io (https tunnel) or the Simulator (127.0.0.1)
-        # (Mark, 2026-09-01). NSAllowsLocalNetworking only exempts local/
-        # private network ranges and loopback, not arbitrary internet
-        # cleartext, so it's narrow enough to ship in Release too - not
-        # scoped to Debug-only here because XcodeGen's `info.properties`
-        # generates one shared Info.plist for every configuration; a true
-        # Debug-only split would need a raw Info.plist source file processed
-        # with INFOPLIST_PREPROCESS/#ifdef instead of this declarative block.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         ScanServiceBaseURL: $(SCAN_SERVICE_BASE_URL)
@@ -46,25 +32,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.vuuro.scan
         TARGETED_DEVICE_FAMILY: "1,2"
         SCAN_SERVICE_BASE_URL: http://127.0.0.1:8089
-        # Manual, not Automatic: automatic signing needs a logged-in Apple ID
-        # session inside Xcode to resolve/create a provisioning profile, which
-        # a fresh GitHub Actions runner never has. .github/workflows/ios-build.yml's
-        # signed-archive job installs a real provisioning profile and passes its
-        # UUID explicitly at archive time — Manual is what makes that profile
-        # actually get used instead of ignored. Irrelevant to compile-check,
-        # which disables signing entirely via CODE_SIGNING_ALLOWED=NO.
         CODE_SIGN_STYLE: Manual
-        # Left blank on purpose: no Apple Developer Team ID is available on this
-        # machine. Set DEVELOPMENT_TEAM as a CI secret / local override once one
-        # of Mark's or the org's team IDs is on hand — see ios-app/README.md's
-        # CI checklist for why this can't be filled in here.
         DEVELOPMENT_TEAM: ""
-    # Debug-only: Mark's 2026-09-02 12:59/13:13 request — every screenshot he
-    # sends should carry the commit SHA and build time, since he's the only
-    # runtime with real hardware. XcodeGen's declarative `info.properties`
-    # can't shell out to git, so this edits the already-copied Info.plist in
-    # the build product after normal build phases run, before code signing —
-    # BuildInfo.swift (Debug-only) reads it back via Bundle.main.
     postbuildScripts:
       - name: Embed Debug build info (commit SHA, build time)
         basedOnDependencyAnalysis: false

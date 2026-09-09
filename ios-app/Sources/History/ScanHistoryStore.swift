@@ -1,18 +1,3 @@
-//
-//  ScanHistoryStore.swift
-//  VuuroScan
-//
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
-//
-//  Local-only persistence for scan sessions this device has created — see
-//  ScanHistoryEntry's header for why this can never be a server-side listing.
-//
-//  Known limit: backed by UserDefaults, which stores each entry's
-//  access_token in plaintext, not the Keychain. Acceptable for this window
-//  (local pilot, no App Store distribution — see ../../docs/adr/0001), but a
-//  real deployment should move this to the Keychain before shipping, same
-//  as any other long-lived credential.
-//
 
 import Foundation
 
@@ -27,29 +12,43 @@ final class ScanHistoryStore {
     }
 
     func all() -> [ScanHistoryEntry] {
-        guard let data = defaults.data(forKey: key),
-              let entries = try? JSONDecoder().decode([ScanHistoryEntry].self, from: data) else {
-            return []
-        }
-        return entries.sorted { $0.createdAt > $1.createdAt }
+        readRedacted()
+            .map { entry in
+                var entry = entry
+                entry.accessToken = KeychainTokenStore.loadToken(forSessionId: entry.sessionId) ?? entry.accessToken
+                return entry
+            }
+            .sorted { $0.createdAt > $1.createdAt }
     }
 
     func add(_ entry: ScanHistoryEntry) {
-        var entries = all()
+        KeychainTokenStore.save(token: entry.accessToken, forSessionId: entry.sessionId)
+        var redacted = entry
+        redacted.accessToken = ""
+        var entries = readRedacted()
         entries.removeAll { $0.sessionId == entry.sessionId }
-        entries.append(entry)
+        entries.append(redacted)
         save(entries)
     }
 
     func remove(sessionId: String) {
-        save(all().filter { $0.sessionId != sessionId })
+        KeychainTokenStore.deleteToken(forSessionId: sessionId)
+        save(readRedacted().filter { $0.sessionId != sessionId })
     }
 
     func updateNickname(sessionId: String, nickname: String?) {
-        var entries = all()
+        var entries = readRedacted()
         guard let index = entries.firstIndex(where: { $0.sessionId == sessionId }) else { return }
         entries[index].nickname = nickname
         save(entries)
+    }
+
+    private func readRedacted() -> [ScanHistoryEntry] {
+        guard let data = defaults.data(forKey: key),
+              let entries = try? JSONDecoder().decode([ScanHistoryEntry].self, from: data) else {
+            return []
+        }
+        return entries
     }
 
     private func save(_ entries: [ScanHistoryEntry]) {

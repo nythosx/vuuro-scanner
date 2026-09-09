@@ -115,6 +115,7 @@ final class FloorPlanImageRenderer
         $doorColor = imagecolorallocate($image, 210, 105, 30);
         $windowColor = imagecolorallocate($image, 70, 130, 180);
         $otherOpeningColor = imagecolorallocate($image, 120, 120, 120);
+        $walkPathColor = imagecolorallocate($image, 150, 60, 190);
         $typePalette = [];
         foreach (self::ROOM_TYPE_PALETTE as $type => $c) {
             $typePalette[$type] = [
@@ -141,7 +142,7 @@ final class FloorPlanImageRenderer
             $tile = $tiles[$i];
             $roomTypeValue = self::roomTypeValue($room);
             [$roomFill, $roomBorder] = $typePalette[$roomTypeValue] ?? [$defaultFill, $defaultBorder];
-            $this->drawRoomTile($image, $room, $x, $y, $roomFill, $roomBorder, $text, $subtext, $doorColor, $windowColor, $otherOpeningColor, $unit);
+            $this->drawRoomTile($image, $room, $x, $y, $roomFill, $roomBorder, $text, $subtext, $doorColor, $windowColor, $otherOpeningColor, $walkPathColor, $unit);
             $x += $tile['width'] + self::TILE_GAP;
         }
 
@@ -209,6 +210,7 @@ final class FloorPlanImageRenderer
         $doorColor = imagecolorallocate($image, 210, 105, 30);
         $windowColor = imagecolorallocate($image, 70, 130, 180);
         $otherOpeningColor = imagecolorallocate($image, 120, 120, 120);
+        $walkPathColor = imagecolorallocate($image, 150, 60, 190);
         $warnFill = imagecolorallocate($image, 250, 205, 205);
         $warnBorder = imagecolorallocate($image, 178, 30, 30);
         $palette = array_map(
@@ -308,6 +310,10 @@ final class FloorPlanImageRenderer
 
         foreach ($rooms as $room) {
             [$originX, $originZ] = $room['structure_origin_m'];
+            $this->drawWalkPath($image, $room, $originX, $originZ, $toPx, $walkPathColor);
+        }
+        foreach ($rooms as $room) {
+            [$originX, $originZ] = $room['structure_origin_m'];
             $this->drawOpenings($image, $room, $originX, $originZ, $toPx, $doorColor, $windowColor, $otherOpeningColor, $text);
         }
 
@@ -318,6 +324,8 @@ final class FloorPlanImageRenderer
         imagestring($image, 1, self::MARGIN + 68, $legendY - 6, 'window', $text);
         imagefilledellipse($image, self::MARGIN + 130, $legendY, 8, 8, $otherOpeningColor);
         imagestring($image, 1, self::MARGIN + 138, $legendY - 6, 'other opening', $text);
+        imageline($image, self::MARGIN + 200, $legendY, self::MARGIN + 216, $legendY, $walkPathColor);
+        imagestring($image, 1, self::MARGIN + 220, $legendY - 6, 'walk path', $text);
 
         $this->drawRoomTypeLegend($image, $rooms, $typePalette, $legendY - 14, $text);
         $this->drawFooter($image, $subtext);
@@ -431,6 +439,47 @@ final class FloorPlanImageRenderer
         }
     }
 
+    private function drawWalkPath($image, array $room, float $originX, float $originZ, callable $toPx, int $color): void
+    {
+        $points = $room['walk_path_m'] ?? [];
+        if (count($points) < 2) {
+            return;
+        }
+        for ($i = 0; $i < count($points) - 1; $i++) {
+            [$ax, $az] = $points[$i];
+            [$bx, $bz] = $points[$i + 1];
+            [$apx, $apy] = $toPx($ax + $originX, $az + $originZ);
+            [$bpx, $bpy] = $toPx($bx + $originX, $bz + $originZ);
+            $this->drawDashedSegment($image, $apx, $apy, $bpx, $bpy, $color);
+        }
+    }
+
+    private function drawDashedSegment($image, int $x1, int $y1, int $x2, int $y2, int $color): void
+    {
+        $dashLength = 6.0;
+        $gapLength = 5.0;
+        $dx = $x2 - $x1;
+        $dy = $y2 - $y1;
+        $distance = sqrt($dx * $dx + $dy * $dy);
+        if ($distance < 0.5) {
+            return;
+        }
+        $step = $dashLength + $gapLength;
+        $steps = (int) ceil($distance / $step);
+        for ($i = 0; $i < $steps; $i++) {
+            $startT = ($i * $step) / $distance;
+            $endT = min(1.0, ($i * $step + $dashLength) / $distance);
+            imageline(
+                $image,
+                (int) round($x1 + $dx * $startT),
+                (int) round($y1 + $dy * $startT),
+                (int) round($x1 + $dx * $endT),
+                (int) round($y1 + $dy * $endT),
+                $color
+            );
+        }
+    }
+
     /**
      * Finds the outline edge closest to (x, z) and returns its unit
      * direction vector plus the unit normal perpendicular to it, flipped to
@@ -537,7 +586,7 @@ final class FloorPlanImageRenderer
         return ['width' => max($width, 120), 'height' => max($height, 120)];
     }
 
-    private function drawRoomTile($image, array $room, int $originX, int $originY, int $fill, int $border, int $text, int $subtext, int $doorColor, int $windowColor, int $otherOpeningColor, string $unit = UnitFormatter::METRIC): void
+    private function drawRoomTile($image, array $room, int $originX, int $originY, int $fill, int $border, int $text, int $subtext, int $doorColor, int $windowColor, int $otherOpeningColor, int $walkPathColor, string $unit = UnitFormatter::METRIC): void
     {
         $points = [];
         foreach ($room['outline_m'] as [$mx, $mz]) {
@@ -556,6 +605,7 @@ final class FloorPlanImageRenderer
             $originY + self::TILE_PADDING + (int) round($mz * self::PIXELS_PER_METER),
         ];
         $this->drawWallLengths($image, $room['outline_m'], 0.0, 0.0, $tileToPx, $subtext, $unit);
+        $this->drawWalkPath($image, $room, 0.0, 0.0, $tileToPx, $walkPathColor);
         $this->drawOpenings($image, $room, 0.0, 0.0, $tileToPx, $doorColor, $windowColor, $otherOpeningColor, $text);
 
         $labelY = $originY + self::TILE_PADDING + (int) round($room['bounding_dimensions_m']['length_m'] * self::PIXELS_PER_METER) + 8;

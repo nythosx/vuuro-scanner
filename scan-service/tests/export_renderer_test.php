@@ -316,6 +316,8 @@ $overlapPdf = $renderer->render($overlapPlan);
 x_check('PDF text includes the overlap warning when rooms overlap', str_contains($overlapPdf, 'WARNING: some rooms below overlap'));
 $cleanFusedPdf = $renderer->render($cleanFusedPlan);
 x_check('PDF text has no overlap warning when rooms are merely adjacent', !str_contains($cleanFusedPdf, 'WARNING'));
+$overlapPdfTiles = $renderer->render($overlapPlan, layout: 'tiles');
+x_check('PDF layout=tiles suppresses the overlap warning, same as PNG layout=tiles', !str_contains($overlapPdfTiles, 'WARNING'));
 
 echo "\n== Viewing one room individually: ?layout=tiles and ?room_id ==\n";
 $forcedTilesPng = $imageRenderer->render($fusedPlan, 'tiles');
@@ -332,7 +334,7 @@ try {
     x_check('an unknown room_id is rejected, not silently ignored', str_contains($e->getMessage(), 'no-such-room'));
 }
 
-$oneRoomPdf = $renderer->render(build_floor_plan([$fusedPlan['rooms'][0], $fusedPlan['rooms'][1]]), 'room-a');
+$oneRoomPdf = $renderer->render(build_floor_plan([$fusedPlan['rooms'][0], $fusedPlan['rooms'][1]]), roomId: 'room-a');
 x_check('room_id narrows the PDF metrics table to that room\'s label only', str_contains($oneRoomPdf, 'Room A') && !str_contains($oneRoomPdf, 'Room B'));
 
 echo "\n== Unit-level total area on the PDF and PNG exports ==\n";
@@ -346,16 +348,16 @@ $totalPngTiled = $imageRenderer->render($twoRoomPlan);
 x_check('PNG (tiled path) renders without throwing now that a total-area line is drawn', str_contains($totalPngTiled, "\x89PNG"));
 
 echo "\n== Metric/imperial unit toggle ==\n";
-$imperialPdf = $renderer->render($twoRoomPlan, null, \VuuroScan\Export\UnitFormatter::IMPERIAL);
+$imperialPdf = $renderer->render($twoRoomPlan, unit: \VuuroScan\Export\UnitFormatter::IMPERIAL);
 x_check('imperial PDF converts the total area to sqft, not sqm', str_contains($imperialPdf, 'sqft') && !str_contains($imperialPdf, '25.50 sqm'));
-$metricPdf = $renderer->render($twoRoomPlan, null, \VuuroScan\Export\UnitFormatter::METRIC);
+$metricPdf = $renderer->render($twoRoomPlan, unit: \VuuroScan\Export\UnitFormatter::METRIC);
 x_check('metric (default) PDF still says sqm', str_contains($metricPdf, 'sqm'));
 $imperialPng = $imageRenderer->render($twoRoomPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::IMPERIAL);
 x_check('imperial PNG renders without throwing', str_contains($imperialPng, "\x89PNG"));
 x_check('imperial PNG produces different bytes than the metric render (unit text actually changed)', $imperialPng !== $totalPngTiled);
 
 echo "\n== Optional branding/label line on the export ==\n";
-$labeledPdf = $renderer->render($twoRoomPlan, null, \VuuroScan\Export\UnitFormatter::METRIC, 'Prepared for Acme Rentals');
+$labeledPdf = $renderer->render($twoRoomPlan, unit: \VuuroScan\Export\UnitFormatter::METRIC, label: 'Prepared for Acme Rentals');
 x_check('PDF includes the caller-supplied label line', str_contains($labeledPdf, 'Prepared for Acme Rentals'));
 $unlabeledPdf = $renderer->render($twoRoomPlan);
 x_check('PDF omits the label line entirely when none is given', !str_contains($unlabeledPdf, 'Prepared for'));

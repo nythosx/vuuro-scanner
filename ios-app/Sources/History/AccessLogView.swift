@@ -1,13 +1,3 @@
-//
-//  AccessLogView.swift
-//  VuuroScan
-//
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
-//
-//  Surfaces GET /scan-sessions/{id}/access-log for one session — the same
-//  audit trail the web-viewer already exercises (../../web-viewer/), now
-//  reachable from the app itself instead of only from that dev tool.
-//
 
 import SwiftUI
 

@@ -17,48 +17,54 @@ struct MultiRoomCaptureFlowView: View {
     @State private var pendingFinishUnit = false
     @State private var partialRoomFailureMessage: String?
     @State private var showCapturedRoomsList = false
-    // Shared by the scanning back-button and the merging-screen Cancel
-    // button — both mean the same thing (leave the flow, lose every room
-    // captured so far), unlike single-room's discard confirmation which
-    // this mirrors, see VuuroScanApp.swift's RoomCaptureFlowStep.
     @State private var showDiscardConfirmation = false
+    @State private var capturedLocation: CaptureLocation?
+    @State private var preUploadedSession: (session: ScanSessionResponse, floorPlan: FloorPlan)?
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
+    private let locationProvider = LocationProvider()
+
+    private var debugFakeCaptureActive: Bool {
+        #if DEBUG
+        FakeLidarMode.isEnabled
+        #else
+        false
+        #endif
+    }
 
     var body: some View {
         Group {
-            if !DeviceCapability.isRoomPlanSupported {
+            if !DeviceCapability.isRoomPlanSupported && !debugFakeCaptureActive {
                 UnsupportedDeviceScreen(onGoBack: onGoBack)
+            } else if !DeviceCapability.isRoomPlanSupported {
+                #if DEBUG
+                ProgressView("Generating fake multi-room capture (Debug)…")
+                    .onAppear {
+                        Task {
+                            let exports = (0..<Int.random(in: 2...4)).map { _ in FakeCaptureGenerator.random() }
+                            if let result = await submitExports(exports) {
+                                onFinished(result.session, result.floorPlan)
+                            }
+                        }
+                    }
+                #else
+                EmptyView()
+                #endif
             } else if isFinishingUnit {
-                // Real dead-end found in review: StructureBuilder's merge
-                // duration on a real multi-room walkthrough is unverified
-                // (Apple forum reports of exceedSceneSizeLimit around 10-11
-                // rooms), and this was the one long-running step in the app
-                // with no way out short of force-quitting.
                 VStack(spacing: 16) {
                     ProgressView("Merging rooms…")
                     Button("Cancel", role: .destructive) {
-                        showDiscardConfirmation = true
+                        coordinator.cancelMerge()
                     }
                 }
                 .padding()
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            } else if isUploading {
+                ProgressView("Uploading rooms…")
+                    .padding()
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             } else {
-                // MultiRoomCaptureScreen must stay mounted for the entire
-                // walkthrough, including through a degenerate or partial-
-                // failure room — confirmed via Apple developer forum reports
-                // (forums.developer.apple.com/forums/thread/769230):
-                // recreating RoomCaptureView, even against the same shared
-                // ARSession, loses world tracking. That's exactly the
-                // alignment MultiRoomCaptureCoordinator's shared ARSession
-                // exists to preserve across rooms, so isDegenerateCapture and
-                // partialRoomFailureMessage used to be their own top-level
-                // Group cases here — which unmounted this ZStack (and the
-                // RoomCaptureView inside MultiRoomCaptureScreen) every time
-                // either one showed, then rebuilt it from scratch on
-                // "Rescan"/"Keep this room". Both are now overlays on top of
-                // the still-running capture screen instead.
                 ZStack {
                     MultiRoomCaptureScreen(coordinator: coordinator)
                         .ignoresSafeArea()
@@ -98,10 +104,6 @@ struct MultiRoomCaptureFlowView: View {
                                 }
                             )
                         }
-                    } else if isUploading {
-                        ProgressView("Uploading rooms…")
-                            .padding()
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                     } else if didRequestStopRoom {
                         ProgressView("Finishing room…")
                             .padding()
@@ -175,7 +177,10 @@ struct MultiRoomCaptureFlowView: View {
                         }
                     }
                 }
-                .onAppear { coordinator.start() }
+                .onAppear {
+                    coordinator.start()
+                    Task { capturedLocation = await locationProvider.currentLocation() }
+                }
                 .onChange(of: coordinator.state) { _, state in
                     handle(state)
                 }
@@ -239,10 +244,22 @@ struct MultiRoomCaptureFlowView: View {
             isFinishingUnit = true
         case .unitFinished:
             guard let structure = coordinator.mergedStructure else { return }
-            Task { await submit(structure) }
+            Task { await submitFused(structure) }
         case .mergeFailed(let message):
             isFinishingUnit = false
-            onError(AppError(site: .captureFailed, underlying: PlainError(message: message)), existingSession)
+            finishWithPreUploadOrError(AppError(site: .captureFailed, underlying: PlainError(message: message)))
+        case .mergeTimedOut, .mergeCancelled:
+            isFinishingUnit = false
+            finishWithPreUploadOrError(AppError(site: .captureFailed, underlying: PlainError(message: "Merging rooms didn't complete.")))
+        }
+    }
+
+    private func finishWithPreUploadOrError(_ error: AppError) {
+        if let preUploadedSession {
+            self.preUploadedSession = nil
+            onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
+        } else {
+            onError(error, existingSession)
         }
     }
 
@@ -252,7 +269,7 @@ struct MultiRoomCaptureFlowView: View {
             if coordinator.capturedRooms.isEmpty {
                 onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
             } else {
-                coordinator.finishUnit()
+                Task { await beginFinishUnit() }
             }
         } else {
             coordinator.start()
@@ -260,20 +277,66 @@ struct MultiRoomCaptureFlowView: View {
     }
 
     @MainActor
-    private func submit(_ structure: CapturedStructure) async {
+    private func beginFinishUnit() async {
+        let exports = coordinator.capturedRooms.indices.map { index in
+            CapturedRoomExporter.export(
+                coordinator.capturedRooms[index],
+                roomTypeConfirmation: coordinator.roomTypeConfirmations[index],
+                walkPath: coordinator.roomWalkPaths.indices.contains(index) ? coordinator.roomWalkPaths[index] : nil
+            )
+        }
+        guard let result = await submitExports(exports) else { return }
+        preUploadedSession = result
+        coordinator.finishUnit()
+    }
+
+    @MainActor
+    private func submitFused(_ structure: CapturedStructure) async {
         isFinishingUnit = false
+        guard let preUploadedSession else { return }
+        let exports = CapturedStructureExporter.export(structure, roomTypeConfirmationsByIdentifier: coordinator.roomTypeConfirmationsByIdentifier, roomWalkPathsByIdentifier: coordinator.roomWalkPathsByIdentifier)
+        guard exports.allSatisfy({ $0.hasUsableFloorOutline }) else {
+            self.preUploadedSession = nil
+            onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
+            return
+        }
+        isUploading = true
+        defer { isUploading = false }
+        do {
+            let floorPlan = try await client.replaceRooms(sessionId: preUploadedSession.session.id, accessToken: preUploadedSession.session.accessToken, exports: exports, location: capturedLocation)
+            self.preUploadedSession = nil
+            onFinished(preUploadedSession.session, floorPlan)
+        } catch {
+            self.preUploadedSession = nil
+            onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
+        }
+    }
+
+    @MainActor
+    private func submitExports(_ exports: [RoomPlanCaptureExport]) async -> (session: ScanSessionResponse, floorPlan: FloorPlan)? {
         isUploading = true
         defer { isUploading = false }
 
-        let exports = CapturedStructureExporter.export(structure, roomTypeConfirmationsByIdentifier: coordinator.roomTypeConfirmationsByIdentifier)
         guard !exports.isEmpty else {
             onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
-            return
+            return nil
         }
         guard exports.allSatisfy({ $0.hasUsableFloorOutline }) else {
             onError(AppError(site: .captureFailed, underlying: PlainError(message: "One or more merged rooms had a degenerate floor outline.")), existingSession)
-            return
+            return nil
         }
+
+        var captures: [PendingUploadState.PendingCapture] = []
+        for export in exports {
+            guard let bodyJSON = try? client.encodeCaptureBody(capture: export, location: capturedLocation) else {
+                onError(AppError(site: .captureFailed, underlying: PlainError(message: "Could not prepare a captured room for upload.")), existingSession)
+                return nil
+            }
+            captures.append(.init(idempotencyKey: UUID().uuidString, bodyJSON: bodyJSON))
+        }
+
+        var pending = PendingUploadState(session: existingSession, identity: identity, captures: captures)
+        PendingUploadStore.save(pending)
 
         let session: ScanSessionResponse
         if let existingSession {
@@ -283,8 +346,10 @@ struct MultiRoomCaptureFlowView: View {
                 session = try await client.createSession(identity: identity)
             } catch {
                 onError(AppError(site: .sessionCreate, underlying: error), nil)
-                return
+                return nil
             }
+            pending.session = session
+            PendingUploadStore.save(pending)
             ScanHistoryStore.shared.add(ScanHistoryEntry(
                 sessionId: session.id,
                 accessToken: session.accessToken,
@@ -298,19 +363,20 @@ struct MultiRoomCaptureFlowView: View {
         }
 
         var floorPlan: FloorPlan?
-        for export in exports {
+        for capture in pending.captures {
             do {
-                floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export)
+                floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: capture.idempotencyKey, bodyJSON: capture.bodyJSON)
             } catch {
                 onError(AppError(site: .captureUpload, underlying: error), session)
-                return
+                return nil
             }
         }
         guard let floorPlan else {
             onError(AppError(site: .captureNoRoom, underlying: nil), session)
-            return
+            return nil
         }
-        onFinished(session, floorPlan)
+        PendingUploadStore.clear()
+        return (session, floorPlan)
     }
 }
 

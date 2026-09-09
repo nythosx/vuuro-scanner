@@ -541,6 +541,46 @@ t_check('capture_location round-trips lat/lon/accuracy_m/captured_at', $withLoca
     'lat' => 52.09, 'lon' => 5.12, 'accuracy_m' => 8.5, 'captured_at' => '2026-09-03T13:08:18+00:00',
 ]);
 
+echo "\n== walk_path_m ==\n";
+$noWalkPath = $adapter->adapt(['floors' => [['polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]]], $identity);
+t_check('walk_path_m is empty when walk_path is absent', $noWalkPath['rooms'][0]['walk_path_m'] === []);
+
+$withWalkPath = $adapter->adapt([
+    'floors' => [['polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]],
+    'walk_path' => [[0.5, 0.0, 0.5], [1.0, 0.0, 0.6], [1.5, 0.0, 0.4]],
+], $identity);
+t_check('walk_path_m carries the recorded points, translated into room-local frame like outline_m', $withWalkPath['rooms'][0]['walk_path_m'] === [
+    [0.5, 0.5], [1.0, 0.6], [1.5, 0.4],
+], 'got ' . json_encode($withWalkPath['rooms'][0]['walk_path_m']));
+
+$mixedWalkPath = $adapter->adapt([
+    'floors' => [['polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]],
+    'walk_path' => [[0.5, 0.0, 0.5], 'not-a-point', ['x' => 1], [1.0, 0.0, 0.6]],
+], $identity);
+t_check('walk_path_m drops malformed entries rather than crashing or fabricating a point', $mixedWalkPath['rooms'][0]['walk_path_m'] === [
+    [0.5, 0.5], [1.0, 0.6],
+], 'got ' . json_encode($mixedWalkPath['rooms'][0]['walk_path_m']));
+
+try {
+    $adapter->adapt([
+        'floors' => [['polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]],
+        'walk_path' => array_fill(0, 1001, [0.0, 0.0, 0.0]),
+    ], $identity);
+    t_check('adapt() rejects a walk_path[] over the sanity limit', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    t_check('adapt() rejects a walk_path[] over the sanity limit', true);
+}
+
+try {
+    $adapter->adapt([
+        'floors' => [['polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]],
+        'walk_path' => [[INF, 0.0, 0.0]],
+    ], $identity);
+    t_check('adapt() rejects a non-finite walk_path coordinate', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    t_check('adapt() rejects a non-finite walk_path coordinate', true);
+}
+
 echo count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

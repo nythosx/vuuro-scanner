@@ -11,6 +11,10 @@ scan-service/data/
 .appetize-build*/
 .appetize-evidence/
 
+# Local GitLab Runner (scanner-windows-shell) runtime state — see CLAUDE.md
+.runner_system_id
+builds/
+
 # OS
 .DS_Store
 Thumbs.db

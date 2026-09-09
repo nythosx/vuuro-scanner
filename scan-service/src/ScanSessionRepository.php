@@ -170,6 +170,17 @@ final class ScanSessionRepository
         return array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'id');
     }
 
+    public function findEarlyPurgeCandidates(string $purpose, int $retentionDays, int $limit = 20): array
+    {
+        $cutoff = gmdate('c', time() - $retentionDays * 86400);
+        $stmt = $this->db->prepare('SELECT id FROM scan_sessions WHERE purpose = :purpose AND created_at < :cutoff LIMIT :limit');
+        $stmt->bindValue(':purpose', $purpose, PDO::PARAM_STR);
+        $stmt->bindValue(':cutoff', $cutoff, PDO::PARAM_STR);
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        return array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'id');
+    }
+
     public function lastInsertRowId(): int
     {
         return (int) $this->db->lastInsertId();
@@ -316,6 +327,31 @@ final class ScanSessionRepository
             $merged['capture_provider'] = $newFloorPlan['capture_provider'];
             // Session-wide, set once — a later capture with no location never nulls out an earlier real one.
             $merged['capture_location'] = $existing['capture_location'] ?? ($newFloorPlan['capture_location'] ?? null);
+
+            $this->saveFloorPlan($sessionId, $merged);
+            return $merged;
+        });
+    }
+
+    public function replaceRooms(string $sessionId, array $rooms, string $captureProvider, string $capturedAt): array
+    {
+        return $this->withWriteLock(function () use ($sessionId, $rooms, $captureProvider, $capturedAt) {
+            $existing = $this->findFloorPlan($sessionId);
+            if ($existing === null) {
+                throw new \RuntimeException(
+                    "Cannot replace rooms on scan session $sessionId before it has a captured FloorPlan."
+                );
+            }
+            if (count($rooms) > self::MAX_ROOMS_PER_SESSION) {
+                throw new \OverflowException(
+                    'Replacement room set has ' . count($rooms) . ' rooms, exceeding the ' . self::MAX_ROOMS_PER_SESSION . '-room limit.'
+                );
+            }
+
+            $merged = $existing;
+            $merged['rooms'] = $rooms;
+            $merged['captured_at'] = $capturedAt;
+            $merged['capture_provider'] = $captureProvider;
 
             $this->saveFloorPlan($sessionId, $merged);
             return $merged;

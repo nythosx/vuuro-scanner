@@ -83,7 +83,17 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
   rate limiter in a real deployment.
 - **Token model is per-session, not per-account**: see
   `docs/adr/0003-privacy-acl-session-tokens.md`'s "what this doesn't solve" section in
-  full — no login, no org-level isolation, no TLS in this repo.
+  full — no login, no org-level isolation. TLS itself is available (see below) but not
+  on by default for local dev.
+- **TLS**: the app itself speaks plain HTTP only (same as any PHP `-S`/Docker setup);
+  `Caddyfile` + `docker-compose.yml` in this directory put Caddy in front for automatic
+  HTTPS the moment a real domain is pointed at the host — `SCAN_SERVICE_DOMAIN=scan.example.com
+  docker compose up`. No manual certificate work: Caddy issues and renews a Let's
+  Encrypt cert on its own as long as ports 80/443 are reachable from the internet for
+  that domain. Point the iOS app's `ScanServiceBaseURL` at the `https://` domain once
+  it's up. Not wired up for pure `127.0.0.1` local dev — Let's Encrypt can't issue a
+  cert for an address with no real DNS record, which is the one thing this can't remove
+  the need for.
 - **Export bounds**: PNG canvas capped at 4000px per side
   (`FloorPlanImageRenderer::MAX_CANVAS_DIMENSION_PX`); PDF capped at 200 pages
   (`FloorPlanPdfRenderer::MAX_PAGES`). A capture large enough to exceed either is
@@ -109,8 +119,10 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
   php net/verify_acl.php http://127.0.0.1:8089
   php net/verify_coverage.php http://127.0.0.1:8089
   php net/verify_openings_and_objects.php http://127.0.0.1:8089
+  php net/verify_replace_rooms.php http://127.0.0.1:8089
   php net/verify_security_fixes.php http://127.0.0.1:8089
   php net/verify_error_messages.php http://127.0.0.1:8089
+  php net/verify_session_delete.php http://127.0.0.1:8089
   php net/verify_enterprise_hardening.php http://127.0.0.1:8089
   ```
   `net/verify_post_body_read_rate_limit.php` is deliberately standalone — it floods a

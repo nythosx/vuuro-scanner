@@ -131,6 +131,7 @@ final class RoomPlanSimulatorAdapter
                 // StructureBuilder-merged multi-room visit (docs/proposals/multi-room-fusion.md).
                 'structure_origin_m' => self::structureOriginM($rawCapture),
                 'room_type' => self::mapRoomType($rawCapture),
+                'walk_path_m' => self::mapWalkPath($rawCapture, $minX, $minZ),
             ];
         }
 
@@ -274,6 +275,25 @@ final class RoomPlanSimulatorAdapter
             }
         }
         return $openings;
+    }
+
+    private static function mapWalkPath(array $rawCapture, float $minX, float $minZ): array
+    {
+        $walkPath = $rawCapture['walk_path'] ?? [];
+        if (!is_array($walkPath)) {
+            return [];
+        }
+        $points = [];
+        foreach ($walkPath as $point) {
+            if (!is_array($point) || !isset($point[0], $point[2])) {
+                continue;
+            }
+            if (!is_numeric($point[0]) || !is_numeric($point[2])) {
+                continue;
+            }
+            $points[] = [round((float) $point[0] - $minX, 3), round((float) $point[2] - $minZ, 3)];
+        }
+        return $points;
     }
 
     /**
@@ -545,6 +565,18 @@ final class RoomPlanSimulatorAdapter
                 }
                 self::validatePoints("$group\[$itemIndex].polygonCorners", $corners);
             }
+        }
+
+        $walkPath = $rawCapture['walk_path'] ?? null;
+        if (is_array($walkPath)) {
+            if (count($walkPath) > self::MAX_POLYGON_POINTS) {
+                throw new \InvalidArgumentException(sprintf(
+                    'walk_path[] has %d entries, exceeding the %d-point sanity limit.',
+                    count($walkPath),
+                    self::MAX_POLYGON_POINTS
+                ));
+            }
+            self::validatePoints('walk_path', $walkPath);
         }
 
         $objects = $rawCapture['objects'] ?? [];
