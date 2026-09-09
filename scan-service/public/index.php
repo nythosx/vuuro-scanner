@@ -230,7 +230,9 @@ $path = rtrim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
 
 $rawRequestBody = '';
 if ($method === 'POST') {
-    if (rateLimited($repo, clientIp() . ':post_body_read', 500, 300)) {
+    $postBodyReadMax = (int) (getenv('SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_MAX') ?: 500);
+    $postBodyReadWindowSeconds = (int) (getenv('SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_WINDOW_SECONDS') ?: 300);
+    if (rateLimited($repo, clientIp() . ':post_body_read', $postBodyReadMax, $postBodyReadWindowSeconds)) {
         return;
     }
 
