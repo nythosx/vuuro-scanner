@@ -155,6 +155,19 @@ final class FloorPlanPdfRenderer
             if (count($walkPath) >= 2) {
                 $lines[] = sprintf('             walk path: %d point(s) recorded', count($walkPath));
             }
+            $objects = $room['objects'] ?? [];
+            if ($objects !== []) {
+                $objectCounts = [];
+                foreach ($objects as $object) {
+                    $objectCounts[$object['category']] = ($objectCounts[$object['category']] ?? 0) + 1;
+                }
+                $objectSummary = implode(', ', array_map(
+                    static fn (string $category, int $count) => "{$count} {$category}",
+                    array_keys($objectCounts),
+                    array_values($objectCounts)
+                ));
+                $lines[] = "             detected objects: {$objectSummary}";
+            }
         }
         $lines[] = '';
         $lines[] = sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalArea, $unit), count($floorPlan['rooms']));

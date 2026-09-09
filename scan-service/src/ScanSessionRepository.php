@@ -149,6 +149,39 @@ final class ScanSessionRepository
         return $row ?: null;
     }
 
+    public function findByFilters(?string $propertyId, ?string $unitId, ?string $organisationId, int $limit = 100): array
+    {
+        $conditions = [];
+        $params = [];
+        if ($propertyId !== null) {
+            $conditions[] = 'property_id = :property_id';
+            $params['property_id'] = $propertyId;
+        }
+        if ($unitId !== null) {
+            $conditions[] = 'unit_id = :unit_id';
+            $params['unit_id'] = $unitId;
+        }
+        if ($organisationId !== null) {
+            $conditions[] = 'organisation_id = :organisation_id';
+            $params['organisation_id'] = $organisationId;
+        }
+
+        $where = $conditions === [] ? '' : 'WHERE ' . implode(' AND ', $conditions);
+        $stmt = $this->db->prepare(
+            "SELECT id, property_id, unit_id, organisation_id, purpose, status, created_at, expires_at, occupied
+             FROM scan_sessions $where ORDER BY created_at DESC LIMIT :limit"
+        );
+        foreach ($params as $key => $value) {
+            $stmt->bindValue(":$key", $value, PDO::PARAM_STR);
+        }
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        return array_map(
+            static fn (array $row) => [...$row, 'occupied' => (bool) $row['occupied']],
+            $stmt->fetchAll(PDO::FETCH_ASSOC)
+        );
+    }
+
     public function deleteSession(string $id): void
     {
         $this->withWriteLock(function () use ($id) {
@@ -371,6 +404,45 @@ final class ScanSessionRepository
     public function appendNote(string $sessionId, array $note): array
     {
         return $this->appendToContractArray($sessionId, 'notes', $note, self::MAX_NOTES_PER_SESSION);
+    }
+
+    public function deletePhoto(string $sessionId, string $photoId): array
+    {
+        return $this->deleteFromContractArray($sessionId, 'photos', 'photo_id', $photoId);
+    }
+
+    public function deleteNote(string $sessionId, string $noteId): array
+    {
+        return $this->deleteFromContractArray($sessionId, 'notes', 'note_id', $noteId);
+    }
+
+    private function deleteFromContractArray(string $sessionId, string $field, string $idKey, string $id): array
+    {
+        return $this->withWriteLock(function () use ($sessionId, $field, $idKey, $id) {
+            $floorPlan = $this->findFloorPlan($sessionId);
+            if ($floorPlan === null) {
+                throw new \RuntimeException(
+                    "Cannot delete a $field from scan session $sessionId before it has a captured FloorPlan."
+                );
+            }
+
+            $index = null;
+            foreach ($floorPlan[$field] as $i => $item) {
+                if ($item[$idKey] === $id) {
+                    $index = $i;
+                    break;
+                }
+            }
+            if ($index === null) {
+                throw new \InvalidArgumentException(
+                    "$idKey '{$id}' does not match any $field attached to this session."
+                );
+            }
+
+            array_splice($floorPlan[$field], $index, 1);
+            $this->saveFloorPlan($sessionId, $floorPlan);
+            return $floorPlan;
+        });
     }
 
     /**

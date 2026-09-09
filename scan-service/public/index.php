@@ -110,6 +110,42 @@ function deleteSessionPhotoDir(string $sessionId): void
     rmdir($photoDir);
 }
 
+const BACKUP_MIN_INTERVAL_SECONDS = 24 * 60 * 60;
+const BACKUP_MAX_KEPT = 14;
+
+function backupDatabaseIfDue(): void
+{
+    $dbPath = \VuuroScan\Storage\Database::resolvePath();
+    if (!is_file($dbPath)) {
+        return;
+    }
+    $backupDir = dirname($dbPath) . '/backups';
+    if (!is_dir($backupDir) && !mkdir($backupDir, 0750, true) && !is_dir($backupDir)) {
+        return;
+    }
+
+    $existing = glob($backupDir . '/*.sqlite') ?: [];
+    $newest = 0;
+    foreach ($existing as $file) {
+        $newest = max($newest, (int) filemtime($file));
+    }
+    if ($newest !== 0 && time() - $newest < BACKUP_MIN_INTERVAL_SECONDS) {
+        return;
+    }
+
+    $backupPath = $backupDir . '/' . gmdate('Ymd\THis\Z') . '.sqlite';
+    if (!copy($dbPath, $backupPath)) {
+        return;
+    }
+
+    $all = glob($backupDir . '/*.sqlite') ?: [];
+    sort($all);
+    $excess = count($all) - BACKUP_MAX_KEPT;
+    for ($i = 0; $i < $excess; $i++) {
+        unlink($all[$i]);
+    }
+}
+
 function clientIp(): string
 {
     // No reverse proxy / load balancer in front of this local-dev service
@@ -168,6 +204,16 @@ function presented_token(): ?string
 {
     $header = $_SERVER['HTTP_X_SCAN_ACCESS_TOKEN'] ?? null;
     return is_string($header) && $header !== '' ? $header : null;
+}
+
+function adminAuthorized(): bool
+{
+    $configuredKey = getenv('SCAN_SERVICE_ADMIN_API_KEY');
+    if (!is_string($configuredKey) || $configuredKey === '') {
+        return false;
+    }
+    $presentedKey = $_SERVER['HTTP_X_ADMIN_API_KEY'] ?? '';
+    return is_string($presentedKey) && $presentedKey !== '' && hash_equals($configuredKey, $presentedKey);
 }
 
 function authorizeSession(ScanSessionRepository $repo, string $sessionId, string $action): ?array
@@ -317,6 +363,8 @@ if ($method === 'POST' && $path === '/scan-sessions') {
         $tokenTtlSeconds
     );
 
+    backupDatabaseIfDue();
+
     if ($repo->lastInsertRowId() % 10 === 0) {
         foreach ($repo->findExpiredBeyondGracePeriod() as $expiredId) {
             $repo->deleteSession($expiredId);
@@ -338,6 +386,30 @@ if ($method === 'POST' && $path === '/scan-sessions') {
         'occupied' => (bool) $session['occupied'],
         'consent_obtained' => (bool) $session['consent_obtained'],
     ]);
+    return;
+}
+
+if ($method === 'GET' && $path === '/scan-sessions') {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header, and set SCAN_SERVICE_ADMIN_API_KEY on the server to enable this endpoint at all.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':list_sessions', 60, 300)) {
+        return;
+    }
+
+    $propertyId = isset($_GET['property_id']) && is_string($_GET['property_id']) && $_GET['property_id'] !== '' ? $_GET['property_id'] : null;
+    $unitId = isset($_GET['unit_id']) && is_string($_GET['unit_id']) && $_GET['unit_id'] !== '' ? $_GET['unit_id'] : null;
+    $organisationId = isset($_GET['organisation_id']) && is_string($_GET['organisation_id']) && $_GET['organisation_id'] !== '' ? $_GET['organisation_id'] : null;
+    if ($propertyId === null && $unitId === null && $organisationId === null) {
+        respondError(422, 'missing_filter', 'Please provide at least one of property_id, unit_id, or organisation_id to look up sessions.');
+        return;
+    }
+
+    respond(200, ['sessions' => $repo->findByFilters($propertyId, $unitId, $organisationId)]);
     return;
 }
 
@@ -785,6 +857,52 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, 
     }
 
     respond(201, $floorPlan);
+    return;
+}
+
+if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)/photos/([^/]+)$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'delete_photo');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':delete_photo', 60, 300)) {
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->deletePhoto($session['id'], $m[2]);
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(404, 'photo_not_found', $e->getMessage());
+        return;
+    }
+
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)/notes/([^/]+)$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'delete_note');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':delete_note', 60, 300)) {
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->deleteNote($session['id'], $m[2]);
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(404, 'note_not_found', $e->getMessage());
+        return;
+    }
+
+    respond(200, $floorPlan);
     return;
 }
 

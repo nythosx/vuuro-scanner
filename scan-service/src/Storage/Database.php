@@ -8,9 +8,14 @@ use PDO;
 
 final class Database
 {
+    public static function resolvePath(): string
+    {
+        return getenv('SCAN_SERVICE_DB_PATH') ?: __DIR__ . '/../../data/scan_service.sqlite';
+    }
+
     public static function connect(?string $path = null): PDO
     {
-        $path ??= getenv('SCAN_SERVICE_DB_PATH') ?: __DIR__ . '/../../data/scan_service.sqlite';
+        $path ??= self::resolvePath();
         $dir = dirname($path);
         if (!is_dir($dir)) {
             // 0750, not 0777: this directory holds privacy-sensitive
