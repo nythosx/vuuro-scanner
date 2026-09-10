@@ -104,6 +104,28 @@ net_http_json('DELETE', "$baseUrl/scan-sessions/$sessionId/photos/$uploadedPhoto
 [$getUploadedAfterStatus, ] = net_http_raw('GET', $uploadedPhotoUrl, null, $accessToken);
 check('the uploaded photo file is gone after delete, not just unlisted (HTTP 404)', $getUploadedAfterStatus === 404, "got HTTP $getUploadedAfterStatus");
 
+echo "\n== Adjacent case: two photo entries sharing one uploaded file — deleting one must not break the other ==\n";
+
+$tmpDupUploadPath = sys_get_temp_dir() . '/net_verify_session_lookup_dup_upload.jpg';
+file_put_contents($tmpDupUploadPath, "\xFF\xD8\xFFnet-test-dup-jpeg-bytes");
+[, $dupUploadBody] = net_http_multipart_upload("$baseUrl/scan-sessions/$sessionId/photo-uploads", $tmpDupUploadPath, 'image/jpeg', $accessToken);
+$dupPhotoUrl = $dupUploadBody['url'];
+
+net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", ['url' => $dupPhotoUrl], $accessToken);
+[, $afterDupAttach] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", ['url' => $dupPhotoUrl], $accessToken);
+$dupPhotos = array_values(array_filter($afterDupAttach['photos'], fn ($p) => $p['url'] === $dupPhotoUrl));
+check('two entries were attached pointing at the same uploaded file', count($dupPhotos) === 2, 'got ' . count($dupPhotos) . ' entries');
+$dupFirstId = $dupPhotos[0]['photo_id'];
+$dupSecondId = $dupPhotos[1]['photo_id'];
+
+net_http_json('DELETE', "$baseUrl/scan-sessions/$sessionId/photos/$dupFirstId", null, $accessToken);
+[$dupStillReferencedStatus, ] = net_http_raw('GET', $dupPhotoUrl, null, $accessToken);
+check('deleting ONE of two entries sharing a file leaves the file intact for the other (HTTP 200)', $dupStillReferencedStatus === 200, "got HTTP $dupStillReferencedStatus");
+
+net_http_json('DELETE', "$baseUrl/scan-sessions/$sessionId/photos/$dupSecondId", null, $accessToken);
+[$dupLastRefGoneStatus, ] = net_http_raw('GET', $dupPhotoUrl, null, $accessToken);
+check('deleting the LAST entry referencing that file finally removes it (HTTP 404)', $dupLastRefGoneStatus === 404, "got HTTP $dupLastRefGoneStatus");
+
 echo "\n== Adjacent case: deleting a photo/note on a session with no floor plan yet is a clean 409, not a crash ==\n";
 
 [, $emptySession] = net_http_json('POST', "$baseUrl/scan-sessions", [

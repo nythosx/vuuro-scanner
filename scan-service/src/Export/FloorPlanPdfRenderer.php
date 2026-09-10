@@ -122,7 +122,7 @@ final class FloorPlanPdfRenderer
             $totalArea += $room['floor_area_m2'];
             $roomType = $room['room_type'] ?? null;
             $roomTypeValue = $roomType !== null ? ($roomType['confirmed'] ?? $roomType['guess'] ?? null) : null;
-            $roomTypeName = $roomTypeValue !== null ? (RoomType::LABELS[$roomTypeValue] ?? null) : null;
+            $roomTypeName = $roomTypeValue !== null ? RoomType::labelFor($roomTypeValue) : null;
             $roomLabel = $roomTypeName !== null ? "{$room['label']} ({$roomTypeName})" : $room['label'];
             $lines[] = sprintf(
                 '%-20s %12s   %14s   confidence: %s',
@@ -168,13 +168,45 @@ final class FloorPlanPdfRenderer
                 ));
                 $lines[] = "             detected objects: {$objectSummary}";
             }
+            $roomNotes = array_values(array_filter(
+                $floorPlan['notes'],
+                static fn (array $note) => ($note['room_id'] ?? null) === $room['room_id']
+            ));
+            foreach ($roomNotes as $note) {
+                foreach ($this->wrapTextLines($note['text'], 85) as $i => $wrapped) {
+                    $lines[] = $i === 0 ? "             note: {$wrapped}" : "                   {$wrapped}";
+                }
+            }
         }
         $lines[] = '';
         $lines[] = sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalArea, $unit), count($floorPlan['rooms']));
+
+        $unitNotes = array_values(array_filter(
+            $floorPlan['notes'],
+            static fn (array $note) => ($note['room_id'] ?? null) === null
+        ));
+        if ($unitNotes !== []) {
+            $lines[] = '';
+            $lines[] = 'Whole-unit notes';
+            $lines[] = '----------------';
+            foreach ($unitNotes as $note) {
+                foreach ($this->wrapTextLines($note['text'], 90) as $i => $wrapped) {
+                    $lines[] = $i === 0 ? "- {$wrapped}" : "  {$wrapped}";
+                }
+            }
+        }
+
         $lines[] = '';
         $lines[] = sprintf('Photos attached: %d   Notes attached: %d', count($floorPlan['photos']), count($floorPlan['notes']));
 
         return $lines;
+    }
+
+    /** @return string[] */
+    private function wrapTextLines(string $text, int $maxChars): array
+    {
+        $wrapped = wordwrap($text, $maxChars, "\n", true);
+        return $wrapped === '' ? [''] : explode("\n", $wrapped);
     }
 
     /** @param string[] $lines */

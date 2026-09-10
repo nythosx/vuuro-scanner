@@ -26,6 +26,7 @@ struct AppError {
         case photoTooLarge = "PHOTO_TOO_LARGE"
         case noteAdd = "NOTE_ADD"
         case roomTypeUpdate = "ROOM_TYPE_UPDATE"
+        case roomLabelUpdate = "ROOM_LABEL_UPDATE"
         case resultImageLoad = "RESULT_IMAGE_LOAD"
         case resultImageDecode = "RESULT_IMAGE_DECODE"
         case resultPDFLoad = "RESULT_PDF_LOAD"
@@ -34,6 +35,7 @@ struct AppError {
         case historyPDFDownload = "HISTORY_PDF_DOWNLOAD"
         case historySessionFetch = "HISTORY_SESSION_FETCH"
         case historyServerDelete = "HISTORY_SERVER_DELETE"
+        case uploadCancelled = "UPLOAD_CANCELLED"
 
         /// Only used when there's no thrown Error to describe the failure
         /// (e.g. capture finished but RoomPlan reported no usable room) —
@@ -48,6 +50,8 @@ struct AppError {
                 return "Couldn't read the selected photo."
             case .photoTooLarge:
                 return "Photos are limited to 25MB. Please choose a smaller photo."
+            case .uploadCancelled:
+                return "Upload cancelled."
             default:
                 return "Something went wrong."
             }

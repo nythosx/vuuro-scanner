@@ -7,6 +7,10 @@ struct PendingUploadRecoveryView: View {
 
     @State private var isRetrying = false
     @State private var lastError: AppError?
+    @State private var retryTask: Task<Void, Never>?
+    @State private var showRetryConfirmation = false
+
+    private static let largeUnitRoomCount = 8
 
     private let client = ScanServiceClient()
 
@@ -28,10 +32,10 @@ struct PendingUploadRecoveryView: View {
             }
 
             if isRetrying {
-                ProgressView("Uploading…")
+                UploadProgressView(message: "Uploading…", onCancel: { retryTask?.cancel() })
             } else {
                 Button("Retry upload") {
-                    Task { await retry() }
+                    showRetryConfirmation = true
                 }
                 .buttonStyle(.borderedProminent)
 
@@ -45,6 +49,16 @@ struct PendingUploadRecoveryView: View {
             }
         }
         .padding()
+        .alert("Retry upload?", isPresented: $showRetryConfirmation) {
+            Button("Retry") {
+                retryTask = Task { await retry() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(state.captures.count >= Self.largeUnitRoomCount
+                ? "This will re-upload all \(state.captures.count) rooms, which may take a while for a unit this size. Make sure you meant to tap this."
+                : "This will re-upload \(state.captures.count) room(s) captured earlier.")
+        }
         .onAppear {
             #if DEBUG
             DiagnosticsLog.shared.record("Pending upload recovery shown: \(state.captures.count) capture(s), session \(state.session?.id ?? "not yet created")", category: .info)
@@ -65,6 +79,8 @@ struct PendingUploadRecoveryView: View {
         } else {
             do {
                 session = try await client.createSession(identity: current.identity)
+            } catch is CancellationError {
+                return
             } catch {
                 lastError = AppError(site: .sessionCreate, underlying: error)
                 return
@@ -87,6 +103,8 @@ struct PendingUploadRecoveryView: View {
         for capture in current.captures {
             do {
                 floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: capture.idempotencyKey, bodyJSON: capture.bodyJSON)
+            } catch is CancellationError {
+                return
             } catch {
                 lastError = AppError(site: .captureUpload, underlying: error)
                 return

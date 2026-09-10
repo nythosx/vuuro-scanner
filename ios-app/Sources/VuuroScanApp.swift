@@ -7,6 +7,7 @@ import UIKit
 struct VuuroScanApp: App {
     init() {
         KeychainTokenStore.resetIfReinstalled()
+        VuuroFontRegistration.registerBundledFonts()
     }
 
     var body: some Scene {
@@ -15,6 +16,8 @@ struct VuuroScanApp: App {
                 ScanFlowView()
             }
             .tint(VuuroColor.primary)
+            .background(VuuroColor.surfaceMuted)
+            .vuuroToastHost()
         }
     }
 }
@@ -25,7 +28,7 @@ struct ScanFlowView: View {
         case resumingUpload(PendingUploadState)
         case capturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
         case multiRoomCapturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
-        case attachments(session: ScanSessionResponse, floorPlan: FloorPlan)
+        case attachments(session: ScanSessionResponse, floorPlan: FloorPlan, identity: ScanIdentity)
         case summary(session: ScanSessionResponse, floorPlan: FloorPlan)
         case error(AppError, identity: ScanIdentity, existingSession: ScanSessionResponse?)
         case multiRoomError(AppError, identity: ScanIdentity, existingSession: ScanSessionResponse?)
@@ -85,7 +88,7 @@ struct ScanFlowView: View {
             switch stage {
             case .resumingUpload(let pending):
                 PendingUploadRecoveryView(state: pending) { session, floorPlan in
-                    stage = .attachments(session: session, floorPlan: floorPlan)
+                    stage = .attachments(session: session, floorPlan: floorPlan, identity: pending.identity)
                 } onDiscarded: {
                     stage = .intake
                 }
@@ -105,7 +108,7 @@ struct ScanFlowView: View {
                                     attempt: UUID()
                                 )
                             }, onAttachToSession: { entry, floorPlan in
-                                stage = .attachments(session: entry.asResumableSession(), floorPlan: floorPlan)
+                                stage = .attachments(session: entry.asResumableSession(), floorPlan: floorPlan, identity: entry.asResumableIdentity())
                             })
                         }
                     }
@@ -115,7 +118,7 @@ struct ScanFlowView: View {
                     if addAnotherRoom {
                         stage = .capturing(identity: identity, session: session, attempt: UUID())
                     } else {
-                        stage = .attachments(session: session, floorPlan: floorPlan)
+                        stage = .attachments(session: session, floorPlan: floorPlan, identity: identity)
                     }
                 } onError: { appError, sessionToResume in
                     stage = .error(appError, identity: identity, existingSession: sessionToResume)
@@ -133,7 +136,7 @@ struct ScanFlowView: View {
                 .id(attempt)
             case .multiRoomCapturing(let identity, let session, let attempt):
                 MultiRoomCaptureFlowView(identity: identity, existingSession: session) { session, floorPlan in
-                    stage = .attachments(session: session, floorPlan: floorPlan)
+                    stage = .attachments(session: session, floorPlan: floorPlan, identity: identity)
                 } onError: { appError, sessionToResume in
                     stage = .multiRoomError(appError, identity: identity, existingSession: sessionToResume)
                 } onGoBack: {
@@ -141,9 +144,11 @@ struct ScanFlowView: View {
                     stage = .intake
                 }
                 .id(attempt)
-            case .attachments(let session, let floorPlan):
+            case .attachments(let session, let floorPlan, let identity):
                 AttachmentsScreen(session: session, floorPlan: floorPlan) { updated in
                     stage = .summary(session: session, floorPlan: updated)
+                } onAddRoom: {
+                    stage = .capturing(identity: identity, session: session, attempt: UUID())
                 }
             case .summary(let session, let floorPlan):
                 ResultSummaryView(session: session, floorPlan: floorPlan) {
@@ -180,6 +185,7 @@ private struct RoomCaptureFlowStep: View {
 
     @StateObject private var coordinator = CaptureCoordinator()
     @State private var isUploading = false
+    @State private var uploadTask: Task<Void, Never>?
     @State private var justCaptured: (session: ScanSessionResponse, floorPlan: FloorPlan)?
     @State private var didRequestStop = false
     @State private var partialCaptureFailureMessage: String?
@@ -189,6 +195,8 @@ private struct RoomCaptureFlowStep: View {
     @State private var uploadRejection: (error: AppError, export: RoomPlanCaptureExport, session: ScanSessionResponse, idempotencyKey: String, bodyJSON: Data)?
     @State private var isRetryingUpload = false
     @State private var capturedLocation: CaptureLocation?
+    @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
+    @State private var isGuessToggleCompact = false
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
@@ -211,7 +219,7 @@ private struct RoomCaptureFlowStep: View {
                     onRoomCaptured(justCaptured.session, justCaptured.floorPlan, addAnother)
                 }
             } else if isUploadingPartialCapture {
-                ProgressView("Uploading capture…")
+                UploadProgressView(message: "Uploading capture…", onCancel: { uploadTask?.cancel() })
                     .padding()
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             } else if let partialCaptureFailureMessage {
@@ -231,7 +239,7 @@ private struct RoomCaptureFlowStep: View {
                     onDiscardRoom()
                 }
             } else if isRetryingUpload {
-                ProgressView("Uploading capture…")
+                UploadProgressView(message: "Uploading capture…", onCancel: { uploadTask?.cancel() })
                     .padding()
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             } else if let uploadRejection {
@@ -272,7 +280,7 @@ private struct RoomCaptureFlowStep: View {
                     }
 
                     if isUploading {
-                        ProgressView("Uploading capture…")
+                        UploadProgressView(message: "Uploading capture…", onCancel: { uploadTask?.cancel() })
                             .padding()
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                     } else if didRequestStop {
@@ -282,7 +290,6 @@ private struct RoomCaptureFlowStep: View {
                     } else if coordinator.state == .scanning {
                         VStack {
                             HStack {
-                                Spacer()
                                 Button {
                                     showDiscardConfirmation = true
                                 } label: {
@@ -291,7 +298,8 @@ private struct RoomCaptureFlowStep: View {
                                         .padding(10)
                                         .background(.regularMaterial, in: Circle())
                                 }
-                                .padding(.trailing, 20)
+                                .accessibilityLabel("Discard scan and go back")
+                                .padding(.leading, 20)
                                 .padding(.top, 8)
                                 .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
                                     Button("Discard", role: .destructive) {
@@ -301,6 +309,38 @@ private struct RoomCaptureFlowStep: View {
                                     Button("Keep Scanning", role: .cancel) {}
                                 } message: {
                                     Text("Everything captured so far in this room will be lost.")
+                                }
+
+                                Spacer()
+                                Button {
+                                    roomTypeGuessOn.toggle()
+                                    RoomTypeGuessSettings.isEnabled = roomTypeGuessOn
+                                    VuuroToast.shared.show(roomTypeGuessOn ? "Room-type guessing on" : "Room-type guessing off")
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: roomTypeGuessOn ? "wand.and.stars" : "wand.and.stars.inverse")
+                                        if !isGuessToggleCompact {
+                                            Text("Room-type guessing")
+                                                .transition(.opacity)
+                                        }
+                                    }
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(roomTypeGuessOn ? VuuroColor.textPrimary : .white)
+                                    .padding(.horizontal, isGuessToggleCompact ? 0 : 12)
+                                    .frame(width: isGuessToggleCompact ? 36 : nil, height: 36)
+                                    .background(
+                                        roomTypeGuessOn ? VuuroColor.accentLime : Color.white.opacity(0.16),
+                                        in: Capsule()
+                                    )
+                                }
+                                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: isGuessToggleCompact)
+                                .padding(.trailing, 20)
+                                .padding(.top, 8)
+                                .onAppear {
+                                    isGuessToggleCompact = false
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.7) {
+                                        isGuessToggleCompact = true
+                                    }
                                 }
                             }
                             Spacer()
@@ -316,7 +356,8 @@ private struct RoomCaptureFlowStep: View {
                                 didRequestStop = true
                                 coordinator.stop()
                             }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.vuuroPrimary)
+                            .padding(.horizontal)
                             .padding(.bottom, 40)
                         }
                     }
@@ -436,8 +477,9 @@ private struct AnotherRoomPromptView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Button("Scan another room") { onChoice(true) }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.vuuroSecondary)
             Button("Finish unit") { onChoice(false) }
+                .buttonStyle(.vuuroPrimary)
         }
         .padding()
     }
@@ -458,7 +500,7 @@ private struct PartialCaptureFailureView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Button("Upload what was captured") { onUsePartial() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.vuuroPrimary)
             Button("Discard and try again", role: .destructive) { onDiscard() }
         }
         .padding()
@@ -474,7 +516,7 @@ struct DegenerateCaptureView: View {
             Text("This room's outline came out too small or flat to use. Try scanning more slowly and cover the whole floor before tapping Done.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Rescan this room", action: onRescan).buttonStyle(.borderedProminent)
+            Button("Rescan this room", action: onRescan).buttonStyle(.vuuroPrimary)
         }
         .padding()
     }
@@ -495,14 +537,14 @@ private struct UploadRejectedView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                Button("Retry upload", action: onRetryUpload).buttonStyle(.borderedProminent)
+                Button("Retry upload", action: onRetryUpload).buttonStyle(.vuuroPrimary)
                 Button("Rescan this room", role: .destructive, action: onRescan)
             } else {
                 Text("The server rejected this capture's data — retrying the same upload won't change that. Rescanning this room is the way forward.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                Button("Rescan this room", action: onRescan).buttonStyle(.borderedProminent)
+                Button("Rescan this room", action: onRescan).buttonStyle(.vuuroPrimary)
             }
         }
         .padding()
@@ -513,6 +555,7 @@ struct AttachmentsScreen: View {
     let session: ScanSessionResponse
     let floorPlan: FloorPlan
     let onDone: (FloorPlan) -> Void
+    let onAddRoom: () -> Void
 
     @State private var noteText = ""
     @State private var photoUrl = ""
@@ -525,15 +568,17 @@ struct AttachmentsScreen: View {
     @State private var showCamera = false
     @State private var batchUploadMessage: String?
     @State private var isUpdatingRoomType: Set<String> = []
+    @State private var applyNoteToEveryRoom = false
+    @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
+    @State private var isGuessToggleCompact = false
 
     private let client = ScanServiceClient()
 
-    private static let roomTypeOptions = RoomTypeClassifier.allTypes + ["other"]
-
-    init(session: ScanSessionResponse, floorPlan: FloorPlan, onDone: @escaping (FloorPlan) -> Void) {
+    init(session: ScanSessionResponse, floorPlan: FloorPlan, onDone: @escaping (FloorPlan) -> Void, onAddRoom: @escaping () -> Void) {
         self.session = session
         self.floorPlan = floorPlan
         self.onDone = onDone
+        self.onAddRoom = onAddRoom
         _current = State(initialValue: floorPlan)
     }
 
@@ -550,23 +595,45 @@ struct AttachmentsScreen: View {
                 }
             }
 
-            Section("Room type") {
+            Section {
                 ForEach(current.rooms, id: \.roomId) { room in
-                    VStack(alignment: .leading) {
-                        Picker(room.label, selection: Binding(
-                            get: { room.roomType?.confirmed },
-                            set: { newValue in Task { await updateRoomType(roomId: room.roomId, to: newValue) } }
-                        )) {
-                            Text("Unset").tag(String?.none)
-                            ForEach(Self.roomTypeOptions, id: \.self) { type in
-                                Text(RoomTypeClassifier.displayName(for: type)).tag(String?.some(type))
+                    RoomTypeRow(
+                        room: room,
+                        isUpdating: isUpdatingRoomType.contains(room.roomId),
+                        onUpdate: { newValue in Task { await updateRoomType(roomId: room.roomId, to: newValue) } },
+                        onRename: { newLabel in Task { await updateRoomLabel(roomId: room.roomId, to: newLabel) } }
+                    )
+                }
+            } header: {
+                HStack {
+                    Text("Room type")
+                    Spacer()
+                    Button {
+                        roomTypeGuessOn.toggle()
+                        RoomTypeGuessSettings.isEnabled = roomTypeGuessOn
+                        VuuroToast.shared.show(roomTypeGuessOn ? "Room-type guessing on" : "Room-type guessing off")
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: roomTypeGuessOn ? "wand.and.stars" : "wand.and.stars.inverse")
+                            if !isGuessToggleCompact {
+                                Text("Guessing")
+                                    .transition(.opacity)
                             }
                         }
-                        .disabled(isUpdatingRoomType.contains(room.roomId))
-                        if room.roomType?.confirmed == nil, let guess = room.roomType?.guess {
-                            Text("Auto-detected: \(RoomTypeClassifier.displayName(for: guess))")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(roomTypeGuessOn ? VuuroColor.textPrimary : VuuroColor.textSecondary)
+                        .padding(.horizontal, isGuessToggleCompact ? 0 : 10)
+                        .frame(width: isGuessToggleCompact ? 28 : nil, height: 28)
+                        .background(
+                            roomTypeGuessOn ? VuuroColor.accentLime : VuuroColor.surfaceMuted,
+                            in: Capsule()
+                        )
+                    }
+                    .animation(.spring(response: 0.45, dampingFraction: 0.8), value: isGuessToggleCompact)
+                    .onAppear {
+                        isGuessToggleCompact = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.7) {
+                            isGuessToggleCompact = true
                         }
                     }
                 }
@@ -574,32 +641,66 @@ struct AttachmentsScreen: View {
 
             Section("Add a note (optional)") {
                 TextField("Note text", text: $noteText, axis: .vertical)
+                if current.rooms.count > 1 {
+                    Toggle("Apply to every room individually", isOn: $applyNoteToEveryRoom)
+                }
                 Button("Add note") { Task { await addNote() } }
+                    .buttonStyle(.vuuroSecondary)
                     .disabled(noteText.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
             }
 
             Section("Add a photo (optional)") {
-                PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 10, matching: .images) {
-                    if isUploadingPhoto {
-                        ProgressView()
-                    } else {
-                        Text("Choose from library")
+                HStack(spacing: 10) {
+                    PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 10, matching: .images) {
+                        if isUploadingPhoto {
+                            ProgressView()
+                        } else {
+                            Text("Choose from library")
+                        }
                     }
-                }
-                .disabled(isUploadingPhoto)
-                .onChange(of: selectedPhotoItems) { _, newItems in
-                    guard !newItems.isEmpty else { return }
-                    Task {
-                        isUploadingPhoto = true
-                        var failureCount = 0
-                        for item in newItems {
-                            if await uploadSelectedPhoto(item) == false {
-                                failureCount += 1
+                    .buttonStyle(.vuuroSecondary)
+                    .disabled(isUploadingPhoto)
+                    .onChange(of: selectedPhotoItems) { _, newItems in
+                        guard !newItems.isEmpty else { return }
+                        Task {
+                            isUploadingPhoto = true
+                            var failureCount = 0
+                            for item in newItems {
+                                if await uploadSelectedPhoto(item) == false {
+                                    failureCount += 1
+                                }
+                            }
+                            selectedPhotoItems = []
+                            isUploadingPhoto = false
+                            batchUploadMessage = failureCount > 0 ? "\(failureCount) of \(newItems.count) photo(s) failed to upload." : nil
+                            let succeeded = newItems.count - failureCount
+                            if succeeded > 0 {
+                                VuuroToast.shared.show(succeeded == 1 ? "Photo added" : "\(succeeded) photos added")
                             }
                         }
-                        selectedPhotoItems = []
-                        isUploadingPhoto = false
-                        batchUploadMessage = failureCount > 0 ? "\(failureCount) of \(newItems.count) photo(s) failed to upload." : nil
+                    }
+
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                        Button("Take a photo") {
+                            showCamera = true
+                        }
+                        .buttonStyle(.vuuroSecondary)
+                        .disabled(isUploadingPhoto)
+                        .sheet(isPresented: $showCamera) {
+                            CameraCaptureView(onCaptured: { data in
+                                showCamera = false
+                                Task {
+                                    isUploadingPhoto = true
+                                    let succeeded = await uploadPhotoData(data)
+                                    isUploadingPhoto = false
+                                    if succeeded {
+                                        VuuroToast.shared.show("Photo added")
+                                    }
+                                }
+                            }, onCancel: {
+                                showCamera = false
+                            })
+                        }
                     }
                 }
 
@@ -609,30 +710,12 @@ struct AttachmentsScreen: View {
                         .foregroundStyle(.orange)
                 }
 
-                if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                    Button("Take a photo") {
-                        showCamera = true
-                    }
-                    .disabled(isUploadingPhoto)
-                    .sheet(isPresented: $showCamera) {
-                        CameraCaptureView(onCaptured: { data in
-                            showCamera = false
-                            Task {
-                                isUploadingPhoto = true
-                                await uploadPhotoData(data)
-                                isUploadingPhoto = false
-                            }
-                        }, onCancel: {
-                            showCamera = false
-                        })
-                    }
-                }
-
                 Text("Or paste a URL to a photo already hosted elsewhere:")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 TextField("https://…", text: $photoUrl)
                 Button("Add photo URL") { Task { await addPhoto() } }
+                    .buttonStyle(.vuuroSecondary)
                     .disabled(photoUrl.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
             }
 
@@ -676,11 +759,19 @@ struct AttachmentsScreen: View {
             }
 
             Section {
+                Button("Add another room") { onAddRoom() }
+                    .buttonStyle(.vuuroSecondary)
+                Text("Missed a room? This adds it separately — it won't be merged into the fused layout above (see the disclaimer at the top of the exported plan).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 Text("\(current.notes.count) note(s), \(current.photos.count) photo(s) attached so far.")
                     .foregroundStyle(.secondary)
                     .font(.caption)
                 Button("Finish") { onDone(current) }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.vuuroPrimary)
             }
         }
         .navigationTitle("Notes & photos")
@@ -699,13 +790,32 @@ struct AttachmentsScreen: View {
     }
 
     @MainActor
+    private func updateRoomLabel(roomId: String, to newLabel: String) async {
+        isUpdatingRoomType.insert(roomId)
+        defer { isUpdatingRoomType.remove(roomId) }
+        do {
+            current = try await client.updateRoomLabel(sessionId: session.id, accessToken: session.accessToken, roomId: roomId, label: newLabel)
+            appError = nil
+        } catch {
+            appError = AppError(site: .roomLabelUpdate, underlying: error)
+        }
+    }
+
+    @MainActor
     private func addNote() async {
         isSaving = true
         defer { isSaving = false }
         do {
-            current = try await client.addNote(sessionId: session.id, accessToken: session.accessToken, text: noteText, roomId: selectedRoomId)
+            if applyNoteToEveryRoom && current.rooms.count > 1 {
+                for room in current.rooms {
+                    current = try await client.addNote(sessionId: session.id, accessToken: session.accessToken, text: noteText, roomId: room.roomId)
+                }
+            } else {
+                current = try await client.addNote(sessionId: session.id, accessToken: session.accessToken, text: noteText, roomId: selectedRoomId)
+            }
             noteText = ""
             appError = nil
+            VuuroToast.shared.show("Note added")
         } catch {
             appError = AppError(site: .noteAdd, underlying: error)
         }
@@ -719,6 +829,7 @@ struct AttachmentsScreen: View {
             current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: photoUrl, roomId: selectedRoomId)
             photoUrl = ""
             appError = nil
+            VuuroToast.shared.show("Photo added")
         } catch {
             appError = AppError(site: .photoAdd, underlying: error)
         }
@@ -774,6 +885,99 @@ struct AttachmentsScreen: View {
     }
 }
 
+private struct RoomTypeRow: View {
+    let room: FloorPlan.Room
+    let isUpdating: Bool
+    let onUpdate: (String?) -> Void
+    let onRename: (String) -> Void
+
+    @State private var text: String = ""
+    @State private var labelText: String = ""
+    @FocusState private var isFocused: Bool
+    @FocusState private var isLabelFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("Room name", text: $labelText)
+                .font(.subheadline.weight(.semibold))
+                .focused($isLabelFocused)
+                .disabled(isUpdating)
+                .onSubmit { commitLabel() }
+                .onChange(of: isLabelFocused) { wasFocused, nowFocused in
+                    if wasFocused && !nowFocused {
+                        commitLabel()
+                    }
+                }
+                .onAppear { labelText = room.label }
+                .onChange(of: room.label) { _, newValue in
+                    if !isLabelFocused {
+                        labelText = newValue
+                    }
+                }
+            TextField("Room type, e.g. Living room", text: $text)
+                .focused($isFocused)
+                .disabled(isUpdating)
+                .onSubmit { commit() }
+                .onChange(of: isFocused) { wasFocused, nowFocused in
+                    if wasFocused && !nowFocused {
+                        commit()
+                    }
+                }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(RoomTypeClassifier.allTypes, id: \.self) { type in
+                        Button(RoomTypeClassifier.displayName(for: type)) {
+                            text = RoomTypeClassifier.displayName(for: type)
+                            commit()
+                        }
+                        .font(.caption)
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+            if room.roomType?.confirmed == nil, let guess = room.roomType?.guess {
+                Text("Auto-detected: \(RoomTypeClassifier.displayName(for: guess))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear {
+            text = room.roomType?.confirmed.map { RoomTypeClassifier.displayName(for: $0) } ?? ""
+        }
+        .onChange(of: room.roomType?.confirmed) { _, newValue in
+            if !isFocused {
+                text = newValue.map { RoomTypeClassifier.displayName(for: $0) } ?? ""
+            }
+        }
+    }
+
+    private func commit() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            if room.roomType?.confirmed != nil {
+                onUpdate(nil)
+            }
+            return
+        }
+        if let known = RoomTypeClassifier.allTypes.first(where: {
+            RoomTypeClassifier.displayName(for: $0).caseInsensitiveCompare(trimmed) == .orderedSame
+        }) {
+            onUpdate(known)
+        } else {
+            onUpdate(trimmed)
+        }
+    }
+
+    private func commitLabel() {
+        let trimmed = labelText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != room.label else {
+            labelText = room.label
+            return
+        }
+        onRename(trimmed)
+    }
+}
+
 private struct AttachedPhotoThumbnail: View {
     let session: ScanSessionResponse
     let url: String
@@ -796,9 +1000,9 @@ private struct AttachedPhotoThumbnail: View {
                 ProgressView()
             }
         }
-        .frame(width: 60, height: 60)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+        .frame(width: 40, height: 40)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
         .task {
             guard image == nil else { return }
             do {
@@ -859,6 +1063,83 @@ struct CameraCaptureView: UIViewControllerRepresentable {
     }
 }
 
+private struct RoomResultCard: View {
+    let room: FloorPlan.Room
+    let showsRibbon: Bool
+
+    private var isFused: Bool { room.structureOriginM != nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if showsRibbon {
+                VuuroRibbon(text: "CAPTURED")
+                    .padding(.top, -6)
+                    .padding(.leading, -16)
+            }
+
+            HStack {
+                Text(room.label)
+                    .font(VuuroFont.display(18))
+                    .foregroundStyle(VuuroColor.textPrimary)
+                Spacer()
+                if isFused {
+                    VuuroBadge("Fused", systemImage: "square.on.square", style: .info)
+                } else if !room.coverage.usable {
+                    VuuroBadge("Low confidence", systemImage: "exclamationmark.triangle.fill", style: .warning)
+                } else {
+                    VuuroBadge("Captured", systemImage: "checkmark", style: .good)
+                }
+            }
+
+            HStack(spacing: 10) {
+                RoomStatTile(systemImage: "squareshape", value: String(format: "%.2f m²", room.floorAreaM2), caption: "Floor area")
+                RoomStatTile(systemImage: "ruler", value: String(format: "%.2f m", room.perimeterM), caption: "Perimeter")
+                if let heightM = room.heightM {
+                    RoomStatTile(systemImage: "arrow.up.and.down", value: String(format: "%.2f m", heightM), caption: "Height")
+                }
+            }
+
+            Text("Indicative — NEN2580-inspired, not certified")
+                .font(VuuroFont.body(11))
+                .foregroundStyle(VuuroColor.textSecondary)
+
+            if !room.coverage.usable, let message = room.coverage.message {
+                Label(message, systemImage: "exclamationmark.triangle.fill")
+                    .font(VuuroFont.body(12, weight: .semibold))
+                    .foregroundStyle(VuuroColor.warningText)
+            } else {
+                Text("Scan quality: \(room.coverage.score)/100")
+                    .font(VuuroFont.body(11))
+                    .foregroundStyle(VuuroColor.textSecondary)
+            }
+        }
+        .padding()
+        .vuuroCard()
+    }
+}
+
+private struct RoomStatTile: View {
+    let systemImage: String
+    let value: String
+    let caption: String
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .foregroundStyle(VuuroColor.primary)
+            Text(value)
+                .font(VuuroFont.body(15, weight: .bold))
+                .foregroundStyle(VuuroColor.textPrimary)
+            Text(caption)
+                .font(VuuroFont.body(10))
+                .foregroundStyle(VuuroColor.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+        .background(VuuroColor.surfaceMuted, in: RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius, style: .continuous))
+    }
+}
+
 private struct ResultSummaryView: View {
     let session: ScanSessionResponse
     let floorPlan: FloorPlan
@@ -867,6 +1148,7 @@ private struct ResultSummaryView: View {
     @State private var isFetchingImage = false
     @State private var isFetchingPDF = false
     @State private var floorPlanImage: UIImage?
+    @State private var imageLoadFailed = false
     @State private var floorPlanImageURL: URL?
     @State private var floorPlanPDFURL: URL?
     @State private var appError: AppError?
@@ -879,99 +1161,152 @@ private struct ResultSummaryView: View {
     private let client = ScanServiceClient()
 
     var body: some View {
-        List {
-            ForEach(floorPlan.rooms, id: \.roomId) { room in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(room.label).font(.headline)
-                        if room.structureOriginM != nil {
-                            Label("Fused", systemImage: "square.on.square")
-                                .font(.caption2)
-                                .foregroundStyle(.blue)
+        ScrollView {
+            VStack(spacing: VuuroMetrics.contentSpacing) {
+                ForEach(Array(floorPlan.rooms.enumerated()), id: \.element.roomId) { index, room in
+                    RoomResultCard(room: room, showsRibbon: index == 0)
+                }
+
+                if !floorPlan.photos.isEmpty || !floorPlan.notes.isEmpty {
+                    VStack(alignment: .leading, spacing: VuuroMetrics.contentSpacing) {
+                        Text("Notes & photos")
+                            .font(VuuroFont.body(13, weight: .bold))
+                            .foregroundStyle(VuuroColor.textSecondary)
+                            .textCase(.uppercase)
+
+                        if !floorPlan.photos.isEmpty {
+                            ForEach(floorPlan.photos, id: \.photoId) { photo in
+                                HStack(alignment: .top, spacing: 12) {
+                                    AttachedPhotoThumbnail(session: session, url: photo.url)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(roomLabel(for: photo.roomId)).font(.caption).foregroundStyle(.secondary)
+                                        if !photo.caption.isEmpty {
+                                            Text(photo.caption).font(.caption2)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if !floorPlan.notes.isEmpty {
+                            ForEach(floorPlan.notes, id: \.noteId) { note in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(roomLabel(for: note.roomId)).font(.caption).foregroundStyle(.secondary)
+                                    Text(note.text)
+                                }
+                            }
                         }
                     }
-                    Text(String(format: "%.2f m²", room.floorAreaM2))
-                    Text(String(format: "%.2f m perimeter", room.perimeterM))
-                    Text("Indicative — NEN2580-inspired, not certified")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if !room.coverage.usable, let message = room.coverage.message {
-                        Label(message, systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                            .padding(.top, 2)
-                    } else {
-                        Text("Scan quality: \(room.coverage.score)/100")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+                    .padding()
+                    .vuuroCard()
                 }
-            }
 
-            Section("Floor plan exports") {
-                Button {
-                    Task { await loadImage() }
-                } label: {
+                VStack(alignment: .leading, spacing: VuuroMetrics.contentSpacing) {
+                    Text("Floor plan")
+                        .font(VuuroFont.body(13, weight: .bold))
+                        .foregroundStyle(VuuroColor.textSecondary)
+                        .textCase(.uppercase)
+
                     if isFetchingImage {
-                        ProgressView()
-                    } else {
-                        Text("Download image")
-                    }
-                }
-                .disabled(isFetchingImage)
+                        VStack(spacing: 10) {
+                            ProgressView()
+                            Text("Rendering your floor plan…")
+                                .font(VuuroFont.body(12.5))
+                                .foregroundStyle(VuuroColor.textSecondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 160)
+                    } else if let floorPlanImage {
+                        Image(uiImage: floorPlanImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 220)
+                            .frame(maxWidth: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius, style: .continuous))
 
-                if let floorPlanImage {
-                    Image(uiImage: floorPlanImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 220)
-
-                    if let floorPlanImageURL {
-                        ShareLink(item: floorPlanImageURL) {
-                            Label("Save image", systemImage: "square.and.arrow.up")
+                        HStack(spacing: 10) {
+                            if let floorPlanImageURL {
+                                ShareLink(item: floorPlanImageURL) {
+                                    Label("Save image", systemImage: "square.and.arrow.up")
+                                }
+                                .buttonStyle(.vuuroSecondary)
+                            }
+                            Button {
+                                Task { await loadImage() }
+                            } label: {
+                                Label("Refresh", systemImage: "arrow.clockwise")
+                            }
+                            .buttonStyle(.vuuroSecondary)
+                        }
+                    } else if imageLoadFailed {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Couldn't render the floor plan preview.")
+                                .font(VuuroFont.body(13, weight: .semibold))
+                                .foregroundStyle(VuuroColor.warningText)
+                            Button {
+                                Task { await loadImage() }
+                            } label: {
+                                Text("Try again")
+                            }
+                            .buttonStyle(.vuuroSecondary)
                         }
                     }
-                }
 
-                Button {
-                    Task { await loadPDF() }
-                } label: {
-                    if isFetchingPDF {
-                        ProgressView()
-                    } else {
-                        Text("Download PDF")
+                    Button {
+                        Task { await loadPDF() }
+                    } label: {
+                        if isFetchingPDF {
+                            ProgressView()
+                        } else {
+                            Text("Download PDF")
+                        }
+                    }
+                    .buttonStyle(.vuuroSecondary)
+                    .disabled(isFetchingPDF)
+
+                    if let floorPlanPDFURL {
+                        ShareLink(item: floorPlanPDFURL) {
+                            Label("Save PDF", systemImage: "square.and.arrow.up")
+                        }
+                    }
+
+                    if let appError {
+                        ErrorCodeView(error: appError)
                     }
                 }
-                .disabled(isFetchingPDF)
-
-                if let floorPlanPDFURL {
-                    ShareLink(item: floorPlanPDFURL) {
-                        Label("Save PDF", systemImage: "square.and.arrow.up")
-                    }
+                .padding()
+                .vuuroCard()
+                .task {
+                    guard floorPlanImage == nil, !imageLoadFailed else { return }
+                    await loadImage()
                 }
 
-                if let appError {
-                    ErrorCodeView(error: appError)
-                }
-            }
-
-            Section {
                 NavigationLink("Access log") {
                     AccessLogView(sessionId: session.id, accessToken: session.accessToken)
                 }
-            }
+                .font(VuuroFont.body(15, weight: .semibold))
+                .foregroundStyle(VuuroColor.textPrimary)
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .vuuroCard()
 
-            Section {
                 Button("Done") {
                     cleanUpExportedFiles()
                     onDone()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.vuuroPrimary)
             }
+            .padding()
         }
+        .background(VuuroColor.surfaceMuted)
         .navigationTitle("Scan result")
         .onDisappear { cleanUpExportedFiles() }
+    }
+
+    private func roomLabel(for roomId: String?) -> String {
+        guard let roomId, let room = floorPlan.rooms.first(where: { $0.roomId == roomId }) else {
+            return "Whole unit"
+        }
+        return room.label
     }
 
     @MainActor
@@ -986,11 +1321,13 @@ private struct ResultSummaryView: View {
     @MainActor
     private func loadImage() async {
         isFetchingImage = true
+        imageLoadFailed = false
         defer { isFetchingImage = false }
         do {
             let data = try await client.fetchFloorPlanImage(sessionId: session.id, accessToken: session.accessToken, unit: exportUnit)
             guard let image = UIImage(data: data) else {
                 appError = AppError(site: .resultImageDecode, underlying: nil)
+                imageLoadFailed = true
                 return
             }
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(session.id).png")
@@ -1000,6 +1337,7 @@ private struct ResultSummaryView: View {
             appError = nil
         } catch {
             appError = AppError(site: .resultImageLoad, underlying: error)
+            imageLoadFailed = true
         }
     }
 
@@ -1013,6 +1351,7 @@ private struct ResultSummaryView: View {
             try data.write(to: url)
             floorPlanPDFURL = url
             appError = nil
+            VuuroToast.shared.show("PDF ready")
         } catch {
             appError = AppError(site: .resultPDFLoad, underlying: error)
         }
@@ -1028,7 +1367,7 @@ private struct ErrorView: View {
             Text("Something went wrong").font(.headline)
             ErrorCodeView(error: error)
                 .multilineTextAlignment(.center)
-            Button("Try again", action: onRetry).buttonStyle(.borderedProminent)
+            Button("Try again", action: onRetry).buttonStyle(.vuuroPrimary)
         }
         .padding()
     }

@@ -55,15 +55,20 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
 | POST | `/scan-sessions` | Create a session. Body carries `ScanIdentity` (property/unit/organisation, purpose, `occupied`, `consent_obtained`). Returns the session id and its one-time access token. `occupied: true` requires `consent_obtained: true` or `403 consent_required`. |
 | POST | `/scan-sessions/{id}/rotate-token` | Issue a new token before or within `ROTATE_GRACE_PERIOD_SECONDS` (7 days) after expiry. |
 | POST | `/scan-sessions/{id}/capture` | Submit `raw_capture` (RoomPlan-shaped JSON) + `capture_provider`. Converted via the matching adapter into the `FloorPlan` contract. Supports `Idempotency-Key` for safe retries. |
+| POST | `/scan-sessions/{id}/rooms` | Wholesale-replace this session's rooms with a fused set (body: `captures[]`, one `raw_capture` per room) — used once a multi-room merge succeeds, superseding the individually-uploaded tiles from `capture` above without double-counting them. |
 | POST | `/scan-sessions/{id}/photos` | Attach a photo by URL (e.g. one already returned by `photo-uploads` below), with optional caption/room id. |
 | POST | `/scan-sessions/{id}/photo-uploads` | Upload real image bytes (multipart), content-sniffed via `finfo`, stored under `data/photos/{session_id}/`. Returns a `url` to pass into `/photos`. |
 | GET | `/scan-sessions/{id}/photo-uploads/{filename}` | Fetch a previously uploaded photo. |
+| DELETE | `/scan-sessions/{id}/photos/{photo_id}` | Remove a single attached photo. Also deletes the underlying uploaded file from disk, unless another photo entry still references the same file. |
 | POST | `/scan-sessions/{id}/notes` | Attach a text note, with optional room id. |
+| DELETE | `/scan-sessions/{id}/notes/{note_id}` | Remove a single attached note. |
 | POST | `/scan-sessions/{id}/rooms/{room_id}/room-type` | Set or clear a room's `room_type.confirmed` after capture — body `{"room_type": "kitchen"}` or `{"room_type": null}` to clear. Independent of the live ✓/✗ capture-time prompt; works even on a room that never had a guess. |
 | GET | `/scan-sessions/{id}/export/floorplan.png` | Fused single-layout PNG when every room in the session carries `structure_origin_m` (see `docs/adr/0002-export-coordinate-frame.md`); per-room tiles otherwise, or always with `?layout=tiles`. `?room_id=<id>` isolates one room's own tile. `?unit=metric\|imperial` (default `metric`) controls displayed measurement units. `?label=<text>` (120 chars max) adds an optional branding/caption line. |
 | GET | `/scan-sessions/{id}/export/floorplan.pdf` | Per-room metrics-table PDF, all rooms unless narrowed with `?room_id=<id>`. Same `?unit=` and `?label=` params as the PNG export above. |
 | GET | `/scan-sessions/{id}/access-log` | This session's `action`/`outcome`/`occurred_at` audit trail — never the token or caller IP. |
 | GET | `/scan-sessions/{id}` | Fetch the current `FloorPlan` state for the session. |
+| DELETE | `/scan-sessions/{id}` | Delete the session and everything attached to it (floor plan, photos, notes, access log). |
+| GET | `/scan-sessions?property_id=&unit_id=&organisation_id=` | Look up sessions by any combination of those three filters — the only way to recover "what scans exist for this property" without already holding a session's id/token. Gated behind an `X-Admin-Api-Key` header matching `SCAN_SERVICE_ADMIN_API_KEY`; disabled entirely (always `401`) if that env var isn't set. Never returns `access_token`. |
 
 ## Known limits
 

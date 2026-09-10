@@ -12,30 +12,48 @@ struct AccessLogView: View {
     private let client = ScanServiceClient()
 
     var body: some View {
-        List {
-            if isLoading {
-                ProgressView()
-            } else if log.isEmpty && appError == nil {
-                Text("No access attempts recorded yet.")
-                    .foregroundStyle(.secondary)
-            }
+        ScrollView {
+            VStack(spacing: VuuroMetrics.contentSpacing) {
+                if isLoading {
+                    ProgressView()
+                        .padding()
+                } else if log.isEmpty && appError == nil {
+                    Text("No access attempts recorded yet.")
+                        .font(VuuroFont.body(13))
+                        .foregroundStyle(VuuroColor.textSecondary)
+                        .padding()
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(log) { record in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(record.action)
+                                        .font(VuuroFont.body(14.5, weight: .semibold))
+                                        .foregroundStyle(VuuroColor.textPrimary)
+                                    Text(record.occurredAt)
+                                        .font(VuuroFont.body(12))
+                                        .foregroundStyle(VuuroColor.textSecondary)
+                                }
+                                Spacer()
+                                VuuroBadge(record.outcome, style: Self.isSuccessOutcome(record.outcome) ? .good : .warning)
+                            }
+                            .padding(.vertical, 10)
+                            if record.id != log.last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .vuuroCard()
+                }
 
-            ForEach(log) { record in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(record.action).font(.headline)
-                    Text(record.outcome)
-                        .font(.caption)
-                        .foregroundStyle(Self.isSuccessOutcome(record.outcome) ? .green : .orange)
-                    Text(record.occurredAt)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                if let appError {
+                    ErrorCodeView(error: appError)
                 }
             }
-
-            if let appError {
-                ErrorCodeView(error: appError)
-            }
+            .padding()
         }
+        .background(VuuroColor.surfaceMuted)
         .navigationTitle("Access log")
         .task { await load() }
     }

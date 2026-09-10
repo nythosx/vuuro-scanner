@@ -109,10 +109,15 @@ $invalidGuess['room_type'] = ['guess' => 'garage', 'guess_source' => 'roomplan_s
 t_check('room_type is null when guess is not one of the known section labels',
     $adapter->adapt($invalidGuess, $identity)['rooms'][0]['room_type'] === null);
 
-$invalidConfirmed = $fixture;
-$invalidConfirmed['room_type'] = ['guess' => 'kitchen', 'guess_source' => 'object_heuristic', 'confirmed' => 'not-a-real-answer'];
-t_check('an invalid confirmed value is dropped to null rather than stored as-is, guess/source still pass through',
-    $adapter->adapt($invalidConfirmed, $identity)['rooms'][0]['room_type'] === ['guess' => 'kitchen', 'guess_source' => 'object_heuristic', 'confirmed' => null]);
+$customConfirmed = $fixture;
+$customConfirmed['room_type'] = ['guess' => 'kitchen', 'guess_source' => 'object_heuristic', 'confirmed' => 'not-a-real-answer'];
+t_check('a confirmed value outside the fixed list is kept as free-text, not dropped to null',
+    $adapter->adapt($customConfirmed, $identity)['rooms'][0]['room_type'] === ['guess' => 'kitchen', 'guess_source' => 'object_heuristic', 'confirmed' => 'not-a-real-answer']);
+
+$malformedConfirmed = $fixture;
+$malformedConfirmed['room_type'] = ['guess' => 'kitchen', 'guess_source' => 'object_heuristic', 'confirmed' => "  \x01  "];
+t_check('a confirmed value that is empty/control-chars-only after trimming is still dropped to null',
+    $adapter->adapt($malformedConfirmed, $identity)['rooms'][0]['room_type'] === ['guess' => 'kitchen', 'guess_source' => 'object_heuristic', 'confirmed' => null]);
 echo "\n";
 
 // LIDAR-10, adjacent case: a capture call with no walls[] at all must give

@@ -12,6 +12,8 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+    resources:
+      - path: Resources/Fonts
     info:
       path: Sources/Info.plist
       properties:
@@ -23,6 +25,8 @@ targets:
           NSAllowsLocalNetworking: true
         ScanServiceBaseURL: $(SCAN_SERVICE_BASE_URL)
         UILaunchScreen: {}
+        UIAppFonts:
+          - OpenSans-Variable.ttf
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UISupportedInterfaceOrientations:

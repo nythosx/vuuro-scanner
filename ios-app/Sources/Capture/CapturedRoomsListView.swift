@@ -13,17 +13,24 @@ struct CapturedRoomsListView: View {
                 Section {
                     ForEach(Array(coordinator.capturedRooms.enumerated()), id: \.offset) { index, room in
                         HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(label(for: index))
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Text(label(for: index))
+                                    VuuroBadge("Captured", systemImage: "checkmark", style: .good)
+                                }
                                 Text("\(room.walls.count) wall(s), \(room.floors.count) floor(s)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    .font(VuuroFont.body(12))
+                                    .foregroundStyle(VuuroColor.textSecondary)
                             }
                             Spacer()
-                            Button("Retry") { retryTargetIndex = index }
-                                .buttonStyle(.bordered)
-                            Button("Delete", role: .destructive) { pendingDeleteIndex = index }
-                                .buttonStyle(.bordered)
+                            Button { retryTargetIndex = index } label: {
+                                Image(systemName: "arrow.counterclockwise")
+                            }
+                            .buttonStyle(VuuroIconButtonStyle(tint: VuuroColor.textPrimary, background: VuuroColor.surfaceMuted))
+                            Button { pendingDeleteIndex = index } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(VuuroIconButtonStyle(tint: VuuroColor.danger, background: VuuroColor.danger.opacity(0.14)))
                         }
                     }
                 }
@@ -36,6 +43,7 @@ struct CapturedRoomsListView: View {
                     } label: {
                         Label("Scan Another Room", systemImage: "plus.circle")
                     }
+                    .buttonStyle(.vuuroSecondary)
                 }
             }
             .navigationTitle("Captured Rooms")
@@ -54,6 +62,7 @@ struct CapturedRoomsListView: View {
                 Button("Delete", role: .destructive) {
                     if let index = pendingDeleteIndex {
                         coordinator.removeCapturedRoom(at: index)
+                        VuuroToast.shared.show("Room deleted")
                     }
                     pendingDeleteIndex = nil
                 }
@@ -76,6 +85,7 @@ struct CapturedRoomsListView: View {
                         }
                         coordinator.removeCapturedRoom(at: target.index)
                         retryTargetIndex = nil
+                        VuuroToast.shared.show("Room removed — rescan it now")
                         DispatchQueue.main.async {
                             dismiss()
                         }

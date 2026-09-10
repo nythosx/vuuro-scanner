@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct RoomTypeGuessOverlay: View {
     let guess: RoomTypeClassifier.Guess
@@ -27,20 +28,27 @@ struct RoomTypeGuessOverlay: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                 }
+                .accessibilityLabel("Confirm room type")
+                .accessibilityHint("Marks this room as \(RoomTypeClassifier.displayName(for: guess.type))")
                 Button {
                     isPickingCorrection = true
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.red)
                 }
+                .accessibilityLabel("Correct room type")
+                .accessibilityHint("Opens a list to pick the right room type")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(.regularMaterial, in: Capsule())
             .padding(.top, 12)
+            .accessibilityElement(children: .contain)
             .task {
                 try? await Task.sleep(nanoseconds: 6_000_000_000)
-                isVisible = false
+                if !UIAccessibility.isVoiceOverRunning && !isPickingCorrection {
+                    isVisible = false
+                }
             }
             .confirmationDialog("What kind of room is this?", isPresented: $isPickingCorrection, titleVisibility: .visible) {
                 ForEach(RoomTypeClassifier.allTypes.filter { $0 != guess.type }, id: \.self) { type in

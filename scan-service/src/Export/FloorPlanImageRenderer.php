@@ -48,6 +48,7 @@ final class FloorPlanImageRenderer
     private const WALL_THICKNESS_PX = 3;
     private const DEFAULT_LINE_THICKNESS_PX = 1;
     private const FONT_SMALL = 1;
+    private const NOTE_LINE_HEIGHT = 13;
     private const DOOR_SWING_RADIUS_M = 0.8;
     private const WINDOW_TICK_LENGTH_M = 0.5;
     private const FOOTER_TEXT = 'Indicative measurements - NEN2580-inspired, not certified. No rights can be derived from this plan.';
@@ -67,6 +68,7 @@ final class FloorPlanImageRenderer
     public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null): string
     {
         $rooms = $floorPlan['rooms'];
+        $notes = $floorPlan['notes'] ?? [];
         if ($roomId !== null) {
             $rooms = array_values(array_filter($rooms, static fn (array $room) => $room['room_id'] === $roomId));
             if ($rooms === []) {
@@ -83,19 +85,21 @@ final class FloorPlanImageRenderer
             true
         );
         if ($isFused) {
-            return $this->renderFused($rooms, $unit, $label);
+            return $this->renderFused($rooms, $unit, $label, $notes);
         }
 
         $tiles = array_map([$this, 'tileGeometry'], $rooms);
+        $notesLines = $this->buildNotesLines($rooms, $notes);
 
         $tilesWidth = self::MARGIN * 2 + array_sum(array_column($tiles, 'width'))
             + self::TILE_GAP * (count($tiles) - 1);
-        $headerTextWidth = self::MARGIN * 2 + imagefontwidth(2) * strlen('Room shapes accurate individually; rooms are not laid out relative to each other (see ADR 0002).');
+        $headerTextWidth = self::MARGIN * 2 + imagefontwidth(2) * strlen('Room shapes accurate individually; rooms are not laid out relative to each other.');
         if ($label !== null && $label !== '') {
             $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + imagefontwidth(2) * strlen($this->asciiSafe($label)));
         }
         $canvasWidth = max($tilesWidth, $headerTextWidth);
-        $canvasHeight = self::MARGIN * 2 + self::LABEL_HEIGHT + (int) max(array_column($tiles, 'height'));
+        $canvasHeight = self::MARGIN * 2 + self::LABEL_HEIGHT + (int) max(array_column($tiles, 'height'))
+            + count($notesLines) * self::NOTE_LINE_HEIGHT;
 
         if ($canvasWidth > self::MAX_CANVAS_DIMENSION_PX || $canvasHeight > self::MAX_CANVAS_DIMENSION_PX) {
             throw new \InvalidArgumentException(sprintf(
@@ -129,7 +133,7 @@ final class FloorPlanImageRenderer
         // GD's built-in bitmap fonts are Latin-1 only — stay ASCII to avoid
         // a raw UTF-8 em dash rendering as mojibake.
         imagestring($image, 5, self::MARGIN, 8, 'Vuuro Scan - indicative per-room floor plan sheet', $text);
-        imagestring($image, 2, self::MARGIN, 26, 'Room shapes accurate individually; rooms are not laid out relative to each other (see ADR 0002).', $subtext);
+        imagestring($image, 2, self::MARGIN, 26, 'Room shapes accurate individually; rooms are not laid out relative to each other.', $subtext);
         if ($label !== null && $label !== '') {
             imagestring($image, 2, self::MARGIN, 40, $this->asciiSafe($label), $subtext);
         }
@@ -147,6 +151,8 @@ final class FloorPlanImageRenderer
             $x += $tile['width'] + self::TILE_GAP;
         }
 
+        $tilesBottomY = self::MARGIN + self::LABEL_HEIGHT + (int) max(array_column($tiles, 'height'));
+        $this->drawNotes($image, $notesLines, $tilesBottomY + 10, $text);
         $this->drawRoomTypeLegend($image, $rooms, $typePalette, imagesy($image) - 28, $text);
         $this->drawFooter($image, $subtext);
 
@@ -156,6 +162,55 @@ final class FloorPlanImageRenderer
         imagedestroy($image);
 
         return (string) $bytes;
+    }
+
+    /** @param array<int, array{room_id: ?string, text: string}> $notes */
+    private function buildNotesLines(array $rooms, array $notes): array
+    {
+        if ($notes === []) {
+            return [];
+        }
+        $byRoom = [];
+        $unitNotes = [];
+        foreach ($notes as $note) {
+            $roomId = $note['room_id'] ?? null;
+            if ($roomId === null) {
+                $unitNotes[] = $note;
+            } else {
+                $byRoom[$roomId][] = $note;
+            }
+        }
+
+        $lines = ['Notes:'];
+        foreach ($rooms as $room) {
+            foreach ($byRoom[$room['room_id']] ?? [] as $note) {
+                foreach ($this->wrapTextLines($this->asciiSafe($note['text']), 95) as $i => $wrapped) {
+                    $lines[] = $i === 0 ? "  [{$room['label']}] {$wrapped}" : '        ' . $wrapped;
+                }
+            }
+        }
+        foreach ($unitNotes as $note) {
+            foreach ($this->wrapTextLines($this->asciiSafe($note['text']), 95) as $i => $wrapped) {
+                $lines[] = $i === 0 ? "  [Whole unit] {$wrapped}" : '        ' . $wrapped;
+            }
+        }
+        return count($lines) > 1 ? $lines : [];
+    }
+
+    /** @return string[] */
+    private function wrapTextLines(string $text, int $maxChars): array
+    {
+        $wrapped = wordwrap($text, $maxChars, "\n", true);
+        return $wrapped === '' ? [''] : explode("\n", $wrapped);
+    }
+
+    /** @param string[] $lines */
+    private function drawNotes($image, array $lines, int $y, int $color): void
+    {
+        foreach ($lines as $line) {
+            imagestring($image, self::FONT_SMALL, self::MARGIN, $y, $line, $color);
+            $y += self::NOTE_LINE_HEIGHT;
+        }
     }
 
     private function asciiSafe(string $s): string
@@ -169,7 +224,7 @@ final class FloorPlanImageRenderer
         imagestring($image, self::FONT_SMALL, (int) ((imagesx($image) - $footerWidth) / 2), imagesy($image) - 14, self::FOOTER_TEXT, $color);
     }
 
-    private function renderFused(array $rooms, string $unit = UnitFormatter::METRIC, ?string $label = null): string
+    private function renderFused(array $rooms, string $unit = UnitFormatter::METRIC, ?string $label = null, array $notes = []): string
     {
         $minX = INF;
         $minZ = INF;
@@ -187,13 +242,15 @@ final class FloorPlanImageRenderer
             }
         }
         $overlapping = FusionOverlapDetector::detect($rooms);
+        $notesLines = $this->buildNotesLines($rooms, $notes);
 
         $extraHeaderLines = ($overlapping !== [] ? 1 : 0) + (($label !== null && $label !== '') ? 1 : 0) + 1;
         $headerHeight = self::LABEL_HEIGHT + $extraHeaderLines * 16;
         $dimensionLineY = self::MARGIN + $headerHeight;
         $topGutter = $headerHeight + self::DIMENSION_GUTTER;
         $canvasWidth = self::MARGIN * 2 + self::DIMENSION_GUTTER + (int) round(($maxX - $minX) * self::PIXELS_PER_METER);
-        $canvasHeight = self::MARGIN * 2 + $topGutter + (int) round(($maxZ - $minZ) * self::PIXELS_PER_METER);
+        $canvasHeight = self::MARGIN * 2 + $topGutter + (int) round(($maxZ - $minZ) * self::PIXELS_PER_METER)
+            + count($notesLines) * self::NOTE_LINE_HEIGHT;
         if ($canvasWidth > self::MAX_CANVAS_DIMENSION_PX || $canvasHeight > self::MAX_CANVAS_DIMENSION_PX) {
             throw new \InvalidArgumentException(sprintf(
                 'Fused floor plan would be %dx%d px, exceeding the %d px sanity bound — refusing to allocate it.',
@@ -320,6 +377,9 @@ final class FloorPlanImageRenderer
             $this->drawObjects($image, $room, $originX, $originZ, $toPx, $objectColor, $text);
         }
 
+        $drawingBottomY = $originPxY + (int) round(($maxZ - $minZ) * self::PIXELS_PER_METER);
+        $this->drawNotes($image, $notesLines, $drawingBottomY + 10, $text);
+
         $legendY = imagesy($image) - 30;
         imagefilledellipse($image, self::MARGIN + 4, $legendY, 8, 8, $doorColor);
         imagestring($image, 1, self::MARGIN + 12, $legendY - 6, 'door', $text);
@@ -348,7 +408,7 @@ final class FloorPlanImageRenderer
         $typesPresent = [];
         foreach ($rooms as $room) {
             $type = self::roomTypeValue($room);
-            if ($type !== null && isset(RoomType::LABELS[$type]) && !in_array($type, $typesPresent, true)) {
+            if ($type !== null && isset($typePalette[$type]) && !in_array($type, $typesPresent, true)) {
                 $typesPresent[] = $type;
             }
         }
@@ -359,7 +419,7 @@ final class FloorPlanImageRenderer
         foreach ($typesPresent as $type) {
             [$fill, ] = $typePalette[$type];
             imagefilledrectangle($image, $x, $y - 4, $x + 8, $y + 4, $fill);
-            $label = RoomType::LABELS[$type];
+            $label = RoomType::labelFor($type);
             imagestring($image, self::FONT_SMALL, $x + 12, $y - 6, $label, $textColor);
             $x += 12 + imagefontwidth(self::FONT_SMALL) * strlen($label) + 16;
         }
@@ -368,7 +428,7 @@ final class FloorPlanImageRenderer
     private function displayLabel(array $room): string
     {
         $roomType = self::roomTypeValue($room);
-        $typeName = $roomType !== null ? (RoomType::LABELS[$roomType] ?? null) : null;
+        $typeName = $roomType !== null ? RoomType::labelFor($roomType) : null;
         return $typeName !== null ? sprintf('%s (%s)', $room['label'], $typeName) : $room['label'];
     }
 

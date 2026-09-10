@@ -514,6 +514,35 @@ final class ScanSessionRepository
         });
     }
 
+    public function updateRoomLabel(string $sessionId, string $roomId, string $label): array
+    {
+        return $this->withWriteLock(function () use ($sessionId, $roomId, $label) {
+            $floorPlan = $this->findFloorPlan($sessionId);
+            if ($floorPlan === null) {
+                throw new \RuntimeException(
+                    "Cannot rename a room on scan session $sessionId before it has a captured FloorPlan."
+                );
+            }
+
+            $index = null;
+            foreach ($floorPlan['rooms'] as $i => $room) {
+                if ($room['room_id'] === $roomId) {
+                    $index = $i;
+                    break;
+                }
+            }
+            if ($index === null) {
+                throw new \InvalidArgumentException(
+                    "room_id '{$roomId}' does not match any room captured in this session."
+                );
+            }
+
+            $floorPlan['rooms'][$index]['label'] = $label;
+            $this->saveFloorPlan($sessionId, $floorPlan);
+            return $floorPlan;
+        });
+    }
+
     // Sentinel stored in idempotency_keys.response_json while a claimed key's
     // capture is still being processed — never valid JSON a real FloorPlan
     // would produce, so findIdempotentResponse() can tell "someone else is

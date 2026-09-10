@@ -98,7 +98,14 @@ struct ScanServiceClient {
         }
         return URL(string: "http://127.0.0.1:8089")!
     }()
-    var session: URLSession = .shared
+    var session: URLSession = ScanServiceClient.sharedSession
+
+    private static let sharedSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForResource = 120
+        return URLSession(configuration: configuration)
+    }()
 
     func createSession(identity: ScanIdentity) async throws -> ScanSessionResponse {
         // The only call with no access token to present yet — the Scan
@@ -145,7 +152,7 @@ struct ScanServiceClient {
         request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
         request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
         request.httpBody = bodyJSON
-        return try await send(request)
+        return try await send(request, timeoutSeconds: 45)
     }
 
     struct ReplaceRoomsBody: Encodable {
@@ -154,7 +161,7 @@ struct ScanServiceClient {
 
     func replaceRooms(sessionId: String, accessToken: String, exports: [RoomPlanCaptureExport], provider: String = "roomplan", location: CaptureLocation?) async throws -> FloorPlan {
         let body = ReplaceRoomsBody(captures: exports.map { CaptureBody(rawCapture: $0, captureProvider: provider, captureLocation: location) })
-        return try await post(path: "/scan-sessions/\(sessionId)/rooms", body: body, accessToken: accessToken)
+        return try await post(path: "/scan-sessions/\(sessionId)/rooms", body: body, accessToken: accessToken, timeoutSeconds: 45)
     }
 
     func fetchSession(sessionId: String, accessToken: String) async throws -> FloorPlan {
@@ -212,6 +219,13 @@ struct ScanServiceClient {
         return try await post(path: "/scan-sessions/\(sessionId)/rooms/\(roomId)/room-type", body: Body(roomType: roomType), accessToken: accessToken)
     }
 
+    func updateRoomLabel(sessionId: String, accessToken: String, roomId: String, label: String) async throws -> FloorPlan {
+        struct Body: Encodable {
+            let label: String
+        }
+        return try await post(path: "/scan-sessions/\(sessionId)/rooms/\(roomId)/label", body: Body(label: label), accessToken: accessToken)
+    }
+
     func fetchAccessLog(sessionId: String, accessToken: String) async throws -> AccessLogResponse {
         try await get(path: "/scan-sessions/\(sessionId)/access-log", accessToken: accessToken)
     }
@@ -236,7 +250,7 @@ struct ScanServiceClient {
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
         request.httpBody = body
 
-        return try await send(request)
+        return try await send(request, timeoutSeconds: 45)
     }
 
     func addPhoto(sessionId: String, accessToken: String, url: String, caption: String? = nil, roomId: String? = nil) async throws -> FloorPlan {
@@ -271,7 +285,7 @@ struct ScanServiceClient {
         URL(string: path, relativeTo: baseURL)?.absoluteURL ?? baseURL.appendingPathComponent(path)
     }
 
-    private func post<Body: Encodable, Response: Decodable>(path: String, body: Body, accessToken: String?) async throws -> Response {
+    private func post<Body: Encodable, Response: Decodable>(path: String, body: Body, accessToken: String?, timeoutSeconds: TimeInterval = ScanServiceClient.requestTimeoutSeconds) async throws -> Response {
         var request = URLRequest(url: url(for: path))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -279,11 +293,14 @@ struct ScanServiceClient {
             request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
         }
         request.httpBody = try JSONEncoder().encode(body)
-        return try await send(request)
+        return try await send(request, timeoutSeconds: timeoutSeconds)
     }
+
+    private static let requestTimeoutSeconds: TimeInterval = 25
 
     private func get<Response: Decodable>(path: String, accessToken: String?) async throws -> Response {
         var request = URLRequest(url: url(for: path))
+        request.timeoutInterval = Self.requestTimeoutSeconds
         if let accessToken {
             request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
         }
@@ -294,6 +311,7 @@ struct ScanServiceClient {
     /// application/pdf bytes rather than JSON — nothing here to decode.
     private func getData(path: String, accessToken: String) async throws -> Data {
         var request = URLRequest(url: url(for: path))
+        request.timeoutInterval = Self.requestTimeoutSeconds
         request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
 
         let data: Data
@@ -319,7 +337,9 @@ struct ScanServiceClient {
         return data
     }
 
-    private func send<Response: Decodable>(_ request: URLRequest) async throws -> Response {
+    private func send<Response: Decodable>(_ request: URLRequest, timeoutSeconds: TimeInterval = ScanServiceClient.requestTimeoutSeconds) async throws -> Response {
+        var request = request
+        request.timeoutInterval = timeoutSeconds
         let data: Data
         let response: URLResponse
         do {

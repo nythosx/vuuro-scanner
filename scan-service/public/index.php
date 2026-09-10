@@ -913,7 +913,16 @@ if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)/photos/([^/]+)$
         return;
     }
 
-    deleteUploadedPhotoFileIfOwned($session['id'], $photoUrl);
+    $stillReferenced = false;
+    foreach ($floorPlan['photos'] as $remainingPhoto) {
+        if ($remainingPhoto['url'] === $photoUrl) {
+            $stillReferenced = true;
+            break;
+        }
+    }
+    if (!$stillReferenced) {
+        deleteUploadedPhotoFileIfOwned($session['id'], $photoUrl);
+    }
 
     respond(200, $floorPlan);
     return;
@@ -960,13 +969,53 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)/roo
         return;
     }
     $confirmed = $body['room_type'];
-    if ($confirmed !== null && (!is_string($confirmed) || !in_array($confirmed, \VuuroScan\RoomType::CONFIRMED_VALUES, true))) {
-        respondError(422, 'invalid_room_type', 'room_type must be one of the known values, or null to clear it.', ['allowed' => \VuuroScan\RoomType::CONFIRMED_VALUES]);
-        return;
+    if ($confirmed !== null) {
+        if (!is_string($confirmed) || !\VuuroScan\RoomType::isValidConfirmedValue($confirmed)) {
+            respondError(422, 'invalid_room_type', 'room_type must be a non-empty value of at most ' . \VuuroScan\RoomType::CUSTOM_MAX_LENGTH . ' characters, or null to clear it.', ['suggested' => \VuuroScan\RoomType::CONFIRMED_VALUES]);
+            return;
+        }
+        $confirmed = trim($confirmed);
     }
 
     try {
         $floorPlan = $repo->updateRoomType($sessionId, $roomId, $confirmed);
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unknown_room_id', $e->getMessage());
+        return;
+    }
+
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)/label$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'update_room_label');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+    $roomId = $m[2];
+
+    if (rateLimited($repo, $sessionId . ':update_room_label', 60, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    if (!array_key_exists('label', $body) || !is_string($body['label'])) {
+        respondError(422, 'missing_required_fields', "Please include a non-empty 'label' string field.", ['fields' => ['label']]);
+        return;
+    }
+    $label = trim($body['label']);
+    if ($label === '' || mb_strlen($label) > 60) {
+        respondError(422, 'invalid_room_label', 'label must be non-empty and at most 60 characters.');
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->updateRoomLabel($sessionId, $roomId, $label);
     } catch (\RuntimeException $e) {
         respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
         return;

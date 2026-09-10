@@ -251,6 +251,31 @@ check('room_type: false (present, wrong type) is rejected as invalid_room_type, 
 [$unknownRoomStatus, $unknownRoomBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms/no-such-room/room-type", ['room_type' => 'bedroom'], $accessToken);
 check('an unknown room_id is rejected as unknown_room_id', $unknownRoomStatus === 422 && ($unknownRoomBody['error'] ?? null) === 'unknown_room_id', "got HTTP $unknownRoomStatus: " . json_encode($unknownRoomBody));
 
+echo "\n== Room label rename (set/reject) over real HTTP ==\n";
+$roomLabelRoomId = $floorPlan['rooms'][0]['room_id'] ?? null;
+[$setLabelStatus, $setLabelBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms/$roomLabelRoomId/label", ['label' => 'Primary Bedroom'], $accessToken);
+check('setting a valid label returns 200', $setLabelStatus === 200, "got HTTP $setLabelStatus");
+$labelledRoom = array_values(array_filter($setLabelBody['rooms'] ?? [], static fn (array $r) => $r['room_id'] === $roomLabelRoomId))[0] ?? null;
+check('the room now carries the renamed label', ($labelledRoom['label'] ?? null) === 'Primary Bedroom', 'got ' . json_encode($labelledRoom['label'] ?? null));
+
+[$trimLabelStatus, $trimLabelBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms/$roomLabelRoomId/label", ['label' => '  Guest Room  '], $accessToken);
+check('a label with surrounding whitespace is trimmed before storage', $trimLabelStatus === 200 && (array_values(array_filter($trimLabelBody['rooms'] ?? [], static fn (array $r) => $r['room_id'] === $roomLabelRoomId))[0]['label'] ?? null) === 'Guest Room');
+
+[$missingLabelStatus, $missingLabelBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms/$roomLabelRoomId/label", [], $accessToken);
+check('an absent label key is rejected as missing_required_fields', $missingLabelStatus === 422 && ($missingLabelBody['error'] ?? null) === 'missing_required_fields', "got HTTP $missingLabelStatus: " . json_encode($missingLabelBody));
+
+[$emptyLabelStatus, $emptyLabelBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms/$roomLabelRoomId/label", ['label' => '   '], $accessToken);
+check('a whitespace-only label is rejected as invalid_room_label', $emptyLabelStatus === 422 && ($emptyLabelBody['error'] ?? null) === 'invalid_room_label', "got HTTP $emptyLabelStatus: " . json_encode($emptyLabelBody));
+
+[$tooLongLabelStatus, $tooLongLabelBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms/$roomLabelRoomId/label", ['label' => str_repeat('x', 61)], $accessToken);
+check('a label over 60 characters is rejected as invalid_room_label', $tooLongLabelStatus === 422 && ($tooLongLabelBody['error'] ?? null) === 'invalid_room_label', "got HTTP $tooLongLabelStatus: " . json_encode($tooLongLabelBody));
+
+[$wrongTypeLabelStatus, $wrongTypeLabelBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms/$roomLabelRoomId/label", ['label' => 123], $accessToken);
+check('label: 123 (present, wrong type) is rejected as missing_required_fields', $wrongTypeLabelStatus === 422 && ($wrongTypeLabelBody['error'] ?? null) === 'missing_required_fields', "got HTTP $wrongTypeLabelStatus: " . json_encode($wrongTypeLabelBody));
+
+[$unknownRoomLabelStatus, $unknownRoomLabelBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms/no-such-room/label", ['label' => 'Attic'], $accessToken);
+check('an unknown room_id is rejected as unknown_room_id', $unknownRoomLabelStatus === 422 && ($unknownRoomLabelBody['error'] ?? null) === 'unknown_room_id', "got HTTP $unknownRoomLabelStatus: " . json_encode($unknownRoomLabelBody));
+
 echo "\n== Adversarial: exports before any capture must not silently return an empty/broken file ==\n";
 [, $emptySession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-exports-empty',

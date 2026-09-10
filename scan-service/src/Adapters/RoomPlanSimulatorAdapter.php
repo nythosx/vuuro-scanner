@@ -408,8 +408,8 @@ final class RoomPlanSimulatorAdapter
             return null;
         }
         $confirmed = $roomType['confirmed'] ?? null;
-        if ($confirmed !== null && (!is_string($confirmed) || !in_array($confirmed, RoomType::CONFIRMED_VALUES, true))) {
-            $confirmed = null;
+        if ($confirmed !== null) {
+            $confirmed = is_string($confirmed) && RoomType::isValidConfirmedValue($confirmed) ? trim($confirmed) : null;
         }
         return [
             'guess' => $guess,

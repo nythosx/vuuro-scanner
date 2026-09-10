@@ -395,6 +395,31 @@ r_check(
     'that same call still sets confirmed correctly',
     $afterNoGuessConfirm['rooms'][0]['room_type']['confirmed'] === 'kitchen'
 );
+
+$afterCustomType = $repo->updateRoomType($roomIdSession['id'], 'room-real-1', 'Home office');
+r_check(
+    'updateRoomType() accepts a free-text custom value (not just the fixed whitelist)',
+    $afterCustomType['rooms'][0]['room_type']['confirmed'] === 'Home office'
+);
+echo "\n";
+
+echo "== updateRoomLabel(): renaming a captured room ==\n";
+$afterRename = $repo->updateRoomLabel($roomIdSession['id'], 'room-real-1', 'Master bedroom');
+r_check('updateRoomLabel() sets the label on the matching room', $afterRename['rooms'][0]['label'] === 'Master bedroom');
+
+try {
+    $repo->updateRoomLabel($roomIdSession['id'], 'room-does-not-exist', 'x');
+    r_check('updateRoomLabel() rejects a room_id that matches no real room', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    r_check('updateRoomLabel() rejects a room_id that matches no real room', true);
+}
+
+try {
+    $repo->updateRoomLabel($noFloorPlanSession['id'], 'any-room', 'x');
+    r_check('updateRoomLabel() rejects a session with no captured FloorPlan yet', false, 'no exception was thrown');
+} catch (\RuntimeException) {
+    r_check('updateRoomLabel() rejects a session with no captured FloorPlan yet', true);
+}
 echo "\n";
 
 echo "== capture_location: session-wide, set once, never nulled back out ==\n";

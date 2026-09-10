@@ -16,4 +16,26 @@ final class RoomType
         'kitchen' => 'Kitchen',
         'dining_room' => 'Dining room',
     ];
+
+    public const CUSTOM_MAX_LENGTH = 60;
+
+    public static function isValidConfirmedValue(string $value): bool
+    {
+        $trimmed = trim($value);
+        if ($trimmed === '') {
+            return false;
+        }
+        if (in_array($value, self::CONFIRMED_VALUES, true)) {
+            return true;
+        }
+        if (mb_strlen($trimmed) > self::CUSTOM_MAX_LENGTH) {
+            return false;
+        }
+        return preg_match('/[\x00-\x1f\x7f]/', $trimmed) !== 1;
+    }
+
+    public static function labelFor(string $value): string
+    {
+        return self::LABELS[$value] ?? $value;
+    }
 }

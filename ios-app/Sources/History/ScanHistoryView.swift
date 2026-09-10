@@ -70,6 +70,7 @@ struct ScanHistoryView: View {
                     importError = nil
                     showImportSheet = true
                 }
+                .buttonStyle(.vuuroSecondary)
             }
 
             Section("Export unit") {
@@ -87,7 +88,10 @@ struct ScanHistoryView: View {
                         TextField("Label this scan (optional)", text: nicknameBinding(for: entry))
                             .font(.caption)
                             .focused($focusedNicknameSessionId, equals: entry.sessionId)
-                            .onSubmit { commitNickname(sessionId: entry.sessionId) }
+                            .onSubmit {
+                                commitNickname(sessionId: entry.sessionId)
+                                VuuroToast.shared.show("Nickname saved")
+                            }
                         Text(entry.purpose.displayName)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -96,27 +100,25 @@ struct ScanHistoryView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    HStack {
+                    HStack(spacing: 10) {
                         Button("Download image") {
                             Task { await downloadImage(for: entry) }
                         }
-                        Spacer()
-                        if let url = perEntryImageURLs[entry.sessionId] {
-                            ShareLink(item: url) {
-                                Label("Save", systemImage: "square.and.arrow.up")
-                            }
-                        }
-                    }
-
-                    HStack {
+                        .buttonStyle(.vuuroSecondary)
                         Button("Download PDF") {
                             Task { await downloadPDF(for: entry) }
                         }
-                        Spacer()
-                        if let url = perEntryPDFURLs[entry.sessionId] {
-                            ShareLink(item: url) {
-                                Label("Save", systemImage: "square.and.arrow.up")
-                            }
+                        .buttonStyle(.vuuroSecondary)
+                    }
+
+                    if let url = perEntryImageURLs[entry.sessionId] {
+                        ShareLink(item: url) {
+                            Label("Save image", systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    if let url = perEntryPDFURLs[entry.sessionId] {
+                        ShareLink(item: url) {
+                            Label("Save PDF", systemImage: "square.and.arrow.up")
                         }
                     }
 
@@ -124,35 +126,39 @@ struct ScanHistoryView: View {
                         AccessLogView(sessionId: entry.sessionId, accessToken: entry.accessToken)
                     }
 
-                    if let onResumeToAddRoom {
-                        Button("Scan another room") {
-                            Task {
-                                let refreshed = await rotateTokenIfNeeded(entry)
-                                dismiss()
-                                onResumeToAddRoom(refreshed)
+                    HStack(spacing: 10) {
+                        if let onResumeToAddRoom {
+                            Button("Scan another room") {
+                                Task {
+                                    let refreshed = await rotateTokenIfNeeded(entry)
+                                    dismiss()
+                                    onResumeToAddRoom(refreshed)
+                                }
                             }
+                            .buttonStyle(.vuuroSecondary)
+                        }
+
+                        if let onAttachToSession {
+                            Button {
+                                Task {
+                                    let refreshed = await rotateTokenIfNeeded(entry)
+                                    await attach(refreshed, using: onAttachToSession)
+                                }
+                            } label: {
+                                if isFetchingToAttach.contains(entry.sessionId) {
+                                    ProgressView()
+                                } else {
+                                    Text("Add a photo or note")
+                                }
+                            }
+                            .buttonStyle(.vuuroSecondary)
+                            .disabled(isFetchingToAttach.contains(entry.sessionId))
                         }
                     }
 
-                    if let onAttachToSession {
-                        Button {
-                            Task {
-                                let refreshed = await rotateTokenIfNeeded(entry)
-                                await attach(refreshed, using: onAttachToSession)
-                            }
-                        } label: {
-                            if isFetchingToAttach.contains(entry.sessionId) {
-                                ProgressView()
-                            } else {
-                                Text("Add a photo or note")
-                            }
-                        }
-                        .disabled(isFetchingToAttach.contains(entry.sessionId))
-
-                        if let attachError = attachErrors[entry.sessionId] {
-                            ErrorCodeView(error: attachError)
-                                .font(.caption)
-                        }
+                    if onAttachToSession != nil, let attachError = attachErrors[entry.sessionId] {
+                        ErrorCodeView(error: attachError)
+                            .font(.caption)
                     }
 
                     if let code = ScanShareCode.encode(entry) {
@@ -423,6 +429,7 @@ struct ScanHistoryView: View {
             try data.write(to: url)
             perEntryImageURLs[entry.sessionId] = url
             appError = nil
+            VuuroToast.shared.show("Image downloaded")
         } catch {
             appError = AppError(site: .historyImageDownload, underlying: error)
         }
@@ -436,6 +443,7 @@ struct ScanHistoryView: View {
             try data.write(to: url)
             perEntryPDFURLs[entry.sessionId] = url
             appError = nil
+            VuuroToast.shared.show("PDF downloaded")
         } catch {
             appError = AppError(site: .historyPDFDownload, underlying: error)
         }

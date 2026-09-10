@@ -17,13 +17,24 @@
 Evidence over theatre: never round "CI-compiled and simulator-tested" up to "verified."
 Fixture/simulator proof and real-capture proof are not the same claim.
 
-## Branding later
+## Branding
 
 `Sources/Design/VuuroDesign.swift` holds vuuro.com's brand tokens (colors, fonts, button
-styles) — folded in from the retired `ios-app-with-design/` tree (LIDAR-7, 2026-09-03).
-Nothing uses it by default; the app ships on plain system styling. To brand a screen,
-wire it to `.vuuroPrimary`/`.vuuroSecondary`/`.vuuroCard()`. This keeps branding a
-same-tree, opt-in change instead of a second app to maintain.
+styles) — folded in from the retired `ios-app-with-design/` tree (LIDAR-7, 2026-09-03),
+now wired through the main flow (intake, capture, rooms, attachments, result, history).
+Wire any remaining screen to `.vuuroPrimary`/`.vuuroSecondary`/`.vuuroCard()`.
+
+The body font is vuuro.com's real typeface, Open Sans (OFL-licensed), bundled as a single
+variable font at `Resources/Fonts/OpenSans-Variable.ttf` — `project.yml`'s `resources:`
+entry makes `xcodegen generate` copy it into the app bundle automatically, no manual
+Xcode step needed. It's declared in `Info.plist`'s `UIAppFonts` (via `project.yml`) so
+the system exposes its full weight axis, not just the default instance that
+`CTFontManagerRegisterFontsForURL` alone would expose; `VuuroFontRegistration.registerBundledFonts()`
+(called from `VuuroScanApp.init`) additionally registers it for `.process` scope as a
+belt-and-suspenders fallback. `VuuroFont` calls `.weight(_:)` on it directly, which
+resolves against the font's own weight axis. `Resources/Fonts/OFL.txt` is the required
+license text — keep it alongside the font file if this ever needs to be redistributed
+outside this repo.
 
 ## Checklist: opening this in Xcode for the first time (real-device test)
 
@@ -93,10 +104,13 @@ same-tree, opt-in change instead of a second app to maintain.
 **Proves**: real Apple RoomPlan geometry, captured on real LiDAR hardware, flowing
 through the real adapter/pipeline into the Scan Service, for the first time.
 
-**Does not prove**: multi-room "unit story" fusion into one spatially-coherent floor
-plan — still one RoomPlan session per room today, with no shared coordinate frame
-(`docs/adr/0002-export-coordinate-frame.md`); App Store distribution or signing (this
-test only needs ad-hoc/local Xcode signing, nothing more).
+**Does not prove**: App Store distribution or signing (this test only needs
+ad-hoc/local Xcode signing, nothing more). Multi-room "unit story" fusion into one
+spatially-coherent floor plan does exist today — `MultiRoomCaptureCoordinator` walks a
+structure across rooms in one continuous ARSession and fuses them into a shared
+coordinate frame (`docs/adr/0002-export-coordinate-frame.md`) — but that fusion path is
+still only simulator/fixture-verified, same as everything else on this list, until it's
+been run through on real LiDAR hardware.
 
 ### Apple Developer account
 

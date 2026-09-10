@@ -17,7 +17,7 @@ enum RoomTypeClassifier {
         case "kitchen": return "Kitchen"
         case "dining_room": return "Dining room"
         case "other": return "Other"
-        default: return "Room"
+        default: return type
         }
     }
 

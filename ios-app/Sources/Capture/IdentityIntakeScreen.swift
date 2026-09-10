@@ -32,6 +32,30 @@ struct IdentityIntakeScreen: View {
     private var trimmedUnitId: String { unitId.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var trimmedOrganisationId: String { organisationId.trimmingCharacters(in: .whitespacesAndNewlines) }
 
+    @State private var previouslyUsedPropertyIds: [String] = []
+    @State private var previouslyUsedUnitIds: [String] = []
+    @State private var previouslyUsedOrganisationIds: [String] = []
+
+    private func loadPreviouslyUsedValues() {
+        let entries = ScanHistoryStore.shared.all()
+        previouslyUsedPropertyIds = recentDistinctValues(\.propertyId, in: entries)
+        previouslyUsedUnitIds = recentDistinctValues(\.unitId, in: entries)
+        previouslyUsedOrganisationIds = recentDistinctValues(\.organisationId, in: entries)
+    }
+
+    private func recentDistinctValues(_ keyPath: KeyPath<ScanHistoryEntry, String>, in entries: [ScanHistoryEntry]) -> [String] {
+        var seen = Set<String>()
+        var values: [String] = []
+        for entry in entries {
+            let value = entry[keyPath: keyPath]
+            if !value.isEmpty, seen.insert(value).inserted {
+                values.append(value)
+            }
+            if values.count == 5 { break }
+        }
+        return values
+    }
+
     private var identityFieldsFilled: Bool {
         !trimmedPropertyId.isEmpty && !trimmedUnitId.isEmpty && !trimmedOrganisationId.isEmpty
     }
@@ -40,12 +64,41 @@ struct IdentityIntakeScreen: View {
         identityFieldsFilled && (!occupied || consentObtained)
     }
 
+    private var debugFakeCaptureActive: Bool {
+        #if DEBUG
+        FakeLidarMode.isEnabled
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
+        if !DeviceCapability.isRoomPlanSupported && !debugFakeCaptureActive {
+            UnsupportedDeviceScreen()
+        } else {
+            form
+        }
+    }
+
+    private var form: some View {
         Form {
-            Section("Unit identity") {
-                TextField("Property ID", text: $propertyId)
-                TextField("Unit ID", text: $unitId)
-                TextField("Organisation ID", text: $organisationId)
+            Section {
+                TextField("e.g. prop-oosterpark-14", text: $propertyId)
+                if !previouslyUsedPropertyIds.isEmpty {
+                    suggestionChips(previouslyUsedPropertyIds) { propertyId = $0 }
+                }
+                TextField("e.g. unit-2b", text: $unitId)
+                if !previouslyUsedUnitIds.isEmpty {
+                    suggestionChips(previouslyUsedUnitIds) { unitId = $0 }
+                }
+                TextField("e.g. org-athome-vastgoed", text: $organisationId)
+                if !previouslyUsedOrganisationIds.isEmpty {
+                    suggestionChips(previouslyUsedOrganisationIds) { organisationId = $0 }
+                }
+            } header: {
+                Text("Unit identity")
+            } footer: {
+                Text("Enter the property, unit, and organisation this scan belongs to. Tap a suggestion below a field to reuse a value from an earlier scan.")
             }
 
             Section("Purpose") {
@@ -76,6 +129,7 @@ struct IdentityIntakeScreen: View {
 
             Section {
                 Toggle("Guess room type while scanning", isOn: $roomTypeGuessEnabled)
+                    .tint(VuuroColor.accentLime)
                     .onChange(of: roomTypeGuessEnabled) { _, newValue in
                         RoomTypeGuessSettings.isEnabled = newValue
                     }
@@ -91,18 +145,26 @@ struct IdentityIntakeScreen: View {
                     if isCheckingHealth {
                         ProgressView()
                     } else {
-                        Text("Start scan")
+                        Text("Scan one room")
                     }
                 }
+                .buttonStyle(.vuuroPrimary)
                 .disabled(!canStart || isCheckingHealth)
+                Text("For a single room by itself.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 if let onStartMultiRoom {
                     Button {
                         Task { await startIfHealthy(onStartMultiRoom) }
                     } label: {
-                        Text("Start multi-room scan (fused, experimental)")
+                        Text("Scan a whole unit")
                     }
+                    .buttonStyle(.vuuroSecondary)
                     .disabled(!canStart || isCheckingHealth)
+                    Text("Walk through and capture every room in one visit; they're combined into one floor plan.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 if let healthCheckError {
@@ -120,6 +182,22 @@ struct IdentityIntakeScreen: View {
             #endif
         }
         .navigationTitle("New scan")
+        .onAppear { loadPreviouslyUsedValues() }
+    }
+
+    private func suggestionChips(_ values: [String], onPick: @escaping (String) -> Void) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(values, id: \.self) { value in
+                    Button(value) {
+                        onPick(value)
+                    }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 6, trailing: 16))
     }
 
     @MainActor
