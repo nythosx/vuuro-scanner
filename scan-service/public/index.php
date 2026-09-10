@@ -113,7 +113,7 @@ function deleteSessionPhotoDir(string $sessionId): void
 const BACKUP_MIN_INTERVAL_SECONDS = 24 * 60 * 60;
 const BACKUP_MAX_KEPT = 14;
 
-function backupDatabaseIfDue(): void
+function backupDatabaseIfDue(PDO $db): void
 {
     $dbPath = \VuuroScan\Storage\Database::resolvePath();
     if (!is_file($dbPath)) {
@@ -121,28 +121,53 @@ function backupDatabaseIfDue(): void
     }
     $backupDir = dirname($dbPath) . '/backups';
     if (!is_dir($backupDir) && !mkdir($backupDir, 0750, true) && !is_dir($backupDir)) {
+        error_log("backupDatabaseIfDue: could not create backup directory $backupDir");
         return;
     }
 
-    $existing = glob($backupDir . '/*.sqlite') ?: [];
-    $newest = 0;
-    foreach ($existing as $file) {
-        $newest = max($newest, (int) filemtime($file));
-    }
-    if ($newest !== 0 && time() - $newest < BACKUP_MIN_INTERVAL_SECONDS) {
+    $lastBackupMarker = $backupDir . '/.last_backup_at';
+    $lastBackupAt = is_file($lastBackupMarker) ? (int) filemtime($lastBackupMarker) : 0;
+    if ($lastBackupAt !== 0 && time() - $lastBackupAt < BACKUP_MIN_INTERVAL_SECONDS) {
         return;
     }
 
     $backupPath = $backupDir . '/' . gmdate('Ymd\THis\Z') . '.sqlite';
-    if (!copy($dbPath, $backupPath)) {
+    try {
+        $db->exec('VACUUM INTO ' . $db->quote($backupPath));
+    } catch (\PDOException $e) {
+        error_log('backupDatabaseIfDue: VACUUM INTO failed: ' . $e->getMessage());
         return;
     }
+    touch($lastBackupMarker);
 
     $all = glob($backupDir . '/*.sqlite') ?: [];
     sort($all);
     $excess = count($all) - BACKUP_MAX_KEPT;
     for ($i = 0; $i < $excess; $i++) {
         unlink($all[$i]);
+    }
+}
+
+function deleteUploadedPhotoFileIfOwned(string $sessionId, ?string $url): void
+{
+    if ($url === null) {
+        return;
+    }
+    $path = parse_url($url, PHP_URL_PATH);
+    if (!is_string($path)) {
+        return;
+    }
+    $prefix = "/scan-sessions/$sessionId/photo-uploads/";
+    if (!str_starts_with($path, $prefix)) {
+        return;
+    }
+    $filename = substr($path, strlen($prefix));
+    if (!preg_match('#^[a-f0-9\-]+\.(?:jpg|png|heic|webp)$#', $filename)) {
+        return;
+    }
+    $filePath = __DIR__ . '/../data/photos/' . $sessionId . '/' . $filename;
+    if (is_file($filePath)) {
+        unlink($filePath);
     }
 }
 
@@ -363,7 +388,7 @@ if ($method === 'POST' && $path === '/scan-sessions') {
         $tokenTtlSeconds
     );
 
-    backupDatabaseIfDue();
+    backupDatabaseIfDue($db);
 
     if ($repo->lastInsertRowId() % 10 === 0) {
         foreach ($repo->findExpiredBeyondGracePeriod() as $expiredId) {
@@ -869,6 +894,15 @@ if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)/photos/([^/]+)$
         return;
     }
 
+    $photoUrl = null;
+    $existingFloorPlan = $repo->findFloorPlan($session['id']);
+    foreach (($existingFloorPlan !== null ? $existingFloorPlan['photos'] : []) as $existingPhoto) {
+        if ($existingPhoto['photo_id'] === $m[2]) {
+            $photoUrl = $existingPhoto['url'];
+            break;
+        }
+    }
+
     try {
         $floorPlan = $repo->deletePhoto($session['id'], $m[2]);
     } catch (\RuntimeException $e) {
@@ -878,6 +912,8 @@ if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)/photos/([^/]+)$
         respondError(404, 'photo_not_found', $e->getMessage());
         return;
     }
+
+    deleteUploadedPhotoFileIfOwned($session['id'], $photoUrl);
 
     respond(200, $floorPlan);
     return;

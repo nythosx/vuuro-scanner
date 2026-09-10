@@ -86,6 +86,24 @@ check('deleting a note succeeds (HTTP 200)', $deleteNoteStatus === 200, "got HTT
 check('deleted note is gone', count(array_filter($afterNoteDelete['notes'], fn ($n) => $n['note_id'] === $noteIdToDelete)) === 0);
 check('the other note is untouched', count($afterNoteDelete['notes']) === 1 && $afterNoteDelete['notes'][0]['text'] === 'second note');
 
+echo "\n== Deleting a server-uploaded photo also removes the underlying file, not just the JSON entry ==\n";
+
+$tmpUploadPath = sys_get_temp_dir() . '/net_verify_session_lookup_upload.jpg';
+file_put_contents($tmpUploadPath, "\xFF\xD8\xFFnet-test-jpeg-bytes");
+[, $uploadBody] = net_http_multipart_upload("$baseUrl/scan-sessions/$sessionId/photo-uploads", $tmpUploadPath, 'image/jpeg', $accessToken);
+$uploadedPhotoUrl = $uploadBody['url'];
+
+[, $afterUploadedAttach] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", ['url' => $uploadedPhotoUrl], $accessToken);
+$uploadedPhotoId = $afterUploadedAttach['photos'][count($afterUploadedAttach['photos']) - 1]['photo_id'];
+
+[$getUploadedBeforeStatus, ] = net_http_raw('GET', $uploadedPhotoUrl, null, $accessToken);
+check('the uploaded photo file is fetchable before delete (HTTP 200)', $getUploadedBeforeStatus === 200, "got HTTP $getUploadedBeforeStatus");
+
+net_http_json('DELETE', "$baseUrl/scan-sessions/$sessionId/photos/$uploadedPhotoId", null, $accessToken);
+
+[$getUploadedAfterStatus, ] = net_http_raw('GET', $uploadedPhotoUrl, null, $accessToken);
+check('the uploaded photo file is gone after delete, not just unlisted (HTTP 404)', $getUploadedAfterStatus === 404, "got HTTP $getUploadedAfterStatus");
+
 echo "\n== Adjacent case: deleting a photo/note on a session with no floor plan yet is a clean 409, not a crash ==\n";
 
 [, $emptySession] = net_http_json('POST', "$baseUrl/scan-sessions", [

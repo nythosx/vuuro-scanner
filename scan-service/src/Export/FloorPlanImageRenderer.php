@@ -317,9 +317,6 @@ final class FloorPlanImageRenderer
         foreach ($rooms as $room) {
             [$originX, $originZ] = $room['structure_origin_m'];
             $this->drawOpenings($image, $room, $originX, $originZ, $toPx, $doorColor, $windowColor, $otherOpeningColor, $text);
-        }
-        foreach ($rooms as $room) {
-            [$originX, $originZ] = $room['structure_origin_m'];
             $this->drawObjects($image, $room, $originX, $originZ, $toPx, $objectColor, $text);
         }
 
