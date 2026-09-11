@@ -78,6 +78,11 @@ final class FloorPlanImageRenderer
         if ($rooms === []) {
             throw new \InvalidArgumentException('Cannot render a floor plan sheet with zero rooms.');
         }
+        foreach ($rooms as $room) {
+            if (!isset($room['outline_m'], $room['bounding_dimensions_m']['width_m'], $room['bounding_dimensions_m']['length_m'])) {
+                throw new \InvalidArgumentException("Cannot render a floor plan sheet: room '{$room['label']}' is missing outline_m/bounding_dimensions_m.");
+            }
+        }
 
         $isFused = $layout !== 'tiles' && $roomId === null && count($rooms) > 1 && array_reduce(
             $rooms,
