@@ -64,6 +64,7 @@ scan-service-net:
     - php net/verify_walk_path.php http://127.0.0.1:8089
     - php net/verify_session_lookup_and_item_delete.php http://127.0.0.1:8089 ci-test-admin-key
     - php net/verify_crud.php http://127.0.0.1:8089
+    - php net/verify_delete_and_fusion_hardening.php http://127.0.0.1:8089
     - php net/verify_enterprise_hardening.php http://127.0.0.1:8089
     - if (-not $server1.HasExited) { Stop-Process -Id $server1.Id -Force }
     - if (Test-Path data\scan_service.sqlite) { Remove-Item -Force data\scan_service.sqlite }

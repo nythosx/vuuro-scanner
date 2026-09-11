@@ -36,9 +36,7 @@ struct CapturedRoomsListView: View {
                 }
                 Section {
                     Button {
-                        #if DEBUG
                         DiagnosticsLog.shared.record("Add room tapped from captured-rooms list (multi-room)", category: .info)
-                        #endif
                         dismiss()
                     } label: {
                         Label("Scan Another Room", systemImage: "plus.circle")
@@ -76,12 +74,10 @@ struct CapturedRoomsListView: View {
                     onCancel: { retryTargetIndex = nil },
                     onConfirm: { reason in
                         if let reason, !reason.isEmpty {
-                            #if DEBUG
                             DiagnosticsLog.shared.record(
                                 "Retry reason (\(label(for: target.index))): \(reason)",
                                 category: .info
                             )
-                            #endif
                         }
                         coordinator.removeCapturedRoom(at: target.index)
                         retryTargetIndex = nil

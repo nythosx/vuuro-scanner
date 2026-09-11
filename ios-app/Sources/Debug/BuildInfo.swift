@@ -1,4 +1,4 @@
-#if DEBUG
+
 import Foundation
 
 enum BuildInfo {
@@ -11,11 +11,14 @@ enum BuildInfo {
     }
 
     static var scanServiceBaseURL: String {
-        DebugScanServiceURL.resolved?.absoluteString ?? "http://127.0.0.1:8089"
+        #if DEBUG
+        return DebugScanServiceURL.resolved?.absoluteString ?? "http://127.0.0.1:8089"
+        #else
+        return "http://127.0.0.1:8089"
+        #endif
     }
 
     static var summary: String {
         "\(commitSHA) · built \(buildTimestamp) · \(scanServiceBaseURL)"
     }
 }
-#endif

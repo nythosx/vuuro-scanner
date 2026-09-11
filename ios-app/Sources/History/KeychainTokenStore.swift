@@ -55,10 +55,8 @@ enum KeychainTokenStore {
         guard !UserDefaults.standard.bool(forKey: key) else { return }
         deleteAll()
         UserDefaults.standard.set(true, forKey: key)
-        #if DEBUG
         Task { @MainActor in
             DiagnosticsLog.shared.record("First launch after install/reinstall detected — cleared any leftover Keychain tokens from a previous install", category: .info)
         }
-        #endif
     }
 }

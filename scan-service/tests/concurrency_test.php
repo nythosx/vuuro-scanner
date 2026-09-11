@@ -252,6 +252,84 @@ if ($lockProcess !== false) {
 
 @unlink($idempotencyDbFile);
 
+echo "\n== Two concurrent deleteNote() calls for the SAME note_id must not both succeed or corrupt the note list ==\n";
+
+$deleteDbFile = sys_get_temp_dir() . '/vuuro_scan_delete_race_test_' . bin2hex(random_bytes(6)) . '.sqlite';
+@unlink($deleteDbFile);
+$deleteDb = Database::connect($deleteDbFile);
+$deleteRepo = new ScanSessionRepository($deleteDb);
+$deleteSessionId = $deleteRepo->create('prop-concurrency-delete', 'unit-concurrency-delete', 'org-concurrency-delete', 'listing', false, false)['id'];
+$deleteRepo->appendCapture($deleteSessionId, [
+    'scan_session_id' => $deleteSessionId, 'capture_provider' => 'test',
+    'captured_at' => '2026-09-11T00:00:00Z', 'measurement_basis' => 'indicative_nen2580_inspired',
+    'purpose' => 'listing', 'rooms' => [['room_id' => 'room-del', 'label' => 'Room 1']],
+    'photos' => [], 'notes' => [],
+]);
+$noteAfterAdd = $deleteRepo->appendNote($deleteSessionId, [
+    'note_id' => 'note-race-1', 'text' => 'racing this one', 'room_id' => 'room-del', 'created_at' => '2026-09-11T00:00:01Z',
+]);
+c_check('note to be raced on was actually added first', count($noteAfterAdd['notes']) === 1);
+
+$deleteWorkerScript = <<<'PHP'
+<?php
+declare(strict_types=1);
+require $argv[1] . '/../src/autoload.php';
+use VuuroScan\ScanSessionRepository;
+use VuuroScan\Storage\Database;
+
+$db = Database::connect($argv[2]);
+$repo = new ScanSessionRepository($db);
+try {
+    $repo->deleteNote($argv[3], $argv[4]);
+    echo "OK\n";
+} catch (\InvalidArgumentException $e) {
+    echo "NOT_FOUND\n";
+}
+PHP;
+$deleteWorkerFile = sys_get_temp_dir() . '/vuuro_scan_delete_race_worker_' . bin2hex(random_bytes(6)) . '.php';
+file_put_contents($deleteWorkerFile, $deleteWorkerScript);
+
+$deleteDescriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+$deleteProcess = proc_open(
+    [PHP_BINARY, $deleteWorkerFile, __DIR__, $deleteDbFile, $deleteSessionId, 'note-race-1'],
+    $deleteDescriptors,
+    $deletePipes
+);
+c_check('racing worker process launched', $deleteProcess !== false);
+
+if ($deleteProcess !== false) {
+    fclose($deletePipes[2]);
+
+    $mainOutcome = 'OK';
+    try {
+        $deleteRepo->deleteNote($deleteSessionId, 'note-race-1');
+    } catch (\InvalidArgumentException $e) {
+        $mainOutcome = 'NOT_FOUND';
+    }
+
+    $workerOutcome = trim((string) stream_get_contents($deletePipes[1]));
+    fclose($deletePipes[1]);
+    proc_close($deleteProcess);
+    @unlink($deleteWorkerFile);
+
+    $outcomes = [$mainOutcome, $workerOutcome];
+    sort($outcomes);
+    c_check(
+        'exactly one side deleted the note and the other found it already gone — never both OK, never both NOT_FOUND',
+        $outcomes === ['NOT_FOUND', 'OK'],
+        'got main=' . $mainOutcome . ' worker=' . $workerOutcome
+    );
+
+    $finalFloorPlan = $deleteRepo->findFloorPlan($deleteSessionId);
+    c_check(
+        'the note is gone exactly once — no duplicate removal side effect, no note resurrected',
+        count($finalFloorPlan['notes']) === 0,
+        'got ' . count($finalFloorPlan['notes']) . ' note(s) remaining'
+    );
+}
+
+@unlink($deleteDbFile);
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 
 if ($failures !== []) {

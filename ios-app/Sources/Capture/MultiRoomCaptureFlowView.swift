@@ -238,9 +238,7 @@ struct MultiRoomCaptureFlowView: View {
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     if newPhase == .background, coordinator.state == .scanning {
-                        #if DEBUG
                         DiagnosticsLog.shared.record("App backgrounded mid-scan (multi-room) — ARKit/RoomPlan behavior here is unverified.", category: .state)
-                        #endif
                     }
                 }
             }
@@ -348,6 +346,7 @@ struct MultiRoomCaptureFlowView: View {
         guard let preUploadedSession else { return }
         let exports = CapturedStructureExporter.export(structure, roomTypeConfirmationsByIdentifier: coordinator.roomTypeConfirmationsByIdentifier, roomWalkPathsByIdentifier: coordinator.roomWalkPathsByIdentifier)
         guard exports.allSatisfy({ $0.hasUsableFloorOutline }) else {
+            DiagnosticsLog.shared.record("Fused structure had a degenerate floor outline in \(exports.filter { !$0.hasUsableFloorOutline }.count) of \(exports.count) room(s) — falling back to unfused per-room tiles.", category: .error)
             self.preUploadedSession = nil
             onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
             return
@@ -359,6 +358,7 @@ struct MultiRoomCaptureFlowView: View {
             self.preUploadedSession = nil
             onFinished(preUploadedSession.session, floorPlan)
         } catch {
+            DiagnosticsLog.shared.record("replaceRooms failed while submitting the fused structure — falling back to unfused per-room tiles: \(error.localizedDescription)", category: .error)
             self.preUploadedSession = nil
             onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
         }

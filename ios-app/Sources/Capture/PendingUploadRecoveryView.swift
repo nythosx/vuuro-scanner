@@ -40,9 +40,7 @@ struct PendingUploadRecoveryView: View {
                 .buttonStyle(.borderedProminent)
 
                 Button("Discard", role: .destructive) {
-                    #if DEBUG
                     DiagnosticsLog.shared.record("Pending upload discarded by user: \(state.captures.count) capture(s), session \(state.session?.id ?? "not yet created")", category: .info)
-                    #endif
                     PendingUploadStore.clear()
                     onDiscarded()
                 }
@@ -60,9 +58,7 @@ struct PendingUploadRecoveryView: View {
                 : "This will re-upload \(state.captures.count) room(s) captured earlier.")
         }
         .onAppear {
-            #if DEBUG
             DiagnosticsLog.shared.record("Pending upload recovery shown: \(state.captures.count) capture(s), session \(state.session?.id ?? "not yet created")", category: .info)
-            #endif
         }
     }
 
@@ -115,9 +111,7 @@ struct PendingUploadRecoveryView: View {
             return
         }
         PendingUploadStore.clear()
-        #if DEBUG
         DiagnosticsLog.shared.record("Pending upload recovered successfully: \(current.captures.count) capture(s) into session \(session.id)", category: .info)
-        #endif
         onFinished(session, floorPlan)
     }
 }

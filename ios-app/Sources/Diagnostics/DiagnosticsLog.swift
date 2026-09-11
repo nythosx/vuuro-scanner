@@ -1,5 +1,4 @@
 
-#if DEBUG
 import Foundation
 
 struct DiagnosticsLogEntry: Identifiable {
@@ -37,4 +36,3 @@ final class DiagnosticsLog: ObservableObject {
         print("[VuuroScan][\(category.rawValue)] \(message)")
     }
 }
-#endif

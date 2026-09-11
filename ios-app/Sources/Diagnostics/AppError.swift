@@ -10,9 +10,7 @@ struct AppError {
         self.site = site
         self.underlying = underlying
         self.occurredAt = Date()
-        #if DEBUG
         DiagnosticsLog.shared.record(copyableDetails, category: .error)
-        #endif
     }
 
     enum Site: String {

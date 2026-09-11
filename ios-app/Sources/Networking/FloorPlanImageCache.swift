@@ -26,7 +26,13 @@ final class FloorPlanImageCache {
             return Task { cached }
         }
         let task = Task<Data?, Never> {
-            let data = try? await client.fetchFloorPlanImage(sessionId: sessionId, accessToken: accessToken, unit: unit)
+            let data: Data?
+            do {
+                data = try await client.fetchFloorPlanImage(sessionId: sessionId, accessToken: accessToken, unit: unit)
+            } catch {
+                DiagnosticsLog.shared.record("Floor plan image prefetch failed for session \(sessionId): \(error.localizedDescription)", category: .error)
+                data = nil
+            }
             if let data {
                 self.entries[cacheKey] = data
             }

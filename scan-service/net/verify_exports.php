@@ -12,6 +12,7 @@ declare(strict_types=1);
  */
 
 require_once __DIR__ . '/lib/http_client.php';
+require_once __DIR__ . '/../tests/lib/pdf_object_graph.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';
 $failures = [];
@@ -27,6 +28,12 @@ function check(string $label, bool $pass, string $detail = ''): void
         $failures[] = "$label — $detail";
         echo "  [FAIL] $label — $detail\n";
     }
+}
+
+function check_pdf_graph(string $label, string $pdfBytes): void
+{
+    $problems = pdf_validate_object_graph($pdfBytes);
+    check("$label: object graph is fully valid (parses like a real PDF reader would walk it)", $problems === [], implode('; ', $problems));
 }
 
 $fixtureA = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_single_room.json'), true, 512, JSON_THROW_ON_ERROR);
@@ -99,6 +106,43 @@ $room1Label = $floorPlan['rooms'][0]['label'];
 $room2Area = number_format((float) $floorPlan['rooms'][1]['floor_area_m2'], 2, '.', '');
 check("PDF content contains the first room's label ($room1Label)", str_contains($pdfBytes, $room1Label));
 check("PDF content contains the second room's area ($room2Area)", str_contains($pdfBytes, $room2Area));
+check_pdf_graph('two-room PDF (embeds the floor plan drawing image)', $pdfBytes);
+
+echo "\n== Adversarial: an attached real photo must embed as a valid image XObject ==\n";
+[, $photoSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
+    'property_id' => 'prop-net-exports-photo',
+    'unit_id' => 'unit-net-exports-photo',
+    'organisation_id' => 'org-net-exports-photo',
+    'purpose' => 'listing',
+    'occupied' => false,
+]);
+$photoSessionId = $photoSession['id'] ?? null;
+$photoSessionToken = $photoSession['access_token'] ?? null;
+if ($photoSessionId !== null && $photoSessionToken !== null) {
+    net_http_json('POST', "$baseUrl/scan-sessions/$photoSessionId/capture", ['raw_capture' => $fixtureA], $photoSessionToken);
+
+    $realPhotoPath = tempnam(sys_get_temp_dir(), 'net_photo_');
+    $img = imagecreatetruecolor(800, 600);
+    imagefilledrectangle($img, 0, 0, 800, 600, imagecolorallocate($img, 90, 140, 200));
+    imagejpeg($img, $realPhotoPath, 90);
+    imagedestroy($img);
+
+    [$photoUploadStatus, $photoUploadBody] = net_http_multipart_upload("$baseUrl/scan-sessions/$photoSessionId/photo-uploads", $realPhotoPath, 'image/jpeg', $photoSessionToken);
+    unlink($realPhotoPath);
+    check('setup: real photo uploads', $photoUploadStatus === 201, "got HTTP $photoUploadStatus");
+
+    if ($photoUploadStatus === 201) {
+        [$photoAttachStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$photoSessionId/photos", ['url' => $photoUploadBody['url'], 'caption' => 'Test photo'], $photoSessionToken);
+        check('setup: uploaded photo attaches to the session', $photoAttachStatus === 201, "got HTTP $photoAttachStatus");
+
+        [$photoPdfStatus, , $photoPdfBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$photoSessionId/export/floorplan.pdf", null, $photoSessionToken);
+        check('PDF export with an attached photo returns HTTP 200', $photoPdfStatus === 200, "got HTTP $photoPdfStatus");
+        if ($photoPdfStatus === 200) {
+            check('PDF with an attached photo has more than one page (floor plan page + photo page)', (bool) preg_match('/\/Count\s+(?!1\b)\d+/', $photoPdfBytes), 'PDF still declares a single page');
+            check_pdf_graph('PDF with a real attached photo (two embedded JPEG XObjects)', $photoPdfBytes);
+        }
+    }
+}
 
 echo "\n== Adversarial: many rooms must not go missing off a fixed-size PDF page ==\n";
 
@@ -163,6 +207,7 @@ if ($manyRoomsSessionId !== null && $manyRoomsToken !== null) {
             }
         }
         check('the paginated 40-room PDF still has a structurally valid xref table', $manyOffsetsValid);
+        check_pdf_graph('paginated 40-room PDF', $manyPdfBytes);
     }
 
     // The same 40-room capture also exceeds the PNG canvas width bound
@@ -219,12 +264,14 @@ if ($unicodeSessionId === null || $unicodeSessionToken === null) {
 
     check('PDF still starts with a valid %PDF- header', str_starts_with($unicodePdfBytes, '%PDF-'));
     check('PDF still ends with %%EOF', str_ends_with(rtrim($unicodePdfBytes), '%%EOF'));
+    check_pdf_graph('non-ASCII identity PDF', $unicodePdfBytes);
 }
 
 echo "\n== Export unit toggle and optional label, over real HTTP ==\n";
 [$imperialPdfStatus, , $imperialPdfBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.pdf?unit=imperial", null, $accessToken);
 check('imperial PDF export returns HTTP 200', $imperialPdfStatus === 200, "got HTTP $imperialPdfStatus");
 check('imperial PDF export uses sqft, not sqm', str_contains($imperialPdfBytes, 'sqft') && !str_contains($imperialPdfBytes, 'sqm'));
+check_pdf_graph('imperial-unit PDF', $imperialPdfBytes);
 
 [$invalidUnitStatus, $invalidUnitBody] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png?unit=bogus", null, $accessToken);
 check('an invalid ?unit= value is rejected with 422', $invalidUnitStatus === 422 && ($invalidUnitBody['error'] ?? null) === 'invalid_unit', "got HTTP $invalidUnitStatus: " . json_encode($invalidUnitBody));

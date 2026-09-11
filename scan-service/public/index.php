@@ -148,25 +148,31 @@ function backupDatabaseIfDue(PDO $db): void
     }
 }
 
-function deleteUploadedPhotoFileIfOwned(string $sessionId, ?string $url): void
+function ownedPhotoFilePath(string $sessionId, ?string $url): ?string
 {
     if ($url === null) {
-        return;
+        return null;
     }
     $path = parse_url($url, PHP_URL_PATH);
     if (!is_string($path)) {
-        return;
+        return null;
     }
     $prefix = "/scan-sessions/$sessionId/photo-uploads/";
     if (!str_starts_with($path, $prefix)) {
-        return;
+        return null;
     }
     $filename = substr($path, strlen($prefix));
     if (!preg_match('#^[a-f0-9\-]+\.(?:jpg|png|heic|webp)$#', $filename)) {
-        return;
+        return null;
     }
     $filePath = __DIR__ . '/../data/photos/' . $sessionId . '/' . $filename;
-    if (is_file($filePath)) {
+    return is_file($filePath) ? $filePath : null;
+}
+
+function deleteUploadedPhotoFileIfOwned(string $sessionId, ?string $url): void
+{
+    $filePath = ownedPhotoFilePath($sessionId, $url);
+    if ($filePath !== null) {
         unlink($filePath);
     }
 }
@@ -1153,8 +1159,13 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         return;
     }
 
+    $photoLoader = static function (string $url) use ($session): ?string {
+        $filePath = ownedPhotoFilePath($session['id'], $url);
+        return $filePath !== null ? file_get_contents($filePath) : null;
+    };
+
     try {
-        $pdf = (new FloorPlanPdfRenderer())->render($floorPlan, $layout, $roomId, $unit, $label);
+        $pdf = (new FloorPlanPdfRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $photoLoader);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;

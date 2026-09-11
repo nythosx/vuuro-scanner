@@ -1,6 +1,7 @@
 
 import ARKit
 import Combine
+import Foundation
 import RoomPlan
 
 @MainActor
@@ -22,9 +23,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
 
     @Published private(set) var state: State = .scanning {
         didSet {
-            #if DEBUG
             DiagnosticsLog.shared.record("Multi-room capture state -> \(state)", category: .state)
-            #endif
         }
     }
 
@@ -54,9 +53,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     @Published private(set) var isApproachingSizeLimit = false {
         didSet {
             guard oldValue != isApproachingSizeLimit else { return }
-            #if DEBUG
             DiagnosticsLog.shared.record("Room size warning (multi-room) -> \(isApproachingSizeLimit)", category: .state)
-            #endif
         }
     }
 
@@ -71,17 +68,15 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     func confirmRoomTypeGuess() {
         roomTypeConfirmation = liveRoomTypeGuess?.type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
-        #if DEBUG
+        markRoomTypeAnswered()
         DiagnosticsLog.shared.record("Room type confirmed (multi-room): \(liveRoomTypeGuess?.type ?? "nil")", category: .info)
-        #endif
     }
 
     func rejectRoomTypeGuess(correctedTo type: String?) {
         roomTypeConfirmation = type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
-        #if DEBUG
+        markRoomTypeAnswered()
         DiagnosticsLog.shared.record("Room type corrected (multi-room): guess=\(liveRoomTypeGuess?.type ?? "nil") -> \(type ?? "nil")", category: .info)
-        #endif
     }
 
     private(set) var pendingPartialRoom: CapturedRoom?
@@ -115,6 +110,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         roomTypeConfirmation = nil
         roomTypeConfirmedForGuessType = nil
         isApproachingSizeLimit = false
+        resetRoomTypeAnswered()
         startWalkPathTracking()
         captureSession.run(configuration: RoomCaptureSession.Configuration())
     }
@@ -146,9 +142,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         if roomWalkPaths.indices.contains(index) {
             roomWalkPaths.remove(at: index)
         }
-        #if DEBUG
         DiagnosticsLog.shared.record("Captured room removed at index \(index) (multi-room)", category: .info)
-        #endif
     }
 
     private func startWalkPathTracking() {
@@ -169,9 +163,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     private func stopWalkPathTracking() {
         walkPathTask?.cancel()
         walkPathTask = nil
-        #if DEBUG
         DiagnosticsLog.shared.record("Walk path tracking stopped — \(currentRoomWalkPath.count) point(s) recorded for this room", category: .info)
-        #endif
     }
 
     func finishUnit() {
@@ -196,9 +188,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
                 self.stopMergeHeartbeat()
             } catch is MergeTimeoutError {
                 self.stopMergeHeartbeat()
-                #if DEBUG
                 DiagnosticsLog.shared.record("Merge timed out after \(Int(Self.mergeTimeoutSeconds))s — falling back to unmerged rooms", category: .error)
-                #endif
                 self.state = .mergeTimedOut
             } catch {
                 self.stopMergeHeartbeat()
@@ -211,9 +201,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         mergeTask?.cancel()
         mergeTask = nil
         stopMergeHeartbeat()
-        #if DEBUG
         DiagnosticsLog.shared.record("Merge cancelled by user — keeping \(capturedRooms.count) captured room(s)", category: .info)
-        #endif
         state = .mergeCancelled
     }
 
@@ -243,9 +231,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
                 guard !Task.isCancelled else { return }
                 step += 1
                 let elapsed = Int(Date().timeIntervalSince(start))
-                #if DEBUG
                 DiagnosticsLog.shared.record("Merging rooms — step \(step), elapsed \(elapsed)s", category: .state)
-                #endif
             }
         }
     }
@@ -283,23 +269,52 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
     }
 
     nonisolated func captureSession(_ session: RoomCaptureSession, didProvide instruction: RoomCaptureSession.Instruction) {
-        #if DEBUG
         Task { @MainActor in
             DiagnosticsLog.shared.record("RoomPlan instruction (multi-room): \(instruction)", category: .instruction)
         }
-        #endif
+    }
+
+    private let liveUpdateThrottleLock = NSLock()
+    nonisolated(unsafe) private var lastLiveUpdateAt: Date = .distantPast
+    nonisolated(unsafe) private var isRoomTypeAnswered = false
+    private static let liveUpdateThrottleInterval: TimeInterval = 0.15
+
+    nonisolated private func shouldProcessLiveUpdate() -> Bool {
+        liveUpdateThrottleLock.lock()
+        defer { liveUpdateThrottleLock.unlock() }
+        let now = Date()
+        guard now.timeIntervalSince(lastLiveUpdateAt) >= Self.liveUpdateThrottleInterval else { return false }
+        lastLiveUpdateAt = now
+        return true
+    }
+
+    nonisolated private func roomTypeAlreadyAnswered() -> Bool {
+        liveUpdateThrottleLock.lock()
+        defer { liveUpdateThrottleLock.unlock() }
+        return isRoomTypeAnswered
+    }
+
+    private func markRoomTypeAnswered() {
+        liveUpdateThrottleLock.lock()
+        isRoomTypeAnswered = true
+        liveUpdateThrottleLock.unlock()
+    }
+
+    private func resetRoomTypeAnswered() {
+        liveUpdateThrottleLock.lock()
+        isRoomTypeAnswered = false
+        liveUpdateThrottleLock.unlock()
     }
 
     nonisolated func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
+        guard shouldProcessLiveUpdate() else { return }
         let exceedsSizeLimit = RoomSizeGuard.exceedsPracticalLimit(room)
+        let guess = (RoomTypeGuessSettings.isEnabled && !roomTypeAlreadyAnswered()) ? RoomTypeClassifier.guess(for: room) : nil
         Task { @MainActor in
             if self.isApproachingSizeLimit != exceedsSizeLimit {
                 self.isApproachingSizeLimit = exceedsSizeLimit
             }
-        }
-        guard RoomTypeGuessSettings.isEnabled, let guess = RoomTypeClassifier.guess(for: room) else { return }
-        Task { @MainActor in
-            if self.liveRoomTypeGuess?.type != guess.type {
+            if let guess, self.liveRoomTypeGuess?.type != guess.type {
                 self.liveRoomTypeGuess = guess
             }
         }

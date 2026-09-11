@@ -98,28 +98,17 @@ struct ScanHistoryView: View {
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
                         if let onAttachToSession {
-                            Button {
-                                Task {
-                                    let refreshed = await rotateTokenIfNeeded(entry)
-                                    await attach(refreshed, using: onAttachToSession)
-                                }
-                            } label: {
-                                HStack {
-                                    Text(entry.nickname?.isEmpty == false ? entry.nickname! : "\(entry.propertyId) — \(entry.unitId)")
-                                        .font(.headline)
-                                        .foregroundStyle(VuuroColor.textPrimary)
-                                    Spacer()
-                                    if isFetchingToAttach.contains(entry.sessionId) {
-                                        ProgressView()
-                                    } else {
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+                            NavigationLink {
+                                SessionGalleryView(entry: entry) { editEntry, editFloorPlan in
+                                    Task {
+                                        await editFromGallery(editEntry, editFloorPlan, using: onAttachToSession)
                                     }
                                 }
+                            } label: {
+                                Text(entry.nickname?.isEmpty == false ? entry.nickname! : "\(entry.propertyId) — \(entry.unitId)")
+                                    .font(.headline)
+                                    .foregroundStyle(VuuroColor.textPrimary)
                             }
-                            .buttonStyle(.plain)
-                            .disabled(isFetchingToAttach.contains(entry.sessionId))
                         } else {
                             Text(entry.nickname?.isEmpty == false ? entry.nickname! : "\(entry.propertyId) — \(entry.unitId)").font(.headline)
                         }
@@ -380,9 +369,7 @@ struct ScanHistoryView: View {
         let entry = await rotateTokenIfNeeded(entry)
         do {
             try await client.deleteSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
-            #if DEBUG
             DiagnosticsLog.shared.record("Session \(entry.sessionId) deleted from server", category: .info)
-            #endif
             appError = nil
             deleteEntry(entry)
         } catch {
@@ -400,16 +387,12 @@ struct ScanHistoryView: View {
         if let expiresAtString = entry.expiresAt, !expiresAtString.isEmpty,
            let expiresAt = ISO8601DateFormatter().date(from: expiresAtString),
            expiresAt.timeIntervalSinceNow >= 14 * 24 * 60 * 60 {
-            #if DEBUG
             DiagnosticsLog.shared.record("Token rotation skipped for session \(entry.sessionId): still valid until \(expiresAtString)", category: .info)
-            #endif
             return entry
         }
         do {
             let rotated = try await client.rotateToken(sessionId: entry.sessionId, accessToken: entry.accessToken)
-            #if DEBUG
             DiagnosticsLog.shared.record("Token rotated for session \(entry.sessionId), new expiry \(rotated.expiresAt)", category: .info)
-            #endif
             let updated = ScanHistoryEntry(
                 sessionId: entry.sessionId,
                 accessToken: rotated.accessToken,
@@ -425,9 +408,7 @@ struct ScanHistoryView: View {
             reloadEntries()
             return updated
         } catch {
-            #if DEBUG
             DiagnosticsLog.shared.record("Token rotation failed for session \(entry.sessionId): \(error.localizedDescription)", category: .error)
-            #endif
             return entry
         }
     }
@@ -467,6 +448,15 @@ struct ScanHistoryView: View {
 
         ScanHistoryStore.shared.remove(sessionId: entry.sessionId)
         reloadEntries()
+    }
+
+    @MainActor
+    private func editFromGallery(_ entry: ScanHistoryEntry, _ floorPlan: FloorPlan, using onAttachToSession: (ScanHistoryEntry, FloorPlan) -> Void) async {
+        await Task.yield()
+        let refreshed = await rotateTokenIfNeeded(entry)
+        cleanUpTempFiles()
+        dismiss()
+        onAttachToSession(refreshed, floorPlan)
     }
 
     @MainActor
@@ -532,6 +522,7 @@ struct ScanHistoryView: View {
                 urls.append(url)
             } catch {
                 skipped += 1
+                DiagnosticsLog.shared.record("Bulk image download skipped session \(entry.sessionId): \(error.localizedDescription)", category: .error)
             }
         }
         bulkImageURLs = urls
@@ -553,6 +544,7 @@ struct ScanHistoryView: View {
                 urls.append(url)
             } catch {
                 skipped += 1
+                DiagnosticsLog.shared.record("Bulk PDF download skipped session \(entry.sessionId): \(error.localizedDescription)", category: .error)
             }
         }
         bulkPDFURLs = urls

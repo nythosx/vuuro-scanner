@@ -145,10 +145,27 @@ $atCapBody = json_encode([
 check('a 200-character (at the cap) capture_provider is still accepted', $atCapStatus === 200, "got HTTP $atCapStatus");
 
 [$pdfAfterCapStatus, , $pdfAfterCapBody] = net_http_raw_literal('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.pdf", null, $accessToken);
+check('the PDF export after a 200-char capture_provider still succeeds (HTTP 200)', $pdfAfterCapStatus === 200, "got HTTP $pdfAfterCapStatus");
+
+[, $shortProviderSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
+    'property_id' => 'prop-net-security-short', 'unit_id' => 'unit-net-security-short', 'organisation_id' => 'org-net-security-short',
+    'purpose' => 'listing', 'occupied' => false,
+]);
+$shortProviderSessionId = $shortProviderSession['id'] ?? null;
+$shortProviderToken = $shortProviderSession['access_token'] ?? null;
+net_http_json('POST', "$baseUrl/scan-sessions/$shortProviderSessionId/capture", ['raw_capture' => $validFixture], $shortProviderToken);
+$shortProviderBody = json_encode([
+    'raw_capture' => ['floors' => [['identifier' => 'f', 'polygonCorners' => [[0, 0, 0], [3, 0, 0], [3, 0, 3], [0, 0, 3]]]]],
+    'capture_provider' => 'p',
+], JSON_THROW_ON_ERROR);
+net_http_raw_literal('POST', "$baseUrl/scan-sessions/$shortProviderSessionId/capture", $shortProviderBody, $shortProviderToken);
+[, , $pdfShortProviderBody] = net_http_raw_literal('GET', "$baseUrl/scan-sessions/$shortProviderSessionId/export/floorplan.pdf", null, $shortProviderToken);
+
+$sizeDelta = strlen($pdfAfterCapBody) - strlen($pdfShortProviderBody);
 check(
-    'the PDF export after a 200-char capture_provider stays a normal small size, not amplified',
-    $pdfAfterCapStatus === 200 && strlen($pdfAfterCapBody) < 5000,
-    "got HTTP $pdfAfterCapStatus, " . strlen($pdfAfterCapBody) . ' bytes'
+    'the identical geometry with a 200-char vs 1-char capture_provider produces near-identical PDF size, not amplified',
+    abs($sizeDelta) < 1000,
+    "1-char provider: " . strlen($pdfShortProviderBody) . " bytes, 200-char provider: " . strlen($pdfAfterCapBody) . " bytes, delta: $sizeDelta"
 );
 
 echo "\n== photos[].url rejects non-http(s) schemes ==\n";

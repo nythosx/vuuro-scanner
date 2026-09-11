@@ -1,6 +1,5 @@
 
 
-#if DEBUG
 import SwiftUI
 
 struct DiagnosticsLogView: View {
@@ -65,4 +64,3 @@ struct DiagnosticsLogView: View {
         exportURL = nil
     }
 }
-#endif

@@ -1,6 +1,7 @@
 
 import ARKit
 import Combine
+import Foundation
 import RoomPlan
 
 @MainActor
@@ -15,9 +16,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
    
     @Published private(set) var state: State = .scanning {
         didSet {
-            #if DEBUG
             DiagnosticsLog.shared.record("Capture state -> \(state)", category: .state)
-            #endif
         }
     }
 
@@ -32,9 +31,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     @Published private(set) var isApproachingSizeLimit = false {
         didSet {
             guard oldValue != isApproachingSizeLimit else { return }
-            #if DEBUG
             DiagnosticsLog.shared.record("Room size warning -> \(isApproachingSizeLimit)", category: .state)
-            #endif
         }
     }
 
@@ -49,17 +46,15 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     func confirmRoomTypeGuess() {
         roomTypeConfirmation = liveRoomTypeGuess?.type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
-        #if DEBUG
+        markRoomTypeAnswered()
         DiagnosticsLog.shared.record("Room type confirmed: \(liveRoomTypeGuess?.type ?? "nil")", category: .info)
-        #endif
     }
 
     func rejectRoomTypeGuess(correctedTo type: String?) {
         roomTypeConfirmation = type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
-        #if DEBUG
+        markRoomTypeAnswered()
         DiagnosticsLog.shared.record("Room type corrected: guess=\(liveRoomTypeGuess?.type ?? "nil") -> \(type ?? "nil")", category: .info)
-        #endif
     }
 
     private var captureSession: RoomCaptureSession?
@@ -105,9 +100,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     private func stopWalkPathTracking() {
         walkPathTask?.cancel()
         walkPathTask = nil
-        #if DEBUG
         DiagnosticsLog.shared.record("Walk path tracking stopped — \(capturedRoomWalkPath.count) point(s) recorded", category: .info)
-        #endif
     }
 }
 
@@ -133,23 +126,46 @@ extension CaptureCoordinator: RoomCaptureSessionDelegate {
     }
 
     nonisolated func captureSession(_ session: RoomCaptureSession, didProvide instruction: RoomCaptureSession.Instruction) {
-        #if DEBUG
         Task { @MainActor in
             DiagnosticsLog.shared.record("RoomPlan instruction: \(instruction)", category: .instruction)
         }
-        #endif
+    }
+
+    private let liveUpdateThrottleLock = NSLock()
+    nonisolated(unsafe) private var lastLiveUpdateAt: Date = .distantPast
+    nonisolated(unsafe) private var isRoomTypeAnswered = false
+    private static let liveUpdateThrottleInterval: TimeInterval = 0.15
+
+    nonisolated private func shouldProcessLiveUpdate() -> Bool {
+        liveUpdateThrottleLock.lock()
+        defer { liveUpdateThrottleLock.unlock() }
+        let now = Date()
+        guard now.timeIntervalSince(lastLiveUpdateAt) >= Self.liveUpdateThrottleInterval else { return false }
+        lastLiveUpdateAt = now
+        return true
+    }
+
+    nonisolated private func roomTypeAlreadyAnswered() -> Bool {
+        liveUpdateThrottleLock.lock()
+        defer { liveUpdateThrottleLock.unlock() }
+        return isRoomTypeAnswered
+    }
+
+    private func markRoomTypeAnswered() {
+        liveUpdateThrottleLock.lock()
+        isRoomTypeAnswered = true
+        liveUpdateThrottleLock.unlock()
     }
 
     nonisolated func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
+        guard shouldProcessLiveUpdate() else { return }
         let exceedsSizeLimit = RoomSizeGuard.exceedsPracticalLimit(room)
+        let guess = (RoomTypeGuessSettings.isEnabled && !roomTypeAlreadyAnswered()) ? RoomTypeClassifier.guess(for: room) : nil
         Task { @MainActor in
             if self.isApproachingSizeLimit != exceedsSizeLimit {
                 self.isApproachingSizeLimit = exceedsSizeLimit
             }
-        }
-        guard RoomTypeGuessSettings.isEnabled, let guess = RoomTypeClassifier.guess(for: room) else { return }
-        Task { @MainActor in
-            if self.liveRoomTypeGuess?.type != guess.type {
+            if let guess, self.liveRoomTypeGuess?.type != guess.type {
                 self.liveRoomTypeGuess = guess
             }
         }

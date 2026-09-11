@@ -1,3 +1,4 @@
+import ImageIO
 import PhotosUI
 import RoomPlan
 import SwiftUI
@@ -44,19 +45,16 @@ struct ScanFlowView: View {
             _stage = State(initialValue: .intake)
         }
     }
-    #if DEBUG
     @State private var showDiagnostics = false
     private var isCapturingStage: Bool {
         if case .capturing = stage { return true }
         if case .multiRoomCapturing = stage { return true }
         return false
     }
-    #endif
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             content
-            #if DEBUG
             // Top-leading, opposite corner from the capture screen's back
             // button (top-trailing) so the two never overlap. Shown on every
             // other stage, since real errors happen in session creation/
@@ -74,13 +72,10 @@ struct ScanFlowView: View {
                 .padding(.leading, 20)
                 .padding(.top, 8)
             }
-            #endif
         }
-        #if DEBUG
         .sheet(isPresented: $showDiagnostics) {
             DiagnosticsLogView()
         }
-        #endif
     }
 
     @ViewBuilder
@@ -377,9 +372,7 @@ private struct RoomCaptureFlowStep: View {
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     if newPhase == .background, coordinator.state == .scanning {
-                        #if DEBUG
                         DiagnosticsLog.shared.record("App backgrounded mid-scan — ARKit/RoomPlan behavior here is unverified.", category: .state)
-                        #endif
                     }
                 }
             }
@@ -410,9 +403,7 @@ private struct RoomCaptureFlowStep: View {
     private func submit(_ export: RoomPlanCaptureExport) async {
         guard export.hasUsableFloorOutline else {
             isUploadingPartialCapture = false
-            #if DEBUG
             DiagnosticsLog.shared.record("Local reject: floor outline too small/degenerate, upload skipped", category: .error)
-            #endif
             isDegenerateCapture = true
             return
         }
@@ -676,6 +667,12 @@ struct AttachmentsScreen: View {
                         }
                     }
                 }
+            }
+
+            if !current.rooms.isEmpty {
+                Text("Notes and photos are evidence for each room — condition, damage, or anything worth flagging. They stay attached here and in History; note text also prints on the PDF/PNG export.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             ForEach(Array(current.rooms.enumerated()), id: \.element.roomId) { index, room in
@@ -1119,7 +1116,7 @@ private struct RoomTypeRow: View {
     }
 }
 
-private struct AttachedPhotoThumbnail: View {
+struct AttachedPhotoThumbnail: View {
     let session: ScanSessionResponse
     let url: String
 
@@ -1148,12 +1145,32 @@ private struct AttachedPhotoThumbnail: View {
             guard image == nil else { return }
             do {
                 let data = try await client.fetchPhotoData(url: url, accessToken: session.accessToken)
-                image = UIImage(data: data)
+                image = Self.downsampledThumbnail(from: data, maxDimensionPixels: 120)
                 failed = image == nil
+                if failed {
+                    DiagnosticsLog.shared.record("Photo thumbnail decode failed for \(url)", category: .error)
+                }
             } catch {
                 failed = true
+                DiagnosticsLog.shared.record("Photo thumbnail fetch failed for \(url): \(error.localizedDescription)", category: .error)
             }
         }
+    }
+
+    private static func downsampledThumbnail(from data: Data, maxDimensionPixels: CGFloat) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+            return nil
+        }
+        let downsampleOptions = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDimensionPixels,
+        ] as CFDictionary
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, downsampleOptions) else {
+            return nil
+        }
+        return UIImage(cgImage: cgImage)
     }
 }
 
