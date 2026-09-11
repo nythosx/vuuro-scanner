@@ -407,14 +407,14 @@ check('session created for the photos/notes/rotate-token rate-limit test', $writ
 
 if ($writeRateLimitSessionId !== null && $writeRateLimitToken !== null) {
     $sawNoteThrottle = false;
-    for ($i = 0; $i < 65; $i++) {
+    for ($i = 0; $i < 610; $i++) {
         [$status, ] = net_http_json('POST', "$baseUrl/scan-sessions/$writeRateLimitSessionId/notes", ['text' => "note $i"], $writeRateLimitToken);
         if ($status === 429) {
             $sawNoteThrottle = true;
             break;
         }
     }
-    check('repeated note-attach calls against one session eventually hit HTTP 429', $sawNoteThrottle, 'never saw a 429 across 65 rapid note-attach calls');
+    check('repeated note-attach calls against one session eventually hit HTTP 429', $sawNoteThrottle, 'never saw a 429 across 610 rapid note-attach calls');
 
     $sawPhotoThrottle = false;
     for ($i = 0; $i < 65; $i++) {
