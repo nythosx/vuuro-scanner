@@ -416,6 +416,36 @@ final class ScanSessionRepository
         return $this->deleteFromContractArray($sessionId, 'notes', 'note_id', $noteId);
     }
 
+    public function updateNote(string $sessionId, string $noteId, string $text): array
+    {
+        return $this->withWriteLock(function () use ($sessionId, $noteId, $text) {
+            $floorPlan = $this->findFloorPlan($sessionId);
+            if ($floorPlan === null) {
+                throw new \RuntimeException(
+                    "Cannot update a note on scan session $sessionId before it has a captured FloorPlan."
+                );
+            }
+
+            $index = null;
+            foreach ($floorPlan['notes'] as $i => $note) {
+                if ($note['note_id'] === $noteId) {
+                    $index = $i;
+                    break;
+                }
+            }
+            if ($index === null) {
+                throw new \InvalidArgumentException(
+                    "note_id '{$noteId}' does not match any note attached to this session."
+                );
+            }
+
+            $floorPlan['notes'][$index]['text'] = $text;
+            $floorPlan['notes'][$index]['updated_at'] = gmdate('c');
+            $this->saveFloorPlan($sessionId, $floorPlan);
+            return $floorPlan;
+        });
+    }
+
     private function deleteFromContractArray(string $sessionId, string $field, string $idKey, string $id): array
     {
         return $this->withWriteLock(function () use ($sessionId, $field, $idKey, $id) {

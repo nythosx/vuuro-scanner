@@ -167,7 +167,7 @@
             "properties": {
               "guess": { "type": "string", "enum": ["living_room", "bedroom", "bathroom", "kitchen", "dining_room"] },
               "guess_source": { "type": "string", "enum": ["roomplan_section", "object_heuristic"] },
-              "confirmed": { "type": ["string", "null"], "enum": ["living_room", "bedroom", "bathroom", "kitchen", "dining_room", "other", null], "description": "The room's actual type as far as a human has said so: the live ✓/✗ prompt during capture, or a later correction via POST .../rooms/{room_id}/room-type. Null if dismissed/timed out unanswered, or explicitly cleared." }
+              "confirmed": { "type": ["string", "null"], "minLength": 1, "maxLength": 60, "description": "The room's actual type as far as a human has said so: the live ✓/✗ prompt during capture, or a later correction via POST .../rooms/{room_id}/room-type. Free text up to 60 characters (not restricted to the app's suggested list — see RoomType::isValidConfirmedValue), so this is not an enum. Null if dismissed/timed out unanswered, or explicitly cleared." }
             }
           },
           "coverage": {
@@ -209,7 +209,7 @@
     },
     "notes": {
       "type": "array",
-      "description": "Attached via POST /scan-sessions/{id}/notes. Always present; empty until at least one note is attached.",
+      "description": "Attached via POST /scan-sessions/{id}/notes, edited in place via POST /scan-sessions/{id}/notes/{note_id}. Always present; empty until at least one note is attached.",
       "items": {
         "type": "object",
         "required": ["note_id", "text", "room_id", "created_at"],
@@ -217,7 +217,8 @@
           "note_id": { "type": "string" },
           "text": { "type": "string" },
           "room_id": { "type": ["string", "null"], "description": "Null means unit-level, matching photos[].room_id semantics." },
-          "created_at": { "type": "string", "format": "date-time" }
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time", "description": "Present only after at least one edit via POST /scan-sessions/{id}/notes/{note_id}." }
         }
       }
     }

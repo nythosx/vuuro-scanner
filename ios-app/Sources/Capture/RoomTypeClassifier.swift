@@ -7,7 +7,11 @@ enum RoomTypeClassifier {
         let source: String
     }
 
-    static let allTypes = ["living_room", "bedroom", "bathroom", "kitchen", "dining_room"]
+    static let allTypes = [
+        "living_room", "bedroom", "bathroom", "kitchen", "dining_room",
+        "hallway", "office", "garage", "laundry_room", "storage_room",
+        "balcony", "basement", "attic", "walk_in_closet", "guest_room",
+    ]
 
     static func displayName(for type: String) -> String {
         switch type {
@@ -16,6 +20,16 @@ enum RoomTypeClassifier {
         case "bathroom": return "Bathroom"
         case "kitchen": return "Kitchen"
         case "dining_room": return "Dining room"
+        case "hallway": return "Hallway"
+        case "office": return "Office"
+        case "garage": return "Garage"
+        case "laundry_room": return "Laundry room"
+        case "storage_room": return "Storage room"
+        case "balcony": return "Balcony"
+        case "basement": return "Basement"
+        case "attic": return "Attic"
+        case "walk_in_closet": return "Walk-in closet"
+        case "guest_room": return "Guest room"
         case "other": return "Other"
         default: return type
         }

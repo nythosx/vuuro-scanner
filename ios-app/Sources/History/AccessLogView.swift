@@ -9,6 +9,8 @@ struct AccessLogView: View {
     @State private var log: [AccessLogEntry] = []
     @State private var appError: AppError?
 
+    @Environment(\.dismiss) private var dismiss
+
     private let client = ScanServiceClient()
 
     var body: some View {
@@ -55,6 +57,16 @@ struct AccessLogView: View {
         }
         .background(VuuroColor.surfaceMuted)
         .navigationTitle("Access log")
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button {
+                    dismiss()
+                } label: {
+                    Label("Back", systemImage: "chevron.backward")
+                }
+            }
+        }
         .task { await load() }
     }
 

@@ -5,8 +5,11 @@ struct ScanHistoryView: View {
     var onResumeToAddRoom: ((ScanHistoryEntry) -> Void)?
     var onAttachToSession: ((ScanHistoryEntry, FloorPlan) -> Void)?
 
-    @State private var entries: [ScanHistoryEntry] = ScanHistoryStore.shared.all()
+    @State private var entries: [ScanHistoryEntry] = []
+    @State private var isLoadingEntries = true
     @State private var isFetchingToAttach: Set<String> = []
+    @State private var isDownloadingImage: Set<String> = []
+    @State private var isDownloadingPDF: Set<String> = []
     @State private var attachErrors: [String: AppError] = [:]
     @State private var perEntryImageURLs: [String: URL] = [:]
     @State private var perEntryPDFURLs: [String: URL] = [:]
@@ -52,14 +55,24 @@ struct ScanHistoryView: View {
         if let focusedNicknameSessionId {
             commitNickname(sessionId: focusedNicknameSessionId)
         }
-        entries = ScanHistoryStore.shared.all()
+        Task {
+            let loaded = await Task.detached(priority: .userInitiated) {
+                ScanHistoryStore.shared.all()
+            }.value
+            entries = loaded
+            isLoadingEntries = false
+        }
     }
 
     private let client = ScanServiceClient()
 
     var body: some View {
         List {
-            if entries.isEmpty {
+            if isLoadingEntries {
+                ForEach(0..<3, id: \.self) { _ in
+                    HistoryRowSkeleton()
+                }
+            } else if entries.isEmpty {
                 Text("No scans yet on this device.")
                     .foregroundStyle(.secondary)
             }
@@ -84,7 +97,32 @@ struct ScanHistoryView: View {
             ForEach(entries) { entry in
                 Section {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(entry.nickname?.isEmpty == false ? entry.nickname! : "\(entry.propertyId) — \(entry.unitId)").font(.headline)
+                        if let onAttachToSession {
+                            Button {
+                                Task {
+                                    let refreshed = await rotateTokenIfNeeded(entry)
+                                    await attach(refreshed, using: onAttachToSession)
+                                }
+                            } label: {
+                                HStack {
+                                    Text(entry.nickname?.isEmpty == false ? entry.nickname! : "\(entry.propertyId) — \(entry.unitId)")
+                                        .font(.headline)
+                                        .foregroundStyle(VuuroColor.textPrimary)
+                                    Spacer()
+                                    if isFetchingToAttach.contains(entry.sessionId) {
+                                        ProgressView()
+                                    } else {
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isFetchingToAttach.contains(entry.sessionId))
+                        } else {
+                            Text(entry.nickname?.isEmpty == false ? entry.nickname! : "\(entry.propertyId) — \(entry.unitId)").font(.headline)
+                        }
                         TextField("Label this scan (optional)", text: nicknameBinding(for: entry))
                             .font(.caption)
                             .focused($focusedNicknameSessionId, equals: entry.sessionId)
@@ -101,14 +139,28 @@ struct ScanHistoryView: View {
                     }
 
                     HStack(spacing: 10) {
-                        Button("Download image") {
+                        Button {
                             Task { await downloadImage(for: entry) }
+                        } label: {
+                            if isDownloadingImage.contains(entry.sessionId) {
+                                ProgressView()
+                            } else {
+                                Text("Download image")
+                            }
                         }
                         .buttonStyle(.vuuroSecondary)
-                        Button("Download PDF") {
+                        .disabled(isDownloadingImage.contains(entry.sessionId))
+                        Button {
                             Task { await downloadPDF(for: entry) }
+                        } label: {
+                            if isDownloadingPDF.contains(entry.sessionId) {
+                                ProgressView()
+                            } else {
+                                Text("Download PDF")
+                            }
                         }
                         .buttonStyle(.vuuroSecondary)
+                        .disabled(isDownloadingPDF.contains(entry.sessionId))
                     }
 
                     if let url = perEntryImageURLs[entry.sessionId] {
@@ -131,6 +183,7 @@ struct ScanHistoryView: View {
                             Button("Scan another room") {
                                 Task {
                                     let refreshed = await rotateTokenIfNeeded(entry)
+                                    cleanUpTempFiles()
                                     dismiss()
                                     onResumeToAddRoom(refreshed)
                                 }
@@ -233,12 +286,21 @@ struct ScanHistoryView: View {
             }
         }
         .navigationTitle("Scan history")
+        .navigationBarBackButtonHidden(true)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button {
+                    dismiss()
+                } label: {
+                    Label("New scan", systemImage: "chevron.backward")
+                }
+            }
+        }
         .onAppear { reloadEntries() }
         .onDisappear {
             if let focusedNicknameSessionId {
                 commitNickname(sessionId: focusedNicknameSessionId)
             }
-            cleanUpTempFiles()
         }
         .onChange(of: focusedNicknameSessionId) { oldValue, _ in
             if let oldValue {
@@ -414,6 +476,7 @@ struct ScanHistoryView: View {
         do {
             let floorPlan = try await client.fetchSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
             attachErrors[entry.sessionId] = nil
+            cleanUpTempFiles()
             dismiss()
             onAttachToSession(entry, floorPlan)
         } catch {
@@ -423,6 +486,9 @@ struct ScanHistoryView: View {
 
     @MainActor
     private func downloadImage(for entry: ScanHistoryEntry) async {
+        guard !isDownloadingImage.contains(entry.sessionId) else { return }
+        isDownloadingImage.insert(entry.sessionId)
+        defer { isDownloadingImage.remove(entry.sessionId) }
         do {
             let data = try await client.fetchFloorPlanImage(sessionId: entry.sessionId, accessToken: entry.accessToken, unit: exportUnit, label: entry.nickname)
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(entry.sessionId).png")
@@ -437,6 +503,9 @@ struct ScanHistoryView: View {
 
     @MainActor
     private func downloadPDF(for entry: ScanHistoryEntry) async {
+        guard !isDownloadingPDF.contains(entry.sessionId) else { return }
+        isDownloadingPDF.insert(entry.sessionId)
+        defer { isDownloadingPDF.remove(entry.sessionId) }
         do {
             let data = try await client.fetchFloorPlanPDF(sessionId: entry.sessionId, accessToken: entry.accessToken, unit: exportUnit, label: entry.nickname)
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(entry.sessionId).pdf")
@@ -489,5 +558,16 @@ struct ScanHistoryView: View {
         bulkPDFURLs = urls
         errorMessage = urls.isEmpty ? "No floor plan PDFs were available to download." :
             (skipped > 0 ? "Downloaded \(urls.count) PDF(s); skipped \(skipped) session(s) with no capture yet." : nil)
+    }
+}
+
+private struct HistoryRowSkeleton: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Property — Unit").font(.headline)
+            Text("Purpose").font(.subheadline).foregroundStyle(.secondary)
+            Text("Jan 1, 2026 at 12:00 PM").font(.caption).foregroundStyle(.secondary)
+        }
+        .redacted(reason: .placeholder)
     }
 }

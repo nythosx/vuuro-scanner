@@ -840,7 +840,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, 
     }
     $sessionId = $session['id'];
 
-    if (rateLimited($repo, $sessionId . ':attach_note', 60, 300)) {
+    if (rateLimited($repo, $sessionId . ':attach_note', 600, 300)) {
         return;
     }
 
@@ -939,6 +939,49 @@ if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)/notes/([^/]+)$#
 
     try {
         $floorPlan = $repo->deleteNote($session['id'], $m[2]);
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(404, 'note_not_found', $e->getMessage());
+        return;
+    }
+
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes/([^/]+)$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'update_note');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+    $noteId = $m[2];
+
+    if (rateLimited($repo, $sessionId . ':update_note', 600, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    $missing = require_fields($body, ['text']);
+    if ($missing !== null) {
+        respondError(422, 'missing_required_fields', "Please include a 'text' field with the note's new content.", ['fields' => $missing]);
+        return;
+    }
+    if (!is_string($body['text'])) {
+        respondError(422, 'field_must_be_string', "'text' must be a plain string.", ['field' => 'text']);
+        return;
+    }
+    $tooLong = first_too_long($body, ['text' => 5000]);
+    if ($tooLong !== null) {
+        [$tooLongField, $tooLongMax] = $tooLong;
+        respondError(422, 'field_too_long', "'$tooLongField' is too long — please keep it to $tooLongMax characters or fewer.", ['field' => $tooLongField, 'max_length' => $tooLongMax]);
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->updateNote($sessionId, $noteId, $body['text']);
     } catch (\RuntimeException $e) {
         respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
         return;

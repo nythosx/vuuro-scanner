@@ -15,6 +15,16 @@ final class RoomType
         'bathroom' => 'Bathroom',
         'kitchen' => 'Kitchen',
         'dining_room' => 'Dining room',
+        'hallway' => 'Hallway',
+        'office' => 'Office',
+        'garage' => 'Garage',
+        'laundry_room' => 'Laundry room',
+        'storage_room' => 'Storage room',
+        'balcony' => 'Balcony',
+        'basement' => 'Basement',
+        'attic' => 'Attic',
+        'walk_in_closet' => 'Walk-in closet',
+        'guest_room' => 'Guest room',
     ];
 
     public const CUSTOM_MAX_LENGTH = 60;

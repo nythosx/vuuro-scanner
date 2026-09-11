@@ -35,6 +35,7 @@ struct ScanFlowView: View {
     }
 
     @State private var stage: Stage
+    @State private var historyButtonTitle = "History"
 
     init() {
         if let pending = PendingUploadStore.load() {
@@ -100,7 +101,7 @@ struct ScanFlowView: View {
                 })
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        NavigationLink("History") {
+                        NavigationLink(historyButtonTitle) {
                             ScanHistoryView(onResumeToAddRoom: { entry in
                                 stage = .capturing(
                                     identity: entry.asResumableIdentity(),
@@ -152,6 +153,11 @@ struct ScanFlowView: View {
                 }
             case .summary(let session, let floorPlan):
                 ResultSummaryView(session: session, floorPlan: floorPlan) {
+                    VuuroToast.shared.show("Scan saved to history")
+                    historyButtonTitle = "Saved"
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        historyButtonTitle = "History"
+                    }
                     stage = .intake
                 }
             case .error(let appError, let identity, let existingSession):
@@ -557,20 +563,32 @@ struct AttachmentsScreen: View {
     let onDone: (FloorPlan) -> Void
     let onAddRoom: () -> Void
 
-    @State private var noteText = ""
     @State private var photoUrl = ""
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var current: FloorPlan
     @State private var appError: AppError?
-    @State private var isSaving = false
     @State private var isUploadingPhoto = false
-    @State private var selectedRoomId: String?
     @State private var showCamera = false
-    @State private var batchUploadMessage: String?
     @State private var isUpdatingRoomType: Set<String> = []
-    @State private var applyNoteToEveryRoom = false
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
     @State private var isGuessToggleCompact = false
+    @State private var floorPlanPreviewImage: UIImage?
+    @State private var isLoadingFloorPlanPreview = false
+    @State private var floorPlanPreviewFailed = false
+    @State private var noteDrafts: [String: String] = [:]
+    @State private var initialNoteDrafts: [String: String] = [:]
+    @State private var currentNoteIds: [String: String] = [:]
+    @State private var removingPhotoIds: Set<String> = []
+    @State private var showPhotoActionDialog = false
+    @State private var pendingPhotoRoomId: String?
+    @State private var showPhotosPicker = false
+    @State private var showLinkInput = false
+    @State private var isFinishing = false
+    @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
+
+    private var exportUnit: MeasurementUnit {
+        MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
+    }
 
     private let client = ScanServiceClient()
 
@@ -580,33 +598,54 @@ struct AttachmentsScreen: View {
         self.onDone = onDone
         self.onAddRoom = onAddRoom
         _current = State(initialValue: floorPlan)
+        var drafts: [String: String] = [:]
+        var ids: [String: String] = [:]
+        for room in floorPlan.rooms {
+            if let note = floorPlan.notes.last(where: { $0.roomId == room.roomId }) {
+                drafts[room.roomId] = note.text
+                ids[room.roomId] = note.noteId
+            } else {
+                drafts[room.roomId] = ""
+            }
+        }
+        _noteDrafts = State(initialValue: drafts)
+        _initialNoteDrafts = State(initialValue: drafts)
+        _currentNoteIds = State(initialValue: ids)
     }
 
     var body: some View {
         Form {
-            if current.rooms.count > 1 {
-                Section("Applies to") {
-                    Picker("Room", selection: $selectedRoomId) {
-                        Text("Whole unit").tag(String?.none)
-                        ForEach(current.rooms, id: \.roomId) { room in
-                            Text(room.label).tag(String?.some(room.roomId))
-                        }
+            Section("Floor plan") {
+                if let floorPlanPreviewImage {
+                    Image(uiImage: floorPlanPreviewImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: 180)
+                        .frame(maxWidth: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius, style: .continuous))
+                } else if isLoadingFloorPlanPreview {
+                    VStack(spacing: 8) {
+                        ProgressView()
+                        Text("Rendering your floor plan…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    .frame(maxWidth: .infinity, minHeight: 120)
+                } else if floorPlanPreviewFailed {
+                    Text("Couldn't render the floor plan preview.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+            }
+            .task {
+                guard floorPlanPreviewImage == nil, !floorPlanPreviewFailed else { return }
+                await loadFloorPlanPreview()
             }
 
             Section {
-                ForEach(current.rooms, id: \.roomId) { room in
-                    RoomTypeRow(
-                        room: room,
-                        isUpdating: isUpdatingRoomType.contains(room.roomId),
-                        onUpdate: { newValue in Task { await updateRoomType(roomId: room.roomId, to: newValue) } },
-                        onRename: { newLabel in Task { await updateRoomLabel(roomId: room.roomId, to: newLabel) } }
-                    )
-                }
-            } header: {
                 HStack {
-                    Text("Room type")
+                    Text("Room-type guessing")
+                        .font(.subheadline)
                     Spacer()
                     Button {
                         roomTypeGuessOn.toggle()
@@ -639,117 +678,82 @@ struct AttachmentsScreen: View {
                 }
             }
 
-            Section("Add a note (optional)") {
-                TextField("Note text", text: $noteText, axis: .vertical)
-                if current.rooms.count > 1 {
-                    Toggle("Apply to every room individually", isOn: $applyNoteToEveryRoom)
-                }
-                Button("Add note") { Task { await addNote() } }
-                    .buttonStyle(.vuuroSecondary)
-                    .disabled(noteText.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
-            }
+            ForEach(Array(current.rooms.enumerated()), id: \.element.roomId) { index, room in
+                let roomPhotos = current.photos.filter { $0.roomId == room.roomId }
+                Section("Room \(index + 1)") {
+                    RoomTypeRow(
+                        room: room,
+                        isUpdating: isUpdatingRoomType.contains(room.roomId),
+                        onUpdate: { newValue in Task { await updateRoomType(roomId: room.roomId, to: newValue) } },
+                        onRename: { newLabel in Task { await updateRoomLabel(roomId: room.roomId, to: newLabel) } }
+                    )
 
-            Section("Add a photo (optional)") {
-                HStack(spacing: 10) {
-                    PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 10, matching: .images) {
-                        if isUploadingPhoto {
-                            ProgressView()
-                        } else {
-                            Text("Choose from library")
-                        }
-                    }
-                    .buttonStyle(.vuuroSecondary)
-                    .disabled(isUploadingPhoto)
-                    .onChange(of: selectedPhotoItems) { _, newItems in
-                        guard !newItems.isEmpty else { return }
-                        Task {
-                            isUploadingPhoto = true
-                            var failureCount = 0
-                            for item in newItems {
-                                if await uploadSelectedPhoto(item) == false {
-                                    failureCount += 1
-                                }
-                            }
-                            selectedPhotoItems = []
-                            isUploadingPhoto = false
-                            batchUploadMessage = failureCount > 0 ? "\(failureCount) of \(newItems.count) photo(s) failed to upload." : nil
-                            let succeeded = newItems.count - failureCount
-                            if succeeded > 0 {
-                                VuuroToast.shared.show(succeeded == 1 ? "Photo added" : "\(succeeded) photos added")
-                            }
-                        }
-                    }
-
-                    if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                        Button("Take a photo") {
-                            showCamera = true
-                        }
-                        .buttonStyle(.vuuroSecondary)
-                        .disabled(isUploadingPhoto)
-                        .sheet(isPresented: $showCamera) {
-                            CameraCaptureView(onCaptured: { data in
-                                showCamera = false
-                                Task {
-                                    isUploadingPhoto = true
-                                    let succeeded = await uploadPhotoData(data)
-                                    isUploadingPhoto = false
-                                    if succeeded {
-                                        VuuroToast.shared.show("Photo added")
+                    if !roomPhotos.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(roomPhotos, id: \.photoId) { photo in
+                                    ZStack(alignment: .topTrailing) {
+                                        AttachedPhotoThumbnail(session: session, url: photo.url)
+                                        Button {
+                                            Task { await removePhoto(photoId: photo.photoId) }
+                                        } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .symbolRenderingMode(.palette)
+                                                .foregroundStyle(.white, VuuroColor.danger)
+                                        }
+                                        .offset(x: 6, y: -6)
+                                        .disabled(removingPhotoIds.contains(photo.photoId))
                                     }
                                 }
-                            }, onCancel: {
-                                showCamera = false
-                            })
-                        }
-                    }
-                }
-
-                if let batchUploadMessage {
-                    Text(batchUploadMessage)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
-
-                Text("Or paste a URL to a photo already hosted elsewhere:")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("https://…", text: $photoUrl)
-                Button("Add photo URL") { Task { await addPhoto() } }
-                    .buttonStyle(.vuuroSecondary)
-                    .disabled(photoUrl.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
-            }
-
-            if !current.photos.isEmpty {
-                Section("Photos attached") {
-                    ForEach(current.photos, id: \.photoId) { photo in
-                        HStack(alignment: .top, spacing: 12) {
-                            AttachedPhotoThumbnail(session: session, url: photo.url)
-                            VStack(alignment: .leading, spacing: 2) {
-                                if let roomId = photo.roomId, let room = current.rooms.first(where: { $0.roomId == roomId }) {
-                                    Text(room.label).font(.caption).foregroundStyle(.secondary)
-                                } else {
-                                    Text("Whole unit").font(.caption).foregroundStyle(.secondary)
-                                }
-                                if !photo.caption.isEmpty {
-                                    Text(photo.caption).font(.caption2)
-                                }
                             }
                         }
+                        .padding(.top, 4)
                     }
+
+                    HStack(spacing: 8) {
+                        TextField("Add notes and photos", text: noteDraftBinding(for: room.roomId), axis: .vertical)
+                        Button {
+                            pendingPhotoRoomId = room.roomId
+                            showPhotoActionDialog = true
+                        } label: {
+                            Image(systemName: "camera.fill")
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(VuuroColor.primary)
+                    }
+                    .padding(.top, 4)
                 }
             }
 
-            if !current.notes.isEmpty {
-                Section("Notes attached") {
-                    ForEach(current.notes, id: \.noteId) { note in
-                        VStack(alignment: .leading, spacing: 2) {
-                            if let roomId = note.roomId, let room = current.rooms.first(where: { $0.roomId == roomId }) {
-                                Text(room.label).font(.caption).foregroundStyle(.secondary)
-                            } else {
-                                Text("Whole unit").font(.caption).foregroundStyle(.secondary)
+            let unitPhotos = current.photos.filter { $0.roomId == nil }
+            let unitNotes = current.notes.filter { $0.roomId == nil }
+            if !unitPhotos.isEmpty || !unitNotes.isEmpty {
+                Section("Whole unit") {
+                    if !unitNotes.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Notes")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            ForEach(unitNotes, id: \.noteId) { note in
+                                Text(note.text).font(.subheadline)
                             }
-                            Text(note.text)
                         }
+                    }
+                    if !unitPhotos.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Photos attached")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            ForEach(unitPhotos, id: \.photoId) { photo in
+                                HStack(alignment: .top, spacing: 12) {
+                                    AttachedPhotoThumbnail(session: session, url: photo.url)
+                                    if !photo.caption.isEmpty {
+                                        Text(photo.caption).font(.caption2)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.top, unitNotes.isEmpty ? 0 : 4)
                     }
                 }
             }
@@ -770,11 +774,95 @@ struct AttachmentsScreen: View {
                 Text("\(current.notes.count) note(s), \(current.photos.count) photo(s) attached so far.")
                     .foregroundStyle(.secondary)
                     .font(.caption)
-                Button("Finish") { onDone(current) }
-                    .buttonStyle(.vuuroPrimary)
+                Button {
+                    Task { await finish() }
+                } label: {
+                    if isFinishing {
+                        ProgressView()
+                    } else {
+                        Text("Finish")
+                    }
+                }
+                .buttonStyle(.vuuroPrimary)
+                .disabled(isFinishing)
             }
         }
         .navigationTitle("Notes & photos")
+        .onAppear {
+            FloorPlanImageCache.shared.prefetch(sessionId: session.id, accessToken: session.accessToken, unit: exportUnit, client: client)
+        }
+        .confirmationDialog(
+            "Add to \(current.rooms.first(where: { $0.roomId == pendingPhotoRoomId })?.label ?? "room")",
+            isPresented: $showPhotoActionDialog,
+            titleVisibility: .visible
+        ) {
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button("Take a photo") { showCamera = true }
+            }
+            Button("Choose from library") { showPhotosPicker = true }
+            Button("Add a link") { showLinkInput = true }
+            Button("Cancel", role: .cancel) { pendingPhotoRoomId = nil }
+        }
+        .photosPicker(isPresented: $showPhotosPicker, selection: $selectedPhotoItems, maxSelectionCount: 10, matching: .images)
+        .onChange(of: selectedPhotoItems) { _, newItems in
+            guard !newItems.isEmpty else { return }
+            let roomId = pendingPhotoRoomId
+            Task {
+                isUploadingPhoto = true
+                var failureCount = 0
+                for item in newItems {
+                    if await uploadSelectedPhoto(item, roomId: roomId) == false {
+                        failureCount += 1
+                    }
+                }
+                selectedPhotoItems = []
+                isUploadingPhoto = false
+                pendingPhotoRoomId = nil
+                let succeeded = newItems.count - failureCount
+                if succeeded > 0 {
+                    VuuroToast.shared.show(succeeded == 1 ? "Photo added" : "\(succeeded) photos added")
+                }
+                if failureCount > 0 {
+                    VuuroToast.shared.show("\(failureCount) of \(newItems.count) photo(s) failed to upload")
+                }
+            }
+        }
+        .sheet(isPresented: $showCamera) {
+            CameraCaptureView(onCaptured: { data in
+                showCamera = false
+                let roomId = pendingPhotoRoomId
+                Task {
+                    isUploadingPhoto = true
+                    let succeeded = await uploadPhotoData(data, roomId: roomId)
+                    isUploadingPhoto = false
+                    pendingPhotoRoomId = nil
+                    if succeeded {
+                        VuuroToast.shared.show("Photo added")
+                    }
+                }
+            }, onCancel: {
+                showCamera = false
+                pendingPhotoRoomId = nil
+            })
+        }
+        .alert("Add a photo link", isPresented: $showLinkInput) {
+            TextField("https://…", text: $photoUrl)
+            Button("Add") {
+                let roomId = pendingPhotoRoomId
+                Task { await addPhoto(roomId: roomId) }
+            }
+            Button("Cancel", role: .cancel) {
+                photoUrl = ""
+                pendingPhotoRoomId = nil
+            }
+        }
+    }
+
+    private func noteDraftBinding(for roomId: String) -> Binding<String> {
+        Binding(
+            get: { noteDrafts[roomId] ?? "" },
+            set: { noteDrafts[roomId] = $0 }
+        )
     }
 
     @MainActor
@@ -802,36 +890,72 @@ struct AttachmentsScreen: View {
     }
 
     @MainActor
-    private func addNote() async {
-        isSaving = true
-        defer { isSaving = false }
-        do {
-            if applyNoteToEveryRoom && current.rooms.count > 1 {
-                for room in current.rooms {
-                    current = try await client.addNote(sessionId: session.id, accessToken: session.accessToken, text: noteText, roomId: room.roomId)
-                }
-            } else {
-                current = try await client.addNote(sessionId: session.id, accessToken: session.accessToken, text: noteText, roomId: selectedRoomId)
-            }
-            noteText = ""
-            appError = nil
-            VuuroToast.shared.show("Note added")
-        } catch {
-            appError = AppError(site: .noteAdd, underlying: error)
+    private func loadFloorPlanPreview() async {
+        isLoadingFloorPlanPreview = true
+        let data = await FloorPlanImageCache.shared.prefetch(sessionId: session.id, accessToken: session.accessToken, unit: exportUnit, client: client).value
+        isLoadingFloorPlanPreview = false
+        if let data, let image = UIImage(data: data) {
+            floorPlanPreviewImage = image
+        } else {
+            floorPlanPreviewFailed = true
         }
     }
 
     @MainActor
-    private func addPhoto() async {
-        isSaving = true
-        defer { isSaving = false }
+    private func finish() async {
+        isFinishing = true
+        defer { isFinishing = false }
+        for room in current.rooms {
+            let draft = (noteDrafts[room.roomId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let initial = initialNoteDrafts[room.roomId] ?? ""
+            guard draft != initial else { continue }
+            let existingNoteId = currentNoteIds[room.roomId]
+            let site: AppError.Site = draft.isEmpty ? .noteDelete : (existingNoteId != nil ? .noteUpdate : .noteAdd)
+            do {
+                if draft.isEmpty, let noteId = existingNoteId {
+                    current = try await client.deleteNote(sessionId: session.id, accessToken: session.accessToken, noteId: noteId)
+                    currentNoteIds[room.roomId] = nil
+                } else if !draft.isEmpty, let noteId = existingNoteId {
+                    current = try await client.updateNote(sessionId: session.id, accessToken: session.accessToken, noteId: noteId, text: draft)
+                } else if !draft.isEmpty {
+                    current = try await client.addNote(sessionId: session.id, accessToken: session.accessToken, text: draft, roomId: room.roomId)
+                    currentNoteIds[room.roomId] = current.notes.last(where: { $0.roomId == room.roomId })?.noteId
+                }
+                initialNoteDrafts[room.roomId] = draft
+            } catch {
+                appError = AppError(site: site, underlying: error)
+                return
+            }
+        }
+        appError = nil
+        VuuroToast.shared.show("Saved")
+        onDone(current)
+    }
+
+    @MainActor
+    private func addPhoto(roomId: String?) async {
         do {
-            current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: photoUrl, roomId: selectedRoomId)
+            current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: photoUrl, roomId: roomId)
             photoUrl = ""
             appError = nil
             VuuroToast.shared.show("Photo added")
         } catch {
             appError = AppError(site: .photoAdd, underlying: error)
+        }
+        pendingPhotoRoomId = nil
+    }
+
+    @MainActor
+    private func removePhoto(photoId: String) async {
+        guard !removingPhotoIds.contains(photoId) else { return }
+        removingPhotoIds.insert(photoId)
+        defer { removingPhotoIds.remove(photoId) }
+        do {
+            current = try await client.deletePhoto(sessionId: session.id, accessToken: session.accessToken, photoId: photoId)
+            appError = nil
+            VuuroToast.shared.show("Photo removed")
+        } catch {
+            appError = AppError(site: .photoDelete, underlying: error)
         }
     }
 
@@ -853,13 +977,13 @@ struct AttachmentsScreen: View {
     private static let maxPhotoUploadBytes = 25 * 1024 * 1024
 
     @discardableResult
-    private func uploadSelectedPhoto(_ item: PhotosPickerItem) async -> Bool {
+    private func uploadSelectedPhoto(_ item: PhotosPickerItem, roomId: String?) async -> Bool {
         do {
             guard let data = try await item.loadTransferable(type: Data.self) else {
                 appError = AppError(site: .photoUpload, underlying: nil)
                 return false
             }
-            return await uploadPhotoData(data)
+            return await uploadPhotoData(data, roomId: roomId)
         } catch {
             appError = AppError(site: .photoUpload, underlying: error)
             return false
@@ -867,7 +991,7 @@ struct AttachmentsScreen: View {
     }
 
     @discardableResult
-    private func uploadPhotoData(_ data: Data) async -> Bool {
+    private func uploadPhotoData(_ data: Data, roomId: String?) async -> Bool {
         if data.count > Self.maxPhotoUploadBytes {
             appError = AppError(site: .photoTooLarge, underlying: nil)
             return false
@@ -875,7 +999,7 @@ struct AttachmentsScreen: View {
         do {
             let (mime, ext) = detectedMimeType(for: data)
             let uploaded = try await client.uploadPhoto(sessionId: session.id, accessToken: session.accessToken, imageData: data, filename: "photo.\(ext)", mimeType: mime)
-            current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: uploaded.url, roomId: selectedRoomId)
+            current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: uploaded.url, roomId: roomId)
             appError = nil
             return true
         } catch {
@@ -923,17 +1047,26 @@ private struct RoomTypeRow: View {
                         commit()
                     }
                 }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(RoomTypeClassifier.allTypes, id: \.self) { type in
-                        Button(RoomTypeClassifier.displayName(for: type)) {
+            if isFocused && !matchingRoomTypes.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(matchingRoomTypes, id: \.self) { type in
+                        Button {
                             text = RoomTypeClassifier.displayName(for: type)
-                            commit()
+                            isFocused = false
+                        } label: {
+                            Text(RoomTypeClassifier.displayName(for: type))
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .font(.caption)
-                        .buttonStyle(.bordered)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        if type != matchingRoomTypes.last {
+                            Divider()
+                        }
                     }
                 }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .background(VuuroColor.surfaceMuted, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             if room.roomType?.confirmed == nil, let guess = room.roomType?.guess {
                 Text("Auto-detected: \(RoomTypeClassifier.displayName(for: guess))")
@@ -948,6 +1081,14 @@ private struct RoomTypeRow: View {
             if !isFocused {
                 text = newValue.map { RoomTypeClassifier.displayName(for: $0) } ?? ""
             }
+        }
+    }
+
+    private var matchingRoomTypes: [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return RoomTypeClassifier.allTypes }
+        return RoomTypeClassifier.allTypes.filter {
+            RoomTypeClassifier.displayName(for: $0).range(of: trimmed, options: .caseInsensitive) != nil
         }
     }
 
@@ -1066,6 +1207,9 @@ struct CameraCaptureView: UIViewControllerRepresentable {
 private struct RoomResultCard: View {
     let room: FloorPlan.Room
     let showsRibbon: Bool
+    var photos: [FloorPlan.Photo] = []
+    var notes: [FloorPlan.Note] = []
+    var session: ScanSessionResponse? = nil
 
     private var isFused: Bool { room.structureOriginM != nil }
 
@@ -1112,9 +1256,42 @@ private struct RoomResultCard: View {
                     .font(VuuroFont.body(11))
                     .foregroundStyle(VuuroColor.textSecondary)
             }
+
+            if let session, !photos.isEmpty || !notes.isEmpty {
+                Divider()
+                RoomAttachmentsList(session: session, photos: photos, notes: notes)
+            }
         }
         .padding()
         .vuuroCard()
+    }
+}
+
+private struct RoomAttachmentsList: View {
+    let session: ScanSessionResponse
+    let photos: [FloorPlan.Photo]
+    let notes: [FloorPlan.Note]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(notes, id: \.noteId) { note in
+                (Text("Note: ").font(.caption.weight(.semibold)) + Text(note.text).font(.caption))
+                    .foregroundStyle(VuuroColor.textPrimary)
+            }
+            ForEach(photos, id: \.photoId) { photo in
+                HStack(alignment: .top, spacing: 12) {
+                    AttachedPhotoThumbnail(session: session, url: photo.url)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Photo attached:")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(VuuroColor.textPrimary)
+                        if !photo.caption.isEmpty {
+                            Text(photo.caption).font(.caption2)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1164,38 +1341,24 @@ private struct ResultSummaryView: View {
         ScrollView {
             VStack(spacing: VuuroMetrics.contentSpacing) {
                 ForEach(Array(floorPlan.rooms.enumerated()), id: \.element.roomId) { index, room in
-                    RoomResultCard(room: room, showsRibbon: index == 0)
+                    RoomResultCard(
+                        room: room,
+                        showsRibbon: index == 0,
+                        photos: floorPlan.photos.filter { $0.roomId == room.roomId },
+                        notes: floorPlan.notes.filter { $0.roomId == room.roomId },
+                        session: session
+                    )
                 }
 
-                if !floorPlan.photos.isEmpty || !floorPlan.notes.isEmpty {
+                let unitPhotos = floorPlan.photos.filter { $0.roomId == nil }
+                let unitNotes = floorPlan.notes.filter { $0.roomId == nil }
+                if !unitPhotos.isEmpty || !unitNotes.isEmpty {
                     VStack(alignment: .leading, spacing: VuuroMetrics.contentSpacing) {
-                        Text("Notes & photos")
+                        Text("Whole unit — notes & photos")
                             .font(VuuroFont.body(13, weight: .bold))
                             .foregroundStyle(VuuroColor.textSecondary)
                             .textCase(.uppercase)
-
-                        if !floorPlan.photos.isEmpty {
-                            ForEach(floorPlan.photos, id: \.photoId) { photo in
-                                HStack(alignment: .top, spacing: 12) {
-                                    AttachedPhotoThumbnail(session: session, url: photo.url)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(roomLabel(for: photo.roomId)).font(.caption).foregroundStyle(.secondary)
-                                        if !photo.caption.isEmpty {
-                                            Text(photo.caption).font(.caption2)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        if !floorPlan.notes.isEmpty {
-                            ForEach(floorPlan.notes, id: \.noteId) { note in
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(roomLabel(for: note.roomId)).font(.caption).foregroundStyle(.secondary)
-                                    Text(note.text)
-                                }
-                            }
-                        }
+                        RoomAttachmentsList(session: session, photos: unitPhotos, notes: unitNotes)
                     }
                     .padding()
                     .vuuroCard()
@@ -1299,14 +1462,6 @@ private struct ResultSummaryView: View {
         }
         .background(VuuroColor.surfaceMuted)
         .navigationTitle("Scan result")
-        .onDisappear { cleanUpExportedFiles() }
-    }
-
-    private func roomLabel(for roomId: String?) -> String {
-        guard let roomId, let room = floorPlan.rooms.first(where: { $0.roomId == roomId }) else {
-            return "Whole unit"
-        }
-        return room.label
     }
 
     @MainActor
@@ -1320,25 +1475,30 @@ private struct ResultSummaryView: View {
 
     @MainActor
     private func loadImage() async {
-        isFetchingImage = true
         imageLoadFailed = false
+        let alreadyCached = FloorPlanImageCache.shared.cachedData(sessionId: session.id, unit: exportUnit) != nil
+        isFetchingImage = !alreadyCached
         defer { isFetchingImage = false }
-        do {
-            let data = try await client.fetchFloorPlanImage(sessionId: session.id, accessToken: session.accessToken, unit: exportUnit)
-            guard let image = UIImage(data: data) else {
-                appError = AppError(site: .resultImageDecode, underlying: nil)
-                imageLoadFailed = true
-                return
-            }
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(session.id).png")
-            try data.write(to: url)
-            floorPlanImage = image
-            floorPlanImageURL = url
-            appError = nil
-        } catch {
-            appError = AppError(site: .resultImageLoad, underlying: error)
+        guard let data = await FloorPlanImageCache.shared.prefetch(sessionId: session.id, accessToken: session.accessToken, unit: exportUnit, client: client).value else {
+            appError = AppError(site: .resultImageLoad, underlying: nil)
             imageLoadFailed = true
+            return
         }
+        applyFloorPlanImageData(data)
+    }
+
+    @MainActor
+    private func applyFloorPlanImageData(_ data: Data) {
+        guard let image = UIImage(data: data) else {
+            appError = AppError(site: .resultImageDecode, underlying: nil)
+            imageLoadFailed = true
+            return
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(session.id).png")
+        try? data.write(to: url)
+        floorPlanImage = image
+        floorPlanImageURL = url
+        appError = nil
     }
 
     @MainActor

@@ -349,6 +349,26 @@ $withNullRoomId = $repo->appendNote($roomIdSession['id'], ['note_id' => 'n3', 't
 r_check('appendNote() still accepts room_id: null (session-wide note) — this fix must not make room_id required', count($withNullRoomId['notes']) === 2);
 echo "\n";
 
+echo "== updateNote(): in-place edit for the per-room auto-saving note field ==\n";
+$afterUpdate = $repo->updateNote($roomIdSession['id'], 'n2', 'edited text');
+$updatedNote = null;
+foreach ($afterUpdate['notes'] as $note) {
+    if ($note['note_id'] === 'n2') {
+        $updatedNote = $note;
+    }
+}
+r_check('updateNote() changes the matching note\'s text', $updatedNote !== null && $updatedNote['text'] === 'edited text');
+r_check('updateNote() does not touch other notes', count($afterUpdate['notes']) === 2);
+r_check('updateNote() stamps updated_at', isset($updatedNote['updated_at']));
+
+try {
+    $repo->updateNote($roomIdSession['id'], 'note-does-not-exist', 'x');
+    r_check('updateNote() rejects an unknown note_id', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    r_check('updateNote() rejects an unknown note_id', true);
+}
+echo "\n";
+
 echo "== updateRoomType(): post-capture room-type correction ==\n";
 $afterCorrection = $repo->updateRoomType($roomIdSession['id'], 'room-real-1', 'kitchen');
 r_check('updateRoomType() sets confirmed on the matching room', $afterCorrection['rooms'][0]['room_type']['confirmed'] === 'kitchen');

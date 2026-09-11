@@ -281,6 +281,28 @@ struct ScanServiceClient {
         return try await post(path: "/scan-sessions/\(sessionId)/notes", body: Body(text: text, roomId: roomId), accessToken: accessToken)
     }
 
+    func updateNote(sessionId: String, accessToken: String, noteId: String, text: String) async throws -> FloorPlan {
+        struct Body: Encodable {
+            let text: String
+        }
+        return try await post(path: "/scan-sessions/\(sessionId)/notes/\(noteId)", body: Body(text: text), accessToken: accessToken)
+    }
+
+    func deleteNote(sessionId: String, accessToken: String, noteId: String) async throws -> FloorPlan {
+        try await delete(path: "/scan-sessions/\(sessionId)/notes/\(noteId)", accessToken: accessToken)
+    }
+
+    func deletePhoto(sessionId: String, accessToken: String, photoId: String) async throws -> FloorPlan {
+        try await delete(path: "/scan-sessions/\(sessionId)/photos/\(photoId)", accessToken: accessToken)
+    }
+
+    private func delete<Response: Decodable>(path: String, accessToken: String) async throws -> Response {
+        var request = URLRequest(url: url(for: path))
+        request.httpMethod = "DELETE"
+        request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
+        return try await send(request)
+    }
+
     private func url(for path: String) -> URL {
         URL(string: path, relativeTo: baseURL)?.absoluteURL ?? baseURL.appendingPathComponent(path)
     }
