@@ -489,25 +489,28 @@ if ($readRateLimitSessionId !== null && $readRateLimitToken !== null) {
 echo "\n== Session-creation rate limit ==\n";
 
 // The default limit is 60 per 10-minute window per caller IP
-// (public/index.php — overridable via SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX).
-// This net and every other net script share one IP (127.0.0.1) and this
-// same window, so a full merge-gate suite run before this script has
-// already spent some of that budget — this loop is generous (80 requests)
-// so it reliably crosses the default limit even after the rest of the
-// suite has run once. It intentionally does NOT try to survive being run
-// many times back to back in the same 10-minute window: that's a known,
-// documented tradeoff (scan-service/README.md), not something this test
-// hides. Delete scan-service/data/scan_service.sqlite between rapid re-runs
-// of the full suite if you hit this in practice.
+// (public/index.php — overridable via SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX,
+// CI sets this to 500 to give the whole net suite's cumulative session
+// creation enough headroom in one shared window). This net and every
+// other net script share one IP (127.0.0.1) and this same window, so a
+// full merge-gate suite run before this script has already spent some of
+// that budget — this loop is generous (520 requests, same margin the
+// post_body_read test uses above ITS 500 default) so it reliably crosses
+// the configured limit even after the rest of the suite has run once. It
+// intentionally does NOT try to survive being run many times back to
+// back in the same 10-minute window: that's a known, documented tradeoff
+// (scan-service/README.md), not something this test hides. Delete
+// scan-service/data/scan_service.sqlite between rapid re-runs of the full
+// suite if you hit this in practice.
 $sawRateLimited = false;
-for ($i = 0; $i < 160; $i++) {
+for ($i = 0; $i < 520; $i++) {
     [$status, ] = net_http_json('POST', "$baseUrl/scan-sessions", base_payload());
     if ($status === 429) {
         $sawRateLimited = true;
         break;
     }
 }
-check('repeated rapid session creation eventually hits HTTP 429', $sawRateLimited, 'never saw a 429 across 160 rapid session-creation calls');
+check('repeated rapid session creation eventually hits HTTP 429', $sawRateLimited, 'never saw a 429 across 520 rapid session-creation calls');
 
 echo "\n== Repeated lookups of NONEXISTENT session ids are also throttled ==\n";
 
