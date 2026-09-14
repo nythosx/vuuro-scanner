@@ -7,6 +7,7 @@ require __DIR__ . '/lib/pdf_object_graph.php';
 
 use VuuroScan\Export\FloorPlanImageRenderer;
 use VuuroScan\Export\FloorPlanPdfRenderer;
+use VuuroScan\Export\FloorPlanSvgRenderer;
 use VuuroScan\Export\FusionOverlapDetector;
 
 $failures = [];
@@ -145,7 +146,7 @@ try {
 
 $imageRenderer = new FloorPlanImageRenderer();
 
-function build_room_with_outline(string $label, array $outlineM, ?array $structureOriginM, array $openings = [], ?float $heightM = null, ?string $roomId = null, ?array $roomType = null): array
+function build_room_with_outline(string $label, array $outlineM, ?array $structureOriginM, array $openings = [], ?float $heightM = null, ?string $roomId = null, ?array $roomType = null, ?float $headingDeg = null): array
 {
     return [
         'room_id' => $roomId ?? strtolower(str_replace(' ', '-', $label)),
@@ -159,6 +160,7 @@ function build_room_with_outline(string $label, array $outlineM, ?array $structu
         'openings' => $openings,
         'height_m' => $heightM,
         'room_type' => $roomType,
+        'heading_deg' => $headingDeg,
     ];
 }
 
@@ -395,6 +397,168 @@ $photoPlan = [...build_floor_plan([build_room_with_outline('Room With Photo', $s
 $photoPdf = $renderer->render($photoPlan, photoLoader: static fn (string $url): ?string => $url === 'https://example.invalid/photo.jpg' ? $photoJpegBytes : null);
 x_check('PDF with a real attached photo has at least 3 pages (floor plan drawing + photo + metrics table)', preg_match_all('/\/Type \/Page\b/', $photoPdf) >= 3);
 x_check_pdf_graph('PDF with a real attached photo', $photoPdf);
+
+echo "\n== FloorPlanSvgRenderer: tiles and fused layouts ==\n";
+
+$svgRenderer = new FloorPlanSvgRenderer();
+
+$tiledSvg = $svgRenderer->render($tiledPlan);
+x_check('tiled SVG starts with an <svg> root element', str_starts_with($tiledSvg, '<svg '));
+x_check('tiled SVG contains both room labels', str_contains($tiledSvg, 'Room A') && str_contains($tiledSvg, 'Room B'));
+
+$fusedSvg = $svgRenderer->render($fusedPlan);
+x_check('fused SVG starts with an <svg> root element', str_starts_with($fusedSvg, '<svg '));
+x_check('fused SVG differs from the tiled SVG for the same rooms once positions are known', $fusedSvg !== $tiledSvg);
+
+$forcedTilesSvg = $svgRenderer->render($fusedPlan, 'tiles');
+x_check('layout=tiles forces the per-room SVG sheet even when fusion is available', $forcedTilesSvg !== $fusedSvg);
+
+$oneRoomSvg = $svgRenderer->render($fusedPlan, 'auto', 'room-a');
+x_check('room_id isolates a single room\'s SVG without throwing', str_contains($oneRoomSvg, 'Room A') && !str_contains($oneRoomSvg, 'Room B'));
+
+try {
+    $svgRenderer->render($fusedPlan, 'auto', 'no-such-room');
+    x_check('SVG: an unknown room_id is rejected, not silently ignored', false, 'no exception was thrown');
+} catch (\InvalidArgumentException $e) {
+    x_check('SVG: an unknown room_id is rejected, not silently ignored', str_contains($e->getMessage(), 'no-such-room'));
+}
+
+echo "\n== FloorPlanSvgRenderer: doors/windows draw real symbols, not just text ==\n";
+
+$svgWithJoin = $svgRenderer->render($fusedWithJoinPlan);
+x_check('the fused SVG draws a door swing arc path', str_contains($svgWithJoin, '<path d="M') && str_contains($svgWithJoin, 'A '));
+x_check('the fused SVG draws a window tick line group', substr_count($svgWithJoin, 'stroke="#7a7a7a"') >= 1);
+x_check('door/window drawing adds real bytes over the same plan with no openings', strlen($svgWithJoin) > strlen($fusedSvg));
+
+echo "\n== FloorPlanSvgRenderer: room-type fill colors ==\n";
+
+$roomTypedSvg = $svgRenderer->render($roomTypedPlan);
+x_check('bedroom fill color appears in the rendered SVG', str_contains($roomTypedSvg, '#ecc98d'));
+x_check('bathroom/kitchen fill color appears in the rendered SVG', str_contains($roomTypedSvg, '#d3e3f1'));
+x_check('the room-type legend lists both types', str_contains($roomTypedSvg, 'Bedroom') && str_contains($roomTypedSvg, 'Bathroom'));
+
+echo "\n== FloorPlanSvgRenderer: fusion collides rooms to close small real-world gaps (no fill hack) ==\n";
+
+function svg_room_fill_polygons(string $svg): array
+{
+    preg_match_all('/<polygon points="([^"]+)" fill="#[0-9a-f]{6}"\/>/', $svg, $m);
+    $polys = [];
+    foreach ($m[1] as $pointsStr) {
+        $pts = [];
+        foreach (explode(' ', trim($pointsStr)) as $pair) {
+            [$x, $y] = explode(',', $pair);
+            $pts[] = [(float) $x, (float) $y];
+        }
+        $polys[] = $pts;
+    }
+    return $polys;
+}
+
+function polygon_bbox(array $pts): array
+{
+    $xs = array_column($pts, 0);
+    return ['minX' => min($xs), 'maxX' => max($xs)];
+}
+
+x_check('the renderer no longer draws a separate seam-fill layer', !str_contains($svgRenderer->render($fusedPlan), 'id="fusion-seams"'));
+
+$wallGapPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0]),
+    build_room_with_outline('Room B', $squareOutline, [4.15, 0.0]),
+]);
+$wallGapSvg = $svgRenderer->render($wallGapPlan);
+$wallGapPolys = svg_room_fill_polygons($wallGapSvg);
+x_check('setup: both room fill polygons were found in the rendered SVG', count($wallGapPolys) === 2);
+if (count($wallGapPolys) === 2) {
+    $roomABox = polygon_bbox($wallGapPolys[0]);
+    $roomBBox = polygon_bbox($wallGapPolys[1]);
+    x_check('a small (wall-thickness-sized) gap is actually closed — Room A\'s right edge and Room B\'s left edge land on the same pixel, not filled over',
+        abs($roomABox['maxX'] - $roomBBox['minX']) < 0.5,
+        "Room A right edge at {$roomABox['maxX']}, Room B left edge at {$roomBBox['minX']}");
+}
+
+$farApartPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0]),
+    build_room_with_outline('Room B', $squareOutline, [10.0, 0.0]),
+]);
+$farApartSvg = $svgRenderer->render($farApartPlan);
+$farApartPolys = svg_room_fill_polygons($farApartSvg);
+if (count($farApartPolys) === 2) {
+    $roomABox = polygon_bbox($farApartPolys[0]);
+    $roomBBox = polygon_bbox($farApartPolys[1]);
+    x_check('a large gap (not plausibly one wall) is left alone, not force-collided',
+        $roomBBox['minX'] - $roomABox['maxX'] > 3.0,
+        "gap shrank to " . ($roomBBox['minX'] - $roomABox['maxX']) . "px");
+}
+
+$overlapPolysBefore = svg_room_fill_polygons($svgRenderer->render($overlapPlan));
+x_check('rooms already flagged as overlapping are excluded from collision-snapping entirely (left at their captured position)',
+    count($overlapPolysBefore) === 2 && abs(polygon_bbox($overlapPolysBefore[0])['minX'] - 58.0) < 0.5,
+    'Room A moved from its captured origin despite being flagged overlapping');
+
+echo "\n== FloorPlanSvgRenderer: collision works on non-axis-aligned (diagonal/\"pabalagbag\") walls too ==\n";
+
+$diagRoomA = build_room_with_outline('Diag A', [[0.0, 0.0], [3.2, 2.4], [1.4, 4.8], [-1.8, 2.4]], [0.0, 0.0]);
+$diagRoomB = build_room_with_outline('Diag B', [[3.32, 2.49], [6.52, 4.89], [4.72, 7.29], [1.52, 4.89]], [0.0, 0.0]);
+$diagPlan = build_floor_plan([$diagRoomA, $diagRoomB]);
+$diagSvg = $svgRenderer->render($diagPlan);
+$diagPolys = svg_room_fill_polygons($diagSvg);
+x_check('setup: both diagonal-walled room polygons were found', count($diagPolys) === 2);
+if (count($diagPolys) === 2) {
+    [$ax0, $ay0] = $diagPolys[0][1];
+    [$bx0, $by0] = $diagPolys[1][0];
+    [$ax1, $ay1] = $diagPolys[0][2];
+    [$bx1, $by1] = $diagPolys[1][3];
+    x_check('a diagonal wall\'s first shared corner is actually collided to the same pixel, not just close',
+        abs($ax0 - $bx0) < 0.5 && abs($ay0 - $by0) < 0.5,
+        "A=($ax0,$ay0) B=($bx0,$by0)");
+    x_check('a diagonal wall\'s second shared corner is also collided, not just one end',
+        abs($ax1 - $bx1) < 0.5 && abs($ay1 - $by1) < 0.5,
+        "A=($ax1,$ay1) B=($bx1,$by1)");
+}
+
+echo "\n== FloorPlanSvgRenderer: north arrow only appears when a real heading_deg was captured ==\n";
+
+$noHeadingPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, null),
+]);
+$noHeadingSvg = $svgRenderer->render($noHeadingPlan);
+x_check('no heading_deg on any room means no compass arrow, never a fabricated north', !str_contains($noHeadingSvg, '"N"') && !str_contains($noHeadingSvg, '>N<'));
+
+$headingTilePlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, null, [], null, null, null, 0.0),
+]);
+$headingTileSvg = $svgRenderer->render($headingTilePlan, 'tiles');
+x_check('a room with heading_deg = 0.0 (a real reading, not "absent") still draws the compass arrow', str_contains($headingTileSvg, '>N<'));
+x_check('heading_deg = 0.0 points the arrow straight up (rotate(180))', str_contains($headingTileSvg, 'rotate(180)'));
+
+$headingRotatedPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, null, [], null, null, null, 90.0),
+]);
+$headingRotatedSvg = $svgRenderer->render($headingRotatedPlan, 'tiles');
+x_check('heading_deg = 90 rotates the arrow 90 degrees, not left at the default', str_contains($headingRotatedSvg, 'rotate(90)'));
+
+$headingFusedPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0], [], null, null, null, 45.0),
+    build_room_with_outline('Room B', $squareOutline, [4.0, 0.0]),
+]);
+$headingFusedSvg = $svgRenderer->render($headingFusedPlan);
+x_check('the fused layout draws one compass arrow using whichever room actually carries a heading_deg reading', str_contains($headingFusedSvg, '>N<'));
+
+echo "\n== FloorPlanSvgRenderer: overlap warning, units, and label ==\n";
+
+$overlapSvg = $svgRenderer->render($overlapPlan);
+x_check('overlapping rooms are flagged with the warning color in the SVG', str_contains($overlapSvg, '#a4231f'));
+$cleanFusedSvg = $svgRenderer->render($cleanFusedPlan);
+x_check('adjacent (non-overlapping) rooms are not flagged', !str_contains($cleanFusedSvg, '#a4231f'));
+
+$imperialSvg = $svgRenderer->render($twoRoomPlan, unit: \VuuroScan\Export\UnitFormatter::IMPERIAL);
+x_check('imperial SVG uses sqft, not sqm', str_contains($imperialSvg, 'sqft') && !str_contains($imperialSvg, 'sqm'));
+
+$labeledSvg = $svgRenderer->render($twoRoomPlan, label: 'Prepared for Acme Rentals');
+x_check('SVG includes the caller-supplied label line', str_contains($labeledSvg, 'Prepared for Acme Rentals'));
+$unlabeledSvg = $svgRenderer->render($twoRoomPlan);
+x_check('SVG omits the label line entirely when none is given', !str_contains($unlabeledSvg, 'Prepared for'));
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {

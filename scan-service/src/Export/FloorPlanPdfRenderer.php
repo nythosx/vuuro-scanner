@@ -131,20 +131,32 @@ final class FloorPlanPdfRenderer
         try {
             $floorPlanPng = (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label);
             $normalized = $this->toEmbeddableJpeg($floorPlanPng);
-            if ($normalized !== null) {
+            if ($normalized === null) {
+                error_log(sprintf(
+                    'FloorPlanPdfRenderer: floor plan drawing rendered but could not be re-encoded to JPEG for session %s — GD likely built without JPEG support (see Dockerfile). PDF will ship without the drawing page.',
+                    $floorPlan['scan_session_id'] ?? 'unknown'
+                ));
+            } else {
                 $pages[] = $this->layoutImagePage($normalized, [['text' => 'Floor plan drawing', 'style' => 'captionBold']]);
             }
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            error_log(sprintf(
+                'FloorPlanPdfRenderer: floor plan drawing embed failed for session %s: %s',
+                $floorPlan['scan_session_id'] ?? 'unknown',
+                $e->getMessage()
+            ));
         }
 
         if ($photoLoader !== null) {
             foreach ($floorPlan['photos'] as $photo) {
                 $bytes = $photoLoader($photo['url']);
                 if ($bytes === null) {
+                    error_log(sprintf('FloorPlanPdfRenderer: photo %s could not be loaded from disk, skipping embed.', $photo['photo_id'] ?? 'unknown'));
                     continue;
                 }
                 $normalized = $this->toEmbeddableJpeg($bytes);
                 if ($normalized === null) {
+                    error_log(sprintf('FloorPlanPdfRenderer: photo %s loaded but could not be decoded/re-encoded, skipping embed.', $photo['photo_id'] ?? 'unknown'));
                     continue;
                 }
                 $roomLabel = $this->roomLabelFor($floorPlan, $photo['room_id'] ?? null);

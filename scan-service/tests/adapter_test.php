@@ -272,6 +272,57 @@ try {
     t_check('adapt() rejects a multi-floor capture carrying structure_origin_m', true);
 }
 echo "\n";
+
+echo "== heading_deg: real compass reading, never fabricated ==\n";
+$noHeadingResult = $adapter->adapt([
+    'floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]],
+], $identity);
+t_check('heading_deg is null when absent from raw_capture, not fabricated as 0/north', $noHeadingResult['rooms'][0]['heading_deg'] === null);
+
+$withHeadingResult = $adapter->adapt([
+    'floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]],
+    'heading_deg' => 271.5,
+], $identity);
+t_check('heading_deg passes through when present', $withHeadingResult['rooms'][0]['heading_deg'] === 271.5);
+
+$zeroHeadingResult = $adapter->adapt([
+    'floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]],
+    'heading_deg' => 0.0,
+], $identity);
+t_check('a real 0.0 heading_deg reading is kept, not confused with "absent"', $zeroHeadingResult['rooms'][0]['heading_deg'] === 0.0);
+
+foreach ([-0.001, 360.0, 360.5] as $outOfRange) {
+    try {
+        $adapter->adapt([
+            'floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]],
+            'heading_deg' => $outOfRange,
+        ], $identity);
+        t_check("adapt() rejects an out-of-range heading_deg ($outOfRange)", false, 'no exception was thrown');
+    } catch (\InvalidArgumentException) {
+        t_check("adapt() rejects an out-of-range heading_deg ($outOfRange)", true);
+    }
+}
+
+try {
+    $adapter->adapt([
+        'floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]],
+        'heading_deg' => 'north',
+    ], $identity);
+    t_check('adapt() rejects a non-numeric heading_deg', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    t_check('adapt() rejects a non-numeric heading_deg', true);
+}
+
+try {
+    $adapter->adapt([
+        'floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]],
+        'heading_deg' => 1e400,
+    ], $identity);
+    t_check('adapt() rejects a non-finite (overflowed-to-INF) heading_deg', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    t_check('adapt() rejects a non-finite (overflowed-to-INF) heading_deg', true);
+}
+echo "\n";
 echo "\n";
 
 // Deliberately adversarial: a bounding-box-only implementation would still

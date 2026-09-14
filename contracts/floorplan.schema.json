@@ -70,7 +70,7 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["room_id", "label", "floor_area_m2", "perimeter_m", "bounding_dimensions_m", "confidence", "outline_m", "coverage", "openings", "height_m", "volume_m3_indicative", "objects", "structure_origin_m", "room_type"],
+        "required": ["room_id", "label", "floor_area_m2", "perimeter_m", "bounding_dimensions_m", "confidence", "outline_m", "coverage", "openings", "height_m", "volume_m3_indicative", "objects", "structure_origin_m", "room_type", "heading_deg"],
         "properties": {
           "room_id": { "type": "string" },
           "label": { "type": "string" },
@@ -102,6 +102,12 @@
             "maxItems": 2,
             "items": { "type": "number" },
             "description": "LIDAR-5/11: this room's [x, z] placement in a multi-room fused structure's shared frame, only when captured together with other rooms via StructureBuilder in one continuous visit. Null for every room captured the ordinary way (single-room, or LIDAR-4 resume-later) — never fabricated. outline_m itself stays room-local regardless; this is an additive offset, not a replacement (see docs/proposals/multi-room-fusion.md)."
+          },
+          "heading_deg": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "exclusiveMaximum": 360,
+            "description": "Compass bearing (degrees, clockwise from true north, [0, 360)) of the direction of increasing z in this room's own outline_m frame — i.e. which way true north points relative to this room's own local coordinates, captured once from the device's heading at the moment this room's capture session began. Independent of structure_origin_m: a real compass reading, not derived from ARKit/RoomPlan geometry. Null whenever the device's compass wasn't available or calibrated at capture time (no location permission, heading unavailable, or a client older than this field) — never fabricated or assumed to be 0/north-up. Two rooms only share a heading_deg value when they were captured in the same continuous session (see structure_origin_m); an ordinary tiled room added later has its own independent reading."
           },
           "openings": {
             "type": "array",

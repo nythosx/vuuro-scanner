@@ -7,6 +7,7 @@ require __DIR__ . '/../src/autoload.php';
 use VuuroScan\Adapters\RoomPlanSimulatorAdapter;
 use VuuroScan\Export\FloorPlanImageRenderer;
 use VuuroScan\Export\FloorPlanPdfRenderer;
+use VuuroScan\Export\FloorPlanSvgRenderer;
 use VuuroScan\ScanSessionRepository;
 use VuuroScan\Storage\Database;
 
@@ -1121,6 +1122,50 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     }
     header('Content-Type: image/png');
     echo $png;
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.svg$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'export_svg');
+    if ($session === null) {
+        return;
+    }
+
+    if (rateLimited($repo, $session['id'] . ':export_svg', 30, 300)) {
+        return;
+    }
+
+    $floorPlan = $repo->findFloorPlan($session['id']);
+    if ($floorPlan === null) {
+        respondError(404, 'no_floor_plan_yet', 'This session doesn\'t have a captured floor plan yet — capture at least one room before exporting.');
+        return;
+    }
+
+    $layout = $_GET['layout'] ?? 'auto';
+    if (!in_array($layout, ['auto', 'tiles'], true)) {
+        respondError(422, 'invalid_layout', "'layout' must be 'auto' or 'tiles' if given.");
+        return;
+    }
+    $roomId = isset($_GET['room_id']) ? (string) $_GET['room_id'] : null;
+    $unit = $_GET['unit'] ?? \VuuroScan\Export\UnitFormatter::METRIC;
+    if (!in_array($unit, \VuuroScan\Export\UnitFormatter::VALID, true)) {
+        respondError(422, 'invalid_unit', "'unit' must be 'metric' or 'imperial' if given.");
+        return;
+    }
+    $label = isset($_GET['label']) ? trim((string) $_GET['label']) : null;
+    if ($label !== null && mb_strlen($label, 'UTF-8') > 120) {
+        respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
+        return;
+    }
+
+    try {
+        $svg = (new FloorPlanSvgRenderer())->render($floorPlan, $layout, $roomId, $unit, $label);
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
+        return;
+    }
+    header('Content-Type: image/svg+xml');
+    echo $svg;
     return;
 }
 

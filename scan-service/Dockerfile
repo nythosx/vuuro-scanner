@@ -7,8 +7,13 @@ COPY . /app
 # docker-php-ext-install compiles both extensions from source against these
 # headers, so both are required even though only libpng-dev was here before
 # (confirmed failing to build without libsqlite3-dev - Mark, 2026-09-01).
-# No --with-jpeg/libjpeg-dev: FloorPlanImageRenderer only ever calls
-# imagepng(), never imagejpeg(), so there is nothing here that needs it.
+# libjpeg62-turbo-dev + --with-jpeg: FloorPlanPdfRenderer::toEmbeddableJpeg()
+# decodes uploaded photos (imagecreatefromstring on real-world JPEGs) and
+# re-encodes the floor plan drawing to JPEG (imagejpeg()) for PDF embedding -
+# without this, GD builds without JPEG support at all, both calls silently
+# fail, and every PDF export ships as the text-only metrics page with no
+# floor plan image and no photos, regardless of what the floor plan actually
+# has attached (confirmed live on Mark's device, 2026-09-14).
 # Plain http:// to deb.debian.org repeatedly timed out mid-fetch on this
 # machine's WSL2/Docker network - confirmed live: single one-shot requests
 # to the exact same mirror/IPs always succeeded, only apt's longer,
@@ -20,8 +25,9 @@ COPY . /app
 RUN sed -i 's/http:\/\/deb.debian.org/https:\/\/deb.debian.org/g' /etc/apt/sources.list.d/*.sources 2>/dev/null; \
     sed -i 's/http:\/\/deb.debian.org/https:\/\/deb.debian.org/g' /etc/apt/sources.list 2>/dev/null; \
     apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=30 \
-    && apt-get install -y -o Acquire::Retries=5 -o Acquire::http::Timeout=30 --no-install-recommends libpng-dev libsqlite3-dev \
+    && apt-get install -y -o Acquire::Retries=5 -o Acquire::http::Timeout=30 --no-install-recommends libpng-dev libjpeg62-turbo-dev libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/* \
+    && docker-php-ext-configure gd --with-jpeg \
     && docker-php-ext-install pdo_sqlite gd
 
 EXPOSE 8089

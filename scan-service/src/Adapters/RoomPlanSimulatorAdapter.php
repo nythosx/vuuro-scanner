@@ -130,6 +130,7 @@ final class RoomPlanSimulatorAdapter
                 // LIDAR-5/11: additive, null unless this capture came from a
                 // StructureBuilder-merged multi-room visit (docs/proposals/multi-room-fusion.md).
                 'structure_origin_m' => self::structureOriginM($rawCapture),
+                'heading_deg' => self::headingDeg($rawCapture),
                 'room_type' => self::mapRoomType($rawCapture),
                 'walk_path_m' => self::mapWalkPath($rawCapture, $minX, $minZ),
             ];
@@ -395,6 +396,15 @@ final class RoomPlanSimulatorAdapter
         return [(float) $origin[0], (float) $origin[1]];
     }
 
+    private static function headingDeg(array $rawCapture): ?float
+    {
+        $heading = $rawCapture['heading_deg'] ?? null;
+        if (!is_int($heading) && !is_float($heading)) {
+            return null;
+        }
+        return (float) $heading;
+    }
+
     private static function mapRoomType(array $rawCapture): ?array
     {
         $roomType = $rawCapture['room_type'] ?? null;
@@ -614,6 +624,19 @@ final class RoomPlanSimulatorAdapter
         $structureOrigin = $rawCapture['structure_origin_m'] ?? null;
         if (is_array($structureOrigin)) {
             self::validatePoints('structure_origin_m', [$structureOrigin]);
+        }
+
+        $heading = $rawCapture['heading_deg'] ?? null;
+        if ($heading !== null) {
+            if (!is_int($heading) && !is_float($heading)) {
+                throw new \InvalidArgumentException('heading_deg must be a number or null, not ' . get_debug_type($heading) . '.');
+            }
+            if (!is_finite((float) $heading)) {
+                throw new \InvalidArgumentException('heading_deg must be a finite number, not NaN/Infinity.');
+            }
+            if ($heading < 0 || $heading >= 360) {
+                throw new \InvalidArgumentException("heading_deg must be within [0, 360), got {$heading}.");
+            }
         }
 
         // computeHeight() reads walls[].dimensions[1] with no prior bounds

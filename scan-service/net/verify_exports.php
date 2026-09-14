@@ -108,6 +108,54 @@ check("PDF content contains the first room's label ($room1Label)", str_contains(
 check("PDF content contains the second room's area ($room2Area)", str_contains($pdfBytes, $room2Area));
 check_pdf_graph('two-room PDF (embeds the floor plan drawing image)', $pdfBytes);
 
+echo "\n== SVG export ==\n";
+[$svgStatus, $svgContentType, $svgBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg", null, $accessToken);
+check('SVG export returns HTTP 200', $svgStatus === 200, "got HTTP $svgStatus");
+check('SVG export has image/svg+xml content type', str_contains($svgContentType, 'image/svg+xml'), "got $svgContentType");
+check('SVG bytes start with an <svg root element', str_starts_with($svgBytes, '<svg '));
+check("SVG content contains the first room's label ($room1Label)", str_contains($svgBytes, $room1Label));
+check('SVG content contains the second room\'s label', str_contains($svgBytes, $floorPlan['rooms'][1]['label']));
+
+[$svgNoAuthStatus, ] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg");
+check('SVG export without an access token is rejected with HTTP 401', $svgNoAuthStatus === 401, "got HTTP $svgNoAuthStatus");
+
+[$svgBadLayoutStatus, $svgBadLayoutBody] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?layout=bogus", null, $accessToken);
+check('SVG export rejects an invalid layout value as invalid_layout', $svgBadLayoutStatus === 422 && ($svgBadLayoutBody['error'] ?? null) === 'invalid_layout', "got HTTP $svgBadLayoutStatus: " . json_encode($svgBadLayoutBody));
+
+[$svgTilesStatus, , $svgTilesBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?layout=tiles", null, $accessToken);
+check('SVG export accepts layout=tiles', $svgTilesStatus === 200, "got HTTP $svgTilesStatus");
+check('layout=tiles SVG still contains both room labels', str_contains($svgTilesBytes, $room1Label) && str_contains($svgTilesBytes, $floorPlan['rooms'][1]['label']));
+
+echo "\n== Adversarial: a fused layout spread far beyond the render-size sanity bound is rejected, not silently oversized ==\n";
+[, $hugeFusedSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
+    'property_id' => 'prop-net-exports-huge-fused',
+    'unit_id' => 'unit-net-exports-huge-fused',
+    'organisation_id' => 'org-net-exports-huge-fused',
+    'purpose' => 'listing',
+    'occupied' => false,
+]);
+$hugeFusedSessionId = $hugeFusedSession['id'] ?? null;
+$hugeFusedToken = $hugeFusedSession['access_token'] ?? null;
+if ($hugeFusedSessionId !== null && $hugeFusedToken !== null) {
+    for ($i = 0; $i < 10; $i++) {
+        $spreadCapture = $fixtureA;
+        $spreadCapture['structure_origin_m'] = [$i * 10.0, 0.0];
+        [$spreadStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$hugeFusedSessionId/capture", ['raw_capture' => $spreadCapture], $hugeFusedToken);
+        check("setup: fused room $i (10m apart, real captured structure_origin_m) accepted", $spreadStatus === 200, "got HTTP $spreadStatus");
+    }
+
+    [$hugePngStatus, , $hugePngBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$hugeFusedSessionId/export/floorplan.png", null, $hugeFusedToken);
+    check('PNG export of the same wide-spread fused layout is rejected (not silently oversized), matching the SVG guard below', $hugePngStatus === 422, "got HTTP $hugePngStatus");
+
+    [$hugeSvgStatus, $hugeSvgBody] = net_http_json('GET', "$baseUrl/scan-sessions/$hugeFusedSessionId/export/floorplan.svg", null, $hugeFusedToken);
+    check('SVG export of a wide-spread fused layout is rejected as unrenderable_floor_plan, not an unboundedly huge canvas',
+        $hugeSvgStatus === 422 && ($hugeSvgBody['error'] ?? null) === 'unrenderable_floor_plan',
+        "got HTTP $hugeSvgStatus: " . json_encode($hugeSvgBody));
+
+    [$hugeTilesStatus, ] = net_http_raw('GET', "$baseUrl/scan-sessions/$hugeFusedSessionId/export/floorplan.svg?layout=tiles", null, $hugeFusedToken);
+    check('the same wide-spread rooms still export fine as unfused tiles (layout=tiles sidesteps the fused canvas entirely)', $hugeTilesStatus === 200, "got HTTP $hugeTilesStatus");
+}
+
 echo "\n== Adversarial: an attached real photo must embed as a valid image XObject ==\n";
 [, $photoSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-exports-photo',
