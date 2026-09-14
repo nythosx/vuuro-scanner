@@ -14,12 +14,14 @@ struct RoomPlanCaptureExport: Encodable {
     var roomType: RoomTypeExport? = nil
     var structureOriginM: [Double]? = nil
     var walkPathM: [[Double]]? = nil
+    var headingDeg: Double? = nil
 
     enum CodingKeys: String, CodingKey {
         case story, floors, walls, doors, windows, openings, objects
         case roomType = "room_type"
         case structureOriginM = "structure_origin_m"
         case walkPathM = "walk_path"
+        case headingDeg = "heading_deg"
     }
 
     struct SurfaceExport: Encodable {
@@ -51,7 +53,7 @@ struct RoomTypeConfirmation {
 }
 
 enum CapturedRoomExporter {
-    static func export(_ room: CapturedRoom, roomTypeConfirmation: RoomTypeConfirmation? = nil, walkPath: [[Double]]? = nil) -> RoomPlanCaptureExport {
+    static func export(_ room: CapturedRoom, roomTypeConfirmation: RoomTypeConfirmation? = nil, walkPath: [[Double]]? = nil, headingDeg: Double? = nil) -> RoomPlanCaptureExport {
         var export = RoomPlanCaptureExport(
             story: 0,
             floors: room.floors.map { mapSurface($0, category: "floor") },
@@ -62,6 +64,7 @@ enum CapturedRoomExporter {
             objects: room.objects.map(mapObject)
         )
         export.walkPathM = (walkPath?.isEmpty ?? true) ? nil : walkPath
+        export.headingDeg = headingDeg
         if RoomTypeGuessSettings.isEnabled, let guess = RoomTypeClassifier.guess(for: room) {
             let confirmedValue = roomTypeConfirmation?.answeredForGuessType == guess.type ? roomTypeConfirmation?.value : nil
             export.roomType = RoomPlanCaptureExport.RoomTypeExport(
@@ -138,11 +141,6 @@ enum CapturedRoomExporter {
 extension RoomPlanCaptureExport {
     private static let minFloorAreaM2 = 0.25
 
-    // Checks every floor, not just the first — RoomPlanSimulatorAdapter.php
-    // rejects on ANY floor with a degenerate outline (a multi-story capture
-    // can carry more than one), so a guard that only looked at floors[0]
-    // would let a bad floors[1] slip past locally and still round-trip to
-    // the server for the same reject this guard exists to avoid.
     var hasUsableFloorOutline: Bool {
         guard !floors.isEmpty else { return false }
         return floors.allSatisfy { floor in

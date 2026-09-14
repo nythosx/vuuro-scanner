@@ -43,6 +43,13 @@ final class ScanHistoryStore {
         save(entries)
     }
 
+    func updateRoomSummary(sessionId: String, summary: String?) {
+        var entries = readRedacted()
+        guard let index = entries.firstIndex(where: { $0.sessionId == sessionId }) else { return }
+        entries[index].cachedRoomSummary = summary
+        save(entries)
+    }
+
     private func readRedacted() -> [ScanHistoryEntry] {
         guard let data = defaults.data(forKey: key),
               let entries = try? JSONDecoder().decode([ScanHistoryEntry].self, from: data) else {

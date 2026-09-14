@@ -10,6 +10,12 @@ struct ScanHistoryView: View {
     @State private var isFetchingToAttach: Set<String> = []
     @State private var isDownloadingImage: Set<String> = []
     @State private var isDownloadingPDF: Set<String> = []
+    @State private var isPreparingQuickShare: Set<String> = []
+    @State private var quickShareURL: URL?
+    @State private var shareCodeSource: ShareCodeItemSource?
+    @State private var showQuickShare = false
+    @State private var quickLookURL: URL?
+    @State private var showQuickLook = false
     @State private var attachErrors: [String: AppError] = [:]
     @State private var perEntryImageURLs: [String: URL] = [:]
     @State private var perEntryPDFURLs: [String: URL] = [:]
@@ -119,6 +125,11 @@ struct ScanHistoryView: View {
                                 commitNickname(sessionId: entry.sessionId)
                                 VuuroToast.shared.show("Nickname saved")
                             }
+                        if let roomSummary = entry.cachedRoomSummary, !roomSummary.isEmpty {
+                            Text(roomSummary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                         Text(entry.purpose.displayName)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -129,38 +140,27 @@ struct ScanHistoryView: View {
 
                     HStack(spacing: 10) {
                         Button {
-                            Task { await downloadImage(for: entry) }
+                            Task { await viewFile(for: entry, pdf: false) }
                         } label: {
                             if isDownloadingImage.contains(entry.sessionId) {
                                 ProgressView()
                             } else {
-                                Text("Download image")
+                                Text("View image")
                             }
                         }
                         .buttonStyle(.vuuroSecondary)
                         .disabled(isDownloadingImage.contains(entry.sessionId))
                         Button {
-                            Task { await downloadPDF(for: entry) }
+                            Task { await viewFile(for: entry, pdf: true) }
                         } label: {
                             if isDownloadingPDF.contains(entry.sessionId) {
                                 ProgressView()
                             } else {
-                                Text("Download PDF")
+                                Text("View PDF")
                             }
                         }
                         .buttonStyle(.vuuroSecondary)
                         .disabled(isDownloadingPDF.contains(entry.sessionId))
-                    }
-
-                    if let url = perEntryImageURLs[entry.sessionId] {
-                        ShareLink(item: url) {
-                            Label("Save image", systemImage: "square.and.arrow.up")
-                        }
-                    }
-                    if let url = perEntryPDFURLs[entry.sessionId] {
-                        ShareLink(item: url) {
-                            Label("Save PDF", systemImage: "square.and.arrow.up")
-                        }
                     }
 
                     NavigationLink("Access log") {
@@ -203,9 +203,42 @@ struct ScanHistoryView: View {
                             .font(.caption)
                     }
 
+                    HStack(spacing: 10) {
+                        Button {
+                            Task { await shareFile(for: entry, pdf: false) }
+                        } label: {
+                            if isPreparingQuickShare.contains(entry.sessionId + ":image") {
+                                ProgressView()
+                            } else {
+                                Label("Share image", systemImage: "square.and.arrow.up")
+                            }
+                        }
+                        .buttonStyle(.vuuroSecondary)
+                        .disabled(isPreparingQuickShare.contains(entry.sessionId + ":image"))
+                        Button {
+                            Task { await shareFile(for: entry, pdf: true) }
+                        } label: {
+                            if isPreparingQuickShare.contains(entry.sessionId + ":pdf") {
+                                ProgressView()
+                            } else {
+                                Label("Share PDF", systemImage: "square.and.arrow.up")
+                            }
+                        }
+                        .buttonStyle(.vuuroSecondary)
+                        .disabled(isPreparingQuickShare.contains(entry.sessionId + ":pdf"))
+                    }
+
                     if let code = ScanShareCode.encode(entry) {
                         VStack(alignment: .leading, spacing: 2) {
-                            ShareLink(item: code) {
+                            Button {
+                                quickShareURL = nil
+                                shareCodeSource = ShareCodeItemSource(
+                                    code: code,
+                                    subject: "Vuuro Scan access — \(entry.propertyId) / \(entry.unitId)",
+                                    messageBody: "Paste this code into Vuuro Scan, under History → \"Add a scan someone shared with you\", to get full access to this scan (view, export, delete). Only share it with someone you trust."
+                                )
+                                showQuickShare = true
+                            } label: {
                                 Label("Share access with someone else", systemImage: "person.badge.plus")
                             }
                             Text("Anyone who receives this code gets full access to this scan — view, export, and delete. Only send it somewhere secure.")
@@ -352,6 +385,19 @@ struct ScanHistoryView: View {
                 }
             }
         }
+        .sheet(isPresented: $showQuickShare) {
+            if let shareCodeSource {
+                ActivityShareSheet(items: [shareCodeSource])
+            } else if let quickShareURL {
+                ActivityShareSheet(items: [quickShareURL])
+            }
+        }
+        .fullScreenCover(isPresented: $showQuickLook) {
+            if let quickLookURL {
+                QuickLookPreview(url: quickLookURL)
+                    .ignoresSafeArea()
+            }
+        }
     }
 
     private func importScan() {
@@ -377,11 +423,6 @@ struct ScanHistoryView: View {
         }
     }
 
-    // A resumed/attached session's stored token can be close to (or past) its
-    // 90-day expiry with no other path to renew it (see AppError.swift's
-    // header and ScanSessionRepository.php's ROTATE_GRACE_PERIOD_SECONDS) —
-    // this device never proactively rotates otherwise, so the only chance is
-    // right before the token is actually used again.
     @MainActor
     private func rotateTokenIfNeeded(_ entry: ScanHistoryEntry) async -> ScanHistoryEntry {
         if let expiresAtString = entry.expiresAt, !expiresAtString.isEmpty,
@@ -472,6 +513,39 @@ struct ScanHistoryView: View {
         } catch {
             attachErrors[entry.sessionId] = AppError(site: .historySessionFetch, underlying: error)
         }
+    }
+
+    @MainActor
+    private func viewFile(for entry: ScanHistoryEntry, pdf: Bool) async {
+        if pdf, perEntryPDFURLs[entry.sessionId] == nil {
+            await downloadPDF(for: entry)
+        } else if !pdf, perEntryImageURLs[entry.sessionId] == nil {
+            await downloadImage(for: entry)
+        }
+        let url = pdf ? perEntryPDFURLs[entry.sessionId] : perEntryImageURLs[entry.sessionId]
+        guard let url else { return }
+        quickLookURL = url
+        showQuickLook = true
+    }
+
+    @MainActor
+    private func shareFile(for entry: ScanHistoryEntry, pdf: Bool) async {
+        let shareKey = entry.sessionId + (pdf ? ":pdf" : ":image")
+        guard !isPreparingQuickShare.contains(shareKey) else { return }
+        isPreparingQuickShare.insert(shareKey)
+        defer { isPreparingQuickShare.remove(shareKey) }
+
+        if pdf, perEntryPDFURLs[entry.sessionId] == nil {
+            await downloadPDF(for: entry)
+        } else if !pdf, perEntryImageURLs[entry.sessionId] == nil {
+            await downloadImage(for: entry)
+        }
+
+        let url = pdf ? perEntryPDFURLs[entry.sessionId] : perEntryImageURLs[entry.sessionId]
+        guard let url else { return }
+        shareCodeSource = nil
+        quickShareURL = url
+        showQuickShare = true
     }
 
     @MainActor

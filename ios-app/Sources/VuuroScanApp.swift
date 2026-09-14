@@ -196,12 +196,14 @@ private struct RoomCaptureFlowStep: View {
     @State private var uploadRejection: (error: AppError, export: RoomPlanCaptureExport, session: ScanSessionResponse, idempotencyKey: String, bodyJSON: Data)?
     @State private var isRetryingUpload = false
     @State private var capturedLocation: CaptureLocation?
+    @State private var capturedHeadingDeg: Double?
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
     @State private var isGuessToggleCompact = false
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
     private let locationProvider = LocationProvider()
+    private let headingProvider = HeadingProvider()
 
     private var debugFakeCaptureActive: Bool {
         #if DEBUG
@@ -229,7 +231,7 @@ private struct RoomCaptureFlowStep: View {
                     onUsePartial: {
                         let room = coordinator.capturedRoom!
                         isUploadingPartialCapture = true
-                        Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport, walkPath: coordinator.capturedRoomWalkPath)) }
+                        Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport, walkPath: coordinator.capturedRoomWalkPath, headingDeg: capturedHeadingDeg)) }
                     },
                     onDiscard: {
                         onError(AppError(site: .captureFailed, underlying: PlainError(message: partialCaptureFailureMessage)), existingSession)
@@ -366,6 +368,7 @@ private struct RoomCaptureFlowStep: View {
                 .onAppear {
                     coordinator.start()
                     Task { capturedLocation = await locationProvider.currentLocation() }
+                    Task { capturedHeadingDeg = await headingProvider.currentHeadingDeg() }
                 }
                 .onChange(of: coordinator.state) { _, state in
                     handle(state)
@@ -383,7 +386,7 @@ private struct RoomCaptureFlowStep: View {
         switch state {
         case .finished(roomAvailable: true):
             guard let room = coordinator.capturedRoom else { return }
-            Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport, walkPath: coordinator.capturedRoomWalkPath)) }
+            Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport, walkPath: coordinator.capturedRoomWalkPath, headingDeg: capturedHeadingDeg)) }
         case .finished(roomAvailable: false):
             onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
         case .failed(let message, let partialRoomAvailable):
@@ -443,6 +446,7 @@ private struct RoomCaptureFlowStep: View {
         do {
             let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
             PendingUploadStore.clear()
+            ScanHistoryStore.shared.updateRoomSummary(sessionId: session.id, summary: RoomSummary.text(for: floorPlan.rooms))
             justCaptured = (session, floorPlan)
         } catch {
             uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)
@@ -456,6 +460,7 @@ private struct RoomCaptureFlowStep: View {
         do {
             let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
             PendingUploadStore.clear()
+            ScanHistoryStore.shared.updateRoomSummary(sessionId: session.id, summary: RoomSummary.text(for: floorPlan.rooms))
             justCaptured = (session, floorPlan)
         } catch {
             uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)
@@ -566,6 +571,8 @@ struct AttachmentsScreen: View {
     @State private var floorPlanPreviewImage: UIImage?
     @State private var isLoadingFloorPlanPreview = false
     @State private var floorPlanPreviewFailed = false
+    @State private var fullScreenPreviewURL: URL?
+    @State private var showFullScreenPreview = false
     @State private var noteDrafts: [String: String] = [:]
     @State private var initialNoteDrafts: [String: String] = [:]
     @State private var currentNoteIds: [String: String] = [:]
@@ -614,6 +621,11 @@ struct AttachmentsScreen: View {
                         .frame(maxHeight: 180)
                         .frame(maxWidth: .infinity)
                         .clipShape(RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius, style: .continuous))
+                        .contentShape(Rectangle())
+                        .onTapGesture { openFullScreenPreview() }
+                    Text("Tap to view full screen")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 } else if isLoadingFloorPlanPreview {
                     VStack(spacing: 8) {
                         ProgressView()
@@ -670,7 +682,7 @@ struct AttachmentsScreen: View {
             }
 
             if !current.rooms.isEmpty {
-                Text("Notes and photos are evidence for each room — condition, damage, or anything worth flagging. They stay attached here and in History; note text also prints on the PDF/PNG export.")
+                Text("Notes and photos are evidence for each room — condition, damage, or anything worth flagging. They stay attached here and in History; note text and attached photos both print on the PDF export.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -788,6 +800,12 @@ struct AttachmentsScreen: View {
         .onAppear {
             FloorPlanImageCache.shared.prefetch(sessionId: session.id, accessToken: session.accessToken, unit: exportUnit, client: client)
         }
+        .fullScreenCover(isPresented: $showFullScreenPreview) {
+            if let fullScreenPreviewURL {
+                QuickLookPreview(url: fullScreenPreviewURL)
+                    .ignoresSafeArea()
+            }
+        }
         .confirmationDialog(
             "Add to \(current.rooms.first(where: { $0.roomId == pendingPhotoRoomId })?.label ?? "room")",
             isPresented: $showPhotoActionDialog,
@@ -869,6 +887,7 @@ struct AttachmentsScreen: View {
         do {
             current = try await client.updateRoomType(sessionId: session.id, accessToken: session.accessToken, roomId: roomId, roomType: newValue)
             appError = nil
+            await refreshFloorPlanPreviewAndHistory()
         } catch {
             appError = AppError(site: .roomTypeUpdate, underlying: error)
         }
@@ -881,9 +900,28 @@ struct AttachmentsScreen: View {
         do {
             current = try await client.updateRoomLabel(sessionId: session.id, accessToken: session.accessToken, roomId: roomId, label: newLabel)
             appError = nil
+            await refreshFloorPlanPreviewAndHistory()
         } catch {
             appError = AppError(site: .roomLabelUpdate, underlying: error)
         }
+    }
+
+    @MainActor
+    private func openFullScreenPreview() {
+        guard let data = FloorPlanImageCache.shared.cachedData(sessionId: session.id, unit: exportUnit) else { return }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-preview-\(session.id).png")
+        try? data.write(to: url)
+        fullScreenPreviewURL = url
+        showFullScreenPreview = true
+    }
+
+    @MainActor
+    private func refreshFloorPlanPreviewAndHistory() async {
+        FloorPlanImageCache.shared.invalidate(sessionId: session.id)
+        floorPlanPreviewImage = nil
+        floorPlanPreviewFailed = false
+        await loadFloorPlanPreview()
+        ScanHistoryStore.shared.updateRoomSummary(sessionId: session.id, summary: RoomSummary.text(for: current.rooms))
     }
 
     @MainActor
@@ -976,11 +1014,15 @@ struct AttachmentsScreen: View {
     @discardableResult
     private func uploadSelectedPhoto(_ item: PhotosPickerItem, roomId: String?) async -> Bool {
         do {
-            guard let data = try await item.loadTransferable(type: Data.self) else {
+            guard let rawData = try await item.loadTransferable(type: Data.self) else {
                 appError = AppError(site: .photoUpload, underlying: nil)
                 return false
             }
-            return await uploadPhotoData(data, roomId: roomId)
+            guard let image = UIImage(data: rawData), let jpegData = image.jpegData(compressionQuality: 0.9) else {
+                appError = AppError(site: .photoUpload, underlying: nil)
+                return false
+            }
+            return await uploadPhotoData(jpegData, roomId: roomId)
         } catch {
             appError = AppError(site: .photoUpload, underlying: error)
             return false
@@ -1346,6 +1388,8 @@ private struct ResultSummaryView: View {
     @State private var floorPlanImageURL: URL?
     @State private var floorPlanPDFURL: URL?
     @State private var appError: AppError?
+    @State private var fullScreenPreviewURL: URL?
+    @State private var showFullScreenPreview = false
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
 
     private var exportUnit: MeasurementUnit {
@@ -1402,6 +1446,16 @@ private struct ResultSummaryView: View {
                             .frame(maxHeight: 220)
                             .frame(maxWidth: .infinity)
                             .clipShape(RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius, style: .continuous))
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                if let floorPlanImageURL {
+                                    fullScreenPreviewURL = floorPlanImageURL
+                                    showFullScreenPreview = true
+                                }
+                            }
+                        Text("Tap to view full screen")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
 
                         HStack(spacing: 10) {
                             if let floorPlanImageURL {
@@ -1431,21 +1485,30 @@ private struct ResultSummaryView: View {
                         }
                     }
 
-                    Button {
-                        Task { await loadPDF() }
-                    } label: {
-                        if isFetchingPDF {
-                            ProgressView()
-                        } else {
-                            Text("Download PDF")
+                    HStack(spacing: 10) {
+                        Button {
+                            Task {
+                                if floorPlanPDFURL == nil { await loadPDF() }
+                                if let floorPlanPDFURL {
+                                    fullScreenPreviewURL = floorPlanPDFURL
+                                    showFullScreenPreview = true
+                                }
+                            }
+                        } label: {
+                            if isFetchingPDF {
+                                ProgressView()
+                            } else {
+                                Text("View PDF")
+                            }
                         }
-                    }
-                    .buttonStyle(.vuuroSecondary)
-                    .disabled(isFetchingPDF)
+                        .buttonStyle(.vuuroSecondary)
+                        .disabled(isFetchingPDF)
 
-                    if let floorPlanPDFURL {
-                        ShareLink(item: floorPlanPDFURL) {
-                            Label("Save PDF", systemImage: "square.and.arrow.up")
+                        if let floorPlanPDFURL {
+                            ShareLink(item: floorPlanPDFURL) {
+                                Label("Save PDF", systemImage: "square.and.arrow.up")
+                            }
+                            .buttonStyle(.vuuroSecondary)
                         }
                     }
 
@@ -1479,6 +1542,12 @@ private struct ResultSummaryView: View {
         }
         .background(VuuroColor.surfaceMuted)
         .navigationTitle("Scan result")
+        .fullScreenCover(isPresented: $showFullScreenPreview) {
+            if let fullScreenPreviewURL {
+                QuickLookPreview(url: fullScreenPreviewURL)
+                    .ignoresSafeArea()
+            }
+        }
     }
 
     @MainActor

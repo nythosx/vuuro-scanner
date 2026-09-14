@@ -20,6 +20,7 @@ struct MultiRoomCaptureFlowView: View {
     @State private var showCapturedRoomsList = false
     @State private var showDiscardConfirmation = false
     @State private var capturedLocation: CaptureLocation?
+    @State private var capturedHeadingDeg: Double?
     @State private var preUploadedSession: (session: ScanSessionResponse, floorPlan: FloorPlan)?
     @State private var isRoomsButtonCompact = false
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
@@ -28,6 +29,7 @@ struct MultiRoomCaptureFlowView: View {
 
     private let client = ScanServiceClient()
     private let locationProvider = LocationProvider()
+    private let headingProvider = HeadingProvider()
 
     private var debugFakeCaptureActive: Bool {
         #if DEBUG
@@ -232,6 +234,7 @@ struct MultiRoomCaptureFlowView: View {
                 .onAppear {
                     coordinator.start()
                     Task { capturedLocation = await locationProvider.currentLocation() }
+                    Task { capturedHeadingDeg = await headingProvider.currentHeadingDeg() }
                 }
                 .onChange(of: coordinator.state) { _, state in
                     handle(state)
@@ -332,7 +335,8 @@ struct MultiRoomCaptureFlowView: View {
             CapturedRoomExporter.export(
                 coordinator.capturedRooms[index],
                 roomTypeConfirmation: coordinator.roomTypeConfirmations[index],
-                walkPath: coordinator.roomWalkPaths.indices.contains(index) ? coordinator.roomWalkPaths[index] : nil
+                walkPath: coordinator.roomWalkPaths.indices.contains(index) ? coordinator.roomWalkPaths[index] : nil,
+                headingDeg: capturedHeadingDeg
             )
         }
         guard let result = await submitExports(exports) else { return }
@@ -344,7 +348,7 @@ struct MultiRoomCaptureFlowView: View {
     private func submitFused(_ structure: CapturedStructure) async {
         isFinishingUnit = false
         guard let preUploadedSession else { return }
-        let exports = CapturedStructureExporter.export(structure, roomTypeConfirmationsByIdentifier: coordinator.roomTypeConfirmationsByIdentifier, roomWalkPathsByIdentifier: coordinator.roomWalkPathsByIdentifier)
+        let exports = CapturedStructureExporter.export(structure, roomTypeConfirmationsByIdentifier: coordinator.roomTypeConfirmationsByIdentifier, roomWalkPathsByIdentifier: coordinator.roomWalkPathsByIdentifier, headingDeg: capturedHeadingDeg)
         guard exports.allSatisfy({ $0.hasUsableFloorOutline }) else {
             DiagnosticsLog.shared.record("Fused structure had a degenerate floor outline in \(exports.filter { !$0.hasUsableFloorOutline }.count) of \(exports.count) room(s) — falling back to unfused per-room tiles.", category: .error)
             self.preUploadedSession = nil

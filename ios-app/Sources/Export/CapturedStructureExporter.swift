@@ -2,11 +2,11 @@
 import RoomPlan
 
 enum CapturedStructureExporter {
-    static func export(_ structure: CapturedStructure, roomTypeConfirmationsByIdentifier: [UUID: RoomTypeConfirmation] = [:], roomWalkPathsByIdentifier: [UUID: [[Double]]] = [:]) -> [RoomPlanCaptureExport] {
+    static func export(_ structure: CapturedStructure, roomTypeConfirmationsByIdentifier: [UUID: RoomTypeConfirmation] = [:], roomWalkPathsByIdentifier: [UUID: [[Double]]] = [:], headingDeg: Double? = nil) -> [RoomPlanCaptureExport] {
         structure.rooms.map { room in
             let confirmation = roomTypeConfirmationsByIdentifier[room.identifier]
             let walkPath = roomWalkPathsByIdentifier[room.identifier]
-            var export = CapturedRoomExporter.export(room, roomTypeConfirmation: confirmation, walkPath: walkPath)
+            var export = CapturedRoomExporter.export(room, roomTypeConfirmation: confirmation, walkPath: walkPath, headingDeg: headingDeg)
             export.structureOriginM = structureOriginM(for: export)
             return export
         }

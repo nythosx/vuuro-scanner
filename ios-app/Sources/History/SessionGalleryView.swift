@@ -33,7 +33,7 @@ struct SessionGalleryView: View {
                 floorPlanPreviewSection
 
                 if !isLoading, let floorPlan, !floorPlan.rooms.isEmpty {
-                    Text("Notes and photos below are per-room evidence — condition, damage, or anything worth flagging for whoever reviews this unit next. Note text prints on the PDF/PNG export; photos stay attached here and are not embedded in the export yet.")
+                    Text("Notes and photos below are per-room evidence — condition, damage, or anything worth flagging for whoever reviews this unit next. Note text and attached photos both print on the PDF export.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

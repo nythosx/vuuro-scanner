@@ -46,4 +46,10 @@ final class FloorPlanImageCache {
     func cachedData(sessionId: String, unit: MeasurementUnit) -> Data? {
         entries[key(sessionId: sessionId, unit: unit)]
     }
+
+    func invalidate(sessionId: String) {
+        let prefix = "\(sessionId)|"
+        entries = entries.filter { !$0.key.hasPrefix(prefix) }
+        inFlightTasks = inFlightTasks.filter { !$0.key.hasPrefix(prefix) }
+    }
 }
