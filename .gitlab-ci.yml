@@ -38,7 +38,8 @@ scan-service-net:
     - php tests/export_renderer_test.php
     - php tests/concurrency_test.php
     - if (Test-Path data\scan_service.sqlite) { Remove-Item -Force data\scan_service.sqlite }
-    - $env:SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX = "100"
+    - $env:SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX = "500"
+    - $env:SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_WINDOW_SECONDS = "600"
     - $env:SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_MAX = "4000"
     - $env:SCAN_SERVICE_ADMIN_API_KEY = "ci-test-admin-key"
     - $server1 = Start-Process -FilePath php -ArgumentList "-d","post_max_size=30M","-d","upload_max_filesize=26M","-d","display_errors=0","-S","127.0.0.1:8089","public/index.php" -WindowStyle Hidden -PassThru
