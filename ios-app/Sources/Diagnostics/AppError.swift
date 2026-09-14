@@ -78,6 +78,8 @@ struct AppError {
                     return "NETWORK-\(nsError.code)"
                 }
                 return "NETWORK"
+            case .noFloorPlanYet:
+                return "NO-FLOORPLAN"
             }
         }
         return "ERR"
@@ -88,12 +90,18 @@ struct AppError {
     }
 
     var isLikelyRetryable: Bool {
-        guard let scanError = underlying as? ScanServiceError,
-              case .unexpectedStatus(let status, _) = scanError else { return true }
-        if status == 429 {
+        guard let scanError = underlying as? ScanServiceError else { return true }
+        switch scanError {
+        case .unexpectedStatus(let status, _):
+            if status == 429 {
+                return true
+            }
+            return !(400...499).contains(status)
+        case .transport:
             return true
+        case .noFloorPlanYet:
+            return false
         }
-        return !(400...499).contains(status)
     }
 
 

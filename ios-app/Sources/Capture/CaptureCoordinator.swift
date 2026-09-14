@@ -46,18 +46,20 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     func confirmRoomTypeGuess() {
         roomTypeConfirmation = liveRoomTypeGuess?.type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
-        markRoomTypeAnswered()
+        liveUpdateThrottle.markRoomTypeAnswered()
         DiagnosticsLog.shared.record("Room type confirmed: \(liveRoomTypeGuess?.type ?? "nil")", category: .info)
     }
 
     func rejectRoomTypeGuess(correctedTo type: String?) {
         roomTypeConfirmation = type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
-        markRoomTypeAnswered()
+        liveUpdateThrottle.markRoomTypeAnswered()
         DiagnosticsLog.shared.record("Room type corrected: guess=\(liveRoomTypeGuess?.type ?? "nil") -> \(type ?? "nil")", category: .info)
     }
 
     private var captureSession: RoomCaptureSession?
+
+    private let liveUpdateThrottle = RoomLiveUpdateThrottle()
 
     func attach(to session: RoomCaptureSession) {
         captureSession = session
@@ -71,6 +73,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
         roomTypeConfirmation = nil
         roomTypeConfirmedForGuessType = nil
         isApproachingSizeLimit = false
+        liveUpdateThrottle.resetRoomTypeAnswered()
         startWalkPathTracking()
 
         let configuration = RoomCaptureSession.Configuration()
@@ -131,41 +134,15 @@ extension CaptureCoordinator: RoomCaptureSessionDelegate {
         }
     }
 
-    private let liveUpdateThrottleLock = NSLock()
-    nonisolated(unsafe) private var lastLiveUpdateAt: Date = .distantPast
-    nonisolated(unsafe) private var isRoomTypeAnswered = false
-    private static let liveUpdateThrottleInterval: TimeInterval = 0.15
-
-    nonisolated private func shouldProcessLiveUpdate() -> Bool {
-        liveUpdateThrottleLock.lock()
-        defer { liveUpdateThrottleLock.unlock() }
-        let now = Date()
-        guard now.timeIntervalSince(lastLiveUpdateAt) >= Self.liveUpdateThrottleInterval else { return false }
-        lastLiveUpdateAt = now
-        return true
-    }
-
-    nonisolated private func roomTypeAlreadyAnswered() -> Bool {
-        liveUpdateThrottleLock.lock()
-        defer { liveUpdateThrottleLock.unlock() }
-        return isRoomTypeAnswered
-    }
-
-    private func markRoomTypeAnswered() {
-        liveUpdateThrottleLock.lock()
-        isRoomTypeAnswered = true
-        liveUpdateThrottleLock.unlock()
-    }
-
     nonisolated func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
-        guard shouldProcessLiveUpdate() else { return }
+        guard liveUpdateThrottle.shouldProcessUpdate() else { return }
         let exceedsSizeLimit = RoomSizeGuard.exceedsPracticalLimit(room)
-        let guess = (RoomTypeGuessSettings.isEnabled && !roomTypeAlreadyAnswered()) ? RoomTypeClassifier.guess(for: room) : nil
+        let guess = RoomTypeGuessSettings.isEnabled ? RoomTypeClassifier.guess(for: room) : nil
         Task { @MainActor in
             if self.isApproachingSizeLimit != exceedsSizeLimit {
                 self.isApproachingSizeLimit = exceedsSizeLimit
             }
-            if let guess, self.liveRoomTypeGuess?.type != guess.type {
+            if let guess, !self.liveUpdateThrottle.isRoomTypeAnswered(), self.liveRoomTypeGuess?.type != guess.type {
                 self.liveRoomTypeGuess = guess
             }
         }
