@@ -175,8 +175,6 @@ struct VuuroIconButtonStyle: ButtonStyle {
     }
 }
 
-/// Matches vuuro.com's card treatment: white surface, faint border, soft
-/// diffuse shadow, 8pt radius.
 struct VuuroCardBackground: ViewModifier {
     func body(content: Content) -> some View {
         content

@@ -253,9 +253,10 @@ x_check('the per-room tile sheet contains the window marker color as real pixels
 
 echo "\n== Room-type coloring, legend, and label text ==\n";
 
-$bedroomFill = [199, 194, 224];
-$bathroomFill = [214, 224, 194];
-$kitchenFill = [199, 236, 239];
+$bedroomFill = [236, 196, 134];
+$bathroomFill = [212, 226, 240];
+$kitchenFill = [212, 226, 240];
+$livingFill = [242, 216, 176];
 
 $roomTypedPlan = build_floor_plan([
     build_room_with_outline('Room A', $squareOutline, [0.0, 0.0], [], null, null, ['guess' => 'bedroom', 'guess_source' => 'roomplan_section', 'confirmed' => 'bedroom']),
@@ -265,7 +266,7 @@ $roomTypedPng = $imageRenderer->render($roomTypedPlan);
 x_check('bedroom fill color actually appears in the rendered PNG', png_contains_color($roomTypedPng, ...$bedroomFill));
 x_check('bathroom fill color actually appears in the rendered PNG', png_contains_color($roomTypedPng, ...$bathroomFill));
 x_check('bedroom and bathroom do not share the same fill color', $bedroomFill !== $bathroomFill);
-x_check('kitchen fill color does NOT appear when no room is a kitchen', !png_contains_color($roomTypedPng, ...$kitchenFill));
+x_check('living-room fill color does NOT appear when no room is a living/dining/office room', !png_contains_color($roomTypedPng, ...$livingFill));
 
 $untypedPlan = build_floor_plan([
     build_room_with_outline('Room A', $squareOutline, [0.0, 0.0]),
@@ -433,15 +434,16 @@ x_check('door/window drawing adds real bytes over the same plan with no openings
 echo "\n== FloorPlanSvgRenderer: room-type fill colors ==\n";
 
 $roomTypedSvg = $svgRenderer->render($roomTypedPlan);
-x_check('bedroom fill color appears in the rendered SVG', str_contains($roomTypedSvg, '#ecc98d'));
-x_check('bathroom/kitchen fill color appears in the rendered SVG', str_contains($roomTypedSvg, '#d3e3f1'));
+x_check('bedroom fill color appears in the rendered SVG', str_contains($roomTypedSvg, '#ecc486'));
+x_check('bathroom/kitchen fill color appears in the rendered SVG', str_contains($roomTypedSvg, '#d4e2f0'));
 x_check('the room-type legend lists both types', str_contains($roomTypedSvg, 'Bedroom') && str_contains($roomTypedSvg, 'Bathroom'));
 
 echo "\n== FloorPlanSvgRenderer: fusion collides rooms to close small real-world gaps (no fill hack) ==\n";
 
 function svg_room_fill_polygons(string $svg): array
 {
-    preg_match_all('/<polygon points="([^"]+)" fill="#[0-9a-f]{6}"\/>/', $svg, $m);
+    preg_match('/<g id="room-fills">(.*?)<\/g>/s', $svg, $group);
+    preg_match_all('/<polygon points="([^"]+)" fill="#[0-9a-f]{6}"\/>/', $group[1] ?? '', $m);
     $polys = [];
     foreach ($m[1] as $pointsStr) {
         $pts = [];
@@ -559,6 +561,110 @@ $labeledSvg = $svgRenderer->render($twoRoomPlan, label: 'Prepared for Acme Renta
 x_check('SVG includes the caller-supplied label line', str_contains($labeledSvg, 'Prepared for Acme Rentals'));
 $unlabeledSvg = $svgRenderer->render($twoRoomPlan);
 x_check('SVG omits the label line entirely when none is given', !str_contains($unlabeledSvg, 'Prepared for'));
+
+echo "\n== RoomFusionSolver: rotation drift between rooms (translation alone cannot fix this) ==\n";
+
+function rotate_point(float $x, float $z, float $thetaRad): array
+{
+    $cos = cos($thetaRad);
+    $sin = sin($thetaRad);
+    return [$x * $cos - $z * $sin, $x * $sin + $z * $cos];
+}
+
+function build_rotation_drift_rooms(float $driftDeg): array
+{
+    $baseOutline = [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]];
+    $thetaRad = deg2rad($driftDeg);
+    $roomBOutline = array_map(fn (array $p) => rotate_point($p[0], $p[1], $thetaRad), $baseOutline);
+    return [
+        build_room_with_outline('Room A', $baseOutline, [0.0, 0.0]),
+        build_room_with_outline('Room B', $roomBOutline, [4.0, 0.0]),
+    ];
+}
+
+[$roomA, $roomB] = build_rotation_drift_rooms(6.0);
+$rotationPlan = build_floor_plan([$roomA, $roomB]);
+$fusion = \VuuroScan\Export\RoomFusionSolver::solve($rotationPlan['rooms']);
+x_check('no room is flagged as overlapping just because it carries a rotation drift', $fusion['overlapping'] === []);
+
+$poseA = $fusion['poses'][0];
+$poseB = $fusion['poses'][1];
+[$roomBNearLocalX, $roomBNearLocalZ] = $roomB['outline_m'][0];
+[$roomBFarLocalX, $roomBFarLocalZ] = $roomB['outline_m'][3];
+[$sharedNearX, $sharedNearZ] = \VuuroScan\Export\RoomFusionSolver::transformPoint($poseA, 4.0, 0.0);
+[$driftedNearX, $driftedNearZ] = \VuuroScan\Export\RoomFusionSolver::transformPoint($poseB, $roomBNearLocalX, $roomBNearLocalZ);
+[$sharedFarX, $sharedFarZ] = \VuuroScan\Export\RoomFusionSolver::transformPoint($poseA, 4.0, 3.0);
+[$driftedFarX, $driftedFarZ] = \VuuroScan\Export\RoomFusionSolver::transformPoint($poseB, $roomBFarLocalX, $roomBFarLocalZ);
+
+$nearGap = sqrt(($sharedNearX - $driftedNearX) ** 2 + ($sharedNearZ - $driftedNearZ) ** 2);
+$farGap = sqrt(($sharedFarX - $driftedFarX) ** 2 + ($sharedFarZ - $driftedFarZ) ** 2);
+
+x_check(
+    'the near end of the shared wall is closed after solving',
+    $nearGap < 0.02,
+    "near-end gap is {$nearGap}m"
+);
+x_check(
+    'the far end of the shared wall is ALSO closed — a translation-only fix would leave this end open',
+    $farGap < 0.02,
+    "far-end gap is {$farGap}m"
+);
+x_check(
+    'the solver actually rotated Room B to correct the drift, not just translated it',
+    abs($poseB['rotationRad']) > 0.01,
+    'rotationRad = ' . $poseB['rotationRad']
+);
+
+[, $roomBNoFix] = build_rotation_drift_rooms(6.0);
+$rawFarGap = sqrt(
+    (($roomA['outline_m'][2][0] + 0.0) - ($roomBNoFix['outline_m'][3][0] + 4.0)) ** 2
+    + (($roomA['outline_m'][2][1] + 0.0) - ($roomBNoFix['outline_m'][3][1] + 0.0)) ** 2
+);
+x_check(
+    'setup sanity: before any correction, the far end really was open (proves this fixture actually exercises rotation, not a no-op)',
+    $rawFarGap > 0.2,
+    "raw far-end gap was only {$rawFarGap}m"
+);
+
+$rotationSvg = $svgRenderer->render($rotationPlan);
+$rotationPolys = svg_room_fill_polygons($rotationSvg);
+x_check('setup: both rotation-drift room polygons were found in the rendered SVG', count($rotationPolys) === 2);
+if (count($rotationPolys) === 2) {
+    [$svgNearAx, $svgNearAy] = $rotationPolys[0][1];
+    [$svgNearBx, $svgNearBy] = $rotationPolys[1][0];
+    [$svgFarAx, $svgFarAy] = $rotationPolys[0][2];
+    [$svgFarBx, $svgFarBy] = $rotationPolys[1][3];
+    x_check(
+        'rendered SVG: near corner of the rotated seam lands on the same pixel',
+        abs($svgNearAx - $svgNearBx) < 0.75 && abs($svgNearAy - $svgNearBy) < 0.75,
+        "A=($svgNearAx,$svgNearAy) B=($svgNearBx,$svgNearBy)"
+    );
+    x_check(
+        'rendered SVG: far corner of the rotated seam ALSO lands on the same pixel',
+        abs($svgFarAx - $svgFarBx) < 0.75 && abs($svgFarAy - $svgFarBy) < 0.75,
+        "A=($svgFarAx,$svgFarAy) B=($svgFarBx,$svgFarBy)"
+    );
+}
+
+$imageRotationBytes = $imageRenderer->render($rotationPlan);
+x_check('the PNG export also renders the same rotation-drift session without throwing', str_contains($imageRotationBytes, "\x89PNG"));
+
+echo "\n== RoomFusionSolver: three rooms in an L-shape, one drifted, anchor stays put ==\n";
+
+$lShapeA = build_room_with_outline('Anchor Room', [[0.0, 0.0], [5.0, 0.0], [5.0, 4.0], [0.0, 4.0]], [0.0, 0.0]);
+$lShapeA['floor_area_m2'] = 20.0;
+$driftedOutlineC = array_map(fn (array $p) => rotate_point($p[0], $p[1], deg2rad(4.0)), [[0.0, 0.0], [3.0, 0.0], [3.0, 3.0], [0.0, 3.0]]);
+$lShapeC = build_room_with_outline('Drifted Room', $driftedOutlineC, [5.0, 0.0]);
+$lShapeC['floor_area_m2'] = 9.0;
+$lShapePlan = build_floor_plan([$lShapeA, $lShapeC]);
+$lShapeFusion = \VuuroScan\Export\RoomFusionSolver::solve($lShapePlan['rooms']);
+x_check(
+    'the larger room is chosen as the fixed anchor (zero correction), not whichever room happens to be listed first as drifted',
+    abs($lShapeFusion['poses'][0]['rotationRad']) < 1e-9
+        && abs($lShapeFusion['poses'][0]['originX'] - 0.0) < 1e-9
+        && abs($lShapeFusion['poses'][0]['originZ'] - 0.0) < 1e-9
+);
+x_check('the smaller, drifted room is the one that actually gets corrected', abs($lShapeFusion['poses'][1]['rotationRad']) > 0.01);
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {

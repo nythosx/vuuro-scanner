@@ -10,15 +10,9 @@ final class FloorPlanSvgRenderer
 {
     private const PX_PER_M = 60.0;
     private const MAX_CANVAS_DIMENSION_PX = 4000;
-    private const WALL_THICKNESS_M = 0.12;
     private const DOOR_LEAF_M = 0.8;
     private const WINDOW_WIDTH_M = 1.0;
     private const OPENING_WIDTH_M = 0.7;
-    private const SEAM_MIN_GAP_M = 0.01;
-    private const SEAM_MAX_GAP_M = 0.5;
-    private const SEAM_MIN_OVERLAP_M = 0.2;
-    private const SEAM_PARALLEL_TOLERANCE = 0.05;
-    private const SEAM_OFFSET_CONSISTENCY_M = 0.05;
 
     private const TILE_PADDING = 24;
     private const LABEL_HEIGHT = 60;
@@ -43,23 +37,6 @@ final class FloorPlanSvgRenderer
     private const FONT = 'Arial, Helvetica, sans-serif';
     private const FOOTER_TEXT = 'Indicative measurements — NEN2580-inspired, not certified. No rights can be derived from this plan.';
 
-    private const ROOM_TYPE_FILL = [
-        'kitchen' => '#d3e3f1',
-        'bathroom' => '#d3e3f1',
-        'laundry_room' => '#d3e3f1',
-        'bedroom' => '#ecc98d',
-        'guest_room' => '#ecc98d',
-        'living_room' => '#f3dab3',
-        'dining_room' => '#f3dab3',
-        'office' => '#f3dab3',
-        'hallway' => '#fbc97a',
-        'garage' => '#cfcfcf',
-        'storage_room' => '#cfcfcf',
-        'basement' => '#cfcfcf',
-        'attic' => '#cfcfcf',
-        'walk_in_closet' => '#ffffff',
-        'balcony' => '#ffffff',
-    ];
     private const FALLBACK_FILLS = ['#d7e7f4', '#dff0d8', '#fae9cd', '#ede0f0', '#d8f0ee'];
 
     private static function roomHeadingDeg(array $room): ?float
@@ -83,14 +60,8 @@ final class FloorPlanSvgRenderer
 
     private function roomFill(array $room, int $fallbackIndex): string
     {
-        $type = self::roomTypeValue($room);
-        if ($type !== null) {
-            $normalized = strtolower(str_replace([' ', '-'], '_', $type));
-            if (isset(self::ROOM_TYPE_FILL[$normalized])) {
-                return self::ROOM_TYPE_FILL[$normalized];
-            }
-        }
-        return self::FALLBACK_FILLS[$fallbackIndex % count(self::FALLBACK_FILLS)];
+        $fill = FloorPlanPalette::roomFillFor(self::roomTypeValue($room));
+        return $fill ?? self::FALLBACK_FILLS[$fallbackIndex % count(self::FALLBACK_FILLS)];
     }
 
     private function displayLabel(array $room): string
@@ -148,6 +119,9 @@ final class FloorPlanSvgRenderer
   <marker id="ar-e" markerWidth="7" markerHeight="7" refX="6.5" refY="3.5" orient="auto">
     <path d="M 0 0.6 L 6.5 3.5 L 0 6.4 Z" fill="{$this->esc(self::TEXT)}"/>
   </marker>
+  <filter id="wall-shadow" x="-30%" y="-30%" width="160%" height="160%">
+    <feDropShadow dx="0.8" dy="1.2" stdDeviation="1" flood-color="#000000" flood-opacity="0.35"/>
+  </filter>
 </defs>
 SVG;
     }
@@ -253,8 +227,7 @@ SVG;
         }
         $out = '<g id="legend" font-size="10">';
         foreach ($typesPresent as $type) {
-            $normalized = strtolower(str_replace([' ', '-'], '_', $type));
-            $fill = self::ROOM_TYPE_FILL[$normalized] ?? self::FALLBACK_FILLS[0];
+            $fill = FloorPlanPalette::roomFillFor($type) ?? self::FALLBACK_FILLS[0];
             $labelText = RoomType::labelFor($type);
             $out .= '<rect x="' . $x . '" y="' . ($y - 9) . '" width="12" height="12" fill="' . $fill . '" stroke="' . self::WALL . '" stroke-width="0.75"/>';
             $out .= '<text x="' . ($x + 17) . '" y="' . $y . '" fill="' . self::TEXT . '">' . $this->esc($labelText) . '</text>';
@@ -270,6 +243,7 @@ SVG;
         $bestDist = INF;
         $wallDx = 1.0;
         $wallDz = 0.0;
+        $bestEdgeIndex = 0;
         for ($i = 0; $i < $n; $i++) {
             [$ax, $az] = $outlineM[$i];
             [$bx, $bz] = $outlineM[($i + 1) % $n];
@@ -288,6 +262,7 @@ SVG;
                 $edgeLength = sqrt($lengthSq);
                 $wallDx = $edgeDx / $edgeLength;
                 $wallDz = $edgeDz / $edgeLength;
+                $bestEdgeIndex = $i;
             }
         }
         $normalDx = -$wallDz;
@@ -298,7 +273,14 @@ SVG;
             $normalDx = -$normalDx;
             $normalDz = -$normalDz;
         }
-        return [$wallDx, $wallDz, $normalDx, $normalDz];
+        return [$wallDx, $wallDz, $normalDx, $normalDz, $bestEdgeIndex];
+    }
+
+    private function edgeThicknessM(array $roomEdgeTiers, int $edgeIndex): float
+    {
+        return isset($roomEdgeTiers[$edgeIndex])
+            ? FloorPlanPalette::INTERIOR_WALL_THICKNESS_M
+            : FloorPlanPalette::EXTERIOR_WALL_THICKNESS_M;
     }
 
     private function insetTowardCentroid(float $x, float $z, float $centroidX, float $centroidZ, float $insetM): array
@@ -312,136 +294,64 @@ SVG;
         return [$x + ($dx / $dist) * $insetM, $z + ($dz / $dist) * $insetM];
     }
 
-    private function polygonPointsSvg(array $outlineM, float $originX, float $originZ, callable $toPx): string
+    private function polygonPointsSvg(array $outlineM, array $pose, callable $toPx): string
     {
         $pts = [];
         foreach ($outlineM as [$mx, $mz]) {
-            [$px, $py] = $toPx($mx + $originX, $mz + $originZ);
+            [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $mx, $mz);
+            [$px, $py] = $toPx($wx, $wz);
             $pts[] = $this->num($px) . ',' . $this->num($py);
         }
         return implode(' ', $pts);
     }
 
-    private function roomBoundarySvg(array $outlineM, float $originX, float $originZ, callable $toPx, string $fill): string
+    private function roomFillSvg(array $outlineM, array $pose, callable $toPx, string $fill): string
     {
-        $points = $this->polygonPointsSvg($outlineM, $originX, $originZ, $toPx);
-        $strokePx = self::WALL_THICKNESS_M * self::PX_PER_M;
-        return '<polygon points="' . $points . '" fill="' . $fill . '"/>'
-            . '<polygon points="' . $points . '" fill="none" stroke="' . self::WALL . '" stroke-width="' . $this->num($strokePx) . '" stroke-linejoin="miter"/>';
+        $points = $this->polygonPointsSvg($outlineM, $pose, $toPx);
+        return '<polygon points="' . $points . '" fill="' . $fill . '"/>';
     }
 
-    private function findSeamConstraints(array $rooms, array $overlapping): array
+    private function roomWallsSvg(array $outlineM, array $pose, callable $toPx, array $roomEdgeTiers): string
     {
-        $outlines = [];
-        foreach ($rooms as $i => $room) {
-            if (in_array($i, $overlapping, true)) {
+        $n = count($outlineM);
+        $out = '';
+        for ($i = 0; $i < $n; $i++) {
+            [$ax, $az] = $outlineM[$i];
+            [$bx, $bz] = $outlineM[($i + 1) % $n];
+            $dx = $bx - $ax;
+            $dz = $bz - $az;
+            $len = sqrt($dx ** 2 + $dz ** 2);
+            if ($len < 1e-6) {
                 continue;
             }
-            [$originX, $originZ] = $room['structure_origin_m'];
-            $outline = [];
-            foreach ($room['outline_m'] as [$mx, $mz]) {
-                $outline[] = [$mx + $originX, $mz + $originZ];
-            }
-            $outlines[$i] = $outline;
-        }
-
-        $edges = [];
-        foreach ($outlines as $roomIndex => $outline) {
-            $n = count($outline);
-            for ($k = 0; $k < $n; $k++) {
-                [$ax, $az] = $outline[$k];
-                [$bx, $bz] = $outline[($k + 1) % $n];
-                $edges[] = [$roomIndex, $ax, $az, $bx, $bz];
-            }
-        }
-
-        $constraints = [];
-        $count = count($edges);
-        for ($i = 0; $i < $count; $i++) {
-            [$roomA, $a1x, $a1z, $a2x, $a2z] = $edges[$i];
-            $dax = $a2x - $a1x;
-            $daz = $a2z - $a1z;
-            $lenA = sqrt($dax ** 2 + $daz ** 2);
-            if ($lenA < 1e-6) {
-                continue;
-            }
-            $ux = $dax / $lenA;
-            $uz = $daz / $lenA;
+            $ux = $dx / $len;
+            $uz = $dz / $len;
             $nx = -$uz;
             $nz = $ux;
+            $half = $this->edgeThicknessM($roomEdgeTiers, $i) / 2;
 
-            for ($j = $i + 1; $j < $count; $j++) {
-                [$roomB, $b1x, $b1z, $b2x, $b2z] = $edges[$j];
-                if ($roomB === $roomA) {
-                    continue;
-                }
-                $dbx = $b2x - $b1x;
-                $dbz = $b2z - $b1z;
-                $lenB = sqrt($dbx ** 2 + $dbz ** 2);
-                if ($lenB < 1e-6) {
-                    continue;
-                }
-                $vx = $dbx / $lenB;
-                $vz = $dbz / $lenB;
-                $cross = $ux * $vz - $uz * $vx;
-                if (abs($cross) > self::SEAM_PARALLEL_TOLERANCE) {
-                    continue;
-                }
-
-                $distB1 = ($b1x - $a1x) * $nx + ($b1z - $a1z) * $nz;
-                $distB2 = ($b2x - $a1x) * $nx + ($b2z - $a1z) * $nz;
-                if (abs($distB1 - $distB2) > self::SEAM_OFFSET_CONSISTENCY_M) {
-                    continue;
-                }
-                $gap = ($distB1 + $distB2) / 2;
-                if (abs($gap) < self::SEAM_MIN_GAP_M || abs($gap) > self::SEAM_MAX_GAP_M) {
-                    continue;
-                }
-
-                $tB1 = ($b1x - $a1x) * $ux + ($b1z - $a1z) * $uz;
-                $tB2 = ($b2x - $a1x) * $ux + ($b2z - $a1z) * $uz;
-                $tLo = max(0.0, min($tB1, $tB2));
-                $tHi = min($lenA, max($tB1, $tB2));
-                if ($tHi - $tLo < self::SEAM_MIN_OVERLAP_M) {
-                    continue;
-                }
-
-                $constraints[] = [$roomA, $roomB, $nx, $nz, $gap];
+            $eax = $ax - $ux * $half;
+            $eaz = $az - $uz * $half;
+            $ebx = $bx + $ux * $half;
+            $ebz = $bz + $uz * $half;
+            $corners = [
+                [$eax - $nx * $half, $eaz - $nz * $half],
+                [$ebx - $nx * $half, $ebz - $nz * $half],
+                [$ebx + $nx * $half, $ebz + $nz * $half],
+                [$eax + $nx * $half, $eaz + $nz * $half],
+            ];
+            $pts = [];
+            foreach ($corners as [$cx, $cz]) {
+                [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $cx, $cz);
+                [$px, $py] = $toPx($wx, $wz);
+                $pts[] = $this->num($px) . ',' . $this->num($py);
             }
+            $out .= '<polygon points="' . implode(' ', $pts) . '" fill="' . self::WALL . '"/>';
         }
-        return $constraints;
+        return $out === '' ? '' : '<g filter="url(#wall-shadow)">' . $out . '</g>';
     }
 
-    private function resolveFusionOffsets(array $rooms, array $overlapping): array
-    {
-        $offsets = [];
-        foreach ($rooms as $i => $room) {
-            $offsets[$i] = [0.0, 0.0];
-        }
-
-        $constraints = $this->findSeamConstraints($rooms, $overlapping);
-        for ($pass = 0; $pass < 24; $pass++) {
-            foreach ($constraints as [$roomA, $roomB, $nx, $nz, $baseGap]) {
-                $currentGap = $baseGap
-                    + (($offsets[$roomB][0] - $offsets[$roomA][0]) * $nx + ($offsets[$roomB][1] - $offsets[$roomA][1]) * $nz);
-                $correction = $currentGap / 2;
-                $offsets[$roomA][0] += $nx * $correction;
-                $offsets[$roomA][1] += $nz * $correction;
-                $offsets[$roomB][0] -= $nx * $correction;
-                $offsets[$roomB][1] -= $nz * $correction;
-            }
-        }
-        return $offsets;
-    }
-
-    private function fusedRoomOrigin(array $room, int $roomIndex, array $seamOffsets): array
-    {
-        [$originX, $originZ] = $room['structure_origin_m'];
-        [$dx, $dz] = $seamOffsets[$roomIndex] ?? [0.0, 0.0];
-        return [$originX + $dx, $originZ + $dz];
-    }
-
-    private function wallLengthLabelsSvg(array $outlineM, float $originX, float $originZ, callable $toPx, string $unit): string
+    private function wallLengthLabelsSvg(array $outlineM, array $pose, callable $toPx, string $unit, array $roomEdgeTiers): string
     {
         $n = count($outlineM);
         if ($n === 0) {
@@ -451,6 +361,9 @@ SVG;
         $centroidZ = array_sum(array_column($outlineM, 1)) / $n;
         $out = '<g font-size="9" fill="' . self::SUBTEXT . '" text-anchor="middle">';
         for ($i = 0; $i < $n; $i++) {
+            if (isset($roomEdgeTiers[$i])) {
+                continue;
+            }
             [$ax, $az] = $outlineM[$i];
             [$bx, $bz] = $outlineM[($i + 1) % $n];
             $lengthM = sqrt(($bx - $ax) ** 2 + ($bz - $az) ** 2);
@@ -460,26 +373,41 @@ SVG;
             $midX = ($ax + $bx) / 2;
             $midZ = ($az + $bz) / 2;
             [$midX, $midZ] = $this->insetTowardCentroid($midX, $midZ, $centroidX, $centroidZ, 0.22);
-            [$px, $py] = $toPx($midX + $originX, $midZ + $originZ);
+            [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $midX, $midZ);
+            [$px, $py] = $toPx($wx, $wz);
             $out .= '<text x="' . $this->num($px) . '" y="' . $this->num($py) . '">' . $this->esc(UnitFormatter::length($lengthM, $unit)) . '</text>';
         }
         $out .= '</g>';
         return $out;
     }
 
-    private function openingsSvg(array $room, float $originX, float $originZ, callable $toPx, string $unit): string
+    private function jambSquaresSvg(array $pose, callable $toPx, float $mx, float $mz, float $wallDx, float $wallDz, float $half): string
+    {
+        $jamb = 3;
+        $out = '';
+        foreach ([-1, 1] as $side) {
+            $jx = $mx + $wallDx * $side * $half;
+            $jz = $mz + $wallDz * $side * $half;
+            [$jwx, $jwz] = RoomFusionSolver::transformPoint($pose, $jx, $jz);
+            [$jpx, $jpy] = $toPx($jwx, $jwz);
+            $out .= '<rect x="' . $this->num($jpx - $jamb / 2) . '" y="' . $this->num($jpy - $jamb / 2) . '" width="' . $jamb . '" height="' . $jamb . '" fill="' . self::WALL . '"/>';
+        }
+        return $out;
+    }
+
+    private function openingsSvg(array $room, array $pose, callable $toPx, string $unit, array $roomEdgeTiers, string &$labels): string
     {
         $outline = $room['outline_m'] ?? [];
         $n = count($outline);
         $centroidX = $n > 0 ? array_sum(array_column($outline, 0)) / $n : 0.0;
         $centroidZ = $n > 0 ? array_sum(array_column($outline, 1)) / $n : 0.0;
-        $wallHalfM = self::WALL_THICKNESS_M / 2;
 
         $out = '<g id="openings">';
         foreach ($room['openings'] ?? [] as $opening) {
             [$mx, $mz] = $opening['position_m'];
             $category = $opening['category'];
-            [$wallDx, $wallDz, $normalDx, $normalDz] = $this->nearestWallOrientation($outline, $mx, $mz, $centroidX, $centroidZ);
+            [$wallDx, $wallDz, $normalDx, $normalDz, $edgeIndex] = $this->nearestWallOrientation($outline, $mx, $mz, $centroidX, $centroidZ);
+            $wallHalfM = $this->edgeThicknessM($roomEdgeTiers, $edgeIndex) / 2;
 
             $widthM = match ($category) {
                 'door' => self::DOOR_LEAF_M,
@@ -494,34 +422,42 @@ SVG;
             $corners = [$corner(-1, -1), $corner(1, -1), $corner(1, 1), $corner(-1, 1)];
             $pts = [];
             foreach ($corners as [$cx, $cz]) {
-                [$px, $py] = $toPx($cx + $originX, $cz + $originZ);
+                [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $cx, $cz);
+                [$px, $py] = $toPx($wx, $wz);
                 $pts[] = $this->num($px) . ',' . $this->num($py);
             }
             $out .= '<polygon points="' . implode(' ', $pts) . '" fill="' . self::OPENING_FILL . '"/>';
 
-            [$pivotPx, $pivotPy] = $toPx($mx + $originX, $mz + $originZ);
-
             if ($category === 'door') {
-                $tipX = $mx + $wallDx * $widthM;
-                $tipZ = $mz + $wallDz * $widthM;
-                $swingX = $mx + $normalDx * $widthM;
-                $swingZ = $mz + $normalDz * $widthM;
-                [$tipPx, $tipPy] = $toPx($tipX + $originX, $tipZ + $originZ);
-                [$swingPx, $swingPy] = $toPx($swingX + $originX, $swingZ + $originZ);
+                $hingeX = $mx - $wallDx * $half;
+                $hingeZ = $mz - $wallDz * $half;
+                $tipX = $hingeX + $wallDx * $widthM;
+                $tipZ = $hingeZ + $wallDz * $widthM;
+                $swingX = $hingeX + $normalDx * $widthM;
+                $swingZ = $hingeZ + $normalDz * $widthM;
+                [$hingeWx, $hingeWz] = RoomFusionSolver::transformPoint($pose, $hingeX, $hingeZ);
+                [$hingePx, $hingePy] = $toPx($hingeWx, $hingeWz);
+                [$tipWx, $tipWz] = RoomFusionSolver::transformPoint($pose, $tipX, $tipZ);
+                [$tipPx, $tipPy] = $toPx($tipWx, $tipWz);
+                [$swingWx, $swingWz] = RoomFusionSolver::transformPoint($pose, $swingX, $swingZ);
+                [$swingPx, $swingPy] = $toPx($swingWx, $swingWz);
                 $radiusPx = $widthM * self::PX_PER_M;
-                $cross = ($tipX - $mx) * ($swingZ - $mz) - ($tipZ - $mz) * ($swingX - $mx);
+                $cross = ($tipX - $hingeX) * ($swingZ - $hingeZ) - ($tipZ - $hingeZ) * ($swingX - $hingeX);
                 $sweep = $cross > 0 ? 1 : 0;
                 $out .= '<g fill="none" stroke="' . self::DOOR_COLOR . '" stroke-width="1.2">'
-                    . '<line x1="' . $this->num($pivotPx) . '" y1="' . $this->num($pivotPy) . '" x2="' . $this->num($swingPx) . '" y2="' . $this->num($swingPy) . '"/>'
+                    . '<line x1="' . $this->num($hingePx) . '" y1="' . $this->num($hingePy) . '" x2="' . $this->num($swingPx) . '" y2="' . $this->num($swingPy) . '"/>'
                     . '<path d="M ' . $this->num($tipPx) . ' ' . $this->num($tipPy) . ' A ' . $this->num($radiusPx) . ' ' . $this->num($radiusPx) . ' 0 0 ' . $sweep . ' ' . $this->num($swingPx) . ' ' . $this->num($swingPy) . '"/>'
                     . '</g>';
+                $out .= $this->jambSquaresSvg($pose, $toPx, $mx, $mz, $wallDx, $wallDz, $half);
             } elseif ($category === 'window') {
                 $endAX = $mx - $wallDx * $half;
                 $endAZ = $mz - $wallDz * $half;
                 $endBX = $mx + $wallDx * $half;
                 $endBZ = $mz + $wallDz * $half;
-                [$aPx, $aPy] = $toPx($endAX + $originX, $endAZ + $originZ);
-                [$bPx, $bPy] = $toPx($endBX + $originX, $endBZ + $originZ);
+                [$aWx, $aWz] = RoomFusionSolver::transformPoint($pose, $endAX, $endAZ);
+                [$aPx, $aPy] = $toPx($aWx, $aWz);
+                [$bWx, $bWz] = RoomFusionSolver::transformPoint($pose, $endBX, $endBZ);
+                [$bPx, $bPy] = $toPx($bWx, $bWz);
                 $tickLenPx = $wallHalfM * self::PX_PER_M;
                 $out .= '<g stroke="' . self::WINDOW_LINE . '" stroke-width="1">'
                     . '<line x1="' . $this->num($aPx) . '" y1="' . $this->num($aPy) . '" x2="' . $this->num($bPx) . '" y2="' . $this->num($bPy) . '"/>';
@@ -530,24 +466,19 @@ SVG;
                 }
                 $out .= '</g>';
             } else {
-                $jamb = 3;
-                foreach ([-1, 1] as $side) {
-                    $jx = $mx + $wallDx * $side * $half;
-                    $jz = $mz + $wallDz * $side * $half;
-                    [$jpx, $jpy] = $toPx($jx + $originX, $jz + $originZ);
-                    $out .= '<rect x="' . $this->num($jpx - $jamb / 2) . '" y="' . $this->num($jpy - $jamb / 2) . '" width="' . $jamb . '" height="' . $jamb . '" fill="' . self::WALL . '"/>';
-                }
+                $out .= $this->jambSquaresSvg($pose, $toPx, $mx, $mz, $wallDx, $wallDz, $half);
             }
 
             [$labelMx, $labelMz] = $this->insetTowardCentroid($mx, $mz, $centroidX, $centroidZ, 0.3);
-            [$labelX, $labelY] = $toPx($labelMx + $originX, $labelMz + $originZ);
-            $out .= '<text x="' . $this->num($labelX) . '" y="' . $this->num($labelY) . '" font-size="8" fill="' . self::SUBTEXT . '">' . $this->esc($category) . '</text>';
+            [$labelWx, $labelWz] = RoomFusionSolver::transformPoint($pose, $labelMx, $labelMz);
+            [$labelX, $labelY] = $toPx($labelWx, $labelWz);
+            $labels .= '<text x="' . $this->num($labelX) . '" y="' . $this->num($labelY) . '" font-size="8" fill="' . self::SUBTEXT . '">' . $this->esc($category) . '</text>';
         }
         $out .= '</g>';
         return $out;
     }
 
-    private function walkPathSvg(array $room, float $originX, float $originZ, callable $toPx): string
+    private function walkPathSvg(array $room, array $pose, callable $toPx): string
     {
         $points = $room['walk_path_m'] ?? [];
         if (count($points) < 2) {
@@ -555,10 +486,78 @@ SVG;
         }
         $pts = [];
         foreach ($points as [$mx, $mz]) {
-            [$px, $py] = $toPx($mx + $originX, $mz + $originZ);
+            [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $mx, $mz);
+            [$px, $py] = $toPx($wx, $wz);
             $pts[] = $this->num($px) . ',' . $this->num($py);
         }
         return '<polyline points="' . implode(' ', $pts) . '" fill="none" stroke="' . self::WALK_PATH . '" stroke-width="1.5" stroke-dasharray="6,5"/>';
+    }
+
+    private function dimensionChainBreakpoints(array $rooms, array $poses, int $axis): array
+    {
+        $values = [];
+        foreach ($rooms as $i => $room) {
+            $pose = $poses[$i];
+            $min = INF;
+            $max = -INF;
+            foreach ($room['outline_m'] as [$mx, $mz]) {
+                [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $mx, $mz);
+                $v = $axis === 0 ? $wx : $wz;
+                $min = min($min, $v);
+                $max = max($max, $v);
+            }
+            $values[] = $min;
+            $values[] = $max;
+        }
+        sort($values);
+        $breakpoints = [];
+        foreach ($values as $v) {
+            if ($breakpoints === [] || $v - end($breakpoints) > 0.05) {
+                $breakpoints[] = $v;
+            }
+        }
+        return $breakpoints;
+    }
+
+    private function horizontalDimensionChainSvg(array $breakpoints, float $y, callable $toPx, string $unit): string
+    {
+        $out = '<g stroke="' . self::TEXT . '" stroke-width="0.9" fill="none">';
+        $text = '';
+        for ($i = 0; $i < count($breakpoints) - 1; $i++) {
+            $spanM = $breakpoints[$i + 1] - $breakpoints[$i];
+            if ($spanM < 0.1) {
+                continue;
+            }
+            [$x1] = $toPx($breakpoints[$i], 0.0);
+            [$x2] = $toPx($breakpoints[$i + 1], 0.0);
+            $out .= '<line x1="' . $this->num($x1) . '" y1="' . $this->num($y) . '" x2="' . $this->num($x2) . '" y2="' . $this->num($y) . '" marker-start="url(#ar-s)" marker-end="url(#ar-e)"/>'
+                . '<line x1="' . $this->num($x1) . '" y1="' . $this->num($y - 5) . '" x2="' . $this->num($x1) . '" y2="' . $this->num($y + 5) . '"/>'
+                . '<line x1="' . $this->num($x2) . '" y1="' . $this->num($y - 5) . '" x2="' . $this->num($x2) . '" y2="' . $this->num($y + 5) . '"/>';
+            $text .= '<text x="' . $this->num(($x1 + $x2) / 2) . '" y="' . $this->num($y - 6) . '" font-size="10" fill="' . self::TEXT . '" text-anchor="middle">' . $this->esc(UnitFormatter::length($spanM, $unit)) . '</text>';
+        }
+        $out .= '</g>' . $text;
+        return $out;
+    }
+
+    private function verticalDimensionChainSvg(array $breakpoints, float $x, callable $toPx, string $unit): string
+    {
+        $out = '<g stroke="' . self::TEXT . '" stroke-width="0.9" fill="none">';
+        $text = '';
+        for ($i = 0; $i < count($breakpoints) - 1; $i++) {
+            $spanM = $breakpoints[$i + 1] - $breakpoints[$i];
+            if ($spanM < 0.1) {
+                continue;
+            }
+            [, $y1] = $toPx(0.0, $breakpoints[$i]);
+            [, $y2] = $toPx(0.0, $breakpoints[$i + 1]);
+            $out .= '<line x1="' . $this->num($x) . '" y1="' . $this->num($y1) . '" x2="' . $this->num($x) . '" y2="' . $this->num($y2) . '" marker-start="url(#ar-s)" marker-end="url(#ar-e)"/>'
+                . '<line x1="' . $this->num($x - 5) . '" y1="' . $this->num($y1) . '" x2="' . $this->num($x + 5) . '" y2="' . $this->num($y1) . '"/>'
+                . '<line x1="' . $this->num($x - 5) . '" y1="' . $this->num($y2) . '" x2="' . $this->num($x + 5) . '" y2="' . $this->num($y2) . '"/>';
+            $midY = ($y1 + $y2) / 2;
+            $text .= '<text x="' . $this->num($x - 6) . '" y="' . $this->num($midY) . '" font-size="10" fill="' . self::TEXT . '" text-anchor="middle" transform="rotate(-90 ' . $this->num($x - 6) . ' ' . $this->num($midY) . ')">' . $this->esc(UnitFormatter::length($spanM, $unit)) . '</text>';
+        }
+        $out .= '</g>' . $text;
+        return $out;
     }
 
     private function compassArrowSvg(float $headingDeg, float $cx, float $cy): string
@@ -571,7 +570,63 @@ SVG;
             . '</g>';
     }
 
-    private function objectsSvg(array $room, float $originX, float $originZ, callable $toPx): string
+    private function localRectPolygon(array $pose, callable $toPx, float $cx, float $cz, float $halfW, float $halfD): string
+    {
+        $corners = [[$cx - $halfW, $cz - $halfD], [$cx + $halfW, $cz - $halfD], [$cx + $halfW, $cz + $halfD], [$cx - $halfW, $cz + $halfD]];
+        $pts = [];
+        foreach ($corners as [$lx, $lz]) {
+            [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $lx, $lz);
+            [$px, $py] = $toPx($wx, $wz);
+            $pts[] = $this->num($px) . ',' . $this->num($py);
+        }
+        return implode(' ', $pts);
+    }
+
+    private function objectIconSvg(array $pose, callable $toPx, string $category, float $mx, float $mz, float $halfW, float $halfD): ?string
+    {
+        $rotationDeg = rad2deg($pose['rotationRad']);
+        [$cwx, $cwz] = RoomFusionSolver::transformPoint($pose, $mx, $mz);
+        [$cx, $cy] = $toPx($cwx, $cwz);
+        $bodyRect = fn (float $hw, float $hd, string $fill, string $stroke) => '<polygon points="' . $this->localRectPolygon($pose, $toPx, $mx, $mz, $hw, $hd) . '" fill="' . $fill . '" stroke="' . $stroke . '" stroke-width="0.9"/>';
+        $ellipse = fn (float $rw, float $rd, string $fill, string $stroke) => '<ellipse cx="' . $this->num($cx) . '" cy="' . $this->num($cy) . '" rx="' . $this->num($rw * self::PX_PER_M) . '" ry="' . $this->num($rd * self::PX_PER_M) . '" fill="' . $fill . '" stroke="' . $stroke . '" stroke-width="0.9" transform="rotate(' . $this->num($rotationDeg) . ' ' . $this->num($cx) . ' ' . $this->num($cy) . ')"/>';
+
+        return match ($category) {
+            'sink' => $bodyRect($halfW, $halfD, FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE)
+                . $ellipse(min($halfW, $halfD) * 0.6, min($halfW, $halfD) * 0.6, self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE),
+            'toilet' => $bodyRect($halfW, $halfD, FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE)
+                . $ellipse($halfW * 0.65, $halfD * 0.55, self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE),
+            'bathtub' => $bodyRect($halfW, $halfD, self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE),
+            'stove', 'oven' => $bodyRect($halfW, $halfD, FloorPlanPalette::FIXTURE_FILL, FloorPlanPalette::FIXTURE_LINE)
+                . $ellipse($halfW * 0.3, $halfD * 0.3, FloorPlanPalette::FIXTURE_LIGHT, 'none'),
+            'refrigerator', 'dishwasher', 'storage' => $bodyRect($halfW, $halfD, FloorPlanPalette::FIXTURE_FILL, FloorPlanPalette::FIXTURE_LINE),
+            'washerdryer', 'washer_dryer' => $bodyRect($halfW, $halfD, FloorPlanPalette::FIXTURE_FILL, FloorPlanPalette::FIXTURE_LINE)
+                . $ellipse(min($halfW, $halfD) * 0.55, min($halfW, $halfD) * 0.55, FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE),
+            'bed' => $bodyRect($halfW, $halfD, FloorPlanPalette::BED_FRAME_FILL, FloorPlanPalette::FIXTURE_LINE)
+                . $bodyRect($halfW, $halfD * 0.22, self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE),
+            'sofa' => $bodyRect($halfW, $halfD, FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE),
+            'table' => $bodyRect($halfW, $halfD, self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE),
+            'fireplace' => $bodyRect($halfW, $halfD, FloorPlanPalette::HEARTH_FILL, FloorPlanPalette::FIXTURE_LINE),
+            'stairs' => $this->stairsIconSvg($pose, $toPx, $mx, $mz, $halfW, $halfD),
+            default => null,
+        };
+    }
+
+    private function stairsIconSvg(array $pose, callable $toPx, float $mx, float $mz, float $halfW, float $halfD): string
+    {
+        $out = '<polygon points="' . $this->localRectPolygon($pose, $toPx, $mx, $mz, $halfW, $halfD) . '" fill="' . self::OPENING_FILL . '" stroke="' . self::WALL . '" stroke-width="0.9"/>';
+        $steps = 6;
+        for ($s = 1; $s < $steps; $s++) {
+            $lz = -$halfD + ($s / $steps) * (2 * $halfD);
+            [$ax, $az] = RoomFusionSolver::transformPoint($pose, $mx - $halfW, $mz + $lz);
+            [$bx, $bz] = RoomFusionSolver::transformPoint($pose, $mx + $halfW, $mz + $lz);
+            [$apx, $apy] = $toPx($ax, $az);
+            [$bpx, $bpy] = $toPx($bx, $bz);
+            $out .= '<line x1="' . $this->num($apx) . '" y1="' . $this->num($apy) . '" x2="' . $this->num($bpx) . '" y2="' . $this->num($bpy) . '" stroke="' . self::WALL . '" stroke-width="0.9"/>';
+        }
+        return $out;
+    }
+
+    private function objectsSvg(array $room, array $pose, callable $toPx, string &$labels): string
     {
         $out = '<g id="objects" stroke="' . self::OBJECT . '" fill="none" font-size="8">';
         foreach ($room['objects'] ?? [] as $object) {
@@ -579,10 +634,18 @@ SVG;
             $dims = $object['dimensions_m'] ?? [0.5, 0.0, 0.5];
             $halfWidth = ((float) ($dims[0] ?? 0.5)) / 2;
             $halfDepth = ((float) ($dims[2] ?? 0.5)) / 2;
-            [$x1, $y1] = $toPx($mx - $halfWidth + $originX, $mz - $halfDepth + $originZ);
-            [$x2, $y2] = $toPx($mx + $halfWidth + $originX, $mz + $halfDepth + $originZ);
+            $category = strtolower((string) $object['category']);
+            $icon = $this->objectIconSvg($pose, $toPx, $category, $mx, $mz, $halfWidth, $halfDepth);
+            if ($icon !== null) {
+                $out .= $icon;
+                continue;
+            }
+            [$w1x, $w1z] = RoomFusionSolver::transformPoint($pose, $mx - $halfWidth, $mz - $halfDepth);
+            [$x1, $y1] = $toPx($w1x, $w1z);
+            [$w2x, $w2z] = RoomFusionSolver::transformPoint($pose, $mx + $halfWidth, $mz + $halfDepth);
+            [$x2, $y2] = $toPx($w2x, $w2z);
             $out .= '<rect x="' . $this->num(min($x1, $x2)) . '" y="' . $this->num(min($y1, $y2)) . '" width="' . $this->num(abs($x2 - $x1)) . '" height="' . $this->num(abs($y2 - $y1)) . '"/>';
-            $out .= '<text x="' . $this->num(min($x1, $x2) + 2) . '" y="' . $this->num(min($y1, $y2) - 3) . '" fill="' . self::SUBTEXT . '" stroke="none">' . $this->esc($object['category']) . '</text>';
+            $labels .= '<text x="' . $this->num(min($x1, $x2) + 2) . '" y="' . $this->num(min($y1, $y2) - 3) . '" fill="' . self::SUBTEXT . '" stroke="none">' . $this->esc($object['category']) . '</text>';
         }
         $out .= '</g>';
         return $out;
@@ -647,17 +710,22 @@ SVG;
             self::TILE_PADDING + $mz * self::PX_PER_M,
         ];
         $fill = $this->roomFill($room, $fallbackIndex);
+        $identityPose = ['originX' => 0.0, 'originZ' => 0.0, 'rotationRad' => 0.0];
 
+        $labels = '';
         $out = '<rect x="0" y="0" width="' . $tile['width'] . '" height="' . ($tile['height'] - self::LABEL_HEIGHT) . '" fill="url(#grid)"/>';
-        $out .= $this->roomBoundarySvg($room['outline_m'], 0.0, 0.0, $toPx, $fill);
-        $out .= $this->wallLengthLabelsSvg($room['outline_m'], 0.0, 0.0, $toPx, $unit);
-        $out .= $this->walkPathSvg($room, 0.0, 0.0, $toPx);
-        $out .= $this->openingsSvg($room, 0.0, 0.0, $toPx, $unit);
-        $out .= $this->objectsSvg($room, 0.0, 0.0, $toPx);
+        $out .= $this->roomFillSvg($room['outline_m'], $identityPose, $toPx, $fill);
+        $out .= $this->roomWallsSvg($room['outline_m'], $identityPose, $toPx, []);
+        $out .= $this->walkPathSvg($room, $identityPose, $toPx);
+        $out .= $this->openingsSvg($room, $identityPose, $toPx, $unit, [], $labels);
+        $out .= $this->objectsSvg($room, $identityPose, $toPx, $labels);
         $headingDeg = self::roomHeadingDeg($room);
         if ($headingDeg !== null) {
             $out .= $this->compassArrowSvg($headingDeg, $tile['width'] - 26, 26);
         }
+
+        $out .= $this->wallLengthLabelsSvg($room['outline_m'], $identityPose, $toPx, $unit, []);
+        $out .= $labels;
 
         $labelY = $tile['height'] - self::LABEL_HEIGHT + 20;
         $out .= '<text x="0" y="' . $labelY . '" font-size="13" font-weight="600" fill="' . self::TEXT . '">' . $this->esc($this->displayLabel($room)) . '</text>';
@@ -680,15 +748,17 @@ SVG;
         $minZ = INF;
         $maxX = -INF;
         $maxZ = -INF;
-        $overlapping = FusionOverlapDetector::detect($rooms);
-        $seamOffsets = $this->resolveFusionOffsets($rooms, $overlapping);
+        $fusion = RoomFusionSolver::solve($rooms);
+        $overlapping = $fusion['overlapping'];
+        $poses = $fusion['poses'];
         foreach ($rooms as $i => $room) {
-            [$originX, $originZ] = $this->fusedRoomOrigin($room, $i, $seamOffsets);
+            $pose = $poses[$i];
             foreach ($room['outline_m'] as [$mx, $mz]) {
-                $minX = min($minX, $mx + $originX);
-                $minZ = min($minZ, $mz + $originZ);
-                $maxX = max($maxX, $mx + $originX);
-                $maxZ = max($maxZ, $mz + $originZ);
+                [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $mx, $mz);
+                $minX = min($minX, $wx);
+                $minZ = min($minZ, $wz);
+                $maxX = max($maxX, $wx);
+                $maxZ = max($maxZ, $wz);
             }
         }
         $notesLines = $this->buildNotesLines($rooms, $notes);
@@ -731,55 +801,63 @@ SVG;
         $body .= '<rect x="' . $originPxX . '" y="' . $originPxY . '" width="' . $drawingWidth . '" height="' . $drawingHeight . '" fill="url(#grid)"/>';
 
         $dimY = $headerHeight + 14;
-        $body .= '<g stroke="' . self::TEXT . '" stroke-width="0.9" fill="none">'
-            . '<line x1="' . $originPxX . '" y1="' . $dimY . '" x2="' . ($originPxX + $drawingWidth) . '" y2="' . $dimY . '" marker-start="url(#ar-s)" marker-end="url(#ar-e)"/>'
-            . '</g>';
-        $body .= '<text x="' . (int) ($originPxX + $drawingWidth / 2) . '" y="' . ($dimY - 6) . '" font-size="10" fill="' . self::TEXT . '" text-anchor="middle">' . $this->esc(UnitFormatter::length($maxX - $minX, $unit)) . '</text>';
+        $xBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 0);
+        $body .= $this->horizontalDimensionChainSvg($xBreakpoints, $dimY, $toPx, $unit);
 
         $dimX = self::MARGIN + 14;
-        $body .= '<g stroke="' . self::TEXT . '" stroke-width="0.9" fill="none">'
-            . '<line x1="' . $dimX . '" y1="' . $originPxY . '" x2="' . $dimX . '" y2="' . ($originPxY + $drawingHeight) . '" marker-start="url(#ar-s)" marker-end="url(#ar-e)"/>'
-            . '</g>';
-        $body .= '<text x="' . ($dimX - 6) . '" y="' . (int) ($originPxY + $drawingHeight / 2) . '" font-size="10" fill="' . self::TEXT . '" text-anchor="middle" transform="rotate(-90 ' . ($dimX - 6) . ' ' . (int) ($originPxY + $drawingHeight / 2) . ')">' . $this->esc(UnitFormatter::length($maxZ - $minZ, $unit)) . '</text>';
+        $zBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 1);
+        $body .= $this->verticalDimensionChainSvg($zBreakpoints, $dimX, $toPx, $unit);
+
+        $edgeTiers = $fusion['edgeTiers'];
+
+        $body .= '<g id="room-fills">';
+        foreach ($rooms as $i => $room) {
+            $pose = $poses[$i];
+            $fill = in_array($i, $overlapping, true) ? self::WARN_FILL : $this->roomFill($room, $i);
+            $body .= $this->roomFillSvg($room['outline_m'], $pose, $toPx, $fill);
+        }
+        $body .= '</g>';
+
+        $body .= '<g id="walls">';
+        foreach ($rooms as $i => $room) {
+            $pose = $poses[$i];
+            if (in_array($i, $overlapping, true)) {
+                $points = $this->polygonPointsSvg($room['outline_m'], $pose, $toPx);
+                $strokePx = FloorPlanPalette::EXTERIOR_WALL_THICKNESS_M * self::PX_PER_M;
+                $body .= '<polygon points="' . $points . '" fill="none" stroke="' . self::WARN_BORDER . '" stroke-width="' . $this->num($strokePx) . '"/>';
+            } else {
+                $body .= $this->roomWallsSvg($room['outline_m'], $pose, $toPx, $edgeTiers[$i] ?? []);
+            }
+        }
+        $body .= '</g>';
+
+        $labels = '';
 
         foreach ($rooms as $i => $room) {
-            [$originX, $originZ] = $this->fusedRoomOrigin($room, $i, $seamOffsets);
-            $fill = in_array($i, $overlapping, true) ? self::WARN_FILL : $this->roomFill($room, $i);
-            $strokeOverride = in_array($i, $overlapping, true) ? self::WARN_BORDER : null;
+            $body .= $this->walkPathSvg($room, $poses[$i], $toPx);
+        }
+        foreach ($rooms as $i => $room) {
+            $body .= $this->openingsSvg($room, $poses[$i], $toPx, $unit, $edgeTiers[$i] ?? [], $labels);
+            $body .= $this->objectsSvg($room, $poses[$i], $toPx, $labels);
+        }
 
-            if ($strokeOverride !== null) {
-                $points = $this->polygonPointsSvg($room['outline_m'], $originX, $originZ, $toPx);
-                $strokePx = self::WALL_THICKNESS_M * self::PX_PER_M;
-                $body .= '<polygon points="' . $points . '" fill="' . $fill . '"/>'
-                    . '<polygon points="' . $points . '" fill="none" stroke="' . $strokeOverride . '" stroke-width="' . $this->num($strokePx) . '"/>';
-            } else {
-                $body .= $this->roomBoundarySvg($room['outline_m'], $originX, $originZ, $toPx, $fill);
-            }
-            $body .= $this->wallLengthLabelsSvg($room['outline_m'], $originX, $originZ, $toPx, $unit);
-
-            [$labelX, $labelY] = $toPx($originX, $originZ);
-            $body .= '<text x="' . $this->num($labelX + 6) . '" y="' . $this->num($labelY + 16) . '" font-size="12" font-weight="600" fill="' . self::TEXT . '">' . $this->esc($this->displayLabel($room)) . '</text>';
+        foreach ($rooms as $i => $room) {
+            $pose = $poses[$i];
+            [$labelX, $labelY] = $toPx($pose['originX'], $pose['originZ']);
+            $labels .= '<text x="' . $this->num($labelX + 6) . '" y="' . $this->num($labelY + 16) . '" font-size="12" font-weight="600" fill="' . self::TEXT . '">' . $this->esc($this->displayLabel($room)) . '</text>';
             $metrics = sprintf('%s — %s perimeter', UnitFormatter::area($room['floor_area_m2'], $unit), UnitFormatter::length($room['perimeter_m'], $unit));
-            $body .= '<text x="' . $this->num($labelX + 6) . '" y="' . $this->num($labelY + 30) . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc($metrics) . '</text>';
+            $labels .= '<text x="' . $this->num($labelX + 6) . '" y="' . $this->num($labelY + 30) . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc($metrics) . '</text>';
             $lineY = $labelY + 44;
             if (($room['height_m'] ?? null) !== null) {
-                $body .= '<text x="' . $this->num($labelX + 6) . '" y="' . $this->num($lineY) . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc(sprintf('%s height', UnitFormatter::length($room['height_m'], $unit))) . '</text>';
+                $labels .= '<text x="' . $this->num($labelX + 6) . '" y="' . $this->num($lineY) . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc(sprintf('%s height', UnitFormatter::length($room['height_m'], $unit))) . '</text>';
                 $lineY += 13;
             }
             if (($room['volume_m3_indicative'] ?? null) !== null) {
-                $body .= '<text x="' . $this->num($labelX + 6) . '" y="' . $this->num($lineY) . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc(sprintf('%s indicative', UnitFormatter::volume($room['volume_m3_indicative'], $unit))) . '</text>';
+                $labels .= '<text x="' . $this->num($labelX + 6) . '" y="' . $this->num($lineY) . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc(sprintf('%s indicative', UnitFormatter::volume($room['volume_m3_indicative'], $unit))) . '</text>';
             }
         }
 
-        foreach ($rooms as $i => $room) {
-            [$originX, $originZ] = $this->fusedRoomOrigin($room, $i, $seamOffsets);
-            $body .= $this->walkPathSvg($room, $originX, $originZ, $toPx);
-        }
-        foreach ($rooms as $i => $room) {
-            [$originX, $originZ] = $this->fusedRoomOrigin($room, $i, $seamOffsets);
-            $body .= $this->openingsSvg($room, $originX, $originZ, $toPx, $unit);
-            $body .= $this->objectsSvg($room, $originX, $originZ, $toPx);
-        }
+        $body .= $labels;
 
         $fusedHeadingDeg = null;
         foreach ($rooms as $room) {

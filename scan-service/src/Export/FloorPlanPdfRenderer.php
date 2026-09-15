@@ -139,24 +139,18 @@ final class FloorPlanPdfRenderer
             } else {
                 $pages[] = $this->layoutImagePage($normalized, [['text' => 'Floor plan drawing', 'style' => 'captionBold']]);
             }
-        } catch (\Throwable $e) {
-            error_log(sprintf(
-                'FloorPlanPdfRenderer: floor plan drawing embed failed for session %s: %s',
-                $floorPlan['scan_session_id'] ?? 'unknown',
-                $e->getMessage()
-            ));
+        } catch (\Throwable) {
         }
 
         if ($photoLoader !== null) {
             foreach ($floorPlan['photos'] as $photo) {
                 $bytes = $photoLoader($photo['url']);
                 if ($bytes === null) {
-                    error_log(sprintf('FloorPlanPdfRenderer: photo %s could not be loaded from disk, skipping embed.', $photo['photo_id'] ?? 'unknown'));
                     continue;
                 }
                 $normalized = $this->toEmbeddableJpeg($bytes);
                 if ($normalized === null) {
-                    error_log(sprintf('FloorPlanPdfRenderer: photo %s loaded but could not be decoded/re-encoded, skipping embed.', $photo['photo_id'] ?? 'unknown'));
+                    error_log(sprintf('FloorPlanPdfRenderer: photo %s loaded but could not be decoded/re-encoded (unsupported format for GD — e.g. HEIC), skipping embed.', $photo['photo_id'] ?? 'unknown'));
                     continue;
                 }
                 $roomLabel = $this->roomLabelFor($floorPlan, $photo['room_id'] ?? null);

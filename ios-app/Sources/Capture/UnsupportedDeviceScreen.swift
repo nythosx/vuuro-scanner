@@ -1,13 +1,3 @@
-//
-//  UnsupportedDeviceScreen.swift
-//  VuuroScan
-//
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
-//
-//  The designed fallback path hard constraint #5 requires. Non-Pro devices
-//  must land here, never on a crash or a blank/frozen capture screen.
-//
-
 import SwiftUI
 
 struct UnsupportedDeviceScreen: View {
