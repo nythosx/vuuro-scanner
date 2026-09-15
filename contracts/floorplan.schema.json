@@ -203,13 +203,19 @@
       "description": "Attached via POST /scan-sessions/{id}/capture's sibling endpoint /photos. Always present; empty until at least one photo is attached.",
       "items": {
         "type": "object",
-        "required": ["photo_id", "url", "caption", "room_id", "taken_at"],
+        "required": ["photo_id", "url", "caption", "room_id", "taken_at", "tags"],
         "properties": {
           "photo_id": { "type": "string" },
           "url": { "type": "string", "description": "Wherever the image is hosted — either an externally-hosted URL the client already had, or, if the client uploaded real image bytes via POST /scan-sessions/{id}/photo-uploads first (added 2026-08-27), the exact URL that endpoint returned: /scan-sessions/{session_id}/photo-uploads/{filename} under this host. This field's shape didn't change, only what a URL under this host can now mean." },
           "caption": { "type": "string" },
           "room_id": { "type": ["string", "null"], "description": "Which room this photo belongs to, matching a rooms[].room_id. Null means unit-level (not tied to one room)." },
-          "taken_at": { "type": "string", "format": "date-time" }
+          "taken_at": { "type": "string", "format": "date-time" },
+          "tags": {
+            "type": "array",
+            "description": "#21: inspection purpose tags — why this specific photo was taken (damage, normal wear, confirmed present, etc.), independent of the session-wide FloorPlan.purpose. Optional, defaults to []; every photo attached before this field existed is valid with tags: []. A photo can carry more than one tag (e.g. both damage and safety_issue).",
+            "items": { "type": "string", "enum": ["damage", "wear_and_tear", "missing_item", "safety_issue", "pre_existing_condition", "maintenance_needed", "confirmed_present", "other"] },
+            "default": []
+          }
         }
       }
     },
@@ -218,13 +224,19 @@
       "description": "Attached via POST /scan-sessions/{id}/notes, edited in place via POST /scan-sessions/{id}/notes/{note_id}. Always present; empty until at least one note is attached.",
       "items": {
         "type": "object",
-        "required": ["note_id", "text", "room_id", "created_at"],
+        "required": ["note_id", "text", "room_id", "created_at", "tags"],
         "properties": {
           "note_id": { "type": "string" },
           "text": { "type": "string" },
           "room_id": { "type": ["string", "null"], "description": "Null means unit-level, matching photos[].room_id semantics." },
           "created_at": { "type": "string", "format": "date-time" },
-          "updated_at": { "type": "string", "format": "date-time", "description": "Present only after at least one edit via POST /scan-sessions/{id}/notes/{note_id}." }
+          "updated_at": { "type": "string", "format": "date-time", "description": "Present only after at least one edit via POST /scan-sessions/{id}/notes/{note_id}." },
+          "tags": {
+            "type": "array",
+            "description": "#21: inspection purpose tags — why this specific note was taken, independent of the session-wide FloorPlan.purpose. Optional, defaults to []; every note attached before this field existed is valid with tags: []. Updatable in place via POST /scan-sessions/{id}/notes/{note_id}, same as text.",
+            "items": { "type": "string", "enum": ["damage", "wear_and_tear", "missing_item", "safety_issue", "pre_existing_condition", "maintenance_needed", "confirmed_present", "other"] },
+            "default": []
+          }
         }
       }
     }

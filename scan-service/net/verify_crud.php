@@ -168,6 +168,49 @@ check('DELETE note a second time is a clean 404', $deleteNoteAgainStatus === 404
 check('UPDATE a just-deleted note_id is a clean 404, not a crash', $updateDeletedNoteStatus === 404, "got HTTP $updateDeletedNoteStatus");
 echo "\n";
 
+/* ================= #21: inspection purpose tags on photos/notes ================= */
+echo "== #21 inspection purpose tags ==\n";
+
+[$addPhotoWithTagsStatus, $afterPhotoWithTags] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", ['url' => 'https://example.com/crud-tagged.jpg', 'tags' => ['damage', 'safety_issue']], $accessToken);
+check('CREATE photo with tags succeeds (HTTP 200/201)', in_array($addPhotoWithTagsStatus, [200, 201], true), "got HTTP $addPhotoWithTagsStatus");
+check('CREATE photo carries the given tags', ($afterPhotoWithTags['photos'][0]['tags'] ?? null) === ['damage', 'safety_issue']);
+
+[$addPhotoNoTagsStatus, $afterPhotoNoTags] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", ['url' => 'https://example.com/crud-untagged.jpg'], $accessToken);
+check('CREATE photo with no tags field defaults to an empty array, not omitted or null', in_array($addPhotoNoTagsStatus, [200, 201], true) && array_key_exists('tags', $afterPhotoNoTags['photos'][1] ?? []) && $afterPhotoNoTags['photos'][1]['tags'] === []);
+
+[$addPhotoBadTagStatus, $addPhotoBadTagBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", ['url' => 'https://example.com/crud-badtag.jpg', 'tags' => ['not_a_real_tag']], $accessToken);
+check('CREATE photo with an unknown tag value is rejected (HTTP 422)', $addPhotoBadTagStatus === 422, "got HTTP $addPhotoBadTagStatus");
+check('the rejection names the specific error', ($addPhotoBadTagBody['error'] ?? null) === 'invalid_tags', 'got ' . ($addPhotoBadTagBody['error'] ?? 'null'));
+
+[$addNoteWithTagsStatus, $afterNoteWithTags] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/notes", ['text' => 'tagged note', 'tags' => ['confirmed_present']], $accessToken);
+check('CREATE note with tags succeeds (HTTP 200/201)', in_array($addNoteWithTagsStatus, [200, 201], true), "got HTTP $addNoteWithTagsStatus");
+$taggedNoteId = $afterNoteWithTags['notes'][count($afterNoteWithTags['notes']) - 1]['note_id'];
+check('CREATE note carries the given tags', end($afterNoteWithTags['notes'])['tags'] === ['confirmed_present']);
+
+[$updateNoteTagsStatus, $afterNoteTagsUpdate] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/notes/$taggedNoteId", ['text' => 'tagged note', 'tags' => ['damage', 'maintenance_needed']], $accessToken);
+check('UPDATE note tags succeeds (HTTP 200)', $updateNoteTagsStatus === 200, "got HTTP $updateNoteTagsStatus");
+$updatedTaggedNote = null;
+foreach ($afterNoteTagsUpdate['notes'] as $n) {
+    if ($n['note_id'] === $taggedNoteId) {
+        $updatedTaggedNote = $n;
+    }
+}
+check('UPDATE note replaces tags in place', $updatedTaggedNote !== null && $updatedTaggedNote['tags'] === ['damage', 'maintenance_needed']);
+
+[$updateNoteNoTagsStatus, $afterNoteNoTagsUpdate] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/notes/$taggedNoteId", ['text' => 'tagged note edited again'], $accessToken);
+check('UPDATE note with no tags field in the body succeeds (HTTP 200)', $updateNoteNoTagsStatus === 200, "got HTTP $updateNoteNoTagsStatus");
+$untouchedTaggedNote = null;
+foreach ($afterNoteNoTagsUpdate['notes'] as $n) {
+    if ($n['note_id'] === $taggedNoteId) {
+        $untouchedTaggedNote = $n;
+    }
+}
+check('UPDATE note with no tags field leaves existing tags untouched', $untouchedTaggedNote !== null && $untouchedTaggedNote['tags'] === ['damage', 'maintenance_needed']);
+
+[$updateNoteBadTagStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/notes/$taggedNoteId", ['text' => 'x', 'tags' => ['nope']], $accessToken);
+check('UPDATE note with an unknown tag value is rejected (HTTP 422)', $updateNoteBadTagStatus === 422, "got HTTP $updateNoteBadTagStatus");
+echo "\n";
+
 echo count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

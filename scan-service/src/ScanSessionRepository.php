@@ -416,9 +416,9 @@ final class ScanSessionRepository
         return $this->deleteFromContractArray($sessionId, 'notes', 'note_id', $noteId);
     }
 
-    public function updateNote(string $sessionId, string $noteId, string $text): array
+    public function updateNote(string $sessionId, string $noteId, string $text, ?array $tags = null): array
     {
-        return $this->withWriteLock(function () use ($sessionId, $noteId, $text) {
+        return $this->withWriteLock(function () use ($sessionId, $noteId, $text, $tags) {
             $floorPlan = $this->findFloorPlan($sessionId);
             if ($floorPlan === null) {
                 throw new \RuntimeException(
@@ -440,6 +440,9 @@ final class ScanSessionRepository
             }
 
             $floorPlan['notes'][$index]['text'] = $text;
+            if ($tags !== null) {
+                $floorPlan['notes'][$index]['tags'] = $tags;
+            }
             $floorPlan['notes'][$index]['updated_at'] = gmdate('c');
             $this->saveFloorPlan($sessionId, $floorPlan);
             return $floorPlan;

@@ -56,11 +56,12 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
 | POST | `/scan-sessions/{id}/rotate-token` | Issue a new token before or within `ROTATE_GRACE_PERIOD_SECONDS` (7 days) after expiry. |
 | POST | `/scan-sessions/{id}/capture` | Submit `raw_capture` (RoomPlan-shaped JSON) + `capture_provider`. Converted via the matching adapter into the `FloorPlan` contract. Supports `Idempotency-Key` for safe retries. |
 | POST | `/scan-sessions/{id}/rooms` | Wholesale-replace this session's rooms with a fused set (body: `captures[]`, one `raw_capture` per room) — used once a multi-room merge succeeds, superseding the individually-uploaded tiles from `capture` above without double-counting them. |
-| POST | `/scan-sessions/{id}/photos` | Attach a photo by URL (e.g. one already returned by `photo-uploads` below), with optional caption/room id. |
+| POST | `/scan-sessions/{id}/photos` | Attach a photo by URL (e.g. one already returned by `photo-uploads` below), with optional caption/room id/`tags` (#21 inspection purpose tags — array from `VuuroScan\InspectionTag::VALUES`, defaults to `[]`). |
 | POST | `/scan-sessions/{id}/photo-uploads` | Upload real image bytes (multipart), content-sniffed via `finfo`, stored under `data/photos/{session_id}/`. Returns a `url` to pass into `/photos`. |
 | GET | `/scan-sessions/{id}/photo-uploads/{filename}` | Fetch a previously uploaded photo. |
 | DELETE | `/scan-sessions/{id}/photos/{photo_id}` | Remove a single attached photo. Also deletes the underlying uploaded file from disk, unless another photo entry still references the same file. |
-| POST | `/scan-sessions/{id}/notes` | Attach a text note, with optional room id. |
+| POST | `/scan-sessions/{id}/notes` | Attach a text note, with optional room id/`tags` (#21 inspection purpose tags, same enum as photos, defaults to `[]`). |
+| POST | `/scan-sessions/{id}/notes/{note_id}` | Edit a note's `text` in place; optionally replace its `tags` too (omit `tags` entirely to leave the existing ones untouched). |
 | DELETE | `/scan-sessions/{id}/notes/{note_id}` | Remove a single attached note. |
 | POST | `/scan-sessions/{id}/rooms/{room_id}/room-type` | Set or clear a room's `room_type.confirmed` after capture — body `{"room_type": "kitchen"}` or `{"room_type": null}` to clear. Independent of the live ✓/✗ capture-time prompt; works even on a room that never had a guess. |
 | GET | `/scan-sessions/{id}/export/floorplan.png` | Fused single-layout PNG when every room in the session carries `structure_origin_m` (see `docs/adr/0002-export-coordinate-frame.md`); per-room tiles otherwise, or always with `?layout=tiles`. `?room_id=<id>` isolates one room's own tile. `?unit=metric\|imperial` (default `metric`) controls displayed measurement units. `?label=<text>` (120 chars max) adds an optional branding/caption line. |

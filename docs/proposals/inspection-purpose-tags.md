@@ -2,10 +2,13 @@
 
 ## Status
 
-Proposed — not accepted, and not implemented. This is the data-format half of #21
-("Inspection purpose tags") only. No UI exists for this anywhere in the app, on purpose —
-per the punch-list framing this was scoped under, #21 is scoping first, UI later once
-Mark says which tags are actually useful in practice.
+Data-format half implemented 2026-09-15, using this proposal's own defaults below
+(8-value enum, array/multi-select, optional everywhere, applied via the existing
+photo/note endpoints) — not a literal sign-off from Mark on the four open questions.
+Still no UI anywhere in the app, on purpose — per the punch-list framing this was scoped
+under, #21 is scoping first, UI later once Mark says which tags are actually useful in
+practice. Treat the vocabulary/shape below as a starting point to react to, not a decided
+taxonomy, until Mark actually confirms it.
 
 ## What #21 is asking for, and what already exists today
 
@@ -81,6 +84,10 @@ granular as photos/notes already are.
 
 ## Done when
 
-This proposal exists in-repo (this file) for Mark to respond to. Same bar as the other
-proposals in this directory: verified once Mark has said yes / change / defer, not simply
-once this document exists.
+Data-format half: implemented and tested (schema, `POST /photos`, `POST /notes`,
+`POST /notes/{note_id}` all accept/validate/return `tags`; see
+`scan-service/tests/repository_test.php` and `scan-service/net/verify_crud.php`'s
+"#21 inspection purpose tags" section). Still open: the four questions above are
+unanswered by Mark as of this writing — the vocabulary/multi-select/required-when/
+who-applies choices baked into the implementation are this proposal's own defaults, not
+his confirmed answers. UI: not started, blocked on that confirmation same as before.

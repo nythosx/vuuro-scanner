@@ -708,6 +708,10 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
         respondError(422, 'field_too_long', "'$tooLongField' is too long — please keep it to $tooLongMax characters or fewer.", ['field' => $tooLongField, 'max_length' => $tooLongMax]);
         return;
     }
+    if (array_key_exists('tags', $body) && (!is_array($body['tags']) || !\VuuroScan\InspectionTag::isValidList($body['tags']))) {
+        respondError(422, 'invalid_tags', "'tags' must be an array of valid inspection tag values.", ['allowed' => \VuuroScan\InspectionTag::VALUES]);
+        return;
+    }
 
     $photo = [
         'photo_id' => ScanSessionRepository::uuid(),
@@ -715,6 +719,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
         'caption' => $body['caption'] ?? '',
         'room_id' => $body['room_id'] ?? null,
         'taken_at' => $body['taken_at'] ?? gmdate('c'),
+        'tags' => array_values($body['tags'] ?? []),
     ];
 
     try {
@@ -867,12 +872,17 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, 
         respondError(422, 'field_too_long', "'$tooLongField' is too long — please keep it to $tooLongMax characters or fewer.", ['field' => $tooLongField, 'max_length' => $tooLongMax]);
         return;
     }
+    if (array_key_exists('tags', $body) && (!is_array($body['tags']) || !\VuuroScan\InspectionTag::isValidList($body['tags']))) {
+        respondError(422, 'invalid_tags', "'tags' must be an array of valid inspection tag values.", ['allowed' => \VuuroScan\InspectionTag::VALUES]);
+        return;
+    }
 
     $note = [
         'note_id' => ScanSessionRepository::uuid(),
         'text' => $body['text'],
         'room_id' => $body['room_id'] ?? null,
         'created_at' => gmdate('c'),
+        'tags' => array_values($body['tags'] ?? []),
     ];
 
     try {
@@ -986,9 +996,17 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes/([^/]+)$#',
         respondError(422, 'field_too_long', "'$tooLongField' is too long — please keep it to $tooLongMax characters or fewer.", ['field' => $tooLongField, 'max_length' => $tooLongMax]);
         return;
     }
+    $tags = null;
+    if (array_key_exists('tags', $body)) {
+        if (!is_array($body['tags']) || !\VuuroScan\InspectionTag::isValidList($body['tags'])) {
+            respondError(422, 'invalid_tags', "'tags' must be an array of valid inspection tag values.", ['allowed' => \VuuroScan\InspectionTag::VALUES]);
+            return;
+        }
+        $tags = array_values($body['tags']);
+    }
 
     try {
-        $floorPlan = $repo->updateNote($sessionId, $noteId, $body['text']);
+        $floorPlan = $repo->updateNote($sessionId, $noteId, $body['text'], $tags);
     } catch (\RuntimeException $e) {
         respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
         return;

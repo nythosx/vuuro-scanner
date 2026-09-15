@@ -369,6 +369,26 @@ try {
 }
 echo "\n";
 
+echo "== updateNote(): #21 inspection tags ride along with the same edit endpoint ==\n";
+$withTagUpdate = $repo->updateNote($roomIdSession['id'], 'n2', 'edited text again', ['damage', 'safety_issue']);
+$taggedNote = null;
+foreach ($withTagUpdate['notes'] as $note) {
+    if ($note['note_id'] === 'n2') {
+        $taggedNote = $note;
+    }
+}
+r_check('updateNote() with tags sets them on the matching note', $taggedNote !== null && $taggedNote['tags'] === ['damage', 'safety_issue']);
+
+$withoutTagUpdate = $repo->updateNote($roomIdSession['id'], 'n2', 'edited text a third time');
+$untouchedTagsNote = null;
+foreach ($withoutTagUpdate['notes'] as $note) {
+    if ($note['note_id'] === 'n2') {
+        $untouchedTagsNote = $note;
+    }
+}
+r_check('updateNote() called with no tags argument leaves the existing tags untouched', $untouchedTagsNote !== null && $untouchedTagsNote['tags'] === ['damage', 'safety_issue']);
+echo "\n";
+
 echo "== updateRoomType(): post-capture room-type correction ==\n";
 $afterCorrection = $repo->updateRoomType($roomIdSession['id'], 'room-real-1', 'kitchen');
 r_check('updateRoomType() sets confirmed on the matching room', $afterCorrection['rooms'][0]['room_type']['confirmed'] === 'kitchen');
