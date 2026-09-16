@@ -2,14 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Independent net for core security properties: error handling, session
- * enumeration, geometry bounds, field length caps, URL scheme validation.
- * HTTP only, no importing the code under test.
- *
- * Usage: php net/verify_security_fixes.php [base_url]
- */
-
 require_once __DIR__ . '/lib/http_client.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';
@@ -42,17 +34,11 @@ if ($sessionId === null || $accessToken === null) {
     exit(1);
 }
 
-// A legitimate capture first, so the photos[]/notes[] checks below exercise
-// their own validation rather than the "no floor plan yet" 409.
 $validFixture = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_single_room.json'), true, 512, JSON_THROW_ON_ERROR);
 net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $validFixture], $accessToken);
 
 echo "== Uncaught exceptions do not leak stack traces or return a misleading 200 ==\n";
 
-// Built as a literal string, not json_encode()'d: 1e400 is a syntactically
-// valid JSON number token that overflows to PHP float INF only once
-// *decoded* server-side — PHP's own json_encode() can't produce this token
-// from an INF value, so encoding it here would just crash this net script.
 $maliciousCapture = '{"raw_capture":{"floors":[{"identifier":"evil","category":"floor",'
     . '"confidence":"high","polygonCorners":[[0,0,0],[1e400,0,0],[1e400,0,1],[0,0,1]]}]}}';
 [$status, , $body] = net_http_raw_literal('POST', "$baseUrl/scan-sessions/$sessionId/capture", $maliciousCapture, $accessToken);
@@ -98,8 +84,6 @@ $hugeButFiniteCapture = json_encode([
 check('a 50000m coordinate is rejected with a clean 422, not accepted', $hugeStatus === 422, "got HTTP $hugeStatus, body: " . substr($hugeBody, 0, 200));
 
 echo "\n== Data directory permissions ==\n";
-// Can't inspect filesystem permissions of the running server process from
-// here (this net is HTTP-only by design). See Database.php's mkdir mode.
 check('(informational) see Database.php mkdir mode', true);
 
 echo "\n== Rate limiting ==\n";
@@ -121,15 +105,6 @@ $hugeNoteText = str_repeat('n', 5001);
 [$hugeNoteStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/notes", ['text' => $hugeNoteText], $accessToken);
 check('a 5001-character note text is rejected with 422', $hugeNoteStatus === 422, "got HTTP $hugeNoteStatus");
 
-// Exports-surface scan finding: capture_provider had a type check but no
-// length cap, unlike every other client-suppliable string field above.
-// Confirmed live before the fix: a 500,000-char capture_provider was
-// accepted and inflated a normal ~1.3KB PDF export to ~500KB — a
-// client-controlled amplification path through storage and every later
-// export, capped nowhere. Proven end to end here, not just at the capture
-// boundary: the over-cap value must be rejected AND a value actually at the
-// new 200-char cap must still flow through capture into a real PDF export
-// without inflating it.
 $hugeCaptureProviderBody = json_encode([
     'raw_capture' => ['floors' => [['identifier' => 'f', 'polygonCorners' => [[0, 0, 0], [3, 0, 0], [3, 0, 3], [0, 0, 3]]]]],
     'capture_provider' => str_repeat('X', 201),
@@ -186,17 +161,6 @@ check('response includes X-Content-Type-Options: nosniff', stripos($responseHead
     "headers were: " . trim($responseHeaders));
 
 echo "\n== CORS is scoped to a single configured origin, not a wildcard ==\n";
-// Portability finding: the allowed CORS origin used to be a bare hardcoded
-// string in public/index.php, so a web-viewer served from any port other
-// than the one baked into the code got silently blocked by the browser with
-// no config knob. Now reads SCAN_SERVICE_CORS_ORIGIN (default:
-// http://127.0.0.1:8090, unchanged for this suite's default-env server).
-// This net only exercises default-env behavior (still correctly scoped, not
-// a wildcard) — the env override itself was verified by hand by starting a
-// second server with SCAN_SERVICE_CORS_ORIGIN set and confirming the
-// allowed origin moved with it, same tradeoff as PDF MAX_PAGES: it needs a
-// differently-configured server process, not something one HTTP client can
-// drive against a fixed net server.
 function net_cors_headers_for_origin(string $url, string $origin): string
 {
     $ch = curl_init($url);

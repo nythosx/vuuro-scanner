@@ -48,4 +48,16 @@ final class RoomType
     {
         return self::LABELS[$value] ?? $value;
     }
+
+    public static function displayLabel(string $label, ?string $roomTypeValue): string
+    {
+        if ($roomTypeValue === null) {
+            return $label;
+        }
+        $typeName = self::labelFor($roomTypeValue);
+        if (strcasecmp(trim($label), trim($typeName)) === 0) {
+            return $label;
+        }
+        return sprintf('%s (%s)', $label, $typeName);
+    }
 }

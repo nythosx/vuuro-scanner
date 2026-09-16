@@ -8,14 +8,10 @@ struct ScanHistoryView: View {
     @State private var entries: [ScanHistoryEntry] = []
     @State private var isLoadingEntries = true
     @State private var isFetchingToAttach: Set<String> = []
-    @State private var isDownloadingImage: Set<String> = []
-    @State private var isDownloadingPDF: Set<String> = []
     @State private var isPreparingQuickShare: Set<String> = []
     @State private var quickShareURL: URL?
     @State private var shareCodeSource: ShareCodeItemSource?
     @State private var showQuickShare = false
-    @State private var quickLookURL: URL?
-    @State private var showQuickLook = false
     @State private var attachErrors: [String: AppError] = [:]
     @State private var perEntryImageURLs: [String: URL] = [:]
     @State private var perEntryPDFURLs: [String: URL] = [:]
@@ -133,35 +129,17 @@ struct ScanHistoryView: View {
                         Text(entry.purpose.displayName)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
-                        Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
+                        Text(entry.createdAt, format: Date.FormatStyle(date: .abbreviated, time: .shortened))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
 
-                    HStack(spacing: 10) {
-                        Button {
-                            Task { await viewFile(for: entry, pdf: false) }
-                        } label: {
-                            if isDownloadingImage.contains(entry.sessionId) {
-                                ProgressView()
-                            } else {
-                                Text("View image")
-                            }
-                        }
-                        .buttonStyle(.vuuroSecondary)
-                        .disabled(isDownloadingImage.contains(entry.sessionId))
-                        Button {
-                            Task { await viewFile(for: entry, pdf: true) }
-                        } label: {
-                            if isDownloadingPDF.contains(entry.sessionId) {
-                                ProgressView()
-                            } else {
-                                Text("View PDF")
-                            }
-                        }
-                        .buttonStyle(.vuuroSecondary)
-                        .disabled(isDownloadingPDF.contains(entry.sessionId))
+                    NavigationLink {
+                        ScanResultsReportView(entry: entry)
+                    } label: {
+                        Label("View report", systemImage: "doc.text.magnifyingglass")
                     }
+                    .buttonStyle(.vuuroPrimary)
 
                     NavigationLink("Access log") {
                         AccessLogView(sessionId: entry.sessionId, accessToken: entry.accessToken)
@@ -392,12 +370,6 @@ struct ScanHistoryView: View {
                 ActivityShareSheet(items: [quickShareURL])
             }
         }
-        .fullScreenCover(isPresented: $showQuickLook) {
-            if let quickLookURL {
-                QuickLookPreview(url: quickLookURL)
-                    .ignoresSafeArea()
-            }
-        }
     }
 
     private func importScan() {
@@ -516,19 +488,6 @@ struct ScanHistoryView: View {
     }
 
     @MainActor
-    private func viewFile(for entry: ScanHistoryEntry, pdf: Bool) async {
-        if pdf, perEntryPDFURLs[entry.sessionId] == nil {
-            await downloadPDF(for: entry)
-        } else if !pdf, perEntryImageURLs[entry.sessionId] == nil {
-            await downloadImage(for: entry)
-        }
-        let url = pdf ? perEntryPDFURLs[entry.sessionId] : perEntryImageURLs[entry.sessionId]
-        guard let url else { return }
-        quickLookURL = url
-        showQuickLook = true
-    }
-
-    @MainActor
     private func shareFile(for entry: ScanHistoryEntry, pdf: Bool) async {
         let shareKey = entry.sessionId + (pdf ? ":pdf" : ":image")
         guard !isPreparingQuickShare.contains(shareKey) else { return }
@@ -550,9 +509,6 @@ struct ScanHistoryView: View {
 
     @MainActor
     private func downloadImage(for entry: ScanHistoryEntry) async {
-        guard !isDownloadingImage.contains(entry.sessionId) else { return }
-        isDownloadingImage.insert(entry.sessionId)
-        defer { isDownloadingImage.remove(entry.sessionId) }
         do {
             let data = try await client.fetchFloorPlanImage(sessionId: entry.sessionId, accessToken: entry.accessToken, unit: exportUnit, label: entry.nickname)
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(entry.sessionId).png")
@@ -567,9 +523,6 @@ struct ScanHistoryView: View {
 
     @MainActor
     private func downloadPDF(for entry: ScanHistoryEntry) async {
-        guard !isDownloadingPDF.contains(entry.sessionId) else { return }
-        isDownloadingPDF.insert(entry.sessionId)
-        defer { isDownloadingPDF.remove(entry.sessionId) }
         do {
             let data = try await client.fetchFloorPlanPDF(sessionId: entry.sessionId, accessToken: entry.accessToken, unit: exportUnit, label: entry.nickname)
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(entry.sessionId).pdf")

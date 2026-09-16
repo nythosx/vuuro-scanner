@@ -2,13 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Independent net for LIDAR-5/11's structure_origin_m field and the fused
- * PNG rendering path. HTTP only, no adapter/renderer imports.
- *
- * Usage: php net/verify_multiroom_fusion.php [base_url]
- */
-
 require_once __DIR__ . '/lib/http_client.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';

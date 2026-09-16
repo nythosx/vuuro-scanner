@@ -2,15 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Independent net for LIDAR-5/11's POST /scan-sessions/{id}/rooms — the
- * replace-rooms endpoint that lets a client upload tiles immediately, then
- * supersede them with a StructureBuilder-fused set once merge succeeds,
- * without double-counting rooms. HTTP only, no adapter/repository imports.
- *
- * Usage: php net/verify_replace_rooms.php [base_url]
- */
-
 require_once __DIR__ . '/lib/http_client.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';

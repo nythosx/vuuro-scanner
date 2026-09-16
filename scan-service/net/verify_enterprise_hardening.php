@@ -2,17 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Independent net for the enterprise-hardening pass: token expiry/rotation,
- * fixed-window rate limiting, capture idempotency, request body size cap,
- * and the /health endpoint. Same rules as every other net script — HTTP
- * only, never imports ScanSessionRepository/index.php, re-derives its own
- * expected values (e.g. "room count must NOT double" for the idempotency
- * check) rather than re-running the same code path and comparing to itself.
- *
- * Usage: php net/verify_enterprise_hardening.php [base_url]
- */
-
 require_once __DIR__ . '/lib/http_client.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';
@@ -56,8 +45,6 @@ check('a 1-second TTL (below the 60s floor) is rejected (HTTP 422)', $tooShortSt
 [$tooLongStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'access_token_ttl_seconds' => 999999999]);
 check('an absurdly long TTL (above the 1-year ceiling) is rejected (HTTP 422)', $tooLongStatus === 422, "got HTTP $tooLongStatus");
 
-// "Between min and max" is documented (public/index.php) as inclusive, so
-// both boundary values themselves must be ACCEPTED, not rejected.
 echo "\n== Token TTL boundary values (the edges themselves, not just clearly outside) ==\n";
 $oneYearSeconds = 365 * 24 * 60 * 60;
 
@@ -98,8 +85,6 @@ if ($rotId !== null && $rotOldToken !== null) {
 echo "\n== Token expiry is enforced, not just recorded ==\n";
 
 [, $expSession] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'access_token_ttl_seconds' => 60]);
-// 60 is the minimum allowed TTL, so this can't be shrunk further via the
-// public API to make the test fast.
 $expId = $expSession['id'] ?? null;
 $expToken = $expSession['access_token'] ?? null;
 if ($expId !== null && $expToken !== null) {
@@ -107,10 +92,6 @@ if ($expId !== null && $expToken !== null) {
     check('a freshly issued 60s-TTL token is still valid seconds later (HTTP 200)', $stillLiveStatus === 200, "got HTTP $stillLiveStatus");
 }
 
-// rotate-token accepts an expired-but-correct token within a 7-day grace
-// window (ScanSessionRepository::ROTATE_GRACE_PERIOD_SECONDS); every other
-// action stays hard-blocked at the instant of expiry. Proven here with a
-// real 60-second-TTL token actually left to expire, over real HTTP.
 echo "\n== Token-expiry grace period: rotate-token recovers an expired token, other routes stay blocked ==\n";
 
 $graceFixture = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_single_room.json'), true, 512, JSON_THROW_ON_ERROR);
@@ -121,7 +102,7 @@ $graceOldToken = $graceSession['access_token'] ?? null;
 check('session created for the grace-period test', $graceId !== null && $graceOldToken !== null);
 
 if ($graceId !== null && $graceOldToken !== null) {
-    sleep(61); // let the 60s token actually expire
+    sleep(61);
 
     [$expiredCaptureStatus, $expiredCaptureBody] = net_http_json('POST', "$baseUrl/scan-sessions/$graceId/capture", ['raw_capture' => $graceFixture], $graceOldToken);
     check(
@@ -165,18 +146,12 @@ if ($idemId !== null && $idemToken !== null) {
     [$retryStatus, $retryBody] = net_http_json_ex('POST', "$baseUrl/scan-sessions/$idemId/capture", ['raw_capture' => $fixture], $idemToken, ['Idempotency-Key' => $key]);
     check('retried capture with the SAME Idempotency-Key succeeds (HTTP 200)', $retryStatus === 200, "got HTTP $retryStatus");
     $retryRoomCount = count($retryBody['rooms'] ?? []);
-    // The specific bug this net exists to catch: a naive "just retry" client
-    // without idempotency support would see the room count double here
-    // (2 instead of 1) because appendCapture() would run a second time.
     check(
         'retried capture does NOT double the room count',
         $retryRoomCount === $firstRoomCount,
         "first call had $firstRoomCount room(s), retry had $retryRoomCount — a retried upload must replay the cached result, not reprocess"
     );
 
-    // Adjacent case: a DIFFERENT Idempotency-Key for the same session must
-    // still behave like a normal second room capture (Phase 2's multi-room
-    // stitching), not get accidentally deduplicated by session id alone.
     [$secondRoomStatus, $secondRoomBody] = net_http_json_ex('POST', "$baseUrl/scan-sessions/$idemId/capture", ['raw_capture' => $fixture], $idemToken, ['Idempotency-Key' => 'net-idem-key-' . bin2hex(random_bytes(8))]);
     check('a second capture with a DIFFERENT key still appends a new room (HTTP 200)', $secondRoomStatus === 200, "got HTTP $secondRoomStatus");
     $secondRoomCount = count($secondRoomBody['rooms'] ?? []);
@@ -203,19 +178,10 @@ if ($collisionId !== null && $collisionToken !== null) {
     check('first capture under the shared key succeeds (HTTP 200)', $firstCollisionStatus === 200, "got HTTP $firstCollisionStatus");
     $firstCollisionRoomCount = count($firstCollisionBody['rooms'] ?? []);
 
-    // The bug this proves is fixed: reusing the SAME Idempotency-Key with a
-    // genuinely DIFFERENT raw_capture (a different room, here the L-shaped
-    // fixture) must be rejected, not silently answered with the first
-    // capture's stale cached response — that would make the second, real
-    // room vanish from the client's point of view while returning HTTP 200.
     [$mismatchStatus, $mismatchBody] = net_http_json_ex('POST', "$baseUrl/scan-sessions/$collisionId/capture", ['raw_capture' => $lshapedFixture], $collisionToken, ['Idempotency-Key' => $sharedKey]);
     check('reusing the key with a DIFFERENT body is rejected, not replayed (HTTP 409)', $mismatchStatus === 409, "got HTTP $mismatchStatus");
     check('rejection uses the idempotency_key_reused error code', ($mismatchBody['error'] ?? null) === 'idempotency_key_reused', 'got ' . json_encode($mismatchBody));
 
-    // The room count must be exactly what the first, accepted capture
-    // produced — the rejected second attempt must not have appended
-    // anything, and the room count must not have been silently doubled by a
-    // stale-response replay either.
     [$afterStatus, $afterBody] = net_http_json_ex('GET', "$baseUrl/scan-sessions/$collisionId", null, $collisionToken, []);
     check('session GET succeeds after the rejected collision (HTTP 200)', $afterStatus === 200, "got HTTP $afterStatus");
     $afterRoomCount = count($afterBody['rooms'] ?? []);
@@ -225,10 +191,6 @@ if ($collisionId !== null && $collisionToken !== null) {
         "expected $firstCollisionRoomCount room(s) (only the first, accepted capture), got $afterRoomCount"
     );
 
-    // Adjacent-adjacent case: reusing the shared key with the ORIGINAL body
-    // again (a genuine retry, not a collision) must still work exactly as
-    // the retry test above proves — this key's fingerprint check must not
-    // have turned every retry into a false-positive rejection.
     [$trueRetryStatus, $trueRetryBody] = net_http_json_ex('POST', "$baseUrl/scan-sessions/$collisionId/capture", ['raw_capture' => $fixture], $collisionToken, ['Idempotency-Key' => $sharedKey]);
     check('a true retry (same key, same body) after a rejected collision still replays cleanly (HTTP 200)', $trueRetryStatus === 200, "got HTTP $trueRetryStatus");
     check(
@@ -239,16 +201,6 @@ if ($collisionId !== null && $collisionToken !== null) {
 
 echo "\n== A failed capture releases its Idempotency-Key claim instead of poisoning it ==\n";
 
-// ACL-surface scan finding — a real correctness bug, not just table growth:
-// every 422 path after claimIdempotencyKey() succeeds (missing raw_capture,
-// non-string capture_provider, or a rejected/degenerate capture) used to
-// return its error WITHOUT ever releasing the claim, leaving the row stuck
-// at "pending" forever. Confirmed live before this fix: a client whose first
-// attempt failed validation and then retried with the SAME key got
-// permanently stuck — either a bogus "capture_in_progress" 409 (nothing was
-// actually in progress) on a same-body retry, or a false
-// "idempotency_key_reused" 409 on a corrected-body retry — with no way to
-// ever successfully use that key again.
 $degenerateCapture = ['raw_capture' => ['floors' => [['identifier' => 'f', 'polygonCorners' => [[0, 0, 0], [0.001, 0, 0], [0.001, 0, 0.001], [0, 0, 0.001]]]]]];
 
 [, $releaseSameBodySession] = net_http_json('POST', "$baseUrl/scan-sessions", base_payload());
@@ -287,18 +239,12 @@ if ($releaseFixedBodyId !== null && $releaseFixedBodyToken !== null) {
 
 echo "\n== Request body size cap ==\n";
 
-$oversizedPropertyId = str_repeat('a', 9 * 1024 * 1024); // 9MB, over the 8MB cap
+$oversizedPropertyId = str_repeat('a', 9 * 1024 * 1024);
 [$oversizedStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'property_id' => $oversizedPropertyId]);
 check('a request body over the size cap is rejected (HTTP 413)', $oversizedStatus === 413, "got HTTP $oversizedStatus");
 
-// Adjacent case: "clearly over" (9MB vs an 8MB cap) can't tell `>` apart from
-// `>=` — only the exact boundary byte count can. MAX_REQUEST_BODY_BYTES is
-// checked against the raw Content-Length before anything else runs, so a
-// payload of EXACTLY that many bytes must still pass the size check itself
-// (even though it then fails a later, unrelated 200-char field-length check
-// — that's expected and is how this proves it got past the size gate at all).
 echo "\n== Request body size boundary (the exact byte count itself) ==\n";
-$maxBodyBytes = 8 * 1024 * 1024; // must match public/index.php's MAX_REQUEST_BODY_BYTES
+$maxBodyBytes = 8 * 1024 * 1024;
 $basePayloadForSizing = [...base_payload(), 'property_id' => ''];
 $baseLength = strlen(json_encode($basePayloadForSizing, JSON_THROW_ON_ERROR));
 
@@ -306,10 +252,6 @@ $exactPadding = str_repeat('a', $maxBodyBytes - $baseLength);
 $exactSizedBody = json_encode([...base_payload(), 'property_id' => $exactPadding], JSON_THROW_ON_ERROR);
 check('constructed payload is exactly MAX_REQUEST_BODY_BYTES', strlen($exactSizedBody) === $maxBodyBytes, 'got ' . strlen($exactSizedBody) . ' bytes');
 [$exactSizeStatus, ] = net_http_raw_literal('POST', "$baseUrl/scan-sessions", $exactSizedBody);
-// Asserting the SPECIFIC expected outcome (422 field_too_long), not just
-// "!== 413" — a merely-not-413 check would also incorrectly pass on an
-// unrelated failure (e.g. a 429 from a shared rate-limit budget), silently
-// hiding the very boundary this test exists to prove.
 check(
     'a body of exactly MAX_REQUEST_BODY_BYTES is NOT rejected as 413 (fails later, on the unrelated 200-char field cap, instead)',
     $exactSizeStatus === 422,
@@ -322,17 +264,6 @@ check('constructed payload is exactly MAX_REQUEST_BODY_BYTES + 1', strlen($overB
 [$overByOneStatus, ] = net_http_raw_literal('POST', "$baseUrl/scan-sessions", $overByOneBody);
 check('a body of exactly MAX_REQUEST_BODY_BYTES + 1 IS rejected (HTTP 413)', $overByOneStatus === 413, "got HTTP $overByOneStatus");
 
-// ACL-surface scan finding: the size cap above used to only check the
-// CLIENT-DECLARED Content-Length header, which chunked Transfer-Encoding
-// omits entirely ($_SERVER['CONTENT_LENGTH'] is simply unset) — a client
-// sending the exact same oversized body chunked instead sailed straight
-// past the 413 check. Confirmed live before this fix: the identical 9MB
-// payload that correctly got 413 with a normal Content-Length got a 422
-// (reached and was fully buffered by a LATER, unrelated per-field check)
-// when sent chunked — proving the whole body was read into memory
-// unbounded, defeating the exact resource-exhaustion protection this cap
-// exists for. Fixed by bounding the ACTUAL bytes read off php://input,
-// independent of anything the client claims in a header.
 echo "\n== Request body size cap cannot be bypassed via chunked Transfer-Encoding ==\n";
 $chunkedOversizedBody = json_encode([...base_payload(), 'property_id' => $oversizedPropertyId], JSON_THROW_ON_ERROR);
 [$chunkedOversizedStatus, ] = net_http_raw_literal('POST', "$baseUrl/scan-sessions", $chunkedOversizedBody, null, ['Transfer-Encoding' => 'chunked']);
@@ -374,13 +305,6 @@ if ($exportRateLimitSessionId !== null && $exportRateLimitToken !== null) {
 
 echo "\n== Capture route is rate-limited per session ==\n";
 
-// Coverage gap found while auditing this suite: every other session-scoped
-// route (export PNG/PDF, photos, notes, rotate-token, GET read/access-log,
-// plus create_session and session_not_found at IP scope) has its own
-// rapid-fire test proving its rate limit actually throttles — capture
-// itself, the heaviest route in the service (adapter + repository write
-// lock), never did. public/index.php's own 60-per-300s :capture bucket
-// was flying without a regression test the whole time this file existed.
 [, $captureRateLimitSession] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'organisation_id' => 'org-net-capture-throttle']);
 $captureRateLimitSessionId = $captureRateLimitSession['id'] ?? null;
 $captureRateLimitToken = $captureRateLimitSession['access_token'] ?? null;
@@ -448,17 +372,6 @@ if ($writeRateLimitSessionId !== null && $writeRateLimitToken !== null) {
 
 echo "\n== GET routes (session read, access-log) are rate-limited per session ==\n";
 
-// ACL-surface scan finding: every mutating session-scoped route now has a
-// per-session rate limit, but the two GET routes never did. Cheaper
-// per-call than capture/export, but not free — a session's access_log grows
-// with every access attempt (including denied ones), and a session's
-// contract_json can be large (unbounded room count; up to
-// MAX_PHOTOS_PER_SESSION/MAX_NOTES_PER_SESSION each), so a valid (or
-// compromised) token could still hammer either route indefinitely before
-// this fix.
-//
-// Placed BEFORE the "Session-creation rate limit" section below, same
-// cross-section-budget reason as the export/write-route sections above.
 [, $readRateLimitSession] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'organisation_id' => 'org-net-read-throttle']);
 $readRateLimitSessionId = $readRateLimitSession['id'] ?? null;
 $readRateLimitToken = $readRateLimitSession['access_token'] ?? null;
@@ -488,20 +401,6 @@ if ($readRateLimitSessionId !== null && $readRateLimitToken !== null) {
 
 echo "\n== Session-creation rate limit ==\n";
 
-// The default limit is 60 per 10-minute window per caller IP
-// (public/index.php — overridable via SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX,
-// CI sets this to 500 to give the whole net suite's cumulative session
-// creation enough headroom in one shared window). This net and every
-// other net script share one IP (127.0.0.1) and this same window, so a
-// full merge-gate suite run before this script has already spent some of
-// that budget — this loop is generous (520 requests, same margin the
-// post_body_read test uses above ITS 500 default) so it reliably crosses
-// the configured limit even after the rest of the suite has run once. It
-// intentionally does NOT try to survive being run many times back to
-// back in the same 10-minute window: that's a known, documented tradeoff
-// (scan-service/README.md), not something this test hides. Delete
-// scan-service/data/scan_service.sqlite between rapid re-runs of the full
-// suite if you hit this in practice.
 $sawRateLimited = false;
 for ($i = 0; $i < 520; $i++) {
     [$status, ] = net_http_json('POST', "$baseUrl/scan-sessions", base_payload());
@@ -514,19 +413,6 @@ check('repeated rapid session creation eventually hits HTTP 429', $sawRateLimite
 
 echo "\n== Repeated lookups of NONEXISTENT session ids are also throttled ==\n";
 
-// Adjacent-case ACL gap found by deliberately probing what the
-// session-creation and capture rate limits above imply should exist
-// everywhere but didn't: authorizeSession()'s "session not found" branch had
-// no bound at all — confirmed manually (100 back-to-back GETs against
-// different fake session ids, all a plain 401, never throttled) before this
-// fix existed. Bound per caller IP, same shape as create_session's own
-// bucket right above, and deliberately tested here rather than in
-// net/verify_acl.php for the exact same reason create_session's rate
-// limit is tested only here: this bucket is shared across the whole suite
-// by caller IP, and exhausting it in an earlier-run script poisons
-// verify_security_fixes.php's own nonexistent-session check (found the hard
-// way — it did, turning a legitimate 401-vs-404 assertion into a false 429
-// failure until this test was moved here, last).
 $sawNotFoundThrottle = false;
 for ($i = 0; $i < 80; $i++) {
     [$status, ] = net_http_json('GET', "$baseUrl/scan-sessions/does-not-exist-enterprise-net-$i", null, "guess-$i");

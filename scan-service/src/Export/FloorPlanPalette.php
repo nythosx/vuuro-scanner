@@ -9,13 +9,36 @@ final class FloorPlanPalette
     public const EXTERIOR_WALL_THICKNESS_M = 0.30;
     public const INTERIOR_WALL_THICKNESS_M = 0.12;
 
+    // Vuuro brand palette (see ios-app/Sources/Design/VuuroDesign.swift) —
+    // exports should look like they came from the same product as the app.
+    public const BRAND_PRIMARY = '#ff8212';
+    public const BRAND_ACCENT_LIME = '#afdf25';
+    public const BRAND_ACCENT_CYAN = '#2ec3ff';
+    public const BRAND_INK = '#272729';
+    public const BRAND_INK_MUTED = '#87878a';
+    public const BRAND_SURFACE = '#ffffff';
+    public const BRAND_SURFACE_MUTED = '#f9f9fb';
+    public const BRAND_BORDER = '#ececee';
+    public const BRAND_DANGER = '#d6453e';
+    public const BRAND_WARNING_TEXT = '#b45a0d';
+    public const BRAND_GOOD_TEXT = '#5b7a0a';
+
     public const ROOM_BUCKET_FILL = [
-        'garage' => '#cccccc',
-        'wet' => '#d4e2f0',
-        'circ' => '#fcc778',
-        'bed' => '#ecc486',
-        'living' => '#f2d8b0',
-        'neutral' => '#ffffff',
+        'garage' => '#e7e4dd',
+        'wet' => '#dff3ff',
+        'circ' => '#eef6d2',
+        'bed' => '#f3d9a6',
+        'living' => '#fbe3c7',
+        'neutral' => '#fbfbfa',
+    ];
+
+    public const ROOM_BUCKET_ACCENT = [
+        'garage' => '#9a958a',
+        'wet' => '#2ec3ff',
+        'circ' => '#afdf25',
+        'bed' => '#e0a940',
+        'living' => '#ff8212',
+        'neutral' => '#c8c8c8',
     ];
 
     public const ROOM_TYPE_BUCKET = [
@@ -50,6 +73,16 @@ final class FloorPlanPalette
         $normalized = strtolower(str_replace([' ', '-'], '_', $roomType));
         $bucket = self::ROOM_TYPE_BUCKET[$normalized] ?? null;
         return $bucket !== null ? self::ROOM_BUCKET_FILL[$bucket] : null;
+    }
+
+    public static function roomAccentFor(?string $roomType): ?string
+    {
+        if ($roomType === null) {
+            return null;
+        }
+        $normalized = strtolower(str_replace([' ', '-'], '_', $roomType));
+        $bucket = self::ROOM_TYPE_BUCKET[$normalized] ?? null;
+        return $bucket !== null ? self::ROOM_BUCKET_ACCENT[$bucket] : null;
     }
 
     public static function hexToRgb(string $hex): array

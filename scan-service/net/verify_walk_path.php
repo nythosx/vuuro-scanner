@@ -2,14 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Independent net for the walk-path-on-the-2D-sheet feature (Mark's
- * doors/windows/walk-through punch-list item #4). HTTP only, no
- * adapter/renderer imports.
- *
- * Usage: php net/verify_walk_path.php [base_url]
- */
-
 require_once __DIR__ . '/lib/http_client.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';

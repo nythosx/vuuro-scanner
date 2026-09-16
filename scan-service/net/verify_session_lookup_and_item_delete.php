@@ -2,14 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Independent net for server-side session lookup by property/unit/org
- * (admin-key gated), per-item photo/note delete, and detected objects
- * rendering on exports. HTTP only, no adapter/repository/renderer imports.
- *
- * Usage: php net/verify_session_lookup_and_item_delete.php [base_url] [admin_api_key]
- */
-
 require_once __DIR__ . '/lib/http_client.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';

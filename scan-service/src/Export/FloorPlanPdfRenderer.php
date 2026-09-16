@@ -6,12 +6,6 @@ namespace VuuroScan\Export;
 
 use VuuroScan\RoomType;
 
-/**
- * Renders a FloorPlan contract array to a minimal, hand-built PDF: identity,
- * honest-measurement disclaimer, a per-room metrics table, an embedded
- * floor plan drawing page, and one page per loadable attached photo,
- * paginated across as many pages as needed. No external PDF library.
- */
 final class FloorPlanPdfRenderer
 {
     private const PAGE_TOP_Y = 740;
@@ -20,9 +14,6 @@ final class FloorPlanPdfRenderer
     private const PAGE_WIDTH = 612;
     private const PAGE_HEIGHT = 792;
     private const PAGE_MARGIN_X = 50;
-    // Defense-in-depth, same spirit as FloorPlanImageRenderer's
-    // MAX_CANVAS_DIMENSION_PX — bounds how many PDF pages/objects a single
-    // render can build. Generous; thousands of rooms is not a real unit.
     private const MAX_PAGES = 200;
     private const MAX_EMBEDDED_IMAGE_DIMENSION_PX = 1600;
 
@@ -45,7 +36,22 @@ final class FloorPlanPdfRenderer
         'captionRegular' => ['F1', 10],
     ];
 
-    /** @param string|null $roomId When set, the metrics table covers only that one room. */
+    private const INK = [39, 39, 41];
+    private const INK_MUTED = [135, 135, 138];
+    private const DANGER = [214, 69, 62];
+    private const ACCENT = [255, 130, 18];
+    private const BORDER = [236, 236, 238];
+
+    /** style => [r, g, b] (0-255); defaults to INK when a style is absent */
+    private const STYLE_COLORS = [
+        'body' => self::INK_MUTED,
+        'italic' => self::INK_MUTED,
+        'sub' => self::INK_MUTED,
+        'small' => self::INK_MUTED,
+        'warning' => self::DANGER,
+        'captionRegular' => self::INK_MUTED,
+    ];
+
     public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null, ?callable $photoLoader = null): string
     {
         if ($roomId !== null) {
@@ -69,7 +75,7 @@ final class FloorPlanPdfRenderer
         }
 
         $objects = [];
-        $objects[1] = null; // filled in below once page object numbers are known
+        $objects[1] = null; 
         $regularFontObjNum = 3;
         $boldFontObjNum = 4;
         $italicFontObjNum = 5;
@@ -251,12 +257,12 @@ final class FloorPlanPdfRenderer
     private function buildPageChrome(float $pageWidth, float $pageHeight, string $footerLabel, int $pageIndex, int $totalPages): string
     {
         $accentBarHeight = 4;
-        $stream = "q\n1 0.51 0.07 rg\n0 " . ($pageHeight - $accentBarHeight) . " {$pageWidth} {$accentBarHeight} re\nf\nQ\n";
+        $stream = "q\n" . $this->rgOp(self::ACCENT) . "\n0 " . ($pageHeight - $accentBarHeight) . " {$pageWidth} {$accentBarHeight} re\nf\nQ\n";
 
         $footerText = "{$footerLabel}  -  Page {$pageIndex} of {$totalPages}";
         $ascii = preg_replace('/[^\x20-\x7E]/', '-', $footerText) ?? $footerText;
         $escaped = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $ascii);
-        $stream .= "q\n0.45 0.45 0.45 rg\nBT\n/F1 8 Tf\n1 0 0 1 24 16 Tm\n({$escaped}) Tj\nET\nQ\n";
+        $stream .= "q\n" . $this->rgOp(self::INK_MUTED) . "\nBT\n/F1 8 Tf\n1 0 0 1 24 16 Tm\n({$escaped}) Tj\nET\nQ\n";
 
         return rtrim($stream);
     }
@@ -289,9 +295,10 @@ final class FloorPlanPdfRenderer
         $capY = self::IMAGE_PAGE_MARGIN + $captionHeight;
         foreach ($imagePage['caption'] as $line) {
             [$font, $size] = self::STYLE_FONTS[$line['style']];
+            $color = self::STYLE_COLORS[$line['style']] ?? self::INK;
             $ascii = preg_replace('/[^\x20-\x7E]/', '-', $line['text']) ?? $line['text'];
             $escaped = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $ascii);
-            $stream .= "BT\n/{$font} {$size} Tf\n1 0 0 1 " . self::IMAGE_PAGE_MARGIN . " {$capY} Tm\n({$escaped}) Tj\nET\n";
+            $stream .= 'q' . "\n" . $this->rgOp($color) . "\nBT\n/{$font} {$size} Tf\n1 0 0 1 " . self::IMAGE_PAGE_MARGIN . " {$capY} Tm\n({$escaped}) Tj\nET\nQ\n";
             $capY -= self::LINE_HEIGHT;
         }
 
@@ -318,8 +325,8 @@ final class FloorPlanPdfRenderer
     private function buildTextLines(array $floorPlan, string $layout = 'auto', string $unit = UnitFormatter::METRIC, ?string $label = null): array
     {
         $lines = [];
-        $add = static function (string $text, string $style = 'body') use (&$lines): void {
-            $lines[] = ['text' => $text, 'style' => $style];
+        $add = static function (string $text, string $style = 'body', array $extra = []) use (&$lines): void {
+            $lines[] = [...['text' => $text, 'style' => $style], ...$extra];
         };
 
         $add('Vuuro Scan - Floor Plan Metrics', 'title');
@@ -352,8 +359,8 @@ final class FloorPlanPdfRenderer
             $totalArea += $room['floor_area_m2'];
             $roomType = $room['room_type'] ?? null;
             $roomTypeValue = $roomType !== null ? ($roomType['confirmed'] ?? $roomType['guess'] ?? null) : null;
-            $roomTypeName = $roomTypeValue !== null ? RoomType::labelFor($roomTypeValue) : null;
-            $roomLabel = $roomTypeName !== null ? "{$room['label']} ({$roomTypeName})" : $room['label'];
+            $roomLabel = RoomType::displayLabel($room['label'], $roomTypeValue);
+            $bulletHex = FloorPlanPalette::roomAccentFor($roomTypeValue) ?? '#9a958a';
             $add(
                 sprintf(
                     '%-20s %12s   %14s   confidence: %s',
@@ -362,7 +369,8 @@ final class FloorPlanPdfRenderer
                     UnitFormatter::length($room['perimeter_m'], $unit) . ' perimeter',
                     $room['confidence']
                 ),
-                'room'
+                'room',
+                ['bullet' => FloorPlanPalette::hexToRgb($bulletHex)]
             );
             $heightM = $room['height_m'] ?? null;
             $volumeM3 = $room['volume_m3_indicative'] ?? null;
@@ -443,21 +451,37 @@ final class FloorPlanPdfRenderer
         return $wrapped === '' ? [''] : explode("\n", $wrapped);
     }
 
-    /** @param array<int, array{text: string, style: string}> $lines */
+    private function rgOp(array $rgb): string
+    {
+        return sprintf('%.3f %.3f %.3f rg', $rgb[0] / 255, $rgb[1] / 255, $rgb[2] / 255);
+    }
+
+    /** @param array<int, array{text: string, style: string, bullet?: array{0:int,1:int,2:int}}> $lines */
     private function buildContentStream(array $lines): string
     {
         $stream = '';
         $y = self::PAGE_TOP_Y;
         foreach ($lines as $line) {
+            if ($line['style'] === 'warning') {
+                $stream .= "q\n" . $this->rgOp([250, 214, 212]) . "\n0 " . ($y - 4) . ' ' . self::PAGE_WIDTH . ' ' . self::LINE_HEIGHT . " re\nf\nQ\n";
+            }
+            if ($line['style'] === 'section') {
+                $stream .= "q\n" . $this->rgOp(self::ACCENT) . "\n" . self::PAGE_MARGIN_X . ' ' . ($y - 4) . ' 24 2 re' . "\nf\nQ\n";
+            }
+            if (isset($line['bullet'])) {
+                $stream .= "q\n" . $this->rgOp($line['bullet']) . "\n" . (self::PAGE_MARGIN_X - 14) . ' ' . ($y - 1) . " 8 8 re\nf\n"
+                    . $this->rgOp(self::BORDER) . "\n1 w\n" . (self::PAGE_MARGIN_X - 14) . ' ' . ($y - 1) . " 8 8 re\nS\nQ\n";
+            }
             if ($line['text'] !== '') {
                 [$font, $size] = self::STYLE_FONTS[$line['style']];
+                $color = self::STYLE_COLORS[$line['style']] ?? self::INK;
                 // Base-14 Helvetica in a plain PDF string literal is
                 // single-byte StandardEncoding, not UTF-8 — raw multi-byte
                 // characters (e.g. an em dash) would render as mojibake in a
                 // real viewer, so this stays ASCII-only rather than risk that.
                 $ascii = preg_replace('/[^\x20-\x7E]/', '-', $line['text']) ?? $line['text'];
                 $escaped = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $ascii);
-                $stream .= "BT\n/{$font} {$size} Tf\n1 0 0 1 " . self::PAGE_MARGIN_X . " {$y} Tm\n({$escaped}) Tj\nET\n";
+                $stream .= 'q' . "\n" . $this->rgOp($color) . "\nBT\n/{$font} {$size} Tf\n1 0 0 1 " . self::PAGE_MARGIN_X . " {$y} Tm\n({$escaped}) Tj\nET\nQ\n";
             }
             $y -= self::LINE_HEIGHT;
         }

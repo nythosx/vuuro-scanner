@@ -1,0 +1,2502 @@
+{
+    "sourceLanguage": "en",
+    "strings": {
+        "History": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "History"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Geschiedenis"
+                    }
+                }
+            }
+        },
+        "Saved": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Saved"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Opgeslagen"
+                    }
+                }
+            }
+        },
+        "New scan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "New scan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Nieuwe scan"
+                    }
+                }
+            }
+        },
+        "Scan saved to history": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan saved to history"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan opgeslagen in geschiedenis"
+                    }
+                }
+            }
+        },
+        "Room-type guessing on": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Room-type guessing on"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamertype herkenning aan"
+                    }
+                }
+            }
+        },
+        "Room-type guessing off": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Room-type guessing off"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamertype herkenning uit"
+                    }
+                }
+            }
+        },
+        "Room-type guessing": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Room-type guessing"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamertype herkenning"
+                    }
+                }
+            }
+        },
+        "Guessing": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Guessing"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Herkenning"
+                    }
+                }
+            }
+        },
+        "Discard this scan?": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Discard this scan?"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze scan verwijderen?"
+                    }
+                }
+            }
+        },
+        "Discard": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Discard"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Verwijderen"
+                    }
+                }
+            }
+        },
+        "Keep Scanning": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Keep Scanning"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Doorgaan met scannen"
+                    }
+                }
+            }
+        },
+        "Everything captured so far in this room will be lost.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Everything captured so far in this room will be lost."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Alles wat tot nu toe in deze kamer is vastgelegd, gaat verloren."
+                    }
+                }
+            }
+        },
+        "This room looks larger than RoomPlan's practical scanning range (~9m) — accuracy may degrade beyond this size.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This room looks larger than RoomPlan's practical scanning range (~9m) — accuracy may degrade beyond this size."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze kamer lijkt groter dan het praktische scanbereik van RoomPlan (~9m) — de nauwkeurigheid kan boven deze afmeting afnemen."
+                    }
+                }
+            }
+        },
+        "Done": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Done"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Klaar"
+                    }
+                }
+            }
+        },
+        "Scan interrupted": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan interrupted"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan onderbroken"
+                    }
+                }
+            }
+        },
+        "Some of this room was captured before the interruption. You can try uploading it as-is, or discard it and scan again.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Some of this room was captured before the interruption. You can try uploading it as-is, or discard it and scan again."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Een deel van deze kamer is vastgelegd voor de onderbreking. Je kunt dit zo uploaden, of het verwijderen en opnieuw scannen."
+                    }
+                }
+            }
+        },
+        "Upload what was captured": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Upload what was captured"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Upload wat is vastgelegd"
+                    }
+                }
+            }
+        },
+        "Discard and try again": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Discard and try again"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Verwijderen en opnieuw proberen"
+                    }
+                }
+            }
+        },
+        "Keep scanning": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Keep scanning"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Blijf scannen"
+                    }
+                }
+            }
+        },
+        "This room's outline came out too small or flat to use. Try scanning more slowly and cover the whole floor before tapping Done.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This room's outline came out too small or flat to use. Try scanning more slowly and cover the whole floor before tapping Done."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De omtrek van deze kamer is te klein of te vlak om te gebruiken. Scan langzamer en dek de hele vloer voordat je op Klaar tikt."
+                    }
+                }
+            }
+        },
+        "Rescan this room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Rescan this room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamer opnieuw scannen"
+                    }
+                }
+            }
+        },
+        "Upload didn't go through": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Upload didn't go through"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Uploaden is mislukt"
+                    }
+                }
+            }
+        },
+        "This room's capture is still on your device. Retry the same upload, or rescan if the room itself needs it.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This room's capture is still on your device. Retry the same upload, or rescan if the room itself needs it."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De opname van deze kamer staat nog op je toestel. Probeer dezelfde upload opnieuw, of scan de kamer opnieuw als dat nodig is."
+                    }
+                }
+            }
+        },
+        "Retry upload": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Retry upload"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Upload opnieuw proberen"
+                    }
+                }
+            }
+        },
+        "The server rejected this capture's data — retrying the same upload won't change that. Rescanning this room is the way forward.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The server rejected this capture's data — retrying the same upload won't change that. Rescanning this room is the way forward."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De server heeft de gegevens van deze opname geweigerd — dezelfde upload opnieuw proberen verandert daar niets aan. Deze kamer opnieuw scannen is de juiste vervolgstap."
+                    }
+                }
+            }
+        },
+        "Scan another room in this unit, or finish and attach photos/notes.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan another room in this unit, or finish and attach photos/notes."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan nog een kamer in deze eenheid, of rond af en voeg foto's/notities toe."
+                    }
+                }
+            }
+        },
+        "Scan another room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan another room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Nog een kamer scannen"
+                    }
+                }
+            }
+        },
+        "Finish unit": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Finish unit"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Eenheid afronden"
+                    }
+                }
+            }
+        },
+        "Floor plan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Floor plan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Plattegrond"
+                    }
+                }
+            }
+        },
+        "Tap to view full screen": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tap to view full screen"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tik om op volledig scherm te bekijken"
+                    }
+                }
+            }
+        },
+        "Rendering your floor plan…": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Rendering your floor plan…"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Plattegrond wordt gemaakt…"
+                    }
+                }
+            }
+        },
+        "Rendering floor plan…": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Rendering floor plan…"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Plattegrond wordt gemaakt…"
+                    }
+                }
+            }
+        },
+        "Couldn't render the floor plan preview.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Couldn't render the floor plan preview."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De voorvertoning van de plattegrond kon niet worden gemaakt."
+                    }
+                }
+            }
+        },
+        "Notes and photos are evidence for each room — condition, damage, or anything worth flagging. They stay attached here and in History; note text and attached photos both print on the PDF export.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Notes and photos are evidence for each room — condition, damage, or anything worth flagging. They stay attached here and in History; note text and attached photos both print on the PDF export."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Notities en foto's zijn bewijs per kamer — staat, schade of iets anders dat het vermelden waard is. Ze blijven hier en in Geschiedenis bewaard; notitietekst en bijgevoegde foto's worden beide afgedrukt op de PDF-export."
+                    }
+                }
+            }
+        },
+        "Add notes and photos": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Add notes and photos"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Notities en foto's toevoegen"
+                    }
+                }
+            }
+        },
+        "Whole unit": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Whole unit"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Hele eenheid"
+                    }
+                }
+            }
+        },
+        "Notes": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Notes"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Notities"
+                    }
+                }
+            }
+        },
+        "Photos attached": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Photos attached"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Bijgevoegde foto's"
+                    }
+                }
+            }
+        },
+        "Missed a room? This adds it separately — it won't be merged into the fused layout above (see the disclaimer at the top of the exported plan).": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Missed a room? This adds it separately — it won't be merged into the fused layout above (see the disclaimer at the top of the exported plan)."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Een kamer gemist? Deze wordt apart toegevoegd — hij wordt niet samengevoegd met de indeling hierboven (zie de disclaimer bovenaan de geëxporteerde plattegrond)."
+                    }
+                }
+            }
+        },
+        "Add another room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Add another room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Nog een kamer toevoegen"
+                    }
+                }
+            }
+        },
+        "Finish": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Finish"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Afronden"
+                    }
+                }
+            }
+        },
+        "Notes & photos": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Notes & photos"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Notities en foto's"
+                    }
+                }
+            }
+        },
+        "Room name": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Room name"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamernaam"
+                    }
+                }
+            }
+        },
+        "Room type, e.g. Living room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Room type, e.g. Living room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamertype, bijv. Woonkamer"
+                    }
+                }
+            }
+        },
+        "Take a photo": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Take a photo"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Foto maken"
+                    }
+                }
+            }
+        },
+        "Choose from library": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Choose from library"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kiezen uit bibliotheek"
+                    }
+                }
+            }
+        },
+        "Add a link": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Add a link"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Link toevoegen"
+                    }
+                }
+            }
+        },
+        "Cancel": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Cancel"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Annuleren"
+                    }
+                }
+            }
+        },
+        "Add a photo link": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Add a photo link"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Fotolink toevoegen"
+                    }
+                }
+            }
+        },
+        "Add": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Add"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Toevoegen"
+                    }
+                }
+            }
+        },
+        "CAPTURED": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "CAPTURED"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "VASTGELEGD"
+                    }
+                }
+            }
+        },
+        "Fused": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Fused"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Samengevoegd"
+                    }
+                }
+            }
+        },
+        "Low confidence": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Low confidence"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Lage betrouwbaarheid"
+                    }
+                }
+            }
+        },
+        "Captured": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Captured"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Vastgelegd"
+                    }
+                }
+            }
+        },
+        "Floor area": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Floor area"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Vloeroppervlak"
+                    }
+                }
+            }
+        },
+        "Perimeter": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Perimeter"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Omtrek"
+                    }
+                }
+            }
+        },
+        "Height": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Height"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Hoogte"
+                    }
+                }
+            }
+        },
+        "Indicative — NEN2580-inspired, not certified": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Indicative — NEN2580-inspired, not certified"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Indicatief — geïnspireerd op NEN2580, niet gecertificeerd"
+                    }
+                }
+            }
+        },
+        "Note: ": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Note: "
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Notitie: "
+                    }
+                }
+            }
+        },
+        "Photo attached:": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Photo attached:"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Foto bijgevoegd:"
+                    }
+                }
+            }
+        },
+        "Whole unit — notes & photos": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Whole unit — notes & photos"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Hele eenheid — notities en foto's"
+                    }
+                }
+            }
+        },
+        "Save image": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Save image"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Afbeelding opslaan"
+                    }
+                }
+            }
+        },
+        "Refresh": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Refresh"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Vernieuwen"
+                    }
+                }
+            }
+        },
+        "Try again": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Try again"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Opnieuw proberen"
+                    }
+                }
+            }
+        },
+        "View PDF": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "View PDF"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "PDF bekijken"
+                    }
+                }
+            }
+        },
+        "Save PDF": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Save PDF"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "PDF opslaan"
+                    }
+                }
+            }
+        },
+        "Access log": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Access log"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Toegangslogboek"
+                    }
+                }
+            }
+        },
+        "Scan result": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan result"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scanresultaat"
+                    }
+                }
+            }
+        },
+        "Something went wrong": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Something went wrong"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Er is iets misgegaan"
+                    }
+                }
+            }
+        },
+        "No scans yet on this device.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "No scans yet on this device."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Nog geen scans op dit toestel."
+                    }
+                }
+            }
+        },
+        "Add a scan someone shared with you": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Add a scan someone shared with you"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Een gedeelde scan toevoegen"
+                    }
+                }
+            }
+        },
+        "Export unit": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Export unit"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Exporteenheid"
+                    }
+                }
+            }
+        },
+        "Measurement unit": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Measurement unit"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Meeteenheid"
+                    }
+                }
+            }
+        },
+        "View image": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "View image"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Afbeelding bekijken"
+                    }
+                }
+            }
+        },
+        "View report": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "View report"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Rapport bekijken"
+                    }
+                }
+            }
+        },
+        "Add a photo or note": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Add a photo or note"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Foto of notitie toevoegen"
+                    }
+                }
+            }
+        },
+        "Share image": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Share image"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Afbeelding delen"
+                    }
+                }
+            }
+        },
+        "Share PDF": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Share PDF"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "PDF delen"
+                    }
+                }
+            }
+        },
+        "Share access with someone else": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Share access with someone else"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Toegang delen met iemand anders"
+                    }
+                }
+            }
+        },
+        "Anyone who receives this code gets full access to this scan — view, export, and delete. Only send it somewhere secure.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Anyone who receives this code gets full access to this scan — view, export, and delete. Only send it somewhere secure."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Iedereen die deze code ontvangt, krijgt volledige toegang tot deze scan — bekijken, exporteren en verwijderen. Verstuur de code alleen via een veilig kanaal."
+                    }
+                }
+            }
+        },
+        "Forget this scan (device only)": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Forget this scan (device only)"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze scan vergeten (alleen dit toestel)"
+                    }
+                }
+            }
+        },
+        "Delete permanently from server": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Delete permanently from server"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Definitief verwijderen van server"
+                    }
+                }
+            }
+        },
+        "Download all images": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Download all images"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Alle afbeeldingen downloaden"
+                    }
+                }
+            }
+        },
+        "Save all images": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Save all images"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Alle afbeeldingen opslaan"
+                    }
+                }
+            }
+        },
+        "Download all PDFs": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Download all PDFs"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Alle PDF's downloaden"
+                    }
+                }
+            }
+        },
+        "Save all PDFs": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Save all PDFs"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Alle PDF's opslaan"
+                    }
+                }
+            }
+        },
+        "Scan history": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan history"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scangeschiedenis"
+                    }
+                }
+            }
+        },
+        "Forget this scan?": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Forget this scan?"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze scan vergeten?"
+                    }
+                }
+            }
+        },
+        "Forget": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Forget"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Vergeten"
+                    }
+                }
+            }
+        },
+        "This removes the local record on this device only — the session data itself isn't deleted, but you won't be able to reopen it from History again.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This removes the local record on this device only — the session data itself isn't deleted, but you won't be able to reopen it from History again."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Dit verwijdert alleen het lokale record op dit toestel — de sessiegegevens zelf worden niet verwijderd, maar je kunt de scan niet opnieuw openen vanuit Geschiedenis."
+                    }
+                }
+            }
+        },
+        "Delete this scan from the server?": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Delete this scan from the server?"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze scan van de server verwijderen?"
+                    }
+                }
+            }
+        },
+        "Delete": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Delete"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Verwijderen"
+                    }
+                }
+            }
+        },
+        "This permanently deletes the session's rooms, photos, and notes from the Scan Service. This cannot be undone.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This permanently deletes the session's rooms, photos, and notes from the Scan Service. This cannot be undone."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Dit verwijdert de kamers, foto's en notities van deze sessie definitief uit de Scan Service. Dit kan niet ongedaan worden gemaakt."
+                    }
+                }
+            }
+        },
+        "Paste the code": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Paste the code"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Plak de code"
+                    }
+                }
+            }
+        },
+        "Ask the other person to open this scan in their own History, tap \"Share access with someone else\", and send you the code.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ask the other person to open this scan in their own History, tap \"Share access with someone else\", and send you the code."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Vraag de ander om deze scan in hun eigen Geschiedenis te openen, op \"Toegang delen met iemand anders\" te tikken en jou de code te sturen."
+                    }
+                }
+            }
+        },
+        "Add this scan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Add this scan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze scan toevoegen"
+                    }
+                }
+            }
+        },
+        "Add a shared scan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Add a shared scan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Een gedeelde scan toevoegen"
+                    }
+                }
+            }
+        },
+        "Property — Unit": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Property — Unit"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Pand — Eenheid"
+                    }
+                }
+            }
+        },
+        "Purpose": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Purpose"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Doel"
+                    }
+                }
+            }
+        },
+        "Edit": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Edit"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Bewerken"
+                    }
+                }
+            }
+        },
+        "No rooms captured yet.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "No rooms captured yet."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Nog geen kamers vastgelegd."
+                    }
+                }
+            }
+        },
+        "No rooms captured for this scan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "No rooms captured for this scan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Geen kamers vastgelegd voor deze scan."
+                    }
+                }
+            }
+        },
+        "Notes and photos below are per-room evidence — condition, damage, or anything worth flagging for whoever reviews this unit next. Note text and attached photos both print on the PDF export.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Notes and photos below are per-room evidence — condition, damage, or anything worth flagging for whoever reviews this unit next. Note text and attached photos both print on the PDF export."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De notities en foto's hieronder zijn bewijs per kamer — staat, schade of iets anders dat vermeldenswaard is voor wie deze eenheid als volgende beoordeelt. Notitietekst en bijgevoegde foto's worden beide afgedrukt op de PDF-export."
+                    }
+                }
+            }
+        },
+        "Completed scan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Completed scan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Voltooide scan"
+                    }
+                }
+            }
+        },
+        "Language": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Language"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Taal"
+                    }
+                }
+            }
+        },
+        "Changes the language used throughout the app immediately.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Changes the language used throughout the app immediately."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Wijzigt direct de taal die in de hele app wordt gebruikt."
+                    }
+                }
+            }
+        },
+        "System": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "System"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Systeem"
+                    }
+                }
+            }
+        },
+        "English": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "English"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Engels"
+                    }
+                }
+            }
+        },
+        "Activity log": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Activity log"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Activiteitenlogboek"
+                    }
+                }
+            }
+        },
+        "An earlier scan upload didn't finish": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "An earlier scan upload didn't finish"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Een eerdere scan-upload is niet voltooid"
+                    }
+                }
+            }
+        },
+        "Back": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Back"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Terug"
+                    }
+                }
+            }
+        },
+        "Captured Rooms": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Captured Rooms"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Vastgelegde kamers"
+                    }
+                }
+            }
+        },
+        "Confirm room type": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Confirm room type"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamertype bevestigen"
+                    }
+                }
+            }
+        },
+        "Consent is required before scanning an occupied unit.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Consent is required before scanning an occupied unit."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Toestemming is vereist voordat een bewoonde eenheid wordt gescand."
+                    }
+                }
+            }
+        },
+        "Copy details": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Copy details"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Details kopiëren"
+                    }
+                }
+            }
+        },
+        "Correct room type": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Correct room type"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamertype corrigeren"
+                    }
+                }
+            }
+        },
+        "Discard and rescan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Discard and rescan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Verwijderen en opnieuw scannen"
+                    }
+                }
+            }
+        },
+        "Discard scan and go back": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Discard scan and go back"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan verwijderen en teruggaan"
+                    }
+                }
+            }
+        },
+        "Done with this room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Done with this room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Klaar met deze kamer"
+                    }
+                }
+            }
+        },
+        "e.g. missed a corner, wrong room type, walls look off…": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "e.g. missed a corner, wrong room type, walls look off…"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "bijv. hoek gemist, verkeerd kamertype, muren zien er niet goed uit…"
+                    }
+                }
+            }
+        },
+        "e.g. org-athome-vastgoed": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "e.g. org-athome-vastgoed"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "bijv. org-athome-vastgoed"
+                    }
+                }
+            }
+        },
+        "e.g. prop-oosterpark-14": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "e.g. prop-oosterpark-14"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "bijv. prop-oosterpark-14"
+                    }
+                }
+            }
+        },
+        "e.g. unit-2b": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "e.g. unit-2b"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "bijv. unit-2b"
+                    }
+                }
+            }
+        },
+        "Enter the property, unit, and organisation this scan belongs to. Tap a suggestion below a field to reuse a value from an earlier scan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Enter the property, unit, and organisation this scan belongs to. Tap a suggestion below a field to reuse a value from an earlier scan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Voer het pand, de eenheid en de organisatie in waartoe deze scan behoort. Tik op een suggestie onder een veld om een waarde van een eerdere scan te hergebruiken."
+                    }
+                }
+            }
+        },
+        "Export": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Export"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Exporteren"
+                    }
+                }
+            }
+        },
+        "For a single room by itself.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "For a single room by itself."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Voor één losse kamer."
+                    }
+                }
+            }
+        },
+        "Go back": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Go back"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Terug"
+                    }
+                }
+            }
+        },
+        "Guess room type while scanning": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Guess room type while scanning"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamertype raden tijdens scannen"
+                    }
+                }
+            }
+        },
+        "https://…": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "https://…"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "https://…"
+                    }
+                }
+            }
+        },
+        "Jan 1, 2026 at 12:00 PM": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Jan 1, 2026 at 12:00 PM"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "1 jan. 2026 om 12:00"
+                    }
+                }
+            }
+        },
+        "Keep this room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Keep this room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze kamer behouden"
+                    }
+                }
+            }
+        },
+        "Label this scan (optional)": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Label this scan (optional)"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Label deze scan (optioneel)"
+                    }
+                }
+            }
+        },
+        "LiDAR scanning isn't available on this device": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "LiDAR scanning isn't available on this device"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "LiDAR-scannen is niet beschikbaar op dit toestel"
+                    }
+                }
+            }
+        },
+        "No access attempts recorded yet.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "No access attempts recorded yet."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Nog geen toegangspogingen geregistreerd."
+                    }
+                }
+            }
+        },
+        "No activity logged yet.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "No activity logged yet."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Nog geen activiteit geregistreerd."
+                    }
+                }
+            }
+        },
+        "No notes or photos on this room yet.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "No notes or photos on this room yet."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Nog geen notities of foto's bij deze kamer."
+                    }
+                }
+            }
+        },
+        "Not sure": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Not sure"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Niet zeker"
+                    }
+                }
+            }
+        },
+        "Other": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Other"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Overig"
+                    }
+                }
+            }
+        },
+        "Retry": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Retry"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Opnieuw proberen"
+                    }
+                }
+            }
+        },
+        "Retry room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Retry room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamer opnieuw proberen"
+                    }
+                }
+            }
+        },
+        "Scan a whole unit": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan a whole unit"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Een hele eenheid scannen"
+                    }
+                }
+            }
+        },
+        "Scan Another Room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan Another Room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Nog een kamer scannen"
+                    }
+                }
+            }
+        },
+        "Scan one room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan one room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Eén kamer scannen"
+                    }
+                }
+            }
+        },
+        "Shows a quick bathroom/bedroom/kitchen/… guess on screen during capture — tap ✓ or ✗, or turn this off entirely.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Shows a quick bathroom/bedroom/kitchen/… guess on screen during capture — tap ✓ or ✗, or turn this off entirely."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Toont tijdens het scannen een snelle gok voor badkamer/slaapkamer/keuken/… op het scherm — tik op ✓ of ✗, of schakel dit volledig uit."
+                    }
+                }
+            }
+        },
+        "Some of this room was captured before the interruption. You can keep it and continue, or discard it and rescan this room.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Some of this room was captured before the interruption. You can keep it and continue, or discard it and rescan this room."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Een deel van deze kamer is vastgelegd voor de onderbreking. Je kunt dit behouden en doorgaan, of het verwijderen en deze kamer opnieuw scannen."
+                    }
+                }
+            }
+        },
+        "Tenant consent obtained for this scan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tenant consent obtained for this scan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Toestemming van huurder verkregen voor deze scan"
+                    }
+                }
+            }
+        },
+        "This room will be removed from the unit and won't be included in the final upload.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This room will be removed from the unit and won't be included in the final upload."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze kamer wordt verwijderd uit de eenheid en niet meegenomen in de definitieve upload."
+                    }
+                }
+            }
+        },
+        "This unit is currently occupied": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This unit is currently occupied"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze eenheid is momenteel bewoond"
+                    }
+                }
+            }
+        },
+        "Unit identity": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Unit identity"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Eenheidsidentiteit"
+                    }
+                }
+            }
+        },
+        "Walk through and capture every room in one visit; they're combined into one floor plan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Walk through and capture every room in one visit; they're combined into one floor plan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Loop rond en leg elke kamer in één bezoek vast; ze worden samengevoegd tot één plattegrond."
+                    }
+                }
+            }
+        },
+        "By scanning with this app, you agree to the Terms of Service and Privacy Policy.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "By scanning with this app, you agree to the Terms of Service and Privacy Policy."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Door te scannen met deze app ga je akkoord met de Gebruiksvoorwaarden en het Privacybeleid."
+                    }
+                }
+            }
+        },
+        "Read Terms of Service & Privacy Policy": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Read Terms of Service & Privacy Policy"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Lees Gebruiksvoorwaarden en Privacybeleid"
+                    }
+                }
+            }
+        },
+        "Terms & Privacy": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Terms & Privacy"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Voorwaarden en privacy"
+                    }
+                }
+            }
+        },
+        "Terms of Service": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Terms of Service"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Gebruiksvoorwaarden"
+                    }
+                }
+            }
+        },
+        "Privacy Policy": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Privacy Policy"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Privacybeleid"
+                    }
+                }
+            }
+        },
+        "Document": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Document"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Document"
+                    }
+                }
+            }
+        }
+    },
+    "version": "1.0"
+}

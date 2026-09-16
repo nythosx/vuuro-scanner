@@ -173,13 +173,25 @@ struct IdentityIntakeScreen: View {
             }
 
             #if DEBUG
-  
+
             Section {
                 Text(BuildInfo.summary)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
             #endif
+
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("By scanning with this app, you agree to the Terms of Service and Privacy Policy.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    NavigationLink("Read Terms of Service & Privacy Policy") {
+                        TermsAndPrivacyView()
+                    }
+                    .font(.caption.weight(.semibold))
+                }
+            }
         }
         .navigationTitle("New scan")
         .onAppear { loadPreviouslyUsedValues() }
@@ -207,6 +219,7 @@ struct IdentityIntakeScreen: View {
         do {
             try await client.checkHealth()
             healthCheckError = nil
+            LegalAgreementStore.recordAgreement()
             start(currentIdentity)
         } catch {
             healthCheckError = AppError(site: .healthCheck, underlying: error)

@@ -1,28 +1,3 @@
-# Mirrors .github/workflows/scan-service-ci.yml's merge gate on GitLab, where
-# merges to this repo actually happen (the GitHub mirror is a CI convenience
-# for the iOS/macOS build only — Actions results there block nothing here).
-#
-# Runs on a project-registered shell-executor runner (tag: windows-shell) —
-# no shared-runner CI/CD minutes required. `image:` is ignored by a shell
-# executor; it's left here as the documented target if this ever moves to a
-# docker-executor runner instead. Script is PowerShell, not bash: GitLab's
-# own Windows shell-executor guidance is to use powershell/pwsh, not bash —
-# Git-for-Windows' MSYS2 bash.exe doesn't behave reliably when GitLab Runner
-# launches it detached/without a console (confirmed while wiring this up: it
-# returns exit 0 and drops all output even for a trivial `exit 7`). A shell
-# executor uses whatever's already on the runner host, so PHP with
-# pdo_sqlite/gd/curl/mbstring must be pre-installed there (see the runner
-# host's own setup, not this file).
-#
-# Every "this might not exist yet" cleanup below is written to never raise a
-# PowerShell error in the first place (Test-Path / HasExited / an unfiltered
-# Get-Process piped through Where-Object) rather than raising one and trying
-# to catch it: GitLab's PowerShell shell treats $? as failed for the whole
-# line even when a try/catch around the failing call swallowed the
-# exception, which silently aborted step_script here twice in a row with
-# zero visible error (first on a bare Remove-Item on a not-yet-existing
-# sqlite file, then again on the same line wrapped in try/catch).
-
 stages:
   - test
 
@@ -90,16 +65,6 @@ scan-service-net:
         - scan-service/**/*
         - .gitlab-ci.yml
 
-# scan-service-net above never touches the Dockerfile at all (it runs PHP
-# straight on the runner host), so it stayed green through a whole build of
-# ba2f729's Dockerfile being broken (--with-jpeg with no libjpeg-dev,
-# pdo_sqlite with no libsqlite3-dev - Mark found it testing on his Mac,
-# 2026-09-01, since he runs the Scan Service via Docker there). This job
-# closes that gap: a real `docker build` + `docker run` + /health check on
-# this same runner host, via Docker-in-WSL2 (Ubuntu, installed as
-# docker.io, run as root to avoid needing an interactive sudo password on a
-# non-interactive runner). Without this, "the Dockerfile builds" is once
-# again a claim nothing re-checks on the next change to it.
 scan-service-docker-build:
   stage: test
   tags:
@@ -118,26 +83,6 @@ scan-service-docker-build:
         - scan-service/**/*
         - .gitlab-ci.yml
 
-# Catches exactly the incident Mark found by hand on 2026-08-31: both
-# FakeLidarMode.fallback and DebugScanServiceURL's tunnel URL left live
-# ("on") on a branch tip after appetize.io testing, twice, only caught
-# because Mark happened to re-clone and read the files himself. Git log shows
-# this flip-then-reset cycle repeating 7-8 times across this project's
-# history - a debug default shipping "on" is a matter of when, not if,
-# without something other than manual memory catching it. Cheap and
-# deliberately dumb: a plain text match against the one known-safe literal
-# for each file. Used to check both app copies so a fix to one didn't leave
-# the other silently behind — now just the one tree, since LIDAR-7 folded
-# ios-app-with-design/ back into ios-app/ and retired it (2026-09-03, see
-# ARCHITECTURE.md's roadmap entry).
-#
-# Deliberately NOT path-gated on Debug/**, unlike the jobs above: this checks
-# a standing invariant on the current HEAD, not "did this diff break
-# something." A `changes:` gate here would defeat the whole point - a flag
-# flipped on in one commit would go unchecked through every later commit that
-# doesn't happen to touch Debug/** again, which is exactly the silent-
-# persistence failure mode this exists to catch. Four file reads and a regex
-# match costs nothing to run on every pipeline.
 debug-flags-safe-defaults:
   stage: test
   tags:

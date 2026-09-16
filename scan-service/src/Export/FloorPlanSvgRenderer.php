@@ -22,22 +22,23 @@ final class FloorPlanSvgRenderer
     private const NOTE_LINE_HEIGHT = 15;
     private const GRID_STEP = 60.0;
 
-    private const CANVAS = '#f1f0ec';
-    private const GRID_LINE = '#e2e1da';
-    private const WALL = '#141414';
+    private const CANVAS = '#ffffff';
+    private const GRID_LINE = '#ececee';
+    private const WALL = '#272729';
     private const OPENING_FILL = '#ffffff';
-    private const WINDOW_LINE = '#7a7a7a';
-    private const TEXT = '#1a1a1a';
-    private const SUBTEXT = '#6b6b6b';
-    private const DOOR_COLOR = '#141414';
+    private const TEXT = '#272729';
+    private const SUBTEXT = '#87878a';
+    private const DOOR_COLOR = '#ff8212';
+    private const WINDOW_COLOR = '#2ec3ff';
     private const WALK_PATH = '#9656be';
     private const OBJECT = '#5c5c5c';
-    private const WARN_FILL = '#f8d3d3';
-    private const WARN_BORDER = '#a4231f';
-    private const FONT = 'Arial, Helvetica, sans-serif';
+    private const WARN_FILL = '#fadad7';
+    private const WARN_BORDER = '#d6453e';
+    private const HEADER_ACCENT = '#ff8212';
+    private const FONT = "'Open Sans', Arial, Helvetica, sans-serif";
     private const FOOTER_TEXT = 'Indicative measurements — NEN2580-inspired, not certified. No rights can be derived from this plan.';
 
-    private const FALLBACK_FILLS = ['#d7e7f4', '#dff0d8', '#fae9cd', '#ede0f0', '#d8f0ee'];
+    private const FALLBACK_FILLS = ['#ffe5d0', '#e6f4c8', '#e1f5ff', '#f0e7f7', '#e0f4f0'];
 
     private static function roomHeadingDeg(array $room): ?float
     {
@@ -66,9 +67,7 @@ final class FloorPlanSvgRenderer
 
     private function displayLabel(array $room): string
     {
-        $roomType = self::roomTypeValue($room);
-        $typeName = $roomType !== null ? RoomType::labelFor($roomType) : null;
-        return $typeName !== null ? sprintf('%s (%s)', $room['label'], $typeName) : $room['label'];
+        return RoomType::displayLabel($room['label'], self::roomTypeValue($room));
     }
 
     private function esc(string $s): string
@@ -137,6 +136,7 @@ SVG;
             . 'preserveAspectRatio="xMidYMid meet" width="100%" height="100%" font-family="' . self::FONT . '">'
             . '<rect x="0" y="0" width="' . $width . '" height="' . $height . '" fill="' . self::CANVAS . '"/>'
             . $this->defs()
+            . '<rect x="0" y="0" width="' . $width . '" height="4" fill="' . self::HEADER_ACCENT . '"/>'
             . $body
             . '</svg>';
     }
@@ -205,6 +205,33 @@ SVG;
             }
         }
         return count($lines) > 1 ? $lines : [];
+    }
+
+    private function centroidM(array $outlineM): array
+    {
+        $n = count($outlineM);
+        if ($n === 0) {
+            return [0.0, 0.0];
+        }
+        return [array_sum(array_column($outlineM, 0)) / $n, array_sum(array_column($outlineM, 1)) / $n];
+    }
+
+    private function roomSummaryLines(array $rooms, string $unit): array
+    {
+        $lines = ['Room summary:'];
+        foreach ($rooms as $room) {
+            $parts = [UnitFormatter::area($room['floor_area_m2'], $unit) . ' floor area'];
+            $parts[] = UnitFormatter::length($room['perimeter_m'], $unit) . ' perimeter';
+            if (($room['height_m'] ?? null) !== null) {
+                $parts[] = UnitFormatter::length($room['height_m'], $unit) . ' height';
+            }
+            if (($room['volume_m3_indicative'] ?? null) !== null) {
+                $parts[] = UnitFormatter::volume($room['volume_m3_indicative'], $unit) . ' indicative';
+            }
+            $parts[] = $room['confidence'] . ' confidence';
+            $lines[] = "  [{$this->displayLabel($room)}] " . implode(' — ', $parts);
+        }
+        return $lines;
     }
 
     private function wrapTextLines(string $text, int $maxChars): array
@@ -372,7 +399,7 @@ SVG;
             }
             $midX = ($ax + $bx) / 2;
             $midZ = ($az + $bz) / 2;
-            [$midX, $midZ] = $this->insetTowardCentroid($midX, $midZ, $centroidX, $centroidZ, 0.22);
+            [$midX, $midZ] = $this->insetTowardCentroid($midX, $midZ, $centroidX, $centroidZ, -0.4);
             [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $midX, $midZ);
             [$px, $py] = $toPx($wx, $wz);
             $out .= '<text x="' . $this->num($px) . '" y="' . $this->num($py) . '">' . $this->esc(UnitFormatter::length($lengthM, $unit)) . '</text>';
@@ -395,7 +422,7 @@ SVG;
         return $out;
     }
 
-    private function openingsSvg(array $room, array $pose, callable $toPx, string $unit, array $roomEdgeTiers, string &$labels): string
+    private function openingsSvg(array $room, array $pose, callable $toPx, array $roomEdgeTiers): string
     {
         $outline = $room['outline_m'] ?? [];
         $n = count($outline);
@@ -459,7 +486,7 @@ SVG;
                 [$bWx, $bWz] = RoomFusionSolver::transformPoint($pose, $endBX, $endBZ);
                 [$bPx, $bPy] = $toPx($bWx, $bWz);
                 $tickLenPx = $wallHalfM * self::PX_PER_M;
-                $out .= '<g stroke="' . self::WINDOW_LINE . '" stroke-width="1">'
+                $out .= '<g stroke="' . self::WINDOW_COLOR . '" stroke-width="1">'
                     . '<line x1="' . $this->num($aPx) . '" y1="' . $this->num($aPy) . '" x2="' . $this->num($bPx) . '" y2="' . $this->num($bPy) . '"/>';
                 foreach ([[$aPx, $aPy], [$bPx, $bPy]] as [$ex, $ey]) {
                     $out .= '<line x1="' . $this->num($ex - $normalDx * $tickLenPx) . '" y1="' . $this->num($ey - $normalDz * $tickLenPx) . '" x2="' . $this->num($ex + $normalDx * $tickLenPx) . '" y2="' . $this->num($ey + $normalDz * $tickLenPx) . '"/>';
@@ -468,11 +495,6 @@ SVG;
             } else {
                 $out .= $this->jambSquaresSvg($pose, $toPx, $mx, $mz, $wallDx, $wallDz, $half);
             }
-
-            [$labelMx, $labelMz] = $this->insetTowardCentroid($mx, $mz, $centroidX, $centroidZ, 0.3);
-            [$labelWx, $labelWz] = RoomFusionSolver::transformPoint($pose, $labelMx, $labelMz);
-            [$labelX, $labelY] = $toPx($labelWx, $labelWz);
-            $labels .= '<text x="' . $this->num($labelX) . '" y="' . $this->num($labelY) . '" font-size="8" fill="' . self::SUBTEXT . '">' . $this->esc($category) . '</text>';
         }
         $out .= '</g>';
         return $out;
@@ -715,10 +737,10 @@ SVG;
         $labels = '';
         $out = '<rect x="0" y="0" width="' . $tile['width'] . '" height="' . ($tile['height'] - self::LABEL_HEIGHT) . '" fill="url(#grid)"/>';
         $out .= $this->roomFillSvg($room['outline_m'], $identityPose, $toPx, $fill);
+        $out .= $this->objectsSvg($room, $identityPose, $toPx, $labels);
         $out .= $this->roomWallsSvg($room['outline_m'], $identityPose, $toPx, []);
         $out .= $this->walkPathSvg($room, $identityPose, $toPx);
-        $out .= $this->openingsSvg($room, $identityPose, $toPx, $unit, [], $labels);
-        $out .= $this->objectsSvg($room, $identityPose, $toPx, $labels);
+        $out .= $this->openingsSvg($room, $identityPose, $toPx, []);
         $headingDeg = self::roomHeadingDeg($room);
         if ($headingDeg !== null) {
             $out .= $this->compassArrowSvg($headingDeg, $tile['width'] - 26, 26);
@@ -762,6 +784,7 @@ SVG;
             }
         }
         $notesLines = $this->buildNotesLines($rooms, $notes);
+        $summaryLines = $this->roomSummaryLines($rooms, $unit);
 
         $subLines = ['Room positions relative to each other, not independently verified beyond this capture.'];
         if ($overlapping !== []) {
@@ -779,7 +802,10 @@ SVG;
         $drawingWidth = (int) round(($maxX - $minX) * self::PX_PER_M);
         $drawingHeight = (int) round(($maxZ - $minZ) * self::PX_PER_M);
         $canvasWidth = max(self::MARGIN * 2 + $dimGutter + $drawingWidth, 560);
-        $canvasHeight = $topGutter + $drawingHeight + 40 + count($notesLines) * self::NOTE_LINE_HEIGHT + 30;
+        $canvasHeight = $topGutter + $drawingHeight + 40
+            + count($notesLines) * self::NOTE_LINE_HEIGHT
+            + count($summaryLines) * self::NOTE_LINE_HEIGHT
+            + 30;
 
         if ($canvasWidth > self::MAX_CANVAS_DIMENSION_PX || $canvasHeight > self::MAX_CANVAS_DIMENSION_PX) {
             throw new \InvalidArgumentException(sprintf(
@@ -818,6 +844,13 @@ SVG;
         }
         $body .= '</g>';
 
+        $objectLabels = '';
+        $body .= '<g id="objects">';
+        foreach ($rooms as $i => $room) {
+            $body .= $this->objectsSvg($room, $poses[$i], $toPx, $objectLabels);
+        }
+        $body .= '</g>';
+
         $body .= '<g id="walls">';
         foreach ($rooms as $i => $room) {
             $pose = $poses[$i];
@@ -831,32 +864,21 @@ SVG;
         }
         $body .= '</g>';
 
-        $labels = '';
-
         foreach ($rooms as $i => $room) {
             $body .= $this->walkPathSvg($room, $poses[$i], $toPx);
         }
         foreach ($rooms as $i => $room) {
-            $body .= $this->openingsSvg($room, $poses[$i], $toPx, $unit, $edgeTiers[$i] ?? [], $labels);
-            $body .= $this->objectsSvg($room, $poses[$i], $toPx, $labels);
+            $body .= $this->openingsSvg($room, $poses[$i], $toPx, $edgeTiers[$i] ?? []);
         }
 
+        $labels = $objectLabels;
         foreach ($rooms as $i => $room) {
             $pose = $poses[$i];
-            [$labelX, $labelY] = $toPx($pose['originX'], $pose['originZ']);
-            $labels .= '<text x="' . $this->num($labelX + 6) . '" y="' . $this->num($labelY + 16) . '" font-size="12" font-weight="600" fill="' . self::TEXT . '">' . $this->esc($this->displayLabel($room)) . '</text>';
-            $metrics = sprintf('%s — %s perimeter', UnitFormatter::area($room['floor_area_m2'], $unit), UnitFormatter::length($room['perimeter_m'], $unit));
-            $labels .= '<text x="' . $this->num($labelX + 6) . '" y="' . $this->num($labelY + 30) . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc($metrics) . '</text>';
-            $lineY = $labelY + 44;
-            if (($room['height_m'] ?? null) !== null) {
-                $labels .= '<text x="' . $this->num($labelX + 6) . '" y="' . $this->num($lineY) . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc(sprintf('%s height', UnitFormatter::length($room['height_m'], $unit))) . '</text>';
-                $lineY += 13;
-            }
-            if (($room['volume_m3_indicative'] ?? null) !== null) {
-                $labels .= '<text x="' . $this->num($labelX + 6) . '" y="' . $this->num($lineY) . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc(sprintf('%s indicative', UnitFormatter::volume($room['volume_m3_indicative'], $unit))) . '</text>';
-            }
+            [$cx, $cz] = $this->centroidM($room['outline_m']);
+            [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $cx, $cz);
+            [$labelX, $labelY] = $toPx($wx, $wz);
+            $labels .= '<text x="' . $this->num($labelX) . '" y="' . $this->num($labelY) . '" font-size="12" font-weight="600" fill="' . self::TEXT . '" text-anchor="middle">' . $this->esc($this->displayLabel($room)) . '</text>';
         }
-
         $body .= $labels;
 
         $fusedHeadingDeg = null;
@@ -874,10 +896,13 @@ SVG;
         $notesY = $drawingBottomY + 20;
         $body .= $this->notesSvg($notesLines, self::MARGIN, $notesY);
 
+        $summaryY = $notesY + count($notesLines) * self::NOTE_LINE_HEIGHT;
+        $body .= $this->notesSvg($summaryLines, self::MARGIN, $summaryY);
+
         $legendY = $canvasHeight - 30;
         $body .= '<g font-size="9" fill="' . self::TEXT . '">'
             . '<circle cx="' . (self::MARGIN + 4) . '" cy="' . $legendY . '" r="4" fill="' . self::DOOR_COLOR . '"/><text x="' . (self::MARGIN + 12) . '" y="' . ($legendY + 3) . '">door</text>'
-            . '<rect x="' . (self::MARGIN + 60) . '" y="' . ($legendY - 4) . '" width="10" height="6" fill="' . self::OPENING_FILL . '" stroke="' . self::WINDOW_LINE . '"/><text x="' . (self::MARGIN + 74) . '" y="' . ($legendY + 3) . '">window</text>'
+            . '<rect x="' . (self::MARGIN + 60) . '" y="' . ($legendY - 4) . '" width="10" height="6" fill="' . self::OPENING_FILL . '" stroke="' . self::WINDOW_COLOR . '"/><text x="' . (self::MARGIN + 74) . '" y="' . ($legendY + 3) . '">window</text>'
             . '<line x1="' . (self::MARGIN + 130) . '" y1="' . $legendY . '" x2="' . (self::MARGIN + 146) . '" y2="' . $legendY . '" stroke="' . self::WALK_PATH . '" stroke-width="1.5" stroke-dasharray="6,5"/><text x="' . (self::MARGIN + 150) . '" y="' . ($legendY + 3) . '">walk path</text>'
             . '<rect x="' . (self::MARGIN + 220) . '" y="' . ($legendY - 5) . '" width="8" height="8" fill="none" stroke="' . self::OBJECT . '"/><text x="' . (self::MARGIN + 232) . '" y="' . ($legendY + 3) . '">detected object</text>'
             . '</g>';

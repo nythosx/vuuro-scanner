@@ -1,35 +1,22 @@
-# Stack chosen for the Scan Service: plain PHP + SQLite (see
-# docs/adr/0001-scan-service-stack.md). Extend further if the stack changes.
-
-# Scan Service local runtime data
 scan-service/data/
 
-# Scratch appetize.io build extraction/repackaging, never a project artifact.
-# Wildcarded since a new numbered dir gets created each retest cycle -
-# .appetize-build/ and .appetize-build2/ alone missed .appetize-build3/ and
-# .appetize-build4/, which sat untracked instead of ignored.
 .appetize-build*/
 .appetize-evidence/
 
-# Local GitLab Runner (scanner-windows-shell) runtime state — see CLAUDE.md
 .runner_system_id
 builds/
 
-# OS
 .DS_Store
 Thumbs.db
 
-# Editors
 .vscode/
 .idea/
 *.swp
 
-# Env / secrets — never commit these
 .env
 .env.*
 !.env.example
 
-# Common dependency/build dirs (harmless to keep even before a stack is picked)
 node_modules/
 dist/
 build/
@@ -42,25 +29,14 @@ __pycache__/
 .venv/
 venv/
 
-# Logs
 *.log
 
-# Local-only planning notes — scratch, not project artifacts, never pushed
 WEB_VIEWER_PLAN.md
 
-# Repo policy: only top-level README.md and ARCHITECTURE.md were pushed as
-# Mark/developer-facing documentation. Updated 2026-08-31 per Mark: the ADRs
-# and module READMEs (including the iOS Xcode-first-open checklist) now get
-# committed too, since the root README linked to files that only existed on
-# this machine. CLAUDE.md stays local-only (untracked, working notes, not
-# meant to live in the repo); PHASES.md was an early working-notes file that
-# never made it into git either. Dated internal status notes and the
-# web-viewer dev tool stay local-only.
 docs/status/
 web-viewer/
 CLAUDE.md
 
-# Scratch stakeholder-demo mockups — never project artifacts, never pushed
 ios-app.html
 mockup.html
 vuuro.com.html

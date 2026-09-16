@@ -21,8 +21,40 @@ Fixture/simulator proof and real-capture proof are not the same claim.
 
 `Sources/Design/VuuroDesign.swift` holds vuuro.com's brand tokens (colors, fonts, button
 styles) — folded in from the retired `ios-app-with-design/` tree (LIDAR-7, 2026-09-03),
-now wired through the main flow (intake, capture, rooms, attachments, result, history).
-Wire any remaining screen to `.vuuroPrimary`/`.vuuroSecondary`/`.vuuroCard()`.
+now wired through the main flow (intake, capture, rooms, attachments, result, history,
+the read-only scan report). Wire any remaining screen to
+`.vuuroPrimary`/`.vuuroSecondary`/`.vuuroCard()`.
+
+## Localization
+
+`Resources/Localizable.xcstrings` is a SwiftUI String Catalog (English source + Dutch),
+registered as a target resource in `project.yml`. A dropdown in the top-right corner of
+the first screen (New scan) lets the user pick System default / English / Nederlands at
+runtime — `VuuroScanApp` stores the choice in `@AppStorage` and applies it app-wide via
+`.environment(\.locale, ...)`, no relaunch needed. Existing `Text("literal")` calls need
+no code change — SwiftUI resolves plain string literals against the catalog
+automatically; anything not yet in the catalog just falls back to its English text.
+
+Coverage: as of 2026-09-16, every static (non-interpolated) string passed to
+`Text`/`Button`/`Label`/`Toggle`/`TextField`/`.navigationTitle` across `Sources/` has a
+catalog entry — verified by diffing a grep of all such literals against the catalog's
+keys, not just spot-checked. Interpolated strings (e.g. `Text("Room \(index + 1)")`) are
+intentionally NOT in the catalog — SwiftUI's auto-generated key for those depends on
+Swift's format-specifier inference (`%lld` vs `%@` vs `%f`) per interpolated type, which
+can't be hand-replicated reliably without Xcode's own extraction tool; they render fine,
+just always in English until someone runs "Extract to String Catalog" in Xcode and fills
+in translations for them. Date/time text must use `Text(date, format:)`, never
+`Text(date.formatted(...))` — the latter reads `Locale.autoupdatingCurrent`, not this
+app's `\.locale` environment override, so it silently ignores the in-app language choice.
+
+## Terms of Service & Privacy Policy
+
+A disclosure line + "Read Terms of Service & Privacy Policy" link sit at the bottom of
+the first screen (`Sources/Legal/`, see `docs/adr/0006`). Agreement is automatic on use
+(no blocking checkbox), recorded locally the moment a scan actually starts. **The legal
+text itself is a draft, not lawyer-reviewed** — read the ADR before treating it as
+launch-ready; it explains exactly what's covered and what still needs a real lawyer,
+translation, and (if needed) server-side proof-of-agreement before commercial launch.
 
 The body font is vuuro.com's real typeface, Open Sans (OFL-licensed), bundled as a single
 variable font at `Resources/Fonts/OpenSans-Variable.ttf` — `project.yml`'s `resources:`

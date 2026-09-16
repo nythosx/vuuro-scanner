@@ -2,13 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Independent net for privacy/ACL. HTTP only, no importing
- * ScanSessionRepository's authorize/tokenMatches logic.
- *
- * Usage: php net/verify_acl.php [base_url]
- */
-
 require_once __DIR__ . '/lib/http_client.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';
@@ -77,7 +70,6 @@ if ($sessionAId !== null) {
     [$correctTokenGet, $correctGetBody] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionAId", null, $sessionAToken);
     check('GET with the correct token succeeds (HTTP 200)', $correctTokenGet === 200, "got HTTP $correctTokenGet");
 
-    // A second, unrelated session's token must not authorize access to session A.
     [, $sessionB] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'organisation_id' => 'org-net-acl-b', 'occupied' => false]);
     $sessionBToken = $sessionB['access_token'] ?? null;
     if ($sessionBToken !== null) {
@@ -115,8 +107,6 @@ if ($sessionAId !== null && $sessionAToken !== null) {
 
 echo "\n== Repeated failed-auth attempts against a real session are throttled ==\n";
 
-// Uses its own fresh session so this doesn't share a bucket with session A's
-// earlier denied attempts above.
 [, $throttleSession] = net_http_json('POST', "$baseUrl/scan-sessions", [...base_payload(), 'organisation_id' => 'org-net-acl-throttle', 'occupied' => false]);
 $throttleSessionId = $throttleSession['id'] ?? null;
 $throttleSessionToken = $throttleSession['access_token'] ?? null;
@@ -136,9 +126,6 @@ if ($throttleSessionId !== null && $throttleSessionToken !== null) {
     check('25 rapid wrong-token attempts against one session eventually hit HTTP 429', $sawThrottle);
     check('every one of those 25 attempts was either 401 (denied) or 429 (throttled), never anything else', $allDeniedOrThrottled);
 
-    // The throttle must bound only DENIED attempts — a legitimate client
-    // holding the correct token must still work right after the
-    // denied-attempt budget is exhausted.
     [$stillWorksStatus, ] = net_http_json('GET', "$baseUrl/scan-sessions/$throttleSessionId", null, $throttleSessionToken);
     check(
         'the CORRECT token still works immediately after the denied-attempt budget is exhausted',
@@ -146,15 +133,6 @@ if ($throttleSessionId !== null && $throttleSessionToken !== null) {
         "got HTTP $stillWorksStatus"
     );
 
-    // ACL-surface scan finding: the 429 above only bounded the HTTP
-    // responses returned, not the audit-log write itself — logAccess() used
-    // to run BEFORE the rate-limit check, so all 25 wrong-token attempts
-    // wrote a 'denied' row to access_log regardless of how many got a real
-    // 401 vs a 429. access_log has no cap and isn't pruned (unlike
-    // rate_limit_events), so a runaway client could grow it without limit
-    // through the very feature meant to stop that. Fixed by moving the log
-    // write after the rate-limit check, so once a session is throttled,
-    // further denied attempts get neither a 401 nor a new log row.
     [$throttledLogStatus, $throttledLogBody] = net_http_json('GET', "$baseUrl/scan-sessions/$throttleSessionId/access-log", null, $throttleSessionToken);
     if ($throttledLogStatus === 200) {
         $throttledDeniedCount = count(array_filter(

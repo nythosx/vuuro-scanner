@@ -88,8 +88,12 @@ This document serves as a critical, living template designed to equip agents wit
 │   │   │   ├── ScanHistoryStore.swift  # UserDefaults-backed persistence —
 │   │   │   │                           # no server-side listing exists by
 │   │   │   │                           # design (docs/adr/0003)
-│   │   │   ├── ScanHistoryView.swift   # Per-session image/PDF download +
-│   │   │   │                           # bulk "download all" across history
+│   │   │   ├── ScanHistoryView.swift   # Per-session share/export + bulk
+│   │   │   │                           # "download all" across history
+│   │   │   ├── ScanResultsReportView.swift  # Read-only landlord/ops report
+│   │   │   │                           # for one completed scan — per-room
+│   │   │   │                           # metrics, notes/photos, floor plan +
+│   │   │   │                           # PDF, access log; no edit affordances
 │   │   │   └── AccessLogView.swift     # GET .../access-log, in-app
 │   │   ├── Diagnostics/         # Deterministic error-code mechanism
 │   │   │   ├── AppError.swift          # code is DERIVED from the real
@@ -110,9 +114,30 @@ This document serves as a critical, living template designed to equip agents wit
 │   │   │   └── DebugScanServiceURL.swift  # overrides the 127.0.0.1:8089
 │   │   │                                  # default, since a cloud simulator
 │   │   │                                  # (appetize.io) can't reach loopback
-│   │   └── Design/
-│   │       └── VuuroDesign.swift  # Brand tokens/button styles, unwired
-│   │                               # by default (LIDAR-7)
+│   │   ├── Design/
+│   │   │   └── VuuroDesign.swift  # Brand tokens/button styles, wired
+│   │   │                           # through the main flow (LIDAR-7)
+│   │   ├── Settings/
+│   │   │   └── AppLanguage.swift  # System/English/Nederlands enum + the
+│   │   │                           # AppStorage key backing the language
+│   │   │                           # dropdown on the intake screen's toolbar
+│   │   └── Legal/               # Commercialization posture — see ADR 0006.
+│   │       │                     # DRAFT text, not lawyer-reviewed; needs
+│   │       │                     # real legal review before commercial launch
+│   │       ├── LegalContent.swift        # Terms of Service + Privacy Policy
+│   │       │                             # body text, versioned
+│   │       ├── LegalAgreementStore.swift # Records which version + when the
+│   │       │                             # user agreed (UserDefaults), stamped
+│   │       │                             # automatically the moment a scan
+│   │       │                             # actually starts — not a checkbox gate
+│   │       └── TermsAndPrivacyView.swift # In-app reader, linked from the
+│   │                                     # bottom of the intake screen
+│   ├── Resources/
+│   │   └── Localizable.xcstrings  # String Catalog, en source + nl — VuuroScanApp
+│   │                               # applies the chosen language app-wide via
+│   │                               # .environment(\.locale, ...); falls back to
+│   │                               # the raw English literal for any string not
+│   │                               # yet in the catalog, so gaps don't crash
 │   └── README.md               # Local-only (gitignored) — verification
 │                                # status, checklist for whoever opens this
 │                                # in Xcode first

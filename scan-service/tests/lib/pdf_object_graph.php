@@ -2,15 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Walks a generated PDF's actual object graph (Root -> Pages -> Kids ->
- * each Page's /Contents and /Resources) using the xref table as the only
- * source of object boundaries, so embedded binary (JPEG) streams can never
- * be mistaken for PDF syntax. Returns an empty array when the file is
- * structurally sound; otherwise a list of human-readable problems.
- *
- * @return list<string>
- */
 function pdf_validate_object_graph(string $pdf): array
 {
     $problems = [];

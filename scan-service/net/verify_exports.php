@@ -2,15 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Independent net for PNG/PDF floor plan exports. Same rules as the other
- * net scripts — HTTP only, no importing FloorPlanImageRenderer/
- * FloorPlanPdfRenderer, expected structure re-derived independently from
- * the underlying FloorPlan (not from the renderer's own output format).
- *
- * Usage: php net/verify_exports.php [base_url]
- */
-
 require_once __DIR__ . '/lib/http_client.php';
 require_once __DIR__ . '/../tests/lib/pdf_object_graph.php';
 
@@ -81,8 +72,6 @@ check('PDF export has application/pdf content type', str_contains($pdfContentTyp
 check('PDF starts with %PDF- header', str_starts_with($pdfBytes, '%PDF-'));
 check('PDF ends with %%EOF', str_ends_with(rtrim($pdfBytes), '%%EOF'));
 
-// Re-parse the xref table and confirm every declared object offset actually
-// points at that object's "N 0 obj" header.
 preg_match('/startxref\s+(\d+)\s+%%EOF/', $pdfBytes, $xrefMatch);
 $xrefOffsetValid = isset($xrefMatch[1]) && substr($pdfBytes, (int) $xrefMatch[1], 4) === 'xref';
 check('startxref points exactly at the "xref" keyword', $xrefOffsetValid);
@@ -100,8 +89,6 @@ foreach ($objMatches[1] as $i => $offsetStr) {
 check('every xref-declared object offset points at the correct "N 0 obj" header',
     $allObjectOffsetsValid && count($objMatches[1]) > 0);
 
-// The room labels and rounded areas the API already returned must actually
-// appear in the PDF's text content.
 $room1Label = $floorPlan['rooms'][0]['label'];
 $room2Area = number_format((float) $floorPlan['rooms'][1]['floor_area_m2'], 2, '.', '');
 check("PDF content contains the first room's label ($room1Label)", str_contains($pdfBytes, $room1Label));
@@ -223,8 +210,6 @@ if ($manyRoomsSessionId !== null && $manyRoomsToken !== null) {
     if ($manyPdfStatus === 200) {
         check('40-room PDF spans more than one page (/Count 4 or higher, never /Count 1)', (bool) preg_match('/\/Count\s+(?!1\b)\d+/', $manyPdfBytes), 'PDF still declares a single page for 40 rooms');
 
-        // Parse every `Tm` text-positioning operator (`1 0 0 1 <x> <y> Tm`)
-        // and confirm every Y stays within the 792pt MediaBox.
         preg_match_all('/1 0 0 1 [\d.]+ (-?[\d.]+) Tm/', $manyPdfBytes, $tmMatches);
         $offPageYs = array_filter($tmMatches[1] ?? [], static fn ($y) => (float) $y < 0 || (float) $y > 792);
         check(
@@ -258,8 +243,6 @@ if ($manyRoomsSessionId !== null && $manyRoomsToken !== null) {
         check_pdf_graph('paginated 40-room PDF', $manyPdfBytes);
     }
 
-    // The same 40-room capture also exceeds the PNG canvas width bound
-    // (MAX_CANVAS_DIMENSION_PX).
     [$manyPngStatus, $manyPngBody] = net_http_json('GET', "$baseUrl/scan-sessions/$manyRoomsSessionId/export/floorplan.png", null, $manyRoomsToken);
     check(
         'a 40-room PNG export that would exceed the canvas size bound returns a clean 422, not a 500 or a truncated image',
@@ -294,8 +277,6 @@ if ($unicodeSessionId === null || $unicodeSessionToken === null) {
     [$unicodePdfStatus, $unicodePdfContentType, $unicodePdfBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$unicodeSessionId/export/floorplan.pdf", null, $unicodeSessionToken);
     check('PDF export still returns HTTP 200 with a non-ASCII identity', $unicodePdfStatus === 200, "got HTTP $unicodePdfStatus");
 
-    // No raw multi-byte UTF-8 (any byte >= 0x80) should leak into the PDF's
-    // actual text-showing operators.
     preg_match_all('/\(((?:[^()\\\\]|\\\\.)*)\)\s*Tj/', $unicodePdfBytes, $tjMatches);
     $hasHighByteInText = false;
     foreach ($tjMatches[1] as $shown) {

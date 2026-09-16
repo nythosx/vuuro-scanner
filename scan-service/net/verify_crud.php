@@ -2,14 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Independent net for the full CRUD surface the app actually exercises,
- * per resource, over real HTTP (not the repository directly) — Session,
- * Room, Photo, Note. HTTP only, no adapter/repository/renderer imports.
- *
- * Usage: php net/verify_crud.php [base_url]
- */
-
 require_once __DIR__ . '/lib/http_client.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';
@@ -32,7 +24,6 @@ $fixture = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roompl
 $replacementFixture = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_lshaped_adversarial.json'), true, 512, JSON_THROW_ON_ERROR);
 $suffix = substr(md5((string) microtime(true)), 0, 8);
 
-/* ================= SESSION: Create / Read / Update / Delete ================= */
 echo "== Session CRUD ==\n";
 
 [$createStatus, $session] = net_http_json('POST', "$baseUrl/scan-sessions", [
@@ -69,7 +60,6 @@ check('READ session after DELETE fails (HTTP 401/404)', in_array($readAfterDelet
 check('DELETE session a second time is a clean failure, not a crash (HTTP 401/404)', in_array($deleteAgainStatus, [401, 404], true), "got HTTP $deleteAgainStatus");
 echo "\n";
 
-/* ================= fresh session for Room / Photo / Note CRUD ================= */
 [, $s] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => "prop-crud2-$suffix", 'unit_id' => "unit-crud2-$suffix", 'organisation_id' => "org-crud2-$suffix",
     'purpose' => 'listing', 'occupied' => false,
@@ -77,7 +67,6 @@ echo "\n";
 $sessionId = $s['id'];
 $accessToken = $s['access_token'];
 
-/* ================= ROOM: Create / Read / Update (no per-room Delete exists) ================= */
 echo "== Room CRUD (Create/Read/Update — no per-room Delete endpoint exists; see note) ==\n";
 
 [$captureStatus, $afterCapture] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $fixture], $accessToken);
@@ -100,16 +89,12 @@ check('UPDATE room label is reflected', ($afterLabelUpdate['rooms'][0]['label'] 
 [$updateBadRoomStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms/not-a-real-room/label", ['label' => 'x'], $accessToken);
 check('UPDATE label on an unknown room_id fails cleanly (HTTP 422)', $updateBadRoomStatus === 422, "got HTTP $updateBadRoomStatus");
 
-// The only way to remove a room is a full replace with a smaller set — there
-// is no DELETE /rooms/{room_id}. Documented here as a known API gap, not
-// tested as if it were a delete endpoint that doesn't exist.
 [$replaceStatus, $afterReplace] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms", ['captures' => [['raw_capture' => $replacementFixture]]], $accessToken);
 check('REPLACE rooms (the de-facto room removal path) succeeds (HTTP 200)', $replaceStatus === 200, "got HTTP $replaceStatus");
 check('REPLACE rooms drops the old room_id', ($afterReplace['rooms'][0]['room_id'] ?? null) !== $roomId);
 $roomId = $afterReplace['rooms'][0]['room_id'];
 echo "\n";
 
-/* ================= PHOTO: Create / Read / Delete (no Update endpoint exists) ================= */
 echo "== Photo CRUD (Create/Read/Delete — no Update endpoint exists; see note) ==\n";
 
 [$addPhotoStatus, $afterPhoto] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", ['url' => 'https://example.com/crud-a.jpg', 'caption' => 'first', 'room_id' => $roomId], $accessToken);
@@ -121,10 +106,6 @@ $photoId = $afterPhoto['photos'][0]['photo_id'];
 check('READ photo (via session) succeeds (HTTP 200)', $readPhotoStatus === 200, "got HTTP $readPhotoStatus");
 check('READ photo finds the photo just created', ($readPhotoBody['photos'][0]['photo_id'] ?? null) === $photoId);
 
-// There is no POST/PATCH to edit an existing photo's url/caption/room_id in
-// place — this is a real gap for a "remove/replace a wrong photo" flow, not
-// covered here since there is nothing to call.
-
 [$deletePhotoStatus, $afterPhotoDelete] = net_http_json('DELETE', "$baseUrl/scan-sessions/$sessionId/photos/$photoId", null, $accessToken);
 check('DELETE photo succeeds (HTTP 200)', $deletePhotoStatus === 200, "got HTTP $deletePhotoStatus");
 check('DELETE photo actually removes it', count(array_filter($afterPhotoDelete['photos'], fn ($p) => $p['photo_id'] === $photoId)) === 0);
@@ -133,7 +114,6 @@ check('DELETE photo actually removes it', count(array_filter($afterPhotoDelete['
 check('DELETE photo a second time is a clean 404', $deletePhotoAgainStatus === 404, "got HTTP $deletePhotoAgainStatus");
 echo "\n";
 
-/* ================= NOTE: Create / Read / Update / Delete ================= */
 echo "== Note CRUD ==\n";
 
 [$addNoteStatus, $afterNote] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/notes", ['text' => 'original text', 'room_id' => $roomId], $accessToken);
@@ -168,7 +148,6 @@ check('DELETE note a second time is a clean 404', $deleteNoteAgainStatus === 404
 check('UPDATE a just-deleted note_id is a clean 404, not a crash', $updateDeletedNoteStatus === 404, "got HTTP $updateDeletedNoteStatus");
 echo "\n";
 
-/* ================= #21: inspection purpose tags on photos/notes ================= */
 echo "== #21 inspection purpose tags ==\n";
 
 [$addPhotoWithTagsStatus, $afterPhotoWithTags] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", ['url' => 'https://example.com/crud-tagged.jpg', 'tags' => ['damage', 'safety_issue']], $accessToken);

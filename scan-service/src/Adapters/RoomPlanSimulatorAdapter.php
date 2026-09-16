@@ -6,51 +6,15 @@ namespace VuuroScan\Adapters;
 
 use VuuroScan\RoomType;
 
-/**
- * Converts a RoomPlan-shaped capture payload (CapturedRoom-style JSON: a
- * `floors` array of surfaces with `polygonCorners`) into the vendor-neutral
- * FloorPlan contract (contracts/floorplan.schema.json). This is the only
- * place in the Scan Service allowed to know that "polygonCorners" and
- * "floors" are RoomPlan vocabulary — everything downstream of adapt() only
- * ever sees the FloorPlan contract.
- *
- * Named "Simulator" because no physical LiDAR device is available for this
- * window (see docs/adr/0001-scan-service-stack.md); the payload shape is
- * the same either way, so a real RoomPlan/RoomPlan-simulator export slots
- * into the same adapter without a rewrite once one is reachable.
- */
 final class RoomPlanSimulatorAdapter
 {
-    // Sanity bounds on an untrusted raw_capture body. Generous for any real
-    // room/building, not tuned to RoomPlan's actual range (which isn't
-    // verified on this machine — see docs/adr/0001).
     private const MAX_FLOORS = 50;
     private const MAX_SURFACES_PER_GROUP = 500;
     private const MAX_POLYGON_POINTS = 1000;
     private const MAX_COORDINATE_METERS = 1000.0;
 
-    // Rejects degenerate geometry (collinear points, a self-intersecting
-    // outline whose shoelace sum cancels out) that would otherwise present
-    // as a real, usable room. 0.25 m2 (50cm x 50cm) is below any real
-    // habitable space, so legitimate small rooms (closets, etc) still pass.
-    //
-    // Known accepted limitation: a self-intersecting ("bowtie") outline
-    // whose shoelace area does NOT cancel to ~0 still passes this check with
-    // a wrong-but-plausible-looking area. Solving that needs a
-    // simple-polygon (non-self-intersecting) check — separate, larger work.
     private const MIN_POLYGON_AREA_M2 = 0.25;
 
-    /**
-     * @param int $roomIndexOffset How many rooms already exist in this scan
-     *     session before this capture call. A multi-room session is built
-     *     from multiple sequential single-room RoomPlan captures, not one
-     *     payload with every room in it — the offset is what makes room
-     *     numbering continue ("Room 2", "Room 3", ...) across calls instead
-     *     of every call restarting at "Room 1". Also folded into room_id so
-     *     two capture calls reusing the same underlying RoomPlan floor
-     *     identifier (as the bundled fixtures deliberately do) can never
-     *     collide within one session.
-     */
     public function adapt(array $rawCapture, array $identity, int $roomIndexOffset = 0): array
     {
         if (empty($rawCapture['floors']) || !is_array($rawCapture['floors'])) {
@@ -59,10 +23,6 @@ final class RoomPlanSimulatorAdapter
 
         self::validateRawCapture($rawCapture);
 
-        // Aggregated across every surface RoomPlan reported for this capture
-        // — floor, walls, doors, windows, openings — not just the floor's
-        // own confidence field. A room can have a confidently-detected floor
-        // outline while its walls were scanned too fast/too dark to trust.
         $coverage = self::computeCoverage($rawCapture);
 
         $rooms = [];
@@ -82,7 +42,6 @@ final class RoomPlanSimulatorAdapter
                 }
             }
 
-            // RoomPlan's world space is y-up; a floor outline lies in the x,z plane.
             $points2d = array_map(static fn (array $p) => [(float) ($p[0] ?? 0), (float) ($p[2] ?? 0)], $corners);
 
             $area = self::polygonArea($points2d);
@@ -99,10 +58,6 @@ final class RoomPlanSimulatorAdapter
 
             [$minX, $minZ] = self::minXZ($points2d);
 
-            // LIDAR-10: height/volume are indicative only (hard constraint
-            // #2 — never certified), derived from captured wall dimensions.
-            // Null (not 0) when no wall height was reported, same honesty
-            // pattern as measurement_basis never defaulting to certified.
             $height = self::computeHeight($rawCapture);
             $volume = $height !== null ? round($area * $height, 2) : null;
 
@@ -118,17 +73,11 @@ final class RoomPlanSimulatorAdapter
                 ],
                 'confidence' => self::mapConfidence($floor['confidence'] ?? null),
                 'outline_m' => self::roomLocalOutline($points2d),
-                // LIDAR-10: same room-local frame as outline_m (docs/adr/0002)
-                // — same coverage/openings/height/objects on every room from
-                // this capture call, accurate for the one-room-per-call flow
-                // computeCoverage() already assumes.
                 'coverage' => $coverage,
                 'openings' => self::mapOpenings($rawCapture, $minX, $minZ),
                 'height_m' => $height,
                 'volume_m3_indicative' => $volume,
                 'objects' => self::mapObjects($rawCapture, $minX, $minZ),
-                // LIDAR-5/11: additive, null unless this capture came from a
-                // StructureBuilder-merged multi-room visit (docs/proposals/multi-room-fusion.md).
                 'structure_origin_m' => self::structureOriginM($rawCapture),
                 'heading_deg' => self::headingDeg($rawCapture),
                 'room_type' => self::mapRoomType($rawCapture),
@@ -143,7 +92,6 @@ final class RoomPlanSimulatorAdapter
             'organisation_id' => $identity['organisation_id'],
             'capture_provider' => $identity['capture_provider'] ?? 'roomplan_simulator_fixture',
             'captured_at' => $identity['captured_at'] ?? gmdate('c'),
-            // Hard constraint #2: an automated adapter may never claim certified_survey.
             'measurement_basis' => 'indicative_nen2580_inspired',
             'purpose' => $identity['purpose'],
             'rooms' => $rooms,
@@ -191,15 +139,6 @@ final class RoomPlanSimulatorAdapter
     }
 
     /**
-     * Room-local outline: the same polygon, translated so its bounding-box
-     * minimum corner sits at (0,0). Deliberately NOT in a shared/world
-     * coordinate frame — see docs/adr/0002-export-coordinate-frame.md.
-     * Separate RoomPlan capture sessions (one per room, per how multi-room
-     * sessions are built here) do not share ARKit world tracking, so there
-     * is no honest absolute position to preserve across rooms. Consumers
-     * (e.g. the PNG floor plan export) must treat each room's outline as
-     * self-contained and never assume two rooms' outlines share an origin.
-     *
      * @param array<int, array{0: float, 1: float}> $points
      * @return array<int, array{0: float, 1: float}>
      */
@@ -214,11 +153,6 @@ final class RoomPlanSimulatorAdapter
     }
 
     /**
-     * The room-local translation shared by roomLocalOutline() and every
-     * LIDAR-10 opening/object position — all of them must land in the exact
-     * same room-local frame outline_m already uses (docs/adr/0002), so this
-     * is computed once per room and passed down rather than re-derived.
-     *
      * @param array<int, array{0: float, 1: float}> $points
      * @return array{0: float, 1: float}
      */
@@ -228,16 +162,6 @@ final class RoomPlanSimulatorAdapter
     }
 
     /**
-     * LIDAR-10: doors/windows/openings this capture call reported, with
-     * positions — the card's "positions, not only coverage" requirement.
-     * Position is the room-local centroid of the item's own polygonCorners
-     * (world-space per CapturedRoomExporter.swift's worldPolygonCorners()),
-     * translated into outline_m's frame the same way the floor outline is.
-     * An item with no polygonCorners (older client, or RoomPlan genuinely
-     * reported none) is dropped rather than given a fabricated (0,0) —
-     * this is also what makes the "door present in capture but missing from
-     * the contract" failure mode real and independently checkable.
-     *
      * @return array<int, array{opening_id: string, category: string, position_m: array{0: float, 1: float}, confidence: string}>
      */
     private static function mapOpenings(array $rawCapture, float $minX, float $minZ): array
@@ -297,13 +221,6 @@ final class RoomPlanSimulatorAdapter
         return $points;
     }
 
-    /**
-     * LIDAR-10: tallest wall segment reported for this capture call is the
-     * honest ceiling-height proxy — a partially-tracked short wall segment
-     * should not pull the room's reported height down. Null (never 0) when
-     * no wall carried a numeric height, so the contract can tell "no data"
-     * apart from "a room with zero height."
-     */
     private static function computeHeight(array $rawCapture): ?float
     {
         $walls = $rawCapture['walls'] ?? [];
@@ -328,11 +245,6 @@ final class RoomPlanSimulatorAdapter
     }
 
     /**
-     * LIDAR-10: real captured furniture/fixtures for this room, empty only
-     * when the capture reported none — never invented. category is passed
-     * through as RoomPlan/the exporter reported it, same as door/window
-     * categories already are; the adapter never invents a category.
-     *
      * @return array<int, array{object_id: string, category: string, position_m: array{0: float, 1: float}, dimensions_m: array{0: float, 1: float, 2: float}, confidence: string}>
      */
     private static function mapObjects(array $rawCapture, float $minX, float $minZ): array
@@ -352,11 +264,6 @@ final class RoomPlanSimulatorAdapter
             }
             $dims = $item['dimensions'] ?? null;
             if (!is_array($dims) || count($dims) < 3) {
-                // Same drop-not-fabricate rule as position above: a
-                // missing/truncated dimensions array is unknown size, not a
-                // real 0x0x0 object. Review finding — this used to fall back
-                // to [0.0, 0.0, 0.0], fabricating a size the capture never
-                // reported.
                 continue;
             }
             $dimensions = [(float) $dims[0], (float) $dims[1], (float) $dims[2]];
@@ -371,7 +278,6 @@ final class RoomPlanSimulatorAdapter
         return $objects;
     }
 
-    // Already validated by public/index.php — passed through as-is, honest null when absent.
     private static function normalizeCaptureLocation(?array $loc): ?array
     {
         if ($loc === null) {
@@ -385,8 +291,6 @@ final class RoomPlanSimulatorAdapter
         ];
     }
 
-    // LIDAR-5/11: passes structure_origin_m through as-is (already
-    // validated numeric/finite in validateRawCapture) — null when absent.
     private static function structureOriginM(array $rawCapture): ?array
     {
         $origin = $rawCapture['structure_origin_m'] ?? null;
@@ -428,64 +332,14 @@ final class RoomPlanSimulatorAdapter
         ];
     }
 
-    /**
-     * Rejects an untrusted raw_capture body that would otherwise crash
-     * downstream (non-finite/oversized coordinates) or let one capture call
-     * blow up memory/storage (absurd array counts). Runs before anything
-     * else touches the payload, so a rejection here is always a clean 422,
-     * never a fatal error surfacing later.
-     */
     private static function validateRawCapture(array $rawCapture): void
     {
         $floors = $rawCapture['floors'];
 
-        // Capture-surface scan finding: adapt()'s room-building loop does
-        // `$roomIndexOffset + $index` on floors[]'s own array key (to build
-        // each room's global index/room_id) without ever checking that key
-        // is actually an integer. is_array() is true for BOTH a JSON array
-        // (`[...]`, decodes to sequential int keys) and a JSON object
-        // (`{...}`, decodes to string keys) — so a client sending
-        // `"floors": {"myFloor": {...}}` instead of `"floors": [...]` passed
-        // every earlier check here and then crashed with an uncaught
-        // TypeError ("Unsupported operand types: int + string") once
-        // adapt() reached that arithmetic. Confirmed live before this fix.
-        // That's a real fatal error surfacing later, exactly what this
-        // function's own docblock promises never happens — and worse, a
-        // TypeError isn't an InvalidArgumentException, so it skips the
-        // capture route's catch block entirely (including the
-        // idempotency-claim release fix), same as an uncaught exception
-        // anywhere else on this path. array_is_list() (PHP 8.1+, matches
-        // this repo's documented floor) rejects it here instead, as a clean
-        // 422 like every other malformed-shape rejection in this file.
         if (!array_is_list($floors)) {
             throw new \InvalidArgumentException('floors[] must be a JSON array (e.g. [...]), not an object with named keys.');
         }
 
-        // LIDAR-10 review finding (confirmed live, not theoretical): a
-        // multi-floor capture call would previously be accepted silently —
-        // area/perimeter/outline are computed correctly per floor, but
-        // mapOpenings()/mapObjects()/computeHeight() read the WHOLE
-        // rawCapture's doors/windows/openings/objects/walls, not anything
-        // scoped to the floor they're being attached to (RoomPlan doesn't
-        // tag a door/window/object with which floor/room it belongs to in
-        // this payload shape, so real per-floor scoping isn't possible with
-        // the data available). Confirmed: a 2-floor capture with one door
-        // physically in floor A produced a second, phantom "door" entry in
-        // floor B's openings[], translated into floor B's own room-local
-        // frame — a plausible-looking but entirely wrong position, not a
-        // missing-data gap.
-        //
-        // Only rejected when walls/doors/windows/openings/objects data is
-        // actually present, not on floor count alone — net/verify_exports.php
-        // legitimately submits a 40-floor, geometry-only capture (no walls/
-        // openings/objects at all) to exercise PDF pagination and the PNG
-        // canvas-size bound, and that has nothing ambiguous to misattribute:
-        // area/perimeter/outline/height_m(null)/openings([])/objects([]) are
-        // all correct per floor with no cross-floor data to duplicate. Same
-        // "one room per capture call" assumption computeCoverage() already
-        // documents for its own aggregation, now enforced here instead of
-        // silently relied on. Revisit when LIDAR-4 (multi-room) defines a
-        // real per-floor association for these groups.
         if (count($floors) > 1) {
             $hasAmbiguousData = isset($rawCapture['structure_origin_m']) || isset($rawCapture['room_type']);
             foreach (['walls', 'doors', 'windows', 'openings', 'objects'] as $group) {
@@ -495,14 +349,6 @@ final class RoomPlanSimulatorAdapter
                     break;
                 }
             }
-            // Review finding: this message reaches an end user verbatim —
-            // public/index.php's InvalidArgumentException catch wraps it as
-            // "This capture couldn't be processed: <this> Please rescan this
-            // room." and ios-app's ErrorCodeView renders that string as-is
-            // (AppError.userMessage). No internal ticket reference or
-            // payload-shape jargon belongs in it; that context lives in the
-            // comment above, for a developer reading this file, not in the
-            // string a landlord/agent sees on their phone.
             if ($hasAmbiguousData) {
                 throw new \InvalidArgumentException(
                     'This capture reported more than one room along with wall, door, window, or furniture data — only one room per scan is supported when that data is present right now.'
@@ -533,7 +379,7 @@ final class RoomPlanSimulatorAdapter
         foreach ($floors as $index => $floor) {
             $corners = $floor['polygonCorners'] ?? null;
             if (!is_array($corners)) {
-                continue; // adapt()'s own check reports this more specifically.
+                continue;
             }
             if (count($corners) > self::MAX_POLYGON_POINTS) {
                 throw new \InvalidArgumentException(sprintf(
@@ -546,11 +392,6 @@ final class RoomPlanSimulatorAdapter
             self::validatePoints("floors[$index].polygonCorners", $corners);
         }
 
-        // LIDAR-10: doors/windows/openings/objects corners and positions are
-        // just as untrusted as floors[].polygonCorners — mapOpenings() and
-        // mapObjects() would otherwise be the first place a non-numeric or
-        // absurd coordinate is touched, well past the clean-422 boundary
-        // this function exists to be.
         foreach (['doors', 'windows', 'openings'] as $group) {
             $items = $rawCapture[$group] ?? [];
             if (!is_array($items)) {
@@ -562,7 +403,7 @@ final class RoomPlanSimulatorAdapter
                 }
                 $corners = $item['polygonCorners'] ?? null;
                 if (!is_array($corners)) {
-                    continue; // no position reported; mapOpenings() drops it rather than fabricating one.
+                    continue;
                 }
                 if (count($corners) > self::MAX_POLYGON_POINTS) {
                     throw new \InvalidArgumentException(sprintf(
@@ -605,13 +446,8 @@ final class RoomPlanSimulatorAdapter
                 $position = $object['position'] ?? null;
                 if (is_array($position)) {
                     self::validatePoints("objects[$objectIndex].position", [$position]);
-                } // else: no position reported; mapObjects() drops it rather than fabricating one.
+                }
 
-                // Review finding: dimensions_m was reaching mapObjects()'s
-                // `(float) ($dims[n] ?? 0)` cast with no numeric/finite/bounds
-                // check at all — the same silent-corruption/absurd-value
-                // shape validatePoints() already exists to close off for
-                // every other coordinate in this file, just missed here.
                 $dimensions = $object['dimensions'] ?? null;
                 if (is_array($dimensions)) {
                     self::validatePoints("objects[$objectIndex].dimensions", [$dimensions]);
@@ -619,8 +455,6 @@ final class RoomPlanSimulatorAdapter
             }
         }
 
-        // LIDAR-5/11: structure_origin_m is just as untrusted as any other
-        // client-supplied coordinate.
         $structureOrigin = $rawCapture['structure_origin_m'] ?? null;
         if (is_array($structureOrigin)) {
             self::validatePoints('structure_origin_m', [$structureOrigin]);
@@ -639,9 +473,6 @@ final class RoomPlanSimulatorAdapter
             }
         }
 
-        // computeHeight() reads walls[].dimensions[1] with no prior bounds
-        // check — same gap as objects[].dimensions above, just on the field
-        // that now feeds height_m/volume_m3_indicative.
         $walls = $rawCapture['walls'] ?? [];
         if (is_array($walls)) {
             foreach ($walls as $wallIndex => $wall) {
@@ -657,11 +488,6 @@ final class RoomPlanSimulatorAdapter
     }
 
     /**
-     * Shared numeric/finite/bounds validation for any [x, y, z]-shaped point
-     * list — floor polygonCorners originally, now also door/window/opening
-     * polygonCorners and object positions (LIDAR-10). Same three rejections
-     * every caller needs: non-numeric, non-finite, and absurdly large.
-     *
      * @param array<int, mixed> $points
      */
     private static function validatePoints(string $label, array $points): void
@@ -672,18 +498,9 @@ final class RoomPlanSimulatorAdapter
             }
             foreach (array_slice($point, 0, 3) as $value) {
                 if ($value === null) {
-                    // An absent dimension — adapt()'s mapping falls back to
-                    // 0 via `?? 0` for this, same as a shorter-than-3 point.
                     continue;
                 }
                 if (!is_int($value) && !is_float($value)) {
-                    // Anything else (string, bool, array, ...) used to fall
-                    // through this check unrejected, then get silently
-                    // coerced to 0/1 by a `(float) $p[n]` cast — same
-                    // silent-corruption shape as the capture_provider/
-                    // identifier bugs fixed earlier, just on a coordinate
-                    // instead of a string field. A non-numeric coordinate is
-                    // never a real capture.
                     throw new \InvalidArgumentException(sprintf(
                         '%s contains a non-numeric coordinate (%s) — real capture geometry is always numeric.',
                         $label,
@@ -708,8 +525,6 @@ final class RoomPlanSimulatorAdapter
         }
     }
 
-    // Unrecognized/malformed confidence falls through to 'low', same as an
-    // omitted field.
     private static function mapConfidence(mixed $raw): string
     {
         return match ($raw) {
@@ -720,18 +535,8 @@ final class RoomPlanSimulatorAdapter
         };
     }
 
-    /**
-     * Coverage score: the mean of a per-surface confidence weight (high=100,
-     * medium=60, low=20) across every floor/wall/door/window/opening in this
-     * capture call. usable is a threshold call (>=70), not derived from any
-     * RoomPlan-provided signal — RoomPlan doesn't hand us a single
-     * "is this good enough" boolean, so this repo's own bar is documented
-     * here rather than left implicit.
-     */
     private static function computeCoverage(array $rawCapture): array
     {
-        // Non-array groups degrade to "contributes zero surfaces," not a
-        // crash — matches how a missing group is already treated.
         $surfaces = array_merge(
             $rawCapture['floors'] ?? [],
             is_array($rawCapture['walls'] ?? null) ? $rawCapture['walls'] : [],

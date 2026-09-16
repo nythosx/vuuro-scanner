@@ -2,18 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Fast in-process unit tests for ScanSessionRepository — specifically the
- * enterprise-hardening logic (token expiry/rotation, idempotency, rate-limit
- * counting) added on top of the original Phase 1-3 repository. Same spirit
- * as tests/adapter_test.php: quick dev-loop feedback against an in-memory
- * SQLite DB, NOT the independent net (net/verify_enterprise_hardening.php
- * owns that — HTTP only, no import of this class). Both must be green
- * before a merge; neither substitutes for the other.
- *
- * Usage: php tests/repository_test.php
- */
-
 require __DIR__ . '/../src/autoload.php';
 
 use VuuroScan\ScanSessionRepository;
@@ -39,8 +27,6 @@ function r_approx(float $a, float $b, float $tol = 2.0): bool
     return abs($a - $b) <= $tol;
 }
 
-// Fresh in-memory DB per run — fast, isolated, no leftover state between runs
-// (unlike the shared local scan_service.sqlite the net scripts talk to).
 $db = Database::connect(':memory:');
 $repo = new ScanSessionRepository($db);
 
@@ -77,9 +63,6 @@ r_check(
     r_approx((float) strtotime($rotated['expires_at']), (float) (time() + 7200), 5.0)
 );
 
-// Adjacent case: the OLD token must no longer authorize this session — this
-// is the entire point of rotation. tokenMatches() is what public/index.php
-// actually calls, so exercise that, not just "the column changed."
 $refetched = $repo->find($rotSession['id']);
 r_check('the OLD token no longer matches after rotation', !$repo->tokenMatches($refetched, $oldToken));
 r_check('the NEW token matches after rotation', $repo->tokenMatches($refetched, $rotated['access_token']));
@@ -92,23 +75,12 @@ $noExpirySession = ['expires_at' => ''];
 
 r_check('a future expires_at is NOT expired', $repo->isTokenExpired($futureSession) === false);
 r_check('a past expires_at IS expired', $repo->isTokenExpired($pastSession) === true);
-// Adjacent case, not the happy path: a session created before this column
-// existed has expires_at = '' (Database.php's ALTER TABLE migration default).
-// That must read as "no expiry recorded," never as "already expired" — the
-// opposite bug (silently locking out every pre-existing session) would be
-// far worse than the one this feature closes.
 r_check(
     'an empty expires_at (pre-migration session) reads as NOT expired, not as expired',
     $repo->isTokenExpired($noExpirySession) === false
 );
 echo "\n";
 
-// Closes the permanent-lockout gap: rotate-token now accepts an expired
-// token within ScanSessionRepository::ROTATE_GRACE_PERIOD_SECONDS of the
-// original expiry. isBeyondRotateGracePeriod() is the hard cutoff even
-// rotate-token cannot cross — tested directly against synthetic sessions,
-// same technique as isTokenExpired() above, so this doesn't depend on
-// actually waiting out a real TTL.
 echo "== isBeyondRotateGracePeriod() ==\n";
 $grace = ScanSessionRepository::ROTATE_GRACE_PERIOD_SECONDS;
 $justExpiredSession = ['expires_at' => gmdate('c', time() - 1)];
@@ -119,19 +91,9 @@ $notYetExpiredSession = ['expires_at' => gmdate('c', time() + 3600)];
 
 r_check('a token that JUST expired is NOT beyond the grace period', $repo->isBeyondRotateGracePeriod($justExpiredSession) === false);
 r_check('a token expired well within the grace window is NOT beyond it', $repo->isBeyondRotateGracePeriod($withinGraceSession) === false);
-// Adjacent case: the boundary itself, not just "clearly inside" (above) and
-// "clearly outside" (below) — an off-by-one here would only show up exactly
-// at the edge, same reasoning as net/verify_enterprise_hardening.php's TTL
-// boundary checks.
 r_check('a token expired just PAST the grace window IS beyond it', $repo->isBeyondRotateGracePeriod($exactlyAtGraceEdgeSession) === true);
 r_check('a token expired well past the grace window IS beyond it', $repo->isBeyondRotateGracePeriod($wayBeyondGraceSession) === true);
-// Adjacent case, the opposite direction: a token that hasn't even expired
-// yet must not be reported as "beyond" any grace period — this function
-// only ever widens rotate-token's acceptance window, never narrows anything
-// that was already valid.
 r_check('a token that has not expired at all is NOT beyond the grace period', $repo->isBeyondRotateGracePeriod($notYetExpiredSession) === false);
-// Same "no expiry recorded" case isTokenExpired() protects — must not
-// suddenly become "beyond grace" for a pre-migration session.
 r_check('an empty expires_at reads as NOT beyond the grace period', $repo->isBeyondRotateGracePeriod($noExpirySession) === false);
 echo "\n";
 
@@ -176,27 +138,16 @@ $repo->completeIdempotencyKey($idemSession['id'], 'key-a', ['rooms' => ['room-1'
 $stored = $repo->findIdempotentResponse($idemSession['id'], 'key-a');
 r_check('a completed claim is returned verbatim for the same (session, key)', $stored === ['rooms' => ['room-1']]);
 
-// Adjacent case: a DIFFERENT key on the SAME session must not accidentally
-// match — this is the exact bug that would make every retry (with a fresh
-// key) look like a duplicate of the first capture.
 r_check(
     'a different idempotency key on the same session is NOT treated as a match',
     $repo->findIdempotentResponse($idemSession['id'], 'key-b') === null
 );
 
-// Adjacent case, the other direction: the SAME key on a DIFFERENT session
-// must not leak the first session's stored response — this is the exact bug
-// that would let one caller's cached capture bleed into an unrelated session
-// that happens to reuse an idempotency key.
 r_check(
     'the same idempotency key on a DIFFERENT session is NOT treated as a match',
     $repo->findIdempotentResponse($otherSession['id'], 'key-a') === null
 );
 
-// Claiming an already-completed key again must not throw or overwrite —
-// mirrors ON CONFLICT DO NOTHING in the SQL; the caller is expected to check
-// findIdempotentResponse() first (the capture route does), so reaching this
-// again means a very tight race, and losing the claim must be silent + safe.
 r_check('re-claiming an already-completed key returns false, not true', $repo->claimIdempotencyKey($idemSession['id'], 'key-a', 'fp-a') === false);
 $stillOriginal = $repo->findIdempotentResponse($idemSession['id'], 'key-a');
 r_check(
@@ -205,11 +156,6 @@ r_check(
 );
 echo "\n";
 
-// Adjacent case to the whole feature: a key REUSED with a genuinely
-// different request must be distinguishable from a true retry, or the
-// second, different capture silently vanishes behind the first one's cached
-// response. idempotencyKeyFingerprint() is what public/index.php checks
-// before ever trusting a cache hit or a claim.
 echo "== Idempotency fingerprint mismatch detection ==\n";
 r_check(
     'fingerprint for a never-seen key is null (caller may claim freely)',
@@ -228,15 +174,6 @@ r_check(
 );
 echo "\n";
 
-// Found by deliberately probing the adjacent case to the sequential-retry
-// test above: the OLD implementation (findIdempotentResponse, then later
-// recordIdempotentResponse — no claim step) let two concurrent requests for
-// the SAME key both see "no cached response yet" and both proceed to
-// capture, double-appending the room. This is exactly the scenario
-// public/index.php's capture route now guards against with
-// claimIdempotencyKey(); this test proves the atomic primitive itself is
-// correct, deterministically — no real thread timing needed, since a
-// UNIQUE-constrained INSERT resolves the "who goes first" question for us.
 echo "== The race: only one concurrent claim for the same key can win ==\n";
 $raceSession = fresh_session($repo);
 $firstClaim = $repo->claimIdempotencyKey($raceSession['id'], 'race-key', 'fp-race');
@@ -255,19 +192,12 @@ $repo->recordEvent('bucket-a');
 $repo->recordEvent('bucket-a');
 r_check('two recorded events count as 2 within the window', $repo->countRecentEvents('bucket-a', 600) === 2);
 
-// Adjacent case: a different bucket must have its own independent count —
-// the exact bug that would make one caller's IP share a budget with an
-// unrelated caller (or one route's limit bleed into another's).
 r_check('a different, unused bucket is unaffected by bucket-a\'s events', $repo->countRecentEvents('bucket-b', 600) === 0);
 
-// Adjacent case, the one a naive "just COUNT(*) for this bucket" implementation
-// would get wrong: an event recorded outside the window must not count.
-// Inserted directly since recordEvent() always stamps "now" — this is
-// testing the window filter itself, not the insert path.
 $db->exec("INSERT INTO rate_limit_events (bucket, occurred_at) VALUES ('bucket-a', '" . gmdate('c', time() - 3600) . "')");
 r_check(
     'an event from an hour ago does NOT count within a 10-minute (600s) window',
-    $repo->countRecentEvents('bucket-a', 600) === 2 // still 2, the old event doesn't add a 3rd
+    $repo->countRecentEvents('bucket-a', 600) === 2
 );
 r_check(
     'the same old event DOES count within a window wide enough to include it',
@@ -275,13 +205,6 @@ r_check(
 );
 echo "\n";
 
-// ACL-surface scan finding: recordEvent() inserts one row per call, on every
-// single rate-limit check across the service's lifetime, and nothing ever
-// deleted old ones — the table grows forever even though no row outside its
-// own bucket's window is ever read again. Fixed with a deterministic prune
-// (every 100th insert, keyed off SQLite's AUTOINCREMENT id, which is
-// monotonic and never reused even across deletes) rather than a
-// probabilistic one, so this test isn't itself flaky.
 echo "== Rate-limit events are pruned periodically, without disturbing live windows ==\n";
 $db->exec("INSERT INTO rate_limit_events (bucket, occurred_at) VALUES ('prune-test-old', '" . gmdate('c', time() - ScanSessionRepository::RATE_LIMIT_EVENT_RETENTION_SECONDS - 60) . "')");
 $db->exec("INSERT INTO rate_limit_events (bucket, occurred_at) VALUES ('prune-test-recent', '" . gmdate('c') . "')");
@@ -308,10 +231,6 @@ r_check(
 );
 echo "\n";
 
-// Found by deliberately probing past the existing "must have a captured
-// FloorPlan first" (409/RuntimeException) guard: nothing checked that a
-// caller-supplied room_id, once a FloorPlan DOES exist, actually names one
-// of ITS rooms. A typo'd or unrelated room_id used to be stored verbatim.
 echo "== room_id validation on appendPhoto/appendNote ==\n";
 $roomIdSession = fresh_session($repo);
 $repo->appendCapture($roomIdSession['id'], [
@@ -496,15 +415,6 @@ $afterSecondWithLoc = $repo->appendCapture($noLocSession['id'], build_capture_fo
 r_check('a later capture CAN fill in a location the first capture missed', $afterSecondWithLoc['capture_location']['lat'] === 1.0);
 echo "\n";
 
-// ACL-surface scan finding: every other repeatable client-supplied array in
-// this codebase has a cap (MAX_SURFACES_PER_GROUP, PDF MAX_PAGES), but
-// photos[]/notes[] never did — only a per-5-minute rate limit on the attach
-// routes, which bounds pace, not total. Not net-tested (net/ is HTTP-only by
-// hard rule, and driving 500 real HTTP calls needs far more than the
-// 60-per-5-min attach rate limit allows without weakening it just for this
-// test — same tradeoff already made and documented for the PDF MAX_PAGES
-// finding). Verified here instead, at the repository layer, well below the
-// cap and one entry over it.
 echo "== photos/notes are capped per session (MAX_PHOTOS_PER_SESSION / MAX_NOTES_PER_SESSION) ==\n";
 $capSession = fresh_session($repo);
 $repo->appendCapture($capSession['id'], [
@@ -550,18 +460,6 @@ try {
 }
 echo "\n";
 
-// Capture-surface scan finding: appendCapture()'s array_merge of rooms had
-// no session-wide cap at all -- MAX_FLOORS=50 bounds a single capture() call,
-// but nothing bounded the total across repeated calls, unlike
-// photos[]/notes[] just above. Reproduced live: 11 real HTTP capture calls
-// (50 rooms each, well inside the 60-per-5-min capture rate limit) pushed a
-// session to 550 rooms with no rejection, and the actual overflow point
-// used to surface as a raw 500 (see public/index.php's own comment on that)
-// because \OverflowException fell into the generic \Throwable catch and got
-// rethrown instead of answered with a clean 422. Verified at the repository
-// layer, same tradeoff as the photos/notes cap test above (net/ is HTTP-only
-// and 500 real capture calls needs far more volume than is worth driving
-// through a live server just for this).
 echo "== rooms are capped per session across appendCapture() calls (MAX_ROOMS_PER_SESSION) ==\n";
 $roomCapSession = fresh_session($repo);
 $roomCapFloorPlan = null;
@@ -605,13 +503,6 @@ try {
 echo "\n";
 
 echo "== access_log has an index on scan_session_id, not just implicit table order ==\n";
-// Confirmed live before this fix (EXPLAIN QUERY PLAN): GET .../access-log's
-// WHERE scan_session_id = :id was a full table SCAN across every session's
-// rows, not just the requested session's, because access_log — unlike
-// rate_limit_events — had no index at all. It's also the one table that's
-// deliberately never pruned, so that scan only gets worse over the
-// service's lifetime. This check fails red if the index is ever dropped
-// from migrations/schema.sql without anyone noticing.
 $planStmt = $db->prepare("EXPLAIN QUERY PLAN SELECT action, outcome, occurred_at FROM access_log WHERE scan_session_id = :id ORDER BY id ASC");
 $planStmt->execute(['id' => 'irrelevant-for-plan-shape']);
 $planDetail = implode(' | ', array_column($planStmt->fetchAll(PDO::FETCH_ASSOC), 'detail'));

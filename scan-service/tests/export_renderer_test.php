@@ -235,8 +235,8 @@ x_check('the door/window/height drawing adds real bytes over the same plan with 
 
 echo "\n== Doors/windows actually draw as pixels, not just text (LIDAR-10 regressed silently once already) ==\n";
 
-$doorColor = [210, 105, 30];
-$windowColor = [70, 130, 180];
+$doorColor = [255, 130, 18];
+$windowColor = [46, 195, 255];
 
 x_check('the fused PNG contains the door marker color as real pixels', png_contains_color($fusedWithJoinPng, ...$doorColor));
 x_check('the fused PNG contains the window marker color as real pixels', png_contains_color($fusedWithJoinPng, ...$windowColor));
@@ -253,10 +253,10 @@ x_check('the per-room tile sheet contains the window marker color as real pixels
 
 echo "\n== Room-type coloring, legend, and label text ==\n";
 
-$bedroomFill = [236, 196, 134];
-$bathroomFill = [212, 226, 240];
-$kitchenFill = [212, 226, 240];
-$livingFill = [242, 216, 176];
+$bedroomFill = [243, 217, 166];
+$bathroomFill = [223, 243, 255];
+$kitchenFill = [223, 243, 255];
+$livingFill = [251, 227, 199];
 
 $roomTypedPlan = build_floor_plan([
     build_room_with_outline('Room A', $squareOutline, [0.0, 0.0], [], null, null, ['guess' => 'bedroom', 'guess_source' => 'roomplan_section', 'confirmed' => 'bedroom']),
@@ -428,14 +428,14 @@ echo "\n== FloorPlanSvgRenderer: doors/windows draw real symbols, not just text 
 
 $svgWithJoin = $svgRenderer->render($fusedWithJoinPlan);
 x_check('the fused SVG draws a door swing arc path', str_contains($svgWithJoin, '<path d="M') && str_contains($svgWithJoin, 'A '));
-x_check('the fused SVG draws a window tick line group', substr_count($svgWithJoin, 'stroke="#7a7a7a"') >= 1);
+x_check('the fused SVG draws a window tick line group', substr_count($svgWithJoin, 'stroke="#2ec3ff"') >= 1);
 x_check('door/window drawing adds real bytes over the same plan with no openings', strlen($svgWithJoin) > strlen($fusedSvg));
 
 echo "\n== FloorPlanSvgRenderer: room-type fill colors ==\n";
 
 $roomTypedSvg = $svgRenderer->render($roomTypedPlan);
-x_check('bedroom fill color appears in the rendered SVG', str_contains($roomTypedSvg, '#ecc486'));
-x_check('bathroom/kitchen fill color appears in the rendered SVG', str_contains($roomTypedSvg, '#d4e2f0'));
+x_check('bedroom fill color appears in the rendered SVG', str_contains($roomTypedSvg, '#f3d9a6'));
+x_check('bathroom/kitchen fill color appears in the rendered SVG', str_contains($roomTypedSvg, '#dff3ff'));
 x_check('the room-type legend lists both types', str_contains($roomTypedSvg, 'Bedroom') && str_contains($roomTypedSvg, 'Bathroom'));
 
 echo "\n== FloorPlanSvgRenderer: fusion collides rooms to close small real-world gaps (no fill hack) ==\n";
@@ -550,9 +550,9 @@ x_check('the fused layout draws one compass arrow using whichever room actually 
 echo "\n== FloorPlanSvgRenderer: overlap warning, units, and label ==\n";
 
 $overlapSvg = $svgRenderer->render($overlapPlan);
-x_check('overlapping rooms are flagged with the warning color in the SVG', str_contains($overlapSvg, '#a4231f'));
+x_check('overlapping rooms are flagged with the warning color in the SVG', str_contains($overlapSvg, '#d6453e'));
 $cleanFusedSvg = $svgRenderer->render($cleanFusedPlan);
-x_check('adjacent (non-overlapping) rooms are not flagged', !str_contains($cleanFusedSvg, '#a4231f'));
+x_check('adjacent (non-overlapping) rooms are not flagged', !str_contains($cleanFusedSvg, '#d6453e'));
 
 $imperialSvg = $svgRenderer->render($twoRoomPlan, unit: \VuuroScan\Export\UnitFormatter::IMPERIAL);
 x_check('imperial SVG uses sqft, not sqm', str_contains($imperialSvg, 'sqft') && !str_contains($imperialSvg, 'sqm'));

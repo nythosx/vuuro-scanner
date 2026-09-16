@@ -6,6 +6,8 @@ import UIKit
 
 @main
 struct VuuroScanApp: App {
+    @AppStorage(AppLanguageSettings.storageKey) private var appLanguageRaw: String = AppLanguage.system.rawValue
+
     init() {
         KeychainTokenStore.resetIfReinstalled()
         VuuroFontRegistration.registerBundledFonts()
@@ -19,6 +21,7 @@ struct VuuroScanApp: App {
             .tint(VuuroColor.primary)
             .background(VuuroColor.surfaceMuted)
             .vuuroToastHost()
+            .environment(\.locale, AppLanguage(rawValue: appLanguageRaw)?.locale ?? Locale.autoupdatingCurrent)
         }
     }
 }
@@ -37,6 +40,7 @@ struct ScanFlowView: View {
 
     @State private var stage: Stage
     @State private var historyButtonTitle = "History"
+    @AppStorage(AppLanguageSettings.storageKey) private var appLanguageRaw: String = AppLanguage.system.rawValue
 
     init() {
         if let pending = PendingUploadStore.load() {
@@ -95,6 +99,17 @@ struct ScanFlowView: View {
                     stage = .multiRoomCapturing(identity: identity, session: nil, attempt: UUID())
                 })
                 .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Picker(selection: $appLanguageRaw) {
+                            ForEach(AppLanguage.allCases) { language in
+                                Text(language.displayName).tag(language.rawValue)
+                            }
+                        } label: {
+                            Image(systemName: "globe")
+                        }
+                        .pickerStyle(.menu)
+                        .accessibilityLabel("Language")
+                    }
                     ToolbarItem(placement: .navigationBarTrailing) {
                         NavigationLink(historyButtonTitle) {
                             ScanHistoryView(onResumeToAddRoom: { entry in
@@ -1269,7 +1284,7 @@ struct CameraCaptureView: UIViewControllerRepresentable {
     }
 }
 
-private struct RoomResultCard: View {
+struct RoomResultCard: View {
     let room: FloorPlan.Room
     let showsRibbon: Bool
     var photos: [FloorPlan.Photo] = []
@@ -1332,7 +1347,7 @@ private struct RoomResultCard: View {
     }
 }
 
-private struct RoomAttachmentsList: View {
+struct RoomAttachmentsList: View {
     let session: ScanSessionResponse
     let photos: [FloorPlan.Photo]
     let notes: [FloorPlan.Note]

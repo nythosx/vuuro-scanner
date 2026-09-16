@@ -2,13 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Independent net for coverage/quality scoring. HTTP only, never imports
- * RoomPlanSimulatorAdapter's computeCoverage().
- *
- * Usage: php net/verify_coverage.php [base_url]
- */
-
 require_once __DIR__ . '/lib/http_client.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';
@@ -90,10 +83,6 @@ function run_case(string $baseUrl, string $fixturePath, string $label): void
         ($coverage['confidence_counts'] ?? null) === ['high' => $expected['high'], 'medium' => $expected['medium'], 'low' => $expected['low']]);
 
     if ($expected['usable']) {
-        // Note: `?? 'not-null'` would be wrong here — the null-coalescing
-        // operator treats an actual null value the same as a missing key,
-        // so it can't distinguish "message is honestly null" from "message
-        // key is absent." Check the key's actual value directly instead.
         check("$label: message is null when usable", array_key_exists('message', $coverage) && $coverage['message'] === null);
     } else {
         check("$label: message is a non-empty string when not usable", is_string($coverage['message'] ?? null) && $coverage['message'] !== '');

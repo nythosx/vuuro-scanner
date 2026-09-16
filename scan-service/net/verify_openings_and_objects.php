@@ -2,24 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Independent verification for LIDAR-10 (doors/windows/height/objects):
- * re-derives expected openings/height/volume/objects counts and values from
- * the raw fixture JSON, from scratch (never imports RoomPlanSimulatorAdapter
- * or reuses any of its helpers), and checks the live HTTP API against them.
- * Talks to the Scan Service only over HTTP — same shape as
- * verify_capture_geometry.php and verify_coverage.php.
- *
- * This is the card's own required check: "A check that would fail if a door
- * was present in capture and missing in the contract." A door/window/opening
- * with no polygonCorners (no position reported) is correctly dropped by the
- * adapter, not a contract gap — this script counts only positioned items,
- * matching what mapOpenings()/mapObjects() are documented to do.
- *
- * Usage: php net/verify_openings_and_objects.php [base_url]
- *   base_url defaults to http://127.0.0.1:8089
- */
-
 require_once __DIR__ . '/lib/http_client.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';
@@ -42,10 +24,6 @@ function approx(float $a, float $b, float $tolerance = 0.01): bool
 {
     return abs($a - $b) <= $tolerance;
 }
-
-/** Independently counts, per category, every door/window/opening in the raw
- * fixture that actually carries a positioned polygonCorners — the only ones
- * the contract is expected to carry forward. */
 function expected_opening_counts(array $fixture): array
 {
     $counts = ['door' => 0, 'window' => 0, 'opening' => 0];
@@ -59,7 +37,6 @@ function expected_opening_counts(array $fixture): array
     return $counts;
 }
 
-/** Independently recomputes the tallest wall dimensions[1] in the raw fixture. */
 function expected_height(array $fixture): ?float
 {
     $heights = [];
@@ -161,9 +138,6 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
         $gotCategories === $wantCategories,
         'API=' . json_encode($gotCategories) . ' expected=' . json_encode($wantCategories));
 
-    // GET must return the same result the capture call already returned —
-    // catches a "write path lies about what read path serves" divergence,
-    // same check verify_capture_geometry.php already runs for area/perimeter.
     [$getStatus, $refetched] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId", null, $accessToken);
     check('GET after capture returns HTTP 200', $getStatus === 200, "got HTTP $getStatus");
     check('GET result matches captured result exactly (openings/height/objects included)', $refetched === $floorPlan);
