@@ -80,6 +80,8 @@ struct AppError {
                 return "NETWORK"
             case .noFloorPlanYet:
                 return "NO-FLOORPLAN"
+            case .notConfigured:
+                return "NOT-CONFIGURED"
             }
         }
         return "ERR"
@@ -100,6 +102,8 @@ struct AppError {
         case .transport:
             return true
         case .noFloorPlanYet:
+            return false
+        case .notConfigured:
             return false
         }
     }

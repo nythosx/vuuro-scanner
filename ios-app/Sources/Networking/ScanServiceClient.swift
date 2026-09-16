@@ -11,6 +11,7 @@ enum ScanServiceError: Error {
     case unexpectedStatus(Int, body: String)
     case transport(Error)
     case noFloorPlanYet
+    case notConfigured
 }
 
 extension ScanServiceError: LocalizedError {
@@ -27,6 +28,8 @@ extension ScanServiceError: LocalizedError {
             return "Couldn't reach the Scan Service: \(underlying.localizedDescription)"
         case .noFloorPlanYet:
             return "This session hasn't captured a room yet. Capture a room before attaching photos or notes."
+        case .notConfigured:
+            return "Scan Service isn't configured for this build — it would otherwise point at itself (127.0.0.1/localhost). Set a real Scan Service URL before testing on a device."
         }
     }
 }
@@ -84,26 +87,41 @@ struct RotateTokenResponse: Decodable {
 private struct EmptyBody: Encodable {}
 
 struct ScanServiceClient {
-    var baseURL: URL = {
+    var baseURL: URL
+    var isConfigured: Bool
+    var session: URLSession = ScanServiceClient.sharedSession
+
+    init() {
         #if DEBUG
         if let debugURL = DebugScanServiceURL.resolved {
-            return debugURL
+            baseURL = debugURL
+            isConfigured = true
+            return
         }
         #endif
         if let plistValue = Bundle.main.object(forInfoDictionaryKey: "ScanServiceBaseURL") as? String,
            !plistValue.isEmpty,
            let plistURL = URL(string: plistValue),
-           plistURL.scheme != nil {
-            return plistURL
+           plistURL.scheme != nil,
+           let host = plistURL.host,
+           !Self.isLoopbackHost(host) {
+            baseURL = plistURL
+            isConfigured = true
+        } else {
+            baseURL = URL(string: "http://127.0.0.1:8089")!
+            isConfigured = false
         }
-        return URL(string: "http://127.0.0.1:8089")!
-    }()
-    var session: URLSession = ScanServiceClient.sharedSession
+    }
+
+    private static func isLoopbackHost(_ host: String) -> Bool {
+        let lowered = host.lowercased()
+        return lowered == "127.0.0.1" || lowered == "localhost" || lowered == "::1"
+    }
 
     private static let sharedSession: URLSession = {
         let configuration = URLSessionConfiguration.default
-        configuration.waitsForConnectivity = true
-        configuration.timeoutIntervalForResource = 120
+        configuration.waitsForConnectivity = false
+        configuration.timeoutIntervalForResource = 30
         return URLSession(configuration: configuration)
     }()
 
@@ -332,6 +350,7 @@ struct ScanServiceClient {
     /// Like `get`, but for the two export routes, which return image/png or
     /// application/pdf bytes rather than JSON — nothing here to decode.
     private func getData(path: String, accessToken: String) async throws -> Data {
+        guard isConfigured else { throw ScanServiceError.notConfigured }
         var request = URLRequest(url: url(for: path))
         request.timeoutInterval = Self.requestTimeoutSeconds
         request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
@@ -342,7 +361,7 @@ struct ScanServiceClient {
             (data, response) = try await session.data(for: request)
         } catch {
             await logRequest(request, status: nil)
-            throw ScanServiceError.transport(error)
+            throw ScanServiceError.transport(unreachableError(request, underlying: error))
         }
 
         let status = (response as? HTTPURLResponse)?.statusCode
@@ -356,6 +375,7 @@ struct ScanServiceClient {
     }
 
     private func send<Response: Decodable>(_ request: URLRequest, timeoutSeconds: TimeInterval = ScanServiceClient.requestTimeoutSeconds) async throws -> Response {
+        guard isConfigured else { throw ScanServiceError.notConfigured }
         var request = request
         request.timeoutInterval = timeoutSeconds
         let data: Data
@@ -364,7 +384,7 @@ struct ScanServiceClient {
             (data, response) = try await session.data(for: request)
         } catch {
             await logRequest(request, status: nil)
-            throw ScanServiceError.transport(error)
+            throw ScanServiceError.transport(unreachableError(request, underlying: error))
         }
 
         let status = (response as? HTTPURLResponse)?.statusCode
@@ -376,6 +396,11 @@ struct ScanServiceClient {
 
         return try JSONDecoder().decode(Response.self, from: data)
     }
+    private func unreachableError(_ request: URLRequest, underlying: Error) -> Error {
+        let attempted = request.url?.absoluteString ?? baseURL.absoluteString
+        return PlainError(message: "Couldn't reach the Scan Service at \(attempted): \(underlying.localizedDescription)")
+    }
+
     private func logRequest(_ request: URLRequest, status: Int?) async {
         let method = request.httpMethod ?? "GET"
         let path = request.url?.path ?? "?"

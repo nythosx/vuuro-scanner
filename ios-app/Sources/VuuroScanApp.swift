@@ -910,7 +910,12 @@ struct AttachmentsScreen: View {
     private func openFullScreenPreview() {
         guard let data = FloorPlanImageCache.shared.cachedData(sessionId: session.id, unit: exportUnit) else { return }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-preview-\(session.id).png")
-        try? data.write(to: url)
+        do {
+            try data.write(to: url)
+        } catch {
+            appError = AppError(site: .resultImageLoad, underlying: error)
+            return
+        }
         fullScreenPreviewURL = url
         showFullScreenPreview = true
     }
@@ -932,6 +937,7 @@ struct AttachmentsScreen: View {
         if let data, let image = UIImage(data: data) {
             floorPlanPreviewImage = image
         } else {
+            appError = AppError(site: .resultImageLoad, underlying: FloorPlanImageCache.shared.lastError(sessionId: session.id, unit: exportUnit))
             floorPlanPreviewFailed = true
         }
     }
@@ -1566,7 +1572,7 @@ private struct ResultSummaryView: View {
         isFetchingImage = !alreadyCached
         defer { isFetchingImage = false }
         guard let data = await FloorPlanImageCache.shared.prefetch(sessionId: session.id, accessToken: session.accessToken, unit: exportUnit, client: client).value else {
-            appError = AppError(site: .resultImageLoad, underlying: nil)
+            appError = AppError(site: .resultImageLoad, underlying: FloorPlanImageCache.shared.lastError(sessionId: session.id, unit: exportUnit))
             imageLoadFailed = true
             return
         }
@@ -1581,7 +1587,13 @@ private struct ResultSummaryView: View {
             return
         }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(session.id).png")
-        try? data.write(to: url)
+        do {
+            try data.write(to: url)
+        } catch {
+            appError = AppError(site: .resultImageLoad, underlying: error)
+            imageLoadFailed = true
+            return
+        }
         floorPlanImage = image
         floorPlanImageURL = url
         appError = nil

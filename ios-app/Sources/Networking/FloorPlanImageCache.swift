@@ -7,6 +7,7 @@ final class FloorPlanImageCache {
 
     private var entries: [String: Data] = [:]
     private var inFlightTasks: [String: Task<Data?, Never>] = [:]
+    private var lastErrors: [String: Error] = [:]
 
     private init() {}
 
@@ -29,9 +30,11 @@ final class FloorPlanImageCache {
             let data: Data?
             do {
                 data = try await client.fetchFloorPlanImage(sessionId: sessionId, accessToken: accessToken, unit: unit)
+                self.lastErrors[cacheKey] = nil
             } catch {
                 DiagnosticsLog.shared.record("Floor plan image prefetch failed for session \(sessionId): \(error.localizedDescription)", category: .error)
                 data = nil
+                self.lastErrors[cacheKey] = error
             }
             if let data {
                 self.entries[cacheKey] = data
@@ -47,9 +50,14 @@ final class FloorPlanImageCache {
         entries[key(sessionId: sessionId, unit: unit)]
     }
 
+    func lastError(sessionId: String, unit: MeasurementUnit) -> Error? {
+        lastErrors[key(sessionId: sessionId, unit: unit)]
+    }
+
     func invalidate(sessionId: String) {
         let prefix = "\(sessionId)|"
         entries = entries.filter { !$0.key.hasPrefix(prefix) }
         inFlightTasks = inFlightTasks.filter { !$0.key.hasPrefix(prefix) }
+        lastErrors = lastErrors.filter { !$0.key.hasPrefix(prefix) }
     }
 }
