@@ -13,7 +13,7 @@ scan-service-net:
     - php tests/export_renderer_test.php
     - php tests/concurrency_test.php
     - if (Test-Path data\scan_service.sqlite) { Remove-Item -Force data\scan_service.sqlite }
-    - $env:SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX = "500"
+    - $env:SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX = "2000"
     - $env:SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_WINDOW_SECONDS = "600"
     - $env:SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_MAX = "4000"
     - $env:SCAN_SERVICE_ADMIN_API_KEY = "ci-test-admin-key"
