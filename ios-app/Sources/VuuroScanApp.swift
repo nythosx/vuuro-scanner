@@ -9,7 +9,9 @@ struct VuuroScanApp: App {
     @AppStorage(AppLanguageSettings.storageKey) private var appLanguageRaw: String = AppLanguage.system.rawValue
 
     init() {
-        KeychainTokenStore.resetIfReinstalled()
+        DispatchQueue.global(qos: .utility).async {
+            KeychainTokenStore.resetIfReinstalled()
+        }
         VuuroFontRegistration.registerBundledFonts()
     }
 
@@ -40,6 +42,7 @@ struct ScanFlowView: View {
 
     @State private var stage: Stage
     @State private var historyButtonTitle = "History"
+    @State private var historyButtonResetToken = UUID()
     @AppStorage(AppLanguageSettings.storageKey) private var appLanguageRaw: String = AppLanguage.system.rawValue
 
     init() {
@@ -59,11 +62,6 @@ struct ScanFlowView: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             content
-            // Top-leading, opposite corner from the capture screen's back
-            // button (top-trailing) so the two never overlap. Shown on every
-            // other stage, since real errors happen in session creation/
-            // upload/photo-attach too, not only mid-scan — see
-            // isCapturingStage for why it's hidden specifically here.
             if !isCapturingStage {
                 Button {
                     showDiagnostics = true
@@ -90,6 +88,8 @@ struct ScanFlowView: View {
                 PendingUploadRecoveryView(state: pending) { session, floorPlan in
                     stage = .attachments(session: session, floorPlan: floorPlan, identity: pending.identity)
                 } onDiscarded: {
+                    stage = .intake
+                } onSkipped: {
                     stage = .intake
                 }
             case .intake:
@@ -165,7 +165,10 @@ struct ScanFlowView: View {
                 ResultSummaryView(session: session, floorPlan: floorPlan) {
                     VuuroToast.shared.show("Scan saved to history")
                     historyButtonTitle = "Saved"
+                    let resetToken = UUID()
+                    historyButtonResetToken = resetToken
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        guard historyButtonResetToken == resetToken else { return }
                         historyButtonTitle = "History"
                     }
                     stage = .intake
@@ -244,9 +247,17 @@ private struct RoomCaptureFlowStep: View {
                 PartialCaptureFailureView(
                     message: partialCaptureFailureMessage,
                     onUsePartial: {
+                        self.partialCaptureFailureMessage = nil
                         let room = coordinator.capturedRoom!
                         isUploadingPartialCapture = true
-                        Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport, walkPath: coordinator.capturedRoomWalkPath, headingDeg: capturedHeadingDeg)) }
+                        uploadTask = Task {
+                            await submit(CapturedRoomExporter.export(
+                                room,
+                                roomTypeConfirmation: coordinator.roomTypeConfirmationForExport,
+                                walkPath: coordinator.capturedRoomWalkPath,
+                                headingDeg: capturedHeadingDeg
+                            ))
+                        }
                     },
                     onDiscard: {
                         onError(AppError(site: .captureFailed, underlying: PlainError(message: partialCaptureFailureMessage)), existingSession)
@@ -267,7 +278,14 @@ private struct RoomCaptureFlowStep: View {
                         let pending = uploadRejection
                         self.uploadRejection = nil
                         isRetryingUpload = true
-                        Task { await retryUpload(session: pending.session, export: pending.export, idempotencyKey: pending.idempotencyKey, bodyJSON: pending.bodyJSON) }
+                        uploadTask = Task {
+                            await retryUpload(
+                                session: pending.session,
+                                export: pending.export,
+                                idempotencyKey: pending.idempotencyKey,
+                                bodyJSON: pending.bodyJSON
+                            )
+                        }
                     },
                     onRescan: {
                         onDiscardRoom()
@@ -292,7 +310,6 @@ private struct RoomCaptureFlowStep: View {
                                 onConfirm: { coordinator.confirmRoomTypeGuess() },
                                 onReject: { picked in coordinator.rejectRoomTypeGuess(correctedTo: picked) }
                             )
-                            .id(guess.type)
                             Spacer()
                         }
                     }
@@ -419,8 +436,9 @@ private struct RoomCaptureFlowStep: View {
 
     @MainActor
     private func submit(_ export: RoomPlanCaptureExport) async {
+        defer { isUploadingPartialCapture = false }
+
         guard export.hasUsableFloorOutline else {
-            isUploadingPartialCapture = false
             DiagnosticsLog.shared.record("Local reject: floor outline too small/degenerate, upload skipped", category: .error)
             isDegenerateCapture = true
             return
@@ -453,7 +471,9 @@ private struct RoomCaptureFlowStep: View {
                 organisationId: identity.organisationId,
                 purpose: identity.purpose,
                 createdAt: Date(),
-                expiresAt: session.expiresAt
+                expiresAt: session.expiresAt,
+                occupied: identity.occupied,
+                consentObtained: identity.consentObtained
             ))
         }
 
@@ -501,6 +521,7 @@ private struct AnotherRoomPromptView: View {
         .padding()
     }
 }
+
 private struct PartialCaptureFailureView: View {
     let message: String
     let onUsePartial: () -> Void
@@ -961,6 +982,8 @@ struct AttachmentsScreen: View {
     private func finish() async {
         isFinishing = true
         defer { isFinishing = false }
+        var failureCount = 0
+        var lastFailure: AppError?
         for room in current.rooms {
             let draft = (noteDrafts[room.roomId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let initial = initialNoteDrafts[room.roomId] ?? ""
@@ -979,9 +1002,13 @@ struct AttachmentsScreen: View {
                 }
                 initialNoteDrafts[room.roomId] = draft
             } catch {
-                appError = AppError(site: site, underlying: error)
-                return
+                failureCount += 1
+                lastFailure = AppError(site: site, underlying: error)
             }
+        }
+        if let lastFailure {
+            appError = failureCount == 1 ? lastFailure : AppError(site: lastFailure.site, underlying: PlainError(message: "\(failureCount) room notes failed to save. \(lastFailure.site.defaultMessage)"))
+            return
         }
         appError = nil
         VuuroToast.shared.show("Saved")
@@ -1022,8 +1049,15 @@ struct AttachmentsScreen: View {
         if data.starts(with: [0xFF, 0xD8, 0xFF]) {
             return ("image/jpeg", "jpg")
         }
-        if data.count > 12, data[data.startIndex.advanced(by: 4)..<data.startIndex.advanced(by: 8)].elementsEqual("ftyp".utf8) {
-            return ("image/heic", "heic")
+        if data.count > 16,
+           data[data.startIndex.advanced(by: 4)..<data.startIndex.advanced(by: 8)].elementsEqual("ftyp".utf8) {
+            let brand = data[data.startIndex.advanced(by: 8)..<data.startIndex.advanced(by: 12)]
+            let heicBrands: Set<[UInt8]> = [
+                Array("heic".utf8), Array("heix".utf8), Array("hevc".utf8), Array("mif1".utf8),
+            ]
+            if heicBrands.contains(Array(brand)) {
+                return ("image/heic", "heic")
+            }
         }
         return ("image/jpeg", "jpg")
     }
@@ -1039,7 +1073,11 @@ struct AttachmentsScreen: View {
                 appError = AppError(site: .photoUpload, underlying: nil)
                 return false
             }
-            guard let image = UIImage(data: rawData), let jpegData = image.jpegData(compressionQuality: 0.9) else {
+            let jpegData: Data? = await Task.detached(priority: .userInitiated) {
+                guard let image = UIImage(data: rawData) else { return nil }
+                return image.jpegData(compressionQuality: 0.9)
+            }.value
+            guard let jpegData else {
                 appError = AppError(site: .photoUpload, underlying: nil)
                 return false
             }
@@ -1208,8 +1246,11 @@ struct AttachedPhotoThumbnail: View {
             guard image == nil else { return }
             do {
                 let data = try await client.fetchPhotoData(url: url, accessToken: session.accessToken)
-                image = Self.downsampledThumbnail(from: data, maxDimensionPixels: 120)
-                failed = image == nil
+                let thumb = await Task.detached(priority: .userInitiated) {
+                    Self.downsampledThumbnail(from: data, maxDimensionPixels: 120)
+                }.value
+                image = thumb
+                failed = thumb == nil
                 if failed {
                     DiagnosticsLog.shared.record("Photo thumbnail decode failed for \(url)", category: .error)
                 }
@@ -1220,7 +1261,7 @@ struct AttachedPhotoThumbnail: View {
         }
     }
 
-    private static func downsampledThumbnail(from data: Data, maxDimensionPixels: CGFloat) -> UIImage? {
+    private nonisolated static func downsampledThumbnail(from data: Data, maxDimensionPixels: CGFloat) -> UIImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else {
             return nil
         }

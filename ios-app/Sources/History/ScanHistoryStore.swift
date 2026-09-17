@@ -6,13 +6,18 @@ final class ScanHistoryStore {
 
     private let defaults: UserDefaults
     private let key = "com.vuuro.scan.history"
+    private let corruptedBackupKey = "com.vuuro.scan.history.corrupted-backup"
+    private let lock = NSLock()
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
     }
 
     func all() -> [ScanHistoryEntry] {
-        readRedacted()
+        lock.lock()
+        defer { lock.unlock() }
+        let entries = readRedacted()
+        return entries
             .map { entry in
                 var entry = entry
                 entry.accessToken = KeychainTokenStore.loadToken(forSessionId: entry.sessionId) ?? entry.accessToken
@@ -22,6 +27,8 @@ final class ScanHistoryStore {
     }
 
     func add(_ entry: ScanHistoryEntry) {
+        lock.lock()
+        defer { lock.unlock() }
         KeychainTokenStore.save(token: entry.accessToken, forSessionId: entry.sessionId)
         var redacted = entry
         redacted.accessToken = ""
@@ -33,10 +40,14 @@ final class ScanHistoryStore {
 
     func remove(sessionId: String) {
         KeychainTokenStore.deleteToken(forSessionId: sessionId)
+        lock.lock()
+        defer { lock.unlock() }
         save(readRedacted().filter { $0.sessionId != sessionId })
     }
 
     func updateNickname(sessionId: String, nickname: String?) {
+        lock.lock()
+        defer { lock.unlock() }
         var entries = readRedacted()
         guard let index = entries.firstIndex(where: { $0.sessionId == sessionId }) else { return }
         entries[index].nickname = nickname
@@ -44,6 +55,8 @@ final class ScanHistoryStore {
     }
 
     func updateRoomSummary(sessionId: String, summary: String?) {
+        lock.lock()
+        defer { lock.unlock() }
         var entries = readRedacted()
         guard let index = entries.firstIndex(where: { $0.sessionId == sessionId }) else { return }
         entries[index].cachedRoomSummary = summary
@@ -51,8 +64,11 @@ final class ScanHistoryStore {
     }
 
     private func readRedacted() -> [ScanHistoryEntry] {
-        guard let data = defaults.data(forKey: key),
-              let entries = try? JSONDecoder().decode([ScanHistoryEntry].self, from: data) else {
+        guard let data = defaults.data(forKey: key) else { return [] }
+        guard let entries = try? JSONDecoder().decode([ScanHistoryEntry].self, from: data) else {
+            defaults.set(data, forKey: corruptedBackupKey)
+            defaults.removeObject(forKey: key)
+            DiagnosticsLog.shared.record("Scan history blob failed to decode — backed up under \(corruptedBackupKey) and cleared", category: .error)
             return []
         }
         return entries

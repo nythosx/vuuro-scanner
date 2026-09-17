@@ -82,7 +82,6 @@ struct MultiRoomCaptureFlowView: View {
                                 onConfirm: { coordinator.confirmRoomTypeGuess() },
                                 onReject: { picked in coordinator.rejectRoomTypeGuess(correctedTo: picked) }
                             )
-                            .id(guess.type)
                             Spacer()
                         }
                     }
@@ -117,14 +116,6 @@ struct MultiRoomCaptureFlowView: View {
                     } else if coordinator.state == .scanning {
                         VStack {
                             HStack {
-                                // Review finding: this used to call onGoBack()
-                                // directly — a stray tap silently discarded
-                                // every already-captured room in this
-                                // walkthrough, with LESS friction than the
-                                // single-room flow's equivalent button
-                                // despite a worse consequence (many rooms,
-                                // not one). Now confirms first, same as that
-                                // one does.
                                 Button {
                                     showDiscardConfirmation = true
                                 } label: {
@@ -236,15 +227,15 @@ struct MultiRoomCaptureFlowView: View {
                     Task { capturedLocation = await locationProvider.currentLocation() }
                     Task { capturedHeadingDeg = await headingProvider.currentHeadingDeg() }
                 }
-                .onChange(of: coordinator.state) { _, state in
-                    handle(state)
-                }
                 .onChange(of: scenePhase) { _, newPhase in
                     if newPhase == .background, coordinator.state == .scanning {
                         DiagnosticsLog.shared.record("App backgrounded mid-scan (multi-room) — ARKit/RoomPlan behavior here is unverified.", category: .state)
                     }
                 }
             }
+        }
+        .onChange(of: coordinator.state) { _, state in
+            handle(state)
         }
         .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
             Button("Discard", role: .destructive) { onGoBack() }
@@ -257,10 +248,6 @@ struct MultiRoomCaptureFlowView: View {
         }
     }
 
-    // Dimmed backdrop + floating card, since these overlays now draw on top
-    // of the still-running (visually live) camera feed instead of replacing
-    // it with an opaque screen — see the comment above this file's ZStack
-    // for why the capture screen can no longer be swapped out here.
     @ViewBuilder
     private func resolutionOverlay<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         ZStack {
@@ -348,7 +335,12 @@ struct MultiRoomCaptureFlowView: View {
     private func submitFused(_ structure: CapturedStructure) async {
         isFinishingUnit = false
         guard let preUploadedSession else { return }
-        let exports = CapturedStructureExporter.export(structure, roomTypeConfirmationsByIdentifier: coordinator.roomTypeConfirmationsByIdentifier, roomWalkPathsByIdentifier: coordinator.roomWalkPathsByIdentifier, headingDeg: capturedHeadingDeg)
+        let exports = CapturedStructureExporter.export(
+            structure,
+            roomTypeConfirmationsByIdentifier: coordinator.roomTypeConfirmationsForStructure(structure),
+            roomWalkPathsByIdentifier: coordinator.walkPathsForStructure(structure),
+            headingDeg: capturedHeadingDeg
+        )
         guard exports.allSatisfy({ $0.hasUsableFloorOutline }) else {
             DiagnosticsLog.shared.record("Fused structure had a degenerate floor outline in \(exports.filter { !$0.hasUsableFloorOutline }.count) of \(exports.count) room(s) — falling back to unfused per-room tiles.", category: .error)
             self.preUploadedSession = nil
@@ -417,7 +409,9 @@ struct MultiRoomCaptureFlowView: View {
                 organisationId: identity.organisationId,
                 purpose: identity.purpose,
                 createdAt: Date(),
-                expiresAt: session.expiresAt
+                expiresAt: session.expiresAt,
+                occupied: identity.occupied,
+                consentObtained: identity.consentObtained
             ))
         }
 

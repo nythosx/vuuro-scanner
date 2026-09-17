@@ -1,8 +1,8 @@
-
 import ARKit
 import Combine
 import Foundation
 import RoomPlan
+import simd
 
 @MainActor
 final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
@@ -86,13 +86,19 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
 
     private(set) var roomWalkPaths: [[[Double]]] = []
     private var currentRoomWalkPath: [[Double]] = []
-    private var walkPathTask: Task<Void, Never>?
+    nonisolated(unsafe) private var walkPathTask: Task<Void, Never>?
     private static let walkPathSampleIntervalNanoseconds: UInt64 = 500_000_000
     private static let walkPathMaxPoints = 400
 
     static let mergeTimeoutSeconds: Double = 45
-    private var mergeTask: Task<Void, Never>?
-    private var heartbeatTask: Task<Void, Never>?
+    nonisolated(unsafe) private var mergeTask: Task<Void, Never>?
+    nonisolated(unsafe) private var heartbeatTask: Task<Void, Never>?
+
+    deinit {
+        walkPathTask?.cancel()
+        mergeTask?.cancel()
+        heartbeatTask?.cancel()
+    }
 
     let arSession = ARSession()
 
@@ -125,6 +131,12 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
 
     func keepPendingPartialRoom() {
         guard let pendingPartialRoom else { return }
+        guard CapturedRoomExporter.export(pendingPartialRoom).hasUsableFloorOutline else {
+            DiagnosticsLog.shared.record("Partial room rejected locally: degenerate floor outline", category: .error)
+            self.pendingPartialRoom = nil
+            pendingPartialRoomWalkPath = []
+            return
+        }
         capturedRooms.append(pendingPartialRoom)
         roomTypeConfirmations.append(roomTypeConfirmationForExport)
         roomWalkPaths.append(pendingPartialRoomWalkPath)
@@ -166,6 +178,105 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         walkPathTask?.cancel()
         walkPathTask = nil
         DiagnosticsLog.shared.record("Walk path tracking stopped — \(currentRoomWalkPath.count) point(s) recorded for this room", category: .info)
+    }
+
+    // MARK: - Merged-room mapping (fixes Bug #3)
+    //
+    // StructureBuilder assigns new UUIDs to merged rooms and to any walls
+    // shared between rooms, so keying user-confirmed room types and walk
+    // paths by the original identifiers misses every lookup after a merge.
+    // Non-shared wall, window, door, opening, and object identifiers do
+    // survive, so wall overlap reliably identifies most rooms; floor-area
+    // proximity is the fallback when every wall was shared and re-keyed.
+
+    /// Maps each room in the merged structure back to its original
+    /// CapturedRoom index.
+    func mapMergedRoomsToOriginals(_ structure: CapturedStructure) -> [UUID: Int] {
+        var mapping: [UUID: Int] = [:]
+
+        for mergedRoom in structure.rooms {
+            let mergedWallIds = Set(mergedRoom.walls.map(\.identifier))
+            let mergedArea = floorArea(of: mergedRoom)
+
+            var bestIndex: Int?
+            var bestOverlap = -1
+            var bestAreaDelta = Double.greatestFiniteMagnitude
+
+            for (index, originalRoom) in capturedRooms.enumerated() {
+                let originalWallIds = Set(originalRoom.walls.map(\.identifier))
+                let overlap = mergedWallIds.intersection(originalWallIds).count
+                let areaDelta = abs(mergedArea - floorArea(of: originalRoom))
+
+                let isBetter: Bool
+                if overlap > bestOverlap {
+                    isBetter = true
+                } else if overlap == bestOverlap, areaDelta < bestAreaDelta {
+                    isBetter = true
+                } else {
+                    isBetter = false
+                }
+
+                if isBetter || bestIndex == nil {
+                    bestOverlap = overlap
+                    bestAreaDelta = areaDelta
+                    bestIndex = index
+                }
+            }
+
+            if let bestIndex {
+                mapping[mergedRoom.identifier] = bestIndex
+            }
+        }
+
+        return mapping
+    }
+
+    /// Returns room-type confirmations keyed by the *merged* room identifiers,
+    /// so `CapturedStructureExporter.export` can find them after the merge.
+    func roomTypeConfirmationsForStructure(_ structure: CapturedStructure) -> [UUID: RoomTypeConfirmation] {
+        let mapping = mapMergedRoomsToOriginals(structure)
+        var result: [UUID: RoomTypeConfirmation] = [:]
+        for (mergedId, originalIndex) in mapping {
+            if let confirmation = roomTypeConfirmations[originalIndex] {
+                result[mergedId] = confirmation
+            }
+        }
+        return result
+    }
+
+    /// Returns walk paths keyed by the *merged* room identifiers.
+    func walkPathsForStructure(_ structure: CapturedStructure) -> [UUID: [[Double]]] {
+        let mapping = mapMergedRoomsToOriginals(structure)
+        var result: [UUID: [[Double]]] = [:]
+        for (mergedId, originalIndex) in mapping {
+            guard roomWalkPaths.indices.contains(originalIndex),
+                  !roomWalkPaths[originalIndex].isEmpty else { continue }
+            result[mergedId] = roomWalkPaths[originalIndex]
+        }
+        return result
+    }
+
+    /// World-space floor area of a captured room, summed over all floor
+    /// surfaces. Used as a fallback when wall identifiers don't overlap.
+    private func floorArea(of room: CapturedRoom) -> Double {
+        room.floors.reduce(0.0) { sum, floor in
+            sum + polygonArea(corners: floor.polygonCorners, transform: floor.transform)
+        }
+    }
+
+    private func polygonArea(corners: [simd_float3], transform: simd_float4x4) -> Double {
+        let worldCorners = corners.map { corner -> (x: Double, z: Double) in
+            let world = transform * simd_float4(corner, 1)
+            return (Double(world.x), Double(world.z))
+        }
+        guard worldCorners.count >= 3 else { return 0 }
+        var area = 0.0
+        for i in worldCorners.indices {
+            let a = worldCorners[i]
+            let b = worldCorners[(i + 1) % worldCorners.count]
+            area += a.x * b.z - b.x * a.z
+        }
+        return abs(area) / 2.0
     }
 
     func finishUnit() {
@@ -213,7 +324,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
                 try await StructureBuilder(options: [.beautifyObjects]).capturedStructure(from: rooms)
             }
             group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+                try await Task.sleep(for: .seconds(timeoutSeconds))
                 throw MergeTimeoutError()
             }
             guard let result = try await group.next() else {

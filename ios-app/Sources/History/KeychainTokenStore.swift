@@ -11,12 +11,23 @@ enum KeychainTokenStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: sessionId,
         ]
-        SecItemDelete(query as CFDictionary)
+        let deleteStatus = SecItemDelete(query as CFDictionary)
+        if deleteStatus != errSecSuccess, deleteStatus != errSecItemNotFound {
+            DiagnosticsLog.shared.record("Keychain delete before save failed for session \(sessionId): OSStatus \(deleteStatus)", category: .error)
+        }
 
         var attributes = query
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(attributes as CFDictionary, nil)
+        let addStatus = SecItemAdd(attributes as CFDictionary, nil)
+        if addStatus == errSecDuplicateItem {
+            let updateStatus = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+            if updateStatus != errSecSuccess {
+                DiagnosticsLog.shared.record("Keychain update failed for session \(sessionId): OSStatus \(updateStatus)", category: .error)
+            }
+        } else if addStatus != errSecSuccess {
+            DiagnosticsLog.shared.record("Keychain save failed for session \(sessionId): OSStatus \(addStatus)", category: .error)
+        }
     }
 
     static func loadToken(forSessionId sessionId: String) -> String? {

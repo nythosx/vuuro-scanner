@@ -5,6 +5,8 @@ import CoreLocation
 final class HeadingProvider: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     private var continuation: CheckedContinuation<Double?, Never>?
+    private var timeoutTask: Task<Void, Never>?
+    private var callToken = 0
 
     override init() {
         super.init()
@@ -24,11 +26,14 @@ final class HeadingProvider: NSObject, CLLocationManagerDelegate {
             manager.requestWhenInUseAuthorization()
         }
 
+        callToken += 1
+        let token = callToken
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
             manager.startUpdatingHeading()
-            Task {
+            timeoutTask = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard let self, token == self.callToken else { return }
                 self.finish(nil)
             }
         }
@@ -50,6 +55,8 @@ final class HeadingProvider: NSObject, CLLocationManagerDelegate {
     }
 
     private func finish(_ result: Double?) {
+        timeoutTask?.cancel()
+        timeoutTask = nil
         guard let continuation else { return }
         self.continuation = nil
         manager.stopUpdatingHeading()

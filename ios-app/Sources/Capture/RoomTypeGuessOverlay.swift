@@ -15,6 +15,7 @@ struct RoomTypeGuessOverlay: View {
 
     @State private var isVisible = true
     @State private var isPickingCorrection = false
+    @State private var hideToken = 0
 
     var body: some View {
         if isVisible {
@@ -44,11 +45,11 @@ struct RoomTypeGuessOverlay: View {
             .background(.regularMaterial, in: Capsule())
             .padding(.top, 12)
             .accessibilityElement(children: .contain)
-            .task {
-                try? await Task.sleep(nanoseconds: 6_000_000_000)
-                if !UIAccessibility.isVoiceOverRunning && !isPickingCorrection {
-                    isVisible = false
-                }
+            .onAppear { scheduleAutoHide() }
+            .onChange(of: guess.type) { _, _ in
+                isVisible = true
+                isPickingCorrection = false
+                scheduleAutoHide()
             }
             .confirmationDialog("What kind of room is this?", isPresented: $isPickingCorrection, titleVisibility: .visible) {
                 ForEach(RoomTypeClassifier.allTypes.filter { $0 != guess.type }, id: \.self) { type in
@@ -65,6 +66,18 @@ struct RoomTypeGuessOverlay: View {
                     onReject(nil)
                     isVisible = false
                 }
+            }
+        }
+    }
+
+    private func scheduleAutoHide() {
+        hideToken += 1
+        let token = hideToken
+        Task {
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard token == hideToken else { return }
+            if !UIAccessibility.isVoiceOverRunning && !isPickingCorrection {
+                isVisible = false
             }
         }
     }

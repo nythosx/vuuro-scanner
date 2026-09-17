@@ -24,9 +24,13 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     private(set) var capturedRoomWalkPath: [[Double]] = []
 
     let arSession = ARSession()
-    private var walkPathTask: Task<Void, Never>?
+    nonisolated(unsafe) private var walkPathTask: Task<Void, Never>?
     private static let walkPathSampleIntervalNanoseconds: UInt64 = 500_000_000
     private static let walkPathMaxPoints = 400
+
+    deinit {
+        walkPathTask?.cancel()
+    }
 
     @Published private(set) var isApproachingSizeLimit = false {
         didSet {
@@ -115,12 +119,11 @@ extension CaptureCoordinator: RoomCaptureSessionDelegate {
             do {
                 let room = try await RoomBuilder(options: [.beautifyObjects]).capturedRoom(from: data)
                 self.capturedRoom = room
+                let hasUsableGeometry = !room.walls.isEmpty || !room.floors.isEmpty
                 if let error {
-                    
-                    let hasUsableGeometry = !room.walls.isEmpty || !room.floors.isEmpty
                     self.state = .failed(error.localizedDescription, partialRoomAvailable: hasUsableGeometry)
                 } else {
-                    self.state = .finished(roomAvailable: true)
+                    self.state = .finished(roomAvailable: hasUsableGeometry)
                 }
             } catch {
                 self.state = .failed(error.localizedDescription, partialRoomAvailable: false)

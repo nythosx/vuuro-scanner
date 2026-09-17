@@ -121,7 +121,7 @@ struct ScanServiceClient {
     private static let sharedSession: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.waitsForConnectivity = false
-        configuration.timeoutIntervalForResource = 30
+        configuration.timeoutIntervalForResource = 120
         return URLSession(configuration: configuration)
     }()
 
@@ -199,7 +199,28 @@ struct ScanServiceClient {
             }
             return data
         }
-        return try await getData(path: url, accessToken: accessToken)
+        guard isConfigured else { throw ScanServiceError.notConfigured }
+        var request = URLRequest(url: resolved)
+        request.timeoutInterval = Self.requestTimeoutSeconds
+        request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw CancellationError()
+        } catch {
+            logRequest(request, status: nil)
+            throw ScanServiceError.transport(unreachableError(request, underlying: error))
+        }
+
+        let status = (response as? HTTPURLResponse)?.statusCode
+        logRequest(request, status: status)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw ScanServiceError.unexpectedStatus(status ?? -1, body: String(data: data, encoding: .utf8) ?? "")
+        }
+        return data
     }
 
     func fetchFloorPlanImage(sessionId: String, accessToken: String, unit: MeasurementUnit = .metric, label: String? = nil) async throws -> Data {
@@ -322,7 +343,15 @@ struct ScanServiceClient {
     }
 
     private func url(for path: String) -> URL {
-        URL(string: path, relativeTo: baseURL)?.absoluteURL ?? baseURL.appendingPathComponent(path)
+        let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        let parts = trimmed.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        let withPath = baseURL.appendingPathComponent(String(parts[0]))
+        guard parts.count == 2, !parts[1].isEmpty else {
+            return withPath
+        }
+        var components = URLComponents(url: withPath, resolvingAgainstBaseURL: false)
+        components?.percentEncodedQuery = String(parts[1])
+        return components?.url ?? withPath
     }
 
     private func post<Body: Encodable, Response: Decodable>(path: String, body: Body, accessToken: String?, timeoutSeconds: TimeInterval = ScanServiceClient.requestTimeoutSeconds) async throws -> Response {
@@ -359,13 +388,15 @@ struct ScanServiceClient {
         let response: URLResponse
         do {
             (data, response) = try await session.data(for: request)
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw CancellationError()
         } catch {
-            await logRequest(request, status: nil)
+            logRequest(request, status: nil)
             throw ScanServiceError.transport(unreachableError(request, underlying: error))
         }
 
         let status = (response as? HTTPURLResponse)?.statusCode
-        await logRequest(request, status: status)
+        logRequest(request, status: status)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw ScanServiceError.unexpectedStatus(status ?? -1, body: String(data: data, encoding: .utf8) ?? "")
@@ -382,13 +413,15 @@ struct ScanServiceClient {
         let response: URLResponse
         do {
             (data, response) = try await session.data(for: request)
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw CancellationError()
         } catch {
-            await logRequest(request, status: nil)
+            logRequest(request, status: nil)
             throw ScanServiceError.transport(unreachableError(request, underlying: error))
         }
 
         let status = (response as? HTTPURLResponse)?.statusCode
-        await logRequest(request, status: status)
+        logRequest(request, status: status)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw ScanServiceError.unexpectedStatus(status ?? -1, body: String(data: data, encoding: .utf8) ?? "")
@@ -401,10 +434,10 @@ struct ScanServiceClient {
         return PlainError(message: "Couldn't reach the Scan Service at \(attempted): \(underlying.localizedDescription)")
     }
 
-    private func logRequest(_ request: URLRequest, status: Int?) async {
+    private func logRequest(_ request: URLRequest, status: Int?) {
         let method = request.httpMethod ?? "GET"
         let path = request.url?.path ?? "?"
         let statusText = status.map(String.init) ?? "no response (transport error)"
-        await DiagnosticsLog.shared.record("\(method) \(path) -> \(statusText)", category: .request)
+        DiagnosticsLog.shared.record("\(method) \(path) -> \(statusText)", category: .request)
     }
 }

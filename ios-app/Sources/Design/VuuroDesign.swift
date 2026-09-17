@@ -200,17 +200,20 @@ final class VuuroToast: ObservableObject {
 
     @Published fileprivate var message: String?
     private var dismissTask: Task<Void, Never>?
+    private var toastToken = 0
 
     private init() {}
 
     func show(_ text: String) {
+        toastToken += 1
+        let token = toastToken
         dismissTask?.cancel()
         withAnimation(.easeOut(duration: 0.2)) {
             message = text
         }
-        dismissTask = Task {
+        dismissTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 2_200_000_000)
-            guard !Task.isCancelled else { return }
+            guard let self, !Task.isCancelled, token == self.toastToken else { return }
             withAnimation(.easeIn(duration: 0.2)) {
                 self.message = nil
             }

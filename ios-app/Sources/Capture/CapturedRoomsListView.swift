@@ -4,14 +4,14 @@ import SwiftUI
 struct CapturedRoomsListView: View {
     @ObservedObject var coordinator: MultiRoomCaptureCoordinator
     @Environment(\.dismiss) private var dismiss
-    @State private var pendingDeleteIndex: Int?
-    @State private var retryTargetIndex: Int?
+    @State private var pendingDeleteId: UUID?
+    @State private var retryTargetId: UUID?
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(Array(coordinator.capturedRooms.enumerated()), id: \.offset) { index, room in
+                    ForEach(Array(coordinator.capturedRooms.enumerated()), id: \.element.identifier) { index, room in
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack(spacing: 6) {
@@ -23,11 +23,11 @@ struct CapturedRoomsListView: View {
                                     .foregroundStyle(VuuroColor.textSecondary)
                             }
                             Spacer()
-                            Button { retryTargetIndex = index } label: {
+                            Button { retryTargetId = room.identifier } label: {
                                 Image(systemName: "arrow.counterclockwise")
                             }
                             .buttonStyle(VuuroIconButtonStyle(tint: VuuroColor.textPrimary, background: VuuroColor.surfaceMuted))
-                            Button { pendingDeleteIndex = index } label: {
+                            Button { pendingDeleteId = room.identifier } label: {
                                 Image(systemName: "trash")
                             }
                             .buttonStyle(VuuroIconButtonStyle(tint: VuuroColor.danger, background: VuuroColor.danger.opacity(0.14)))
@@ -53,34 +53,36 @@ struct CapturedRoomsListView: View {
             .alert(
                 "Delete this room?",
                 isPresented: Binding(
-                    get: { pendingDeleteIndex != nil },
-                    set: { if !$0 { pendingDeleteIndex = nil } }
+                    get: { pendingDeleteId != nil },
+                    set: { if !$0 { pendingDeleteId = nil } }
                 )
             ) {
                 Button("Delete", role: .destructive) {
-                    if let index = pendingDeleteIndex {
+                    if let id = pendingDeleteId, let index = coordinator.capturedRooms.firstIndex(where: { $0.identifier == id }) {
                         coordinator.removeCapturedRoom(at: index)
                         VuuroToast.shared.show("Room deleted")
                     }
-                    pendingDeleteIndex = nil
+                    pendingDeleteId = nil
                 }
-                Button("Cancel", role: .cancel) { pendingDeleteIndex = nil }
+                Button("Cancel", role: .cancel) { pendingDeleteId = nil }
             } message: {
                 Text("This room will be removed from the unit and won't be included in the final upload.")
             }
             .sheet(item: retryTargetBinding) { target in
                 RetryReasonSheet(
-                    roomLabel: label(for: target.index),
-                    onCancel: { retryTargetIndex = nil },
+                    roomLabel: label(forId: target.id),
+                    onCancel: { retryTargetId = nil },
                     onConfirm: { reason in
                         if let reason, !reason.isEmpty {
                             DiagnosticsLog.shared.record(
-                                "Retry reason (\(label(for: target.index))): \(reason)",
+                                "Retry reason (\(label(forId: target.id))): \(reason)",
                                 category: .info
                             )
                         }
-                        coordinator.removeCapturedRoom(at: target.index)
-                        retryTargetIndex = nil
+                        if let index = coordinator.capturedRooms.firstIndex(where: { $0.identifier == target.id }) {
+                            coordinator.removeCapturedRoom(at: index)
+                        }
+                        retryTargetId = nil
                         VuuroToast.shared.show("Room removed — rescan it now")
                         DispatchQueue.main.async {
                             dismiss()
@@ -92,14 +94,13 @@ struct CapturedRoomsListView: View {
     }
 
     private struct RetryTarget: Identifiable {
-        let index: Int
-        var id: Int { index }
+        let id: UUID
     }
 
     private var retryTargetBinding: Binding<RetryTarget?> {
         Binding(
-            get: { retryTargetIndex.map(RetryTarget.init) },
-            set: { retryTargetIndex = $0?.index }
+            get: { retryTargetId.map(RetryTarget.init) },
+            set: { retryTargetId = $0?.id }
         )
     }
 
@@ -109,6 +110,13 @@ struct CapturedRoomsListView: View {
             return value.capitalized
         }
         return "Room \(index + 1)"
+    }
+
+    private func label(forId id: UUID) -> String {
+        guard let index = coordinator.capturedRooms.firstIndex(where: { $0.identifier == id }) else {
+            return "this room"
+        }
+        return label(for: index)
     }
 }
 

@@ -16,23 +16,28 @@ struct DiagnosticsLogEntry: Identifiable {
     let message: String
 }
 
-@MainActor
 final class DiagnosticsLog: ObservableObject {
     static let shared = DiagnosticsLog()
 
-    @Published private(set) var entries: [DiagnosticsLogEntry] = []
+    @MainActor @Published private(set) var entries: [DiagnosticsLogEntry] = []
 
-     private let maxEntries = 300
+    private let maxEntries = 300
 
     private init() {
         record(BuildInfo.summary, category: .info)
     }
 
-    func record(_ message: String, category: DiagnosticsLogEntry.Category) {
-        entries.append(DiagnosticsLogEntry(timestamp: Date(), category: category, message: message))
-        if entries.count > maxEntries {
-            entries.removeFirst(entries.count - maxEntries)
-        }
+    nonisolated func record(_ message: String, category: DiagnosticsLogEntry.Category) {
+        #if DEBUG
         print("[VuuroScan][\(category.rawValue)] \(message)")
+        #endif
+        let entry = DiagnosticsLogEntry(timestamp: Date(), category: category, message: message)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.entries.append(entry)
+            if self.entries.count > self.maxEntries {
+                self.entries.removeFirst(self.entries.count - self.maxEntries)
+            }
+        }
     }
 }

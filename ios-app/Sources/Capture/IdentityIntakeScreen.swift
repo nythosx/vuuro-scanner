@@ -14,6 +14,8 @@ struct IdentityIntakeScreen: View {
     @State private var roomTypeGuessEnabled = RoomTypeGuessSettings.isEnabled
     @State private var isCheckingHealth = false
     @State private var healthCheckError: AppError?
+    @State private var pendingStart: ((ScanIdentity) -> Void)?
+    @State private var showReagreeSheet = false
 
     private let client = ScanServiceClient()
 
@@ -37,13 +39,22 @@ struct IdentityIntakeScreen: View {
     @State private var previouslyUsedOrganisationIds: [String] = []
 
     private func loadPreviouslyUsedValues() {
-        let entries = ScanHistoryStore.shared.all()
-        previouslyUsedPropertyIds = recentDistinctValues(\.propertyId, in: entries)
-        previouslyUsedUnitIds = recentDistinctValues(\.unitId, in: entries)
-        previouslyUsedOrganisationIds = recentDistinctValues(\.organisationId, in: entries)
+        Task { @MainActor in
+            let (propertyIds, unitIds, organisationIds) = await Task.detached(priority: .userInitiated) {
+                let entries = ScanHistoryStore.shared.all()
+                return (
+                    Self.recentDistinctValues(\.propertyId, in: entries),
+                    Self.recentDistinctValues(\.unitId, in: entries),
+                    Self.recentDistinctValues(\.organisationId, in: entries)
+                )
+            }.value
+            previouslyUsedPropertyIds = propertyIds
+            previouslyUsedUnitIds = unitIds
+            previouslyUsedOrganisationIds = organisationIds
+        }
     }
 
-    private func recentDistinctValues(_ keyPath: KeyPath<ScanHistoryEntry, String>, in entries: [ScanHistoryEntry]) -> [String] {
+    private static func recentDistinctValues(_ keyPath: KeyPath<ScanHistoryEntry, String>, in entries: [ScanHistoryEntry]) -> [String] {
         var seen = Set<String>()
         var values: [String] = []
         for entry in entries {
@@ -195,6 +206,24 @@ struct IdentityIntakeScreen: View {
         }
         .navigationTitle("New scan")
         .onAppear { loadPreviouslyUsedValues() }
+        .sheet(isPresented: $showReagreeSheet) {
+            NavigationStack {
+                ReagreeTermsView(
+                    onAgree: {
+                        LegalAgreementStore.recordAgreement()
+                        showReagreeSheet = false
+                        if let pendingStart {
+                            self.pendingStart = nil
+                            Task { await startIfHealthy(pendingStart) }
+                        }
+                    },
+                    onDecline: {
+                        pendingStart = nil
+                        showReagreeSheet = false
+                    }
+                )
+            }
+        }
     }
 
     private func suggestionChips(_ values: [String], onPick: @escaping (String) -> Void) -> some View {
@@ -213,13 +242,17 @@ struct IdentityIntakeScreen: View {
     }
 
     @MainActor
-    private func startIfHealthy(_ start: (ScanIdentity) -> Void) async {
+    private func startIfHealthy(_ start: @escaping (ScanIdentity) -> Void) async {
+        guard LegalAgreementStore.agreedVersion == LegalDocument.currentVersion else {
+            pendingStart = start
+            showReagreeSheet = true
+            return
+        }
         isCheckingHealth = true
         defer { isCheckingHealth = false }
         do {
             try await client.checkHealth()
             healthCheckError = nil
-            LegalAgreementStore.recordAgreement()
             start(currentIdentity)
         } catch {
             healthCheckError = AppError(site: .healthCheck, underlying: error)

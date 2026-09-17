@@ -149,7 +149,7 @@ struct ScanHistoryView: View {
                         if let onResumeToAddRoom {
                             Button("Scan another room") {
                                 Task {
-                                    let refreshed = await rotateTokenIfNeeded(entry)
+                                    guard let refreshed = await rotateTokenIfNeeded(entry) else { return }
                                     cleanUpTempFiles()
                                     dismiss()
                                     onResumeToAddRoom(refreshed)
@@ -161,7 +161,7 @@ struct ScanHistoryView: View {
                         if let onAttachToSession {
                             Button {
                                 Task {
-                                    let refreshed = await rotateTokenIfNeeded(entry)
+                                    guard let refreshed = await rotateTokenIfNeeded(entry) else { return }
                                     await attach(refreshed, using: onAttachToSession)
                                 }
                             } label: {
@@ -384,7 +384,7 @@ struct ScanHistoryView: View {
 
     @MainActor
     private func deleteFromServer(_ entry: ScanHistoryEntry) async {
-        let entry = await rotateTokenIfNeeded(entry)
+        guard let entry = await rotateTokenIfNeeded(entry) else { return }
         do {
             try await client.deleteSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
             DiagnosticsLog.shared.record("Session \(entry.sessionId) deleted from server", category: .info)
@@ -396,7 +396,7 @@ struct ScanHistoryView: View {
     }
 
     @MainActor
-    private func rotateTokenIfNeeded(_ entry: ScanHistoryEntry) async -> ScanHistoryEntry {
+    private func rotateTokenIfNeeded(_ entry: ScanHistoryEntry) async -> ScanHistoryEntry? {
         if let expiresAtString = entry.expiresAt, !expiresAtString.isEmpty,
            let expiresAt = ISO8601DateFormatter().date(from: expiresAtString),
            expiresAt.timeIntervalSinceNow >= 14 * 24 * 60 * 60 {
@@ -415,14 +415,18 @@ struct ScanHistoryView: View {
                 purpose: entry.purpose,
                 createdAt: entry.createdAt,
                 expiresAt: rotated.expiresAt,
-                nickname: entry.nickname
+                nickname: entry.nickname,
+                cachedRoomSummary: entry.cachedRoomSummary,
+                occupied: entry.occupied,
+                consentObtained: entry.consentObtained
             )
             ScanHistoryStore.shared.add(updated)
             reloadEntries()
             return updated
         } catch {
             DiagnosticsLog.shared.record("Token rotation failed for session \(entry.sessionId): \(error.localizedDescription)", category: .error)
-            return entry
+            appError = AppError(site: .historySessionFetch, underlying: error)
+            return nil
         }
     }
 
@@ -466,7 +470,7 @@ struct ScanHistoryView: View {
     @MainActor
     private func editFromGallery(_ entry: ScanHistoryEntry, _ floorPlan: FloorPlan, using onAttachToSession: (ScanHistoryEntry, FloorPlan) -> Void) async {
         await Task.yield()
-        let refreshed = await rotateTokenIfNeeded(entry)
+        guard let refreshed = await rotateTokenIfNeeded(entry) else { return }
         cleanUpTempFiles()
         dismiss()
         onAttachToSession(refreshed, floorPlan)

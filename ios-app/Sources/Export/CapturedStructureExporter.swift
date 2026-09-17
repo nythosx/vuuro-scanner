@@ -13,7 +13,7 @@ enum CapturedStructureExporter {
     }
 
     private static func structureOriginM(for export: RoomPlanCaptureExport) -> [Double]? {
-        let corners = export.floors.compactMap { $0.polygonCorners }.flatMap { $0 }
+        let corners = export.floors.compactMap { $0.polygonCorners }.flatMap { $0 }.filter { $0.count >= 3 }
         guard let minX = corners.map({ $0[0] }).min(),
               let minZ = corners.map({ $0[2] }).min() else { return nil }
         return [minX, minZ]

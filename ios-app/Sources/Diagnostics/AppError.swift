@@ -88,7 +88,15 @@ struct AppError {
     }
 
     var userMessage: String {
-        underlying?.localizedDescription ?? site.defaultMessage
+        guard let scanError = underlying as? ScanServiceError else {
+            return underlying?.localizedDescription ?? site.defaultMessage
+        }
+        switch scanError {
+        case .transport:
+            return site.defaultMessage
+        case .unexpectedStatus, .noFloorPlanYet, .notConfigured:
+            return scanError.errorDescription ?? site.defaultMessage
+        }
     }
 
     var isLikelyRetryable: Bool {
@@ -110,11 +118,15 @@ struct AppError {
 
 
     var copyableDetails: String {
-        """
-        Vuuro Scan error \(code)
-        When: \(occurredAt.formatted(date: .abbreviated, time: .standard))
-        What: \(userMessage)
-        """
+        var lines = [
+            "Vuuro Scan error \(code)",
+            "When: \(occurredAt.formatted(date: .abbreviated, time: .standard))",
+            "What: \(userMessage)",
+        ]
+        if let underlying {
+            lines.append("Underlying: \(underlying.localizedDescription)")
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
