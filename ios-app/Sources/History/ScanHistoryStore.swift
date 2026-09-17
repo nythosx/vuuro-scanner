@@ -39,9 +39,9 @@ final class ScanHistoryStore {
     }
 
     func remove(sessionId: String) {
-        KeychainTokenStore.deleteToken(forSessionId: sessionId)
         lock.lock()
         defer { lock.unlock() }
+        KeychainTokenStore.deleteToken(forSessionId: sessionId)
         save(readRedacted().filter { $0.sessionId != sessionId })
     }
 

@@ -17,9 +17,6 @@ enum RoomSizeGuard {
         return false
     }
 
-    /// Extents along the room's principal axis (via PCA), not the world
-    /// axes — a rotated rectangular room otherwise reports an inflated
-    /// axis-aligned bounding box (e.g. an 8x8m room at 45° reads as ~11.3m).
     private static func orientedExtents(of points: [SIMD2<Float>]) -> (width: Float, height: Float) {
         let count = Float(points.count)
         let mean = points.reduce(SIMD2<Float>(0, 0), +) / count

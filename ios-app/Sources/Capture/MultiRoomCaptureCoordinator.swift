@@ -30,26 +30,6 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     @Published private(set) var capturedRooms: [CapturedRoom] = []
     @Published private(set) var roomTypeConfirmations: [RoomTypeConfirmation?] = []
 
-    var roomTypeConfirmationsByIdentifier: [UUID: RoomTypeConfirmation] {
-        var result: [UUID: RoomTypeConfirmation] = [:]
-        for (room, confirmation) in zip(capturedRooms, roomTypeConfirmations) {
-            if let confirmation {
-                result[room.identifier] = confirmation
-            }
-        }
-        return result
-    }
-
-    var roomWalkPathsByIdentifier: [UUID: [[Double]]] {
-        var result: [UUID: [[Double]]] = [:]
-        for (room, walkPath) in zip(capturedRooms, roomWalkPaths) {
-            if !walkPath.isEmpty {
-                result[room.identifier] = walkPath
-            }
-        }
-        return result
-    }
-
     @Published private(set) var isApproachingSizeLimit = false {
         didSet {
             guard oldValue != isApproachingSizeLimit else { return }
@@ -123,7 +103,6 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         captureSession.run(configuration: RoomCaptureSession.Configuration())
     }
 
-    /// pauseARSession: false — required for the next room to share this one's frame.
     func stopCurrentRoom() {
         stopWalkPathTracking()
         captureSession?.stop(pauseARSession: false)
@@ -180,84 +159,69 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         DiagnosticsLog.shared.record("Walk path tracking stopped — \(currentRoomWalkPath.count) point(s) recorded for this room", category: .info)
     }
 
-    // MARK: - Merged-room mapping (fixes Bug #3)
-    //
-    // StructureBuilder assigns new UUIDs to merged rooms and to any walls
-    // shared between rooms, so keying user-confirmed room types and walk
-    // paths by the original identifiers misses every lookup after a merge.
-    // Non-shared wall, window, door, opening, and object identifiers do
-    // survive, so wall overlap reliably identifies most rooms; floor-area
-    // proximity is the fallback when every wall was shared and re-keyed.
-
-    /// Maps each room in the merged structure back to its original
-    /// CapturedRoom index.
-    func mapMergedRoomsToOriginals(_ structure: CapturedStructure) -> [UUID: Int] {
-        var mapping: [UUID: Int] = [:]
-
+    func mapMergedRoomsToOriginals(_ structure: CapturedStructure) -> [UUID: [Int]] {
+        var wallToMergedRoom: [UUID: UUID] = [:]
         for mergedRoom in structure.rooms {
-            let mergedWallIds = Set(mergedRoom.walls.map(\.identifier))
-            let mergedArea = floorArea(of: mergedRoom)
-
-            var bestIndex: Int?
-            var bestOverlap = -1
-            var bestAreaDelta = Double.greatestFiniteMagnitude
-
-            for (index, originalRoom) in capturedRooms.enumerated() {
-                let originalWallIds = Set(originalRoom.walls.map(\.identifier))
-                let overlap = mergedWallIds.intersection(originalWallIds).count
-                let areaDelta = abs(mergedArea - floorArea(of: originalRoom))
-
-                let isBetter: Bool
-                if overlap > bestOverlap {
-                    isBetter = true
-                } else if overlap == bestOverlap, areaDelta < bestAreaDelta {
-                    isBetter = true
-                } else {
-                    isBetter = false
-                }
-
-                if isBetter || bestIndex == nil {
-                    bestOverlap = overlap
-                    bestAreaDelta = areaDelta
-                    bestIndex = index
-                }
+            for wall in mergedRoom.walls {
+                wallToMergedRoom[wall.identifier] = mergedRoom.identifier
             }
+        }
 
-            if let bestIndex {
-                mapping[mergedRoom.identifier] = bestIndex
+        var mapping: [UUID: [Int]] = [:]
+        var unmatchedIndices: [Int] = []
+
+        for (index, originalRoom) in capturedRooms.enumerated() {
+            let mergedIdCounts = originalRoom.walls
+                .compactMap { wallToMergedRoom[$0.identifier] }
+                .reduce(into: [UUID: Int]()) { counts, mergedId in counts[mergedId, default: 0] += 1 }
+
+            guard let bestMergedId = mergedIdCounts.max(by: { $0.value < $1.value })?.key else {
+                unmatchedIndices.append(index)
+                continue
             }
+            mapping[bestMergedId, default: []].append(index)
+        }
+
+        for index in unmatchedIndices {
+            let originalArea = floorArea(of: capturedRooms[index])
+            guard let bestMergedRoom = structure.rooms.min(by: {
+                abs(floorArea(of: $0) - originalArea) < abs(floorArea(of: $1) - originalArea)
+            }) else { continue }
+            mapping[bestMergedRoom.identifier, default: []].append(index)
         }
 
         return mapping
     }
 
-    /// Returns room-type confirmations keyed by the *merged* room identifiers,
-    /// so `CapturedStructureExporter.export` can find them after the merge.
     func roomTypeConfirmationsForStructure(_ structure: CapturedStructure) -> [UUID: RoomTypeConfirmation] {
         let mapping = mapMergedRoomsToOriginals(structure)
         var result: [UUID: RoomTypeConfirmation] = [:]
-        for (mergedId, originalIndex) in mapping {
-            if let confirmation = roomTypeConfirmations[originalIndex] {
-                result[mergedId] = confirmation
+        for (mergedId, originalIndices) in mapping {
+            for index in originalIndices {
+                if let confirmation = roomTypeConfirmations[index] {
+                    result[mergedId] = confirmation
+                    break
+                }
             }
         }
         return result
     }
 
-    /// Returns walk paths keyed by the *merged* room identifiers.
     func walkPathsForStructure(_ structure: CapturedStructure) -> [UUID: [[Double]]] {
         let mapping = mapMergedRoomsToOriginals(structure)
         var result: [UUID: [[Double]]] = [:]
-        for (mergedId, originalIndex) in mapping {
-            guard roomWalkPaths.indices.contains(originalIndex),
-                  !roomWalkPaths[originalIndex].isEmpty else { continue }
-            result[mergedId] = roomWalkPaths[originalIndex]
+        for (mergedId, originalIndices) in mapping {
+            let combined = originalIndices.flatMap { index -> [[Double]] in
+                guard roomWalkPaths.indices.contains(index) else { return [] }
+                return roomWalkPaths[index]
+            }
+            if !combined.isEmpty {
+                result[mergedId] = combined
+            }
         }
         return result
     }
 
-    /// World-space floor area of a captured room, summed over all floor
-    /// surfaces. Used as a fallback when wall identifiers don't overlap.
     private func floorArea(of room: CapturedRoom) -> Double {
         room.floors.reduce(0.0) { sum, floor in
             sum + polygonArea(corners: floor.polygonCorners, transform: floor.transform)
