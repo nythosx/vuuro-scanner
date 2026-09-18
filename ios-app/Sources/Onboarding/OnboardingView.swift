@@ -75,11 +75,11 @@ struct OnboardingView: View {
             }
             LinearGradient(
                 stops: [
-                    .init(color: .black.opacity(0.45), location: 0.00),
-                    .init(color: .black.opacity(0.08), location: 0.22),
-                    .init(color: .black.opacity(0.05), location: 0.45),
-                    .init(color: .black.opacity(0.55), location: 0.72),
-                    .init(color: .black.opacity(0.92), location: 1.00),
+                    .init(color: .black.opacity(0.68), location: 0.00),
+                    .init(color: .black.opacity(0.30), location: 0.20),
+                    .init(color: .black.opacity(0.25), location: 0.45),
+                    .init(color: .black.opacity(0.78), location: 0.68),
+                    .init(color: .black.opacity(0.96), location: 1.00),
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -96,6 +96,7 @@ struct OnboardingView: View {
                 .font(.system(size: 16, weight: .bold))
                 .tracking(-0.3)
                 .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.6), radius: 4, x: 0, y: 1)
             Spacer()
             Button("Skip", action: onSkip)
                 .font(.system(size: 14, weight: .semibold))
@@ -103,7 +104,8 @@ struct OnboardingView: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .background(Color.white.opacity(0.18), in: Capsule())
+                .background(Color.black.opacity(0.35), in: Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.4), lineWidth: 1))
         }
         .padding(.horizontal, 20)
         .frame(height: 52)
@@ -151,8 +153,16 @@ struct OnboardingView: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 24)
+        .padding(.top, 28)
         .padding(.bottom, 36)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [.clear, .black.opacity(0.85)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
     }
 
     private func advance() {
