@@ -109,6 +109,16 @@ struct OnboardingView: View {
         }
         .padding(.horizontal, 20)
         .frame(height: 52)
+        .background(
+            LinearGradient(
+                colors: [.black.opacity(0.75), .clear],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 110)
+            .allowsHitTesting(false),
+            alignment: .top
+        )
     }
 
     private var bottomContent: some View {
@@ -158,7 +168,7 @@ struct OnboardingView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             LinearGradient(
-                colors: [.clear, .black.opacity(0.85)],
+                colors: [.black.opacity(0.55), .black.opacity(0.6), .black.opacity(0.88)],
                 startPoint: .top,
                 endPoint: .bottom
             )
