@@ -139,6 +139,8 @@ enum CapturedRoomExporter {
 }
 
 extension RoomPlanCaptureExport {
+    private static let minFloorAreaM2 = 0.25
+
     var floorAreaM2: Double {
         floors.reduce(0.0) { sum, floor in
             guard let corners = floor.polygonCorners, corners.count >= 3 else { return sum }
@@ -150,6 +152,21 @@ extension RoomPlanCaptureExport {
                 area += a.x * b.z - b.x * a.z
             }
             return sum + abs(area) / 2.0
+        }
+    }
+
+    var hasUsableFloorOutline: Bool {
+        guard !floors.isEmpty else { return false }
+        return floors.allSatisfy { floor in
+            guard let corners = floor.polygonCorners, corners.count >= 3 else { return false }
+            let points = corners.map { (x: $0[0], z: $0[2]) }
+            var sum = 0.0
+            for i in points.indices {
+                let a = points[i]
+                let b = points[(i + 1) % points.count]
+                sum += a.x * b.z - b.x * a.z
+            }
+            return abs(sum) / 2.0 >= Self.minFloorAreaM2
         }
     }
 }
