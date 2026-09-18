@@ -1,4 +1,3 @@
-
 import Foundation
 
 @MainActor
@@ -15,8 +14,6 @@ final class FloorPlanImageCache {
         "\(sessionId)|\(unit.rawValue)"
     }
 
-    /// Fire-and-forget prefetch — callers who don't need the result (just
-    /// want to warm the cache early) can ignore the returned Task.
     @discardableResult
     func prefetch(sessionId: String, accessToken: String, unit: MeasurementUnit, client: ScanServiceClient) -> Task<Data?, Never> {
         let cacheKey = key(sessionId: sessionId, unit: unit)
@@ -73,5 +70,14 @@ final class FloorPlanImageCache {
         }
         inFlightTasks = inFlightTasks.filter { !$0.key.hasPrefix(prefix) }
         lastErrors = lastErrors.filter { !$0.key.hasPrefix(prefix) }
+    }
+
+    func clearAll() {
+        for (_, task) in inFlightTasks {
+            task.cancel()
+        }
+        entries.removeAll()
+        inFlightTasks.removeAll()
+        lastErrors.removeAll()
     }
 }

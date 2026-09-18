@@ -27,6 +27,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         }
     }
 
+    @Published private(set) var liveStats: CaptureLiveStats = .empty
     @Published private(set) var capturedRooms: [CapturedRoom] = []
     @Published private(set) var roomTypeConfirmations: [RoomTypeConfirmation?] = []
 
@@ -38,6 +39,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     }
 
     @Published private(set) var liveRoomTypeGuess: RoomTypeClassifier.Guess?
+    @Published private(set) var hasAnsweredRoomType: Bool = false
     private(set) var roomTypeConfirmation: String?
     private(set) var roomTypeConfirmedForGuessType: String?
 
@@ -49,6 +51,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         roomTypeConfirmation = liveRoomTypeGuess?.type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
         liveUpdateThrottle.markRoomTypeAnswered()
+        hasAnsweredRoomType = true
         DiagnosticsLog.shared.record("Room type confirmed (multi-room): \(liveRoomTypeGuess?.type ?? "nil")", category: .info)
     }
 
@@ -56,14 +59,13 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         roomTypeConfirmation = type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
         liveUpdateThrottle.markRoomTypeAnswered()
+        hasAnsweredRoomType = true
         DiagnosticsLog.shared.record("Room type corrected (multi-room): guess=\(liveRoomTypeGuess?.type ?? "nil") -> \(type ?? "nil")", category: .info)
     }
 
     private(set) var pendingPartialRoom: CapturedRoom?
     private var pendingPartialRoomWalkPath: [[Double]] = []
-
     private(set) var mergedStructure: CapturedStructure?
-
     private(set) var roomWalkPaths: [[[Double]]] = []
     private var currentRoomWalkPath: [[Double]] = []
     nonisolated(unsafe) private var walkPathTask: Task<Void, Never>?
@@ -81,9 +83,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     }
 
     let arSession = ARSession()
-
     private var captureSession: RoomCaptureSession?
-
     private let liveUpdateThrottle = RoomLiveUpdateThrottle()
 
     func attach(to session: RoomCaptureSession) {
@@ -97,7 +97,9 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         liveRoomTypeGuess = nil
         roomTypeConfirmation = nil
         roomTypeConfirmedForGuessType = nil
+        hasAnsweredRoomType = false
         isApproachingSizeLimit = false
+        liveStats = .empty
         liveUpdateThrottle.resetRoomTypeAnswered()
         startWalkPathTracking()
         captureSession.run(configuration: RoomCaptureSession.Configuration())
@@ -141,8 +143,11 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     private func startWalkPathTracking() {
         stopWalkPathTracking()
         currentRoomWalkPath = []
-        walkPathTask = Task {
+        // [weak self] breaks the retain cycle: coordinator can deinit,
+        // which then cancels the task, which exits on the next iteration.
+        walkPathTask = Task { [weak self] in
             while !Task.isCancelled {
+                guard let self else { return }
                 if let transform = self.arSession.currentFrame?.camera.transform,
                    self.currentRoomWalkPath.count < Self.walkPathMaxPoints {
                     let t = transform.columns.3
@@ -254,22 +259,22 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         state = .merging
         startMergeHeartbeat()
         let rooms = capturedRooms
-        mergeTask = Task {
+        mergeTask = Task { [weak self] in
             do {
                 let structure = try await Self.runMerge(rooms: rooms, timeoutSeconds: Self.mergeTimeoutSeconds)
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, let self else { return }
                 self.stopMergeHeartbeat()
                 self.mergedStructure = structure
                 self.state = .unitFinished
             } catch is CancellationError {
-                self.stopMergeHeartbeat()
+                self?.stopMergeHeartbeat()
             } catch is MergeTimeoutError {
-                self.stopMergeHeartbeat()
+                self?.stopMergeHeartbeat()
                 DiagnosticsLog.shared.record("Merge timed out after \(Int(Self.mergeTimeoutSeconds))s — falling back to unmerged rooms", category: .error)
-                self.state = .mergeTimedOut
+                self?.state = .mergeTimedOut
             } catch {
-                self.stopMergeHeartbeat()
-                self.state = .mergeFailed(error.localizedDescription)
+                self?.stopMergeHeartbeat()
+                self?.state = .mergeFailed(error.localizedDescription)
             }
         }
     }
@@ -352,12 +357,17 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
     }
 
     nonisolated func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
-        guard liveUpdateThrottle.shouldProcessUpdate() else { return }
+        let decision = liveUpdateThrottle.decideUpdate()
+        guard decision.shouldProcess else { return }
         let exceedsSizeLimit = RoomSizeGuard.exceedsPracticalLimit(room)
         let guess = RoomTypeGuessSettings.isEnabled ? RoomTypeClassifier.guess(for: room) : nil
+        let stats = CaptureCoordinator.computeStats(room)
         Task { @MainActor in
             if self.isApproachingSizeLimit != exceedsSizeLimit {
                 self.isApproachingSizeLimit = exceedsSizeLimit
+            }
+            if self.liveStats != stats {
+                self.liveStats = stats
             }
             if let guess, !self.liveUpdateThrottle.isRoomTypeAnswered(), self.liveRoomTypeGuess?.type != guess.type {
                 self.liveRoomTypeGuess = guess

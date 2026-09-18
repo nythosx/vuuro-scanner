@@ -17,20 +17,63 @@ struct VuuroScanApp: App {
 
     var body: some Scene {
         WindowGroup {
-            NavigationStack {
-                ScanFlowView()
+            VuuroRootView()
+                .tint(VuuroColor.accent)
+                .environment(\.locale, AppLanguage(rawValue: appLanguageRaw)?.locale ?? Locale.autoupdatingCurrent)
+        }
+    }
+}
+
+struct VuuroRootView: View {
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @AppStorage("darkModeEnabled") private var darkMode = false
+
+    var body: some View {
+        Group {
+            if hasCompletedOnboarding {
+                NavigationStack {
+                    ScanFlowView()
+                        .background(VuuroColor.bgApp)
+                }
+            } else {
+                OnboardingFlowView {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        hasCompletedOnboarding = true
+                    }
+                }
             }
-            .tint(VuuroColor.primary)
-            .background(VuuroColor.surfaceMuted)
-            .vuuroToastHost()
-            .environment(\.locale, AppLanguage(rawValue: appLanguageRaw)?.locale ?? Locale.autoupdatingCurrent)
+        }
+        .preferredColorScheme(darkMode ? .dark : .light)
+        .vuuroToastHost()
+        .vuuroOfflineBannerHost()
+    }
+}
+
+struct OnboardingFlowView: View {
+    enum Stage { case onboarding, permissions }
+
+    let onComplete: () -> Void
+    @State private var stage: Stage = .onboarding
+
+    var body: some View {
+        switch stage {
+        case .onboarding:
+            OnboardingView(
+                onSkip: onComplete,
+                onGetStarted: { stage = .permissions }
+            )
+        case .permissions:
+            PermissionsView(
+                onBack: { stage = .onboarding },
+                onContinue: onComplete
+            )
         }
     }
 }
 
 struct ScanFlowView: View {
     private enum Stage {
-        case intake
+        case home
         case resumingUpload(PendingUploadState)
         case capturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
         case multiRoomCapturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
@@ -41,91 +84,57 @@ struct ScanFlowView: View {
     }
 
     @State private var stage: Stage
-    @State private var historyButtonTitle = "History"
-    @State private var historyButtonResetToken = UUID()
+    @State private var showStartSheet = false
+    @State private var startType: ScanStartType = .single
+    @State private var showSettings = false
+    @State private var showHistory = false
+    @State private var showTerms = false
+    @State private var showDiagnostics = false
     @AppStorage(AppLanguageSettings.storageKey) private var appLanguageRaw: String = AppLanguage.system.rawValue
 
     init() {
         if let pending = PendingUploadStore.load() {
             _stage = State(initialValue: .resumingUpload(pending))
         } else {
-            _stage = State(initialValue: .intake)
+            _stage = State(initialValue: .home)
         }
-    }
-    @State private var showDiagnostics = false
-    private var isCapturingStage: Bool {
-        if case .capturing = stage { return true }
-        if case .multiRoomCapturing = stage { return true }
-        return false
     }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            content
-            if !isCapturingStage {
-                Button {
-                    showDiagnostics = true
-                } label: {
-                    Image(systemName: "ladybug")
-                        .font(.headline)
-                        .padding(10)
-                        .background(.regularMaterial, in: Circle())
-                }
-                .padding(.leading, 20)
-                .padding(.top, 8)
-            }
-        }
-        .sheet(isPresented: $showDiagnostics) {
-            DiagnosticsLogView()
-        }
-    }
-
-    @ViewBuilder
-    private var content: some View {
         Group {
             switch stage {
+            case .home:
+                HomeView(
+                    onStartSingle: {
+                        startType = .single
+                        showStartSheet = true
+                    },
+                    onStartMulti: {
+                        startType = .multi
+                        showStartSheet = true
+                    },
+                    onOpenSettings: { showSettings = true },
+                    onOpenHistory: { showHistory = true },
+                    onOpenTerms: { showTerms = true }
+                )
+                .toolbar(.hidden, for: .navigationBar)
+
             case .resumingUpload(let pending):
-                PendingUploadRecoveryView(state: pending) { session, floorPlan in
-                    stage = .attachments(session: session, floorPlan: floorPlan, identity: pending.identity)
-                } onDiscarded: {
-                    stage = .intake
-                } onSkipped: {
-                    stage = .intake
-                }
-            case .intake:
-                IdentityIntakeScreen(onStart: { identity in
-                    stage = .capturing(identity: identity, session: nil, attempt: UUID())
-                }, onStartMultiRoom: { identity in
-                    stage = .multiRoomCapturing(identity: identity, session: nil, attempt: UUID())
-                })
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Picker(selection: $appLanguageRaw) {
-                            ForEach(AppLanguage.allCases) { language in
-                                Text(language.displayName).tag(language.rawValue)
-                            }
-                        } label: {
-                            Image(systemName: "globe")
-                        }
-                        .pickerStyle(.menu)
-                        .accessibilityLabel("Language")
-                    }
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        NavigationLink(historyButtonTitle) {
-                            ScanHistoryView(onResumeToAddRoom: { entry in
-                                stage = .capturing(
-                                    identity: entry.asResumableIdentity(),
-                                    session: entry.asResumableSession(),
-                                    attempt: UUID()
-                                )
-                            }, onAttachToSession: { entry, floorPlan in
-                                stage = .attachments(session: entry.asResumableSession(), floorPlan: floorPlan, identity: entry.asResumableIdentity())
-                            })
-                        }
-                    }
-                }
+                PendingUploadRecoveryView(
+                    state: pending,
+                    onFinished: { session, floorPlan in
+                        stage = .attachments(session: session, floorPlan: floorPlan, identity: pending.identity)
+                    },
+                    onDiscarded: { stage = .home },
+                    onSkipped: { stage = .home }
+                )
+                .toolbar(.hidden, for: .navigationBar)
+
             case .capturing(let identity, let session, let attempt):
-                RoomCaptureFlowStep(identity: identity, existingSession: session) { session, floorPlan, addAnotherRoom in
+                RoomCaptureFlowStep(
+                    identity: identity,
+                    existingSession: session
+                ) { session, floorPlan, addAnotherRoom in
                     if addAnotherRoom {
                         stage = .capturing(identity: identity, session: session, attempt: UUID())
                     } else {
@@ -135,44 +144,51 @@ struct ScanFlowView: View {
                     stage = .error(appError, identity: identity, existingSession: sessionToResume)
                 } onGoBack: {
                     PendingUploadStore.clear()
-                    stage = .intake
+                    stage = .home
                 } onDiscardRoom: {
                     PendingUploadStore.clear()
                     if let session {
                         stage = .capturing(identity: identity, session: session, attempt: UUID())
                     } else {
-                        stage = .intake
+                        stage = .home
                     }
                 }
                 .id(attempt)
+                .toolbar(.hidden, for: .navigationBar)
+
             case .multiRoomCapturing(let identity, let session, let attempt):
-                MultiRoomCaptureFlowView(identity: identity, existingSession: session) { session, floorPlan in
+                MultiRoomCaptureFlowView(
+                    identity: identity,
+                    existingSession: session
+                ) { session, floorPlan in
                     stage = .attachments(session: session, floorPlan: floorPlan, identity: identity)
                 } onError: { appError, sessionToResume in
                     stage = .multiRoomError(appError, identity: identity, existingSession: sessionToResume)
                 } onGoBack: {
                     PendingUploadStore.clear()
-                    stage = .intake
+                    stage = .home
                 }
                 .id(attempt)
+                .toolbar(.hidden, for: .navigationBar)
+
             case .attachments(let session, let floorPlan, let identity):
-                AttachmentsScreen(session: session, floorPlan: floorPlan) { updated in
+                AttachmentsScreen(
+                    session: session,
+                    floorPlan: floorPlan
+                ) { updated in
                     stage = .summary(session: session, floorPlan: updated)
                 } onAddRoom: {
                     stage = .capturing(identity: identity, session: session, attempt: UUID())
                 }
+                .toolbar(.hidden, for: .navigationBar)
+
             case .summary(let session, let floorPlan):
                 ResultSummaryView(session: session, floorPlan: floorPlan) {
                     VuuroToast.shared.show("Scan saved to history")
-                    historyButtonTitle = "Saved"
-                    let resetToken = UUID()
-                    historyButtonResetToken = resetToken
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        guard historyButtonResetToken == resetToken else { return }
-                        historyButtonTitle = "History"
-                    }
-                    stage = .intake
+                    stage = .home
                 }
+                .toolbar(.hidden, for: .navigationBar)
+
             case .error(let appError, let identity, let existingSession):
                 ErrorView(error: appError) {
                     if let pending = PendingUploadStore.load() {
@@ -181,6 +197,8 @@ struct ScanFlowView: View {
                         stage = .capturing(identity: identity, session: existingSession, attempt: UUID())
                     }
                 }
+                .toolbar(.hidden, for: .navigationBar)
+
             case .multiRoomError(let appError, let identity, let existingSession):
                 ErrorView(error: appError) {
                     if let pending = PendingUploadStore.load() {
@@ -189,7 +207,61 @@ struct ScanFlowView: View {
                         stage = .multiRoomCapturing(identity: identity, session: existingSession, attempt: UUID())
                     }
                 }
+                .toolbar(.hidden, for: .navigationBar)
             }
+        }
+        .sheet(isPresented: $showStartSheet) {
+            StartScanSheet(
+                type: startType,
+                onCancel: { showStartSheet = false },
+                onStart: { identity in
+                    showStartSheet = false
+                    if startType == .multi {
+                        stage = .multiRoomCapturing(identity: identity, session: nil, attempt: UUID())
+                    } else {
+                        stage = .capturing(identity: identity, session: nil, attempt: UUID())
+                    }
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.hidden)
+            .presentationCornerRadius(VuuroMetrics.sheetRadius)
+        }
+        .navigationDestination(isPresented: $showSettings) {
+            SettingsView(
+                onBack: { showSettings = false },
+                onOpenTerms: { showTerms = true },
+                onOpenDiagnostics: { showDiagnostics = true }
+            )
+            .toolbar(.hidden, for: .navigationBar)
+        }
+        .navigationDestination(isPresented: $showHistory) {
+            ScanHistoryView(
+                onResumeToAddRoom: { entry in
+                    showHistory = false
+                    stage = .capturing(
+                        identity: entry.asResumableIdentity(),
+                        session: entry.asResumableSession(),
+                        attempt: UUID()
+                    )
+                },
+                onAttachToSession: { entry, floorPlan in
+                    showHistory = false
+                    stage = .attachments(
+                        session: entry.asResumableSession(),
+                        floorPlan: floorPlan,
+                        identity: entry.asResumableIdentity()
+                    )
+                }
+            )
+        }
+        .navigationDestination(isPresented: $showTerms) {
+            TermsAndPrivacyView()
+                .toolbar(.hidden, for: .navigationBar)
+        }
+        .navigationDestination(isPresented: $showDiagnostics) {
+            DiagnosticsLogView()
+                .toolbar(.hidden, for: .navigationBar)
         }
     }
 }
@@ -216,7 +288,8 @@ private struct RoomCaptureFlowStep: View {
     @State private var capturedLocation: CaptureLocation?
     @State private var capturedHeadingDeg: Double?
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
-    @State private var isGuessToggleCompact = false
+    @State private var didStart = false
+    @State private var showCorrectionDialog = false
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
@@ -303,17 +376,6 @@ private struct RoomCaptureFlowStep: View {
                     RoomCaptureScreen(coordinator: coordinator)
                         .ignoresSafeArea()
 
-                    if let guess = coordinator.liveRoomTypeGuess {
-                        VStack {
-                            RoomTypeGuessOverlay(
-                                guess: guess,
-                                onConfirm: { coordinator.confirmRoomTypeGuess() },
-                                onReject: { picked in coordinator.rejectRoomTypeGuess(correctedTo: picked) }
-                            )
-                            Spacer()
-                        }
-                    }
-
                     if isUploading {
                         UploadProgressView(message: "Uploading capture…", onCancel: { uploadTask?.cancel() })
                             .padding()
@@ -323,81 +385,12 @@ private struct RoomCaptureFlowStep: View {
                             .padding()
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                     } else if coordinator.state == .scanning {
-                        VStack {
-                            HStack {
-                                Button {
-                                    showDiscardConfirmation = true
-                                } label: {
-                                    Image(systemName: "chevron.backward")
-                                        .font(.headline)
-                                        .padding(10)
-                                        .background(.regularMaterial, in: Circle())
-                                }
-                                .accessibilityLabel("Discard scan and go back")
-                                .padding(.leading, 20)
-                                .padding(.top, 8)
-                                .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
-                                    Button("Discard", role: .destructive) {
-                                        coordinator.stop()
-                                        onGoBack()
-                                    }
-                                    Button("Keep Scanning", role: .cancel) {}
-                                } message: {
-                                    Text("Everything captured so far in this room will be lost.")
-                                }
-
-                                Spacer()
-                                Button {
-                                    roomTypeGuessOn.toggle()
-                                    RoomTypeGuessSettings.isEnabled = roomTypeGuessOn
-                                    VuuroToast.shared.show(roomTypeGuessOn ? "Room-type guessing on" : "Room-type guessing off")
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: roomTypeGuessOn ? "wand.and.stars" : "wand.and.stars.inverse")
-                                        if !isGuessToggleCompact {
-                                            Text("Room-type guessing")
-                                                .transition(.opacity)
-                                        }
-                                    }
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(roomTypeGuessOn ? VuuroColor.textPrimary : .white)
-                                    .padding(.horizontal, isGuessToggleCompact ? 0 : 12)
-                                    .frame(width: isGuessToggleCompact ? 36 : nil, height: 36)
-                                    .background(
-                                        roomTypeGuessOn ? VuuroColor.accentLime : Color.white.opacity(0.16),
-                                        in: Capsule()
-                                    )
-                                }
-                                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: isGuessToggleCompact)
-                                .padding(.trailing, 20)
-                                .padding(.top, 8)
-                                .onAppear {
-                                    isGuessToggleCompact = false
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.7) {
-                                        isGuessToggleCompact = true
-                                    }
-                                }
-                            }
-                            Spacer()
-                            if coordinator.isApproachingSizeLimit {
-                                Text("This room looks larger than RoomPlan's practical scanning range (~9m) — accuracy may degrade beyond this size.")
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                                    .multilineTextAlignment(.center)
-                                    .padding(.horizontal)
-                                    .padding(.bottom, 8)
-                            }
-                            Button("Done") {
-                                didRequestStop = true
-                                coordinator.stop()
-                            }
-                            .buttonStyle(.vuuroPrimary)
-                            .padding(.horizontal)
-                            .padding(.bottom, 40)
-                        }
+                        singleCaptureOverlay
                     }
                 }
                 .onAppear {
+                    guard !didStart else { return }
+                    didStart = true
                     coordinator.start()
                     Task { capturedLocation = await locationProvider.currentLocation() }
                     Task { capturedHeadingDeg = await headingProvider.currentHeadingDeg() }
@@ -410,6 +403,98 @@ private struct RoomCaptureFlowStep: View {
                         DiagnosticsLog.shared.record("App backgrounded mid-scan — ARKit/RoomPlan behavior here is unverified.", category: .state)
                     }
                 }
+            }
+        }
+    }
+
+    private var singleCaptureOverlay: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                VuuroCaptureCircleButton(
+                    systemName: "xmark",
+                    accessibilityLabel: "Discard scan"
+                ) {
+                    showDiscardConfirmation = true
+                }
+                Spacer(minLength: 0)
+                VuuroCaptureTogglePill(isOn: roomTypeGuessOn) {
+                    roomTypeGuessOn.toggle()
+                    RoomTypeGuessSettings.isEnabled = roomTypeGuessOn
+                    VuuroToast.shared.show(roomTypeGuessOn ? "Room-type guessing on" : "Room-type guessing off")
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+
+            Spacer().frame(height: 24)
+
+            VuuroScanRing(walls: coordinator.liveStats.walls)
+
+            Spacer().frame(height: 14)
+
+            VuuroScanHint(text: "Slowly pan around the walls")
+
+            if let guess = coordinator.liveRoomTypeGuess, !coordinator.hasAnsweredRoomType {
+                Spacer().frame(height: 20)
+                guessPill(for: guess)
+            }
+
+            Spacer(minLength: 20)
+
+            if coordinator.isApproachingSizeLimit {
+                Text("This room looks larger than RoomPlan's practical scanning range (~9m) — accuracy may degrade beyond this size.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 8)
+            }
+
+            VuuroLiveStatsRow(stats: coordinator.liveStats)
+                .padding(.horizontal, 20)
+
+            Spacer().frame(height: 12)
+
+            VuuroFinishRoomButton(label: "Finish room") {
+                didRequestStop = true
+                coordinator.stop()
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 24)
+        }
+        .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
+            Button("Discard", role: .destructive) {
+                coordinator.stop()
+                onGoBack()
+            }
+            Button("Keep Scanning", role: .cancel) {}
+        } message: {
+            Text("Everything captured so far in this room will be lost.")
+        }
+    }
+
+    @ViewBuilder
+    private func guessPill(for guess: RoomTypeClassifier.Guess) -> some View {
+        VuuroCaptureGuessPill(
+            typeName: RoomTypeClassifier.displayName(for: guess.type),
+            onConfirm: { coordinator.confirmRoomTypeGuess() },
+            onReject: { showCorrectionDialog = true }
+        )
+        .confirmationDialog(
+            "What kind of room is this?",
+            isPresented: $showCorrectionDialog,
+            titleVisibility: .visible
+        ) {
+            ForEach(RoomTypeClassifier.allTypes.filter { $0 != guess.type }, id: \.self) { type in
+                Button(RoomTypeClassifier.displayName(for: type)) {
+                    coordinator.rejectRoomTypeGuess(correctedTo: type)
+                }
+            }
+            Button("Other") {
+                coordinator.rejectRoomTypeGuess(correctedTo: "other")
+            }
+            Button("Not sure", role: .cancel) {
+                coordinator.rejectRoomTypeGuess(correctedTo: nil)
             }
         }
     }
@@ -500,1189 +585,5 @@ private struct RoomCaptureFlowStep: View {
         } catch {
             uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)
         }
-    }
-}
-
-private struct AnotherRoomPromptView: View {
-    let roomCount: Int
-    let onChoice: (Bool) -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Room \(roomCount) captured").font(.headline)
-            Text("Scan another room in this unit, or finish and attach photos/notes.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Scan another room") { onChoice(true) }
-                .buttonStyle(.vuuroSecondary)
-            Button("Finish unit") { onChoice(false) }
-                .buttonStyle(.vuuroPrimary)
-        }
-        .padding()
-    }
-}
-
-private struct PartialCaptureFailureView: View {
-    let message: String
-    let onUsePartial: () -> Void
-    let onDiscard: () -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Scan interrupted").font(.headline)
-            Text(message)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Text("Some of this room was captured before the interruption. You can try uploading it as-is, or discard it and scan again.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Upload what was captured") { onUsePartial() }
-                .buttonStyle(.vuuroPrimary)
-            Button("Discard and try again", role: .destructive) { onDiscard() }
-        }
-        .padding()
-    }
-}
-
-struct DegenerateCaptureView: View {
-    let onRescan: () -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Keep scanning").font(.headline)
-            Text("This room's outline came out too small or flat to use. Try scanning more slowly and cover the whole floor before tapping Done.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Rescan this room", action: onRescan).buttonStyle(.vuuroPrimary)
-        }
-        .padding()
-    }
-}
-
-private struct UploadRejectedView: View {
-    let error: AppError
-    let onRetryUpload: () -> Void
-    let onRescan: () -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Upload didn't go through").font(.headline)
-            ErrorCodeView(error: error)
-                .multilineTextAlignment(.center)
-            if error.isLikelyRetryable {
-                Text("This room's capture is still on your device. Retry the same upload, or rescan if the room itself needs it.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                Button("Retry upload", action: onRetryUpload).buttonStyle(.vuuroPrimary)
-                Button("Rescan this room", role: .destructive, action: onRescan)
-            } else {
-                Text("The server rejected this capture's data — retrying the same upload won't change that. Rescanning this room is the way forward.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                Button("Rescan this room", action: onRescan).buttonStyle(.vuuroPrimary)
-            }
-        }
-        .padding()
-    }
-}
-
-struct AttachmentsScreen: View {
-    let session: ScanSessionResponse
-    let floorPlan: FloorPlan
-    let onDone: (FloorPlan) -> Void
-    let onAddRoom: () -> Void
-
-    @State private var photoUrl = ""
-    @State private var selectedPhotoItems: [PhotosPickerItem] = []
-    @State private var current: FloorPlan
-    @State private var appError: AppError?
-    @State private var isUploadingPhoto = false
-    @State private var showCamera = false
-    @State private var isUpdatingRoomType: Set<String> = []
-    @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
-    @State private var isGuessToggleCompact = false
-    @State private var floorPlanPreviewImage: UIImage?
-    @State private var isLoadingFloorPlanPreview = false
-    @State private var floorPlanPreviewFailed = false
-    @State private var fullScreenPreviewURL: URL?
-    @State private var showFullScreenPreview = false
-    @State private var noteDrafts: [String: String] = [:]
-    @State private var initialNoteDrafts: [String: String] = [:]
-    @State private var currentNoteIds: [String: String] = [:]
-    @State private var removingPhotoIds: Set<String> = []
-    @State private var showPhotoActionDialog = false
-    @State private var pendingPhotoRoomId: String?
-    @State private var showPhotosPicker = false
-    @State private var showLinkInput = false
-    @State private var isFinishing = false
-    @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
-
-    private var exportUnit: MeasurementUnit {
-        MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
-    }
-
-    private let client = ScanServiceClient()
-
-    init(session: ScanSessionResponse, floorPlan: FloorPlan, onDone: @escaping (FloorPlan) -> Void, onAddRoom: @escaping () -> Void) {
-        self.session = session
-        self.floorPlan = floorPlan
-        self.onDone = onDone
-        self.onAddRoom = onAddRoom
-        _current = State(initialValue: floorPlan)
-        var drafts: [String: String] = [:]
-        var ids: [String: String] = [:]
-        for room in floorPlan.rooms {
-            if let note = floorPlan.notes.last(where: { $0.roomId == room.roomId }) {
-                drafts[room.roomId] = note.text
-                ids[room.roomId] = note.noteId
-            } else {
-                drafts[room.roomId] = ""
-            }
-        }
-        _noteDrafts = State(initialValue: drafts)
-        _initialNoteDrafts = State(initialValue: drafts)
-        _currentNoteIds = State(initialValue: ids)
-    }
-
-    var body: some View {
-        Form {
-            Section("Floor plan") {
-                if let floorPlanPreviewImage {
-                    Image(uiImage: floorPlanPreviewImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 180)
-                        .frame(maxWidth: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius, style: .continuous))
-                        .contentShape(Rectangle())
-                        .onTapGesture { openFullScreenPreview() }
-                    Text("Tap to view full screen")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                } else if isLoadingFloorPlanPreview {
-                    VStack(spacing: 8) {
-                        ProgressView()
-                        Text("Rendering your floor plan…")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 120)
-                } else if floorPlanPreviewFailed {
-                    Text("Couldn't render the floor plan preview.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .task {
-                guard floorPlanPreviewImage == nil, !floorPlanPreviewFailed else { return }
-                await loadFloorPlanPreview()
-            }
-
-            Section {
-                HStack {
-                    Text("Room-type guessing")
-                        .font(.subheadline)
-                    Spacer()
-                    Button {
-                        roomTypeGuessOn.toggle()
-                        RoomTypeGuessSettings.isEnabled = roomTypeGuessOn
-                        VuuroToast.shared.show(roomTypeGuessOn ? "Room-type guessing on" : "Room-type guessing off")
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: roomTypeGuessOn ? "wand.and.stars" : "wand.and.stars.inverse")
-                            if !isGuessToggleCompact {
-                                Text("Guessing")
-                                    .transition(.opacity)
-                            }
-                        }
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(roomTypeGuessOn ? VuuroColor.textPrimary : VuuroColor.textSecondary)
-                        .padding(.horizontal, isGuessToggleCompact ? 0 : 10)
-                        .frame(width: isGuessToggleCompact ? 28 : nil, height: 28)
-                        .background(
-                            roomTypeGuessOn ? VuuroColor.accentLime : VuuroColor.surfaceMuted,
-                            in: Capsule()
-                        )
-                    }
-                    .animation(.spring(response: 0.45, dampingFraction: 0.8), value: isGuessToggleCompact)
-                    .onAppear {
-                        isGuessToggleCompact = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.7) {
-                            isGuessToggleCompact = true
-                        }
-                    }
-                }
-            }
-
-            if !current.rooms.isEmpty {
-                Text("Notes and photos are evidence for each room — condition, damage, or anything worth flagging. They stay attached here and in History; note text and attached photos both print on the PDF export.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            ForEach(Array(current.rooms.enumerated()), id: \.element.roomId) { index, room in
-                let roomPhotos = current.photos.filter { $0.roomId == room.roomId }
-                Section("Room \(index + 1)") {
-                    RoomTypeRow(
-                        room: room,
-                        isUpdating: isUpdatingRoomType.contains(room.roomId),
-                        onUpdate: { newValue in Task { await updateRoomType(roomId: room.roomId, to: newValue) } },
-                        onRename: { newLabel in Task { await updateRoomLabel(roomId: room.roomId, to: newLabel) } }
-                    )
-
-                    if !roomPhotos.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(roomPhotos, id: \.photoId) { photo in
-                                    ZStack(alignment: .topTrailing) {
-                                        AttachedPhotoThumbnail(session: session, url: photo.url)
-                                        Button {
-                                            Task { await removePhoto(photoId: photo.photoId) }
-                                        } label: {
-                                            Image(systemName: "xmark.circle.fill")
-                                                .symbolRenderingMode(.palette)
-                                                .foregroundStyle(.white, VuuroColor.danger)
-                                        }
-                                        .offset(x: 6, y: -6)
-                                        .disabled(removingPhotoIds.contains(photo.photoId))
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.top, 4)
-                    }
-
-                    HStack(spacing: 8) {
-                        TextField("Add notes and photos", text: noteDraftBinding(for: room.roomId), axis: .vertical)
-                        Button {
-                            pendingPhotoRoomId = room.roomId
-                            showPhotoActionDialog = true
-                        } label: {
-                            Image(systemName: "camera.fill")
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(VuuroColor.primary)
-                    }
-                    .padding(.top, 4)
-                }
-            }
-
-            let unitPhotos = current.photos.filter { $0.roomId == nil }
-            let unitNotes = current.notes.filter { $0.roomId == nil }
-            if !unitPhotos.isEmpty || !unitNotes.isEmpty {
-                Section("Whole unit") {
-                    if !unitNotes.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Notes")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            ForEach(unitNotes, id: \.noteId) { note in
-                                Text(note.text).font(.subheadline)
-                            }
-                        }
-                    }
-                    if !unitPhotos.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Photos attached")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            ForEach(unitPhotos, id: \.photoId) { photo in
-                                HStack(alignment: .top, spacing: 12) {
-                                    AttachedPhotoThumbnail(session: session, url: photo.url)
-                                    if !photo.caption.isEmpty {
-                                        Text(photo.caption).font(.caption2)
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.top, unitNotes.isEmpty ? 0 : 4)
-                    }
-                }
-            }
-
-            if let appError {
-                ErrorCodeView(error: appError)
-            }
-
-            Section {
-                Button("Add another room") { onAddRoom() }
-                    .buttonStyle(.vuuroSecondary)
-                Text("Missed a room? This adds it separately — it won't be merged into the fused layout above (see the disclaimer at the top of the exported plan).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                Text("\(current.notes.count) note(s), \(current.photos.count) photo(s) attached so far.")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-                Button {
-                    Task { await finish() }
-                } label: {
-                    if isFinishing {
-                        ProgressView()
-                    } else {
-                        Text("Finish")
-                    }
-                }
-                .buttonStyle(.vuuroPrimary)
-                .disabled(isFinishing)
-            }
-        }
-        .navigationTitle("Notes & photos")
-        .onAppear {
-            FloorPlanImageCache.shared.prefetch(sessionId: session.id, accessToken: session.accessToken, unit: exportUnit, client: client)
-        }
-        .fullScreenCover(isPresented: $showFullScreenPreview) {
-            if let fullScreenPreviewURL {
-                QuickLookPreview(url: fullScreenPreviewURL)
-                    .ignoresSafeArea()
-            }
-        }
-        .confirmationDialog(
-            "Add to \(current.rooms.first(where: { $0.roomId == pendingPhotoRoomId })?.label ?? "room")",
-            isPresented: $showPhotoActionDialog,
-            titleVisibility: .visible
-        ) {
-            if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                Button("Take a photo") { showCamera = true }
-            }
-            Button("Choose from library") { showPhotosPicker = true }
-            Button("Add a link") { showLinkInput = true }
-            Button("Cancel", role: .cancel) { pendingPhotoRoomId = nil }
-        }
-        .photosPicker(isPresented: $showPhotosPicker, selection: $selectedPhotoItems, maxSelectionCount: 10, matching: .images)
-        .onChange(of: selectedPhotoItems) { _, newItems in
-            guard !newItems.isEmpty else { return }
-            let roomId = pendingPhotoRoomId
-            Task {
-                isUploadingPhoto = true
-                var failureCount = 0
-                for item in newItems {
-                    if await uploadSelectedPhoto(item, roomId: roomId) == false {
-                        failureCount += 1
-                    }
-                }
-                selectedPhotoItems = []
-                isUploadingPhoto = false
-                pendingPhotoRoomId = nil
-                let succeeded = newItems.count - failureCount
-                if succeeded > 0 {
-                    VuuroToast.shared.show(succeeded == 1 ? "Photo added" : "\(succeeded) photos added")
-                }
-                if failureCount > 0 {
-                    VuuroToast.shared.show("\(failureCount) of \(newItems.count) photo(s) failed to upload")
-                }
-            }
-        }
-        .sheet(isPresented: $showCamera) {
-            CameraCaptureView(onCaptured: { data in
-                showCamera = false
-                let roomId = pendingPhotoRoomId
-                Task {
-                    isUploadingPhoto = true
-                    let succeeded = await uploadPhotoData(data, roomId: roomId)
-                    isUploadingPhoto = false
-                    pendingPhotoRoomId = nil
-                    if succeeded {
-                        VuuroToast.shared.show("Photo added")
-                    }
-                }
-            }, onCancel: {
-                showCamera = false
-                pendingPhotoRoomId = nil
-            })
-        }
-        .alert("Add a photo link", isPresented: $showLinkInput) {
-            TextField("https://…", text: $photoUrl)
-            Button("Add") {
-                let roomId = pendingPhotoRoomId
-                Task { await addPhoto(roomId: roomId) }
-            }
-            Button("Cancel", role: .cancel) {
-                photoUrl = ""
-                pendingPhotoRoomId = nil
-            }
-        }
-    }
-
-    private func noteDraftBinding(for roomId: String) -> Binding<String> {
-        Binding(
-            get: { noteDrafts[roomId] ?? "" },
-            set: { noteDrafts[roomId] = $0 }
-        )
-    }
-
-    @MainActor
-    private func updateRoomType(roomId: String, to newValue: String?) async {
-        isUpdatingRoomType.insert(roomId)
-        defer { isUpdatingRoomType.remove(roomId) }
-        do {
-            current = try await client.updateRoomType(sessionId: session.id, accessToken: session.accessToken, roomId: roomId, roomType: newValue)
-            appError = nil
-            await refreshFloorPlanPreviewAndHistory()
-        } catch {
-            appError = AppError(site: .roomTypeUpdate, underlying: error)
-        }
-    }
-
-    @MainActor
-    private func updateRoomLabel(roomId: String, to newLabel: String) async {
-        isUpdatingRoomType.insert(roomId)
-        defer { isUpdatingRoomType.remove(roomId) }
-        do {
-            current = try await client.updateRoomLabel(sessionId: session.id, accessToken: session.accessToken, roomId: roomId, label: newLabel)
-            appError = nil
-            await refreshFloorPlanPreviewAndHistory()
-        } catch {
-            appError = AppError(site: .roomLabelUpdate, underlying: error)
-        }
-    }
-
-    @MainActor
-    private func openFullScreenPreview() {
-        guard let data = FloorPlanImageCache.shared.cachedData(sessionId: session.id, unit: exportUnit) else { return }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-preview-\(session.id).png")
-        do {
-            try data.write(to: url)
-        } catch {
-            appError = AppError(site: .resultImageLoad, underlying: error)
-            return
-        }
-        fullScreenPreviewURL = url
-        showFullScreenPreview = true
-    }
-
-    @MainActor
-    private func refreshFloorPlanPreviewAndHistory() async {
-        FloorPlanImageCache.shared.invalidate(sessionId: session.id)
-        floorPlanPreviewImage = nil
-        floorPlanPreviewFailed = false
-        await loadFloorPlanPreview()
-        ScanHistoryStore.shared.updateRoomSummary(sessionId: session.id, summary: RoomSummary.text(for: current.rooms))
-    }
-
-    @MainActor
-    private func loadFloorPlanPreview() async {
-        isLoadingFloorPlanPreview = true
-        let data = await FloorPlanImageCache.shared.prefetch(sessionId: session.id, accessToken: session.accessToken, unit: exportUnit, client: client).value
-        isLoadingFloorPlanPreview = false
-        if let data, let image = UIImage(data: data) {
-            floorPlanPreviewImage = image
-        } else {
-            appError = AppError(site: .resultImageLoad, underlying: FloorPlanImageCache.shared.lastError(sessionId: session.id, unit: exportUnit))
-            floorPlanPreviewFailed = true
-        }
-    }
-
-    @MainActor
-    private func finish() async {
-        isFinishing = true
-        defer { isFinishing = false }
-        var failureCount = 0
-        var lastFailure: AppError?
-        for room in current.rooms {
-            let draft = (noteDrafts[room.roomId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            let initial = initialNoteDrafts[room.roomId] ?? ""
-            guard draft != initial else { continue }
-            let existingNoteId = currentNoteIds[room.roomId]
-            let site: AppError.Site = draft.isEmpty ? .noteDelete : (existingNoteId != nil ? .noteUpdate : .noteAdd)
-            do {
-                if draft.isEmpty, let noteId = existingNoteId {
-                    current = try await client.deleteNote(sessionId: session.id, accessToken: session.accessToken, noteId: noteId)
-                    currentNoteIds[room.roomId] = nil
-                } else if !draft.isEmpty, let noteId = existingNoteId {
-                    current = try await client.updateNote(sessionId: session.id, accessToken: session.accessToken, noteId: noteId, text: draft)
-                } else if !draft.isEmpty {
-                    current = try await client.addNote(sessionId: session.id, accessToken: session.accessToken, text: draft, roomId: room.roomId)
-                    currentNoteIds[room.roomId] = current.notes.last(where: { $0.roomId == room.roomId })?.noteId
-                }
-                initialNoteDrafts[room.roomId] = draft
-            } catch {
-                failureCount += 1
-                lastFailure = AppError(site: site, underlying: error)
-            }
-        }
-        if let lastFailure {
-            appError = failureCount == 1 ? lastFailure : AppError(site: lastFailure.site, underlying: PlainError(message: "\(failureCount) room notes failed to save. \(lastFailure.site.defaultMessage)"))
-            return
-        }
-        appError = nil
-        VuuroToast.shared.show("Saved")
-        onDone(current)
-    }
-
-    @MainActor
-    private func addPhoto(roomId: String?) async {
-        do {
-            current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: photoUrl, roomId: roomId)
-            photoUrl = ""
-            appError = nil
-            VuuroToast.shared.show("Photo added")
-        } catch {
-            appError = AppError(site: .photoAdd, underlying: error)
-        }
-        pendingPhotoRoomId = nil
-    }
-
-    @MainActor
-    private func removePhoto(photoId: String) async {
-        guard !removingPhotoIds.contains(photoId) else { return }
-        removingPhotoIds.insert(photoId)
-        defer { removingPhotoIds.remove(photoId) }
-        do {
-            current = try await client.deletePhoto(sessionId: session.id, accessToken: session.accessToken, photoId: photoId)
-            appError = nil
-            VuuroToast.shared.show("Photo removed")
-        } catch {
-            appError = AppError(site: .photoDelete, underlying: error)
-        }
-    }
-
-    private func detectedMimeType(for data: Data) -> (mime: String, extension: String) {
-        if data.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
-            return ("image/png", "png")
-        }
-        if data.starts(with: [0xFF, 0xD8, 0xFF]) {
-            return ("image/jpeg", "jpg")
-        }
-        if data.count > 16,
-           data[data.startIndex.advanced(by: 4)..<data.startIndex.advanced(by: 8)].elementsEqual("ftyp".utf8) {
-            let brand = data[data.startIndex.advanced(by: 8)..<data.startIndex.advanced(by: 12)]
-            let heicBrands: Set<[UInt8]> = [
-                Array("heic".utf8), Array("heix".utf8), Array("hevc".utf8), Array("mif1".utf8),
-            ]
-            if heicBrands.contains(Array(brand)) {
-                return ("image/heic", "heic")
-            }
-        }
-        return ("image/jpeg", "jpg")
-    }
-
-    @MainActor
-
-    private static let maxPhotoUploadBytes = 25 * 1024 * 1024
-
-    @discardableResult
-    private func uploadSelectedPhoto(_ item: PhotosPickerItem, roomId: String?) async -> Bool {
-        do {
-            guard let rawData = try await item.loadTransferable(type: Data.self) else {
-                appError = AppError(site: .photoUpload, underlying: nil)
-                return false
-            }
-            let jpegData: Data? = await Task.detached(priority: .userInitiated) {
-                guard let image = UIImage(data: rawData) else { return nil }
-                return image.jpegData(compressionQuality: 0.9)
-            }.value
-            guard let jpegData else {
-                appError = AppError(site: .photoUpload, underlying: nil)
-                return false
-            }
-            return await uploadPhotoData(jpegData, roomId: roomId)
-        } catch {
-            appError = AppError(site: .photoUpload, underlying: error)
-            return false
-        }
-    }
-
-    @discardableResult
-    private func uploadPhotoData(_ data: Data, roomId: String?) async -> Bool {
-        if data.count > Self.maxPhotoUploadBytes {
-            appError = AppError(site: .photoTooLarge, underlying: nil)
-            return false
-        }
-        do {
-            let (mime, ext) = detectedMimeType(for: data)
-            let uploaded = try await client.uploadPhoto(sessionId: session.id, accessToken: session.accessToken, imageData: data, filename: "photo.\(ext)", mimeType: mime)
-            current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: uploaded.url, roomId: roomId)
-            appError = nil
-            return true
-        } catch {
-            appError = AppError(site: .photoUpload, underlying: error)
-            return false
-        }
-    }
-}
-
-private struct RoomTypeRow: View {
-    let room: FloorPlan.Room
-    let isUpdating: Bool
-    let onUpdate: (String?) -> Void
-    let onRename: (String) -> Void
-
-    @State private var text: String = ""
-    @State private var labelText: String = ""
-    @FocusState private var isFocused: Bool
-    @FocusState private var isLabelFocused: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            TextField("Room name", text: $labelText)
-                .font(.subheadline.weight(.semibold))
-                .focused($isLabelFocused)
-                .disabled(isUpdating)
-                .onSubmit { commitLabel() }
-                .onChange(of: isLabelFocused) { wasFocused, nowFocused in
-                    if wasFocused && !nowFocused {
-                        commitLabel()
-                    }
-                }
-                .onAppear { labelText = room.label }
-                .onChange(of: room.label) { _, newValue in
-                    if !isLabelFocused {
-                        labelText = newValue
-                    }
-                }
-            TextField("Room type, e.g. Living room", text: $text)
-                .focused($isFocused)
-                .disabled(isUpdating)
-                .onSubmit { commit() }
-                .onChange(of: isFocused) { wasFocused, nowFocused in
-                    if wasFocused && !nowFocused {
-                        commit()
-                    }
-                }
-            if isFocused && !matchingRoomTypes.isEmpty {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(matchingRoomTypes, id: \.self) { type in
-                        Button {
-                            text = RoomTypeClassifier.displayName(for: type)
-                            isFocused = false
-                        } label: {
-                            Text(RoomTypeClassifier.displayName(for: type))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        if type != matchingRoomTypes.last {
-                            Divider()
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .font(.caption)
-                .background(VuuroColor.surfaceMuted, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
-            if room.roomType?.confirmed == nil, let guess = room.roomType?.guess {
-                Text("Auto-detected: \(RoomTypeClassifier.displayName(for: guess))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .onAppear {
-            text = room.roomType?.confirmed.map { RoomTypeClassifier.displayName(for: $0) } ?? ""
-        }
-        .onChange(of: room.roomType?.confirmed) { _, newValue in
-            if !isFocused {
-                text = newValue.map { RoomTypeClassifier.displayName(for: $0) } ?? ""
-            }
-        }
-    }
-
-    private var matchingRoomTypes: [String] {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return RoomTypeClassifier.allTypes }
-        return RoomTypeClassifier.allTypes.filter {
-            RoomTypeClassifier.displayName(for: $0).range(of: trimmed, options: .caseInsensitive) != nil
-        }
-    }
-
-    private func commit() {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            if room.roomType?.confirmed != nil {
-                onUpdate(nil)
-            }
-            return
-        }
-        if let known = RoomTypeClassifier.allTypes.first(where: {
-            RoomTypeClassifier.displayName(for: $0).caseInsensitiveCompare(trimmed) == .orderedSame
-        }) {
-            onUpdate(known)
-        } else {
-            onUpdate(trimmed)
-        }
-    }
-
-    private func commitLabel() {
-        let trimmed = labelText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != room.label else {
-            labelText = room.label
-            return
-        }
-        onRename(trimmed)
-    }
-}
-
-struct AttachedPhotoThumbnail: View {
-    let session: ScanSessionResponse
-    let url: String
-
-    @State private var image: UIImage?
-    @State private var failed = false
-
-    private let client = ScanServiceClient()
-
-    var body: some View {
-        Group {
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else if failed {
-                Image(systemName: "photo.badge.exclamationmark")
-                    .foregroundStyle(.secondary)
-            } else {
-                ProgressView()
-            }
-        }
-        .frame(width: 40, height: 40)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .background(.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
-        .task {
-            guard image == nil else { return }
-            do {
-                let data = try await client.fetchPhotoData(url: url, accessToken: session.accessToken)
-                let thumb = await Task.detached(priority: .userInitiated) {
-                    Self.downsampledThumbnail(from: data, maxDimensionPixels: 120)
-                }.value
-                image = thumb
-                failed = thumb == nil
-                if failed {
-                    DiagnosticsLog.shared.record("Photo thumbnail decode failed for \(url)", category: .error)
-                }
-            } catch {
-                failed = true
-                DiagnosticsLog.shared.record("Photo thumbnail fetch failed for \(url): \(error.localizedDescription)", category: .error)
-            }
-        }
-    }
-
-    private nonisolated static func downsampledThumbnail(from data: Data, maxDimensionPixels: CGFloat) -> UIImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else {
-            return nil
-        }
-        let downsampleOptions = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxDimensionPixels,
-        ] as CFDictionary
-        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, downsampleOptions) else {
-            return nil
-        }
-        return UIImage(cgImage: cgImage)
-    }
-}
-
-struct CameraCaptureView: UIViewControllerRepresentable {
-    let onCaptured: (Data) -> Void
-    let onCancel: () -> Void
-
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let parent: CameraCaptureView
-
-        init(_ parent: CameraCaptureView) {
-            self.parent = parent
-        }
-
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            guard let image = info[.originalImage] as? UIImage else {
-                parent.onCancel()
-                return
-            }
-            Task.detached(priority: .userInitiated) {
-                let data = image.jpegData(compressionQuality: 0.9)
-                await MainActor.run {
-                    if let data {
-                        self.parent.onCaptured(data)
-                    } else {
-                        self.parent.onCancel()
-                    }
-                }
-            }
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            parent.onCancel()
-        }
-    }
-}
-
-struct RoomResultCard: View {
-    let room: FloorPlan.Room
-    let showsRibbon: Bool
-    var photos: [FloorPlan.Photo] = []
-    var notes: [FloorPlan.Note] = []
-    var session: ScanSessionResponse? = nil
-
-    private var isFused: Bool { room.structureOriginM != nil }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if showsRibbon {
-                VuuroRibbon(text: "CAPTURED")
-                    .padding(.top, -6)
-                    .padding(.leading, -16)
-            }
-
-            HStack {
-                Text(room.label)
-                    .font(VuuroFont.display(18))
-                    .foregroundStyle(VuuroColor.textPrimary)
-                Spacer()
-                if isFused {
-                    VuuroBadge("Fused", systemImage: "square.on.square", style: .info)
-                } else if !room.coverage.usable {
-                    VuuroBadge("Low confidence", systemImage: "exclamationmark.triangle.fill", style: .warning)
-                } else {
-                    VuuroBadge("Captured", systemImage: "checkmark", style: .good)
-                }
-            }
-
-            HStack(spacing: 10) {
-                RoomStatTile(systemImage: "squareshape", value: String(format: "%.2f m²", room.floorAreaM2), caption: "Floor area")
-                RoomStatTile(systemImage: "ruler", value: String(format: "%.2f m", room.perimeterM), caption: "Perimeter")
-                if let heightM = room.heightM {
-                    RoomStatTile(systemImage: "arrow.up.and.down", value: String(format: "%.2f m", heightM), caption: "Height")
-                }
-            }
-
-            Text("Indicative — NEN2580-inspired, not certified")
-                .font(VuuroFont.body(11))
-                .foregroundStyle(VuuroColor.textSecondary)
-
-            if !room.coverage.usable, let message = room.coverage.message {
-                Label(message, systemImage: "exclamationmark.triangle.fill")
-                    .font(VuuroFont.body(12, weight: .semibold))
-                    .foregroundStyle(VuuroColor.warningText)
-            } else {
-                Text("Scan quality: \(room.coverage.score)/100")
-                    .font(VuuroFont.body(11))
-                    .foregroundStyle(VuuroColor.textSecondary)
-            }
-
-            if let session, !photos.isEmpty || !notes.isEmpty {
-                Divider()
-                RoomAttachmentsList(session: session, photos: photos, notes: notes)
-            }
-        }
-        .padding()
-        .vuuroCard()
-    }
-}
-
-struct RoomAttachmentsList: View {
-    let session: ScanSessionResponse
-    let photos: [FloorPlan.Photo]
-    let notes: [FloorPlan.Note]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(notes, id: \.noteId) { note in
-                (Text("Note: ").font(.caption.weight(.semibold)) + Text(note.text).font(.caption))
-                    .foregroundStyle(VuuroColor.textPrimary)
-            }
-            ForEach(photos, id: \.photoId) { photo in
-                HStack(alignment: .top, spacing: 12) {
-                    AttachedPhotoThumbnail(session: session, url: photo.url)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Photo attached:")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(VuuroColor.textPrimary)
-                        if !photo.caption.isEmpty {
-                            Text(photo.caption).font(.caption2)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private struct RoomStatTile: View {
-    let systemImage: String
-    let value: String
-    let caption: String
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Image(systemName: systemImage)
-                .foregroundStyle(VuuroColor.primary)
-            Text(value)
-                .font(VuuroFont.body(15, weight: .bold))
-                .foregroundStyle(VuuroColor.textPrimary)
-            Text(caption)
-                .font(VuuroFont.body(10))
-                .foregroundStyle(VuuroColor.textSecondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
-        .background(VuuroColor.surfaceMuted, in: RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius, style: .continuous))
-    }
-}
-
-private struct ResultSummaryView: View {
-    let session: ScanSessionResponse
-    let floorPlan: FloorPlan
-    let onDone: () -> Void
-
-    @State private var isFetchingImage = false
-    @State private var isFetchingPDF = false
-    @State private var floorPlanImage: UIImage?
-    @State private var imageLoadFailed = false
-    @State private var floorPlanImageURL: URL?
-    @State private var floorPlanPDFURL: URL?
-    @State private var appError: AppError?
-    @State private var fullScreenPreviewURL: URL?
-    @State private var showFullScreenPreview = false
-    @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
-
-    private var exportUnit: MeasurementUnit {
-        MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
-    }
-
-    private let client = ScanServiceClient()
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: VuuroMetrics.contentSpacing) {
-                ForEach(Array(floorPlan.rooms.enumerated()), id: \.element.roomId) { index, room in
-                    RoomResultCard(
-                        room: room,
-                        showsRibbon: index == 0,
-                        photos: floorPlan.photos.filter { $0.roomId == room.roomId },
-                        notes: floorPlan.notes.filter { $0.roomId == room.roomId },
-                        session: session
-                    )
-                }
-
-                let unitPhotos = floorPlan.photos.filter { $0.roomId == nil }
-                let unitNotes = floorPlan.notes.filter { $0.roomId == nil }
-                if !unitPhotos.isEmpty || !unitNotes.isEmpty {
-                    VStack(alignment: .leading, spacing: VuuroMetrics.contentSpacing) {
-                        Text("Whole unit — notes & photos")
-                            .font(VuuroFont.body(13, weight: .bold))
-                            .foregroundStyle(VuuroColor.textSecondary)
-                            .textCase(.uppercase)
-                        RoomAttachmentsList(session: session, photos: unitPhotos, notes: unitNotes)
-                    }
-                    .padding()
-                    .vuuroCard()
-                }
-
-                VStack(alignment: .leading, spacing: VuuroMetrics.contentSpacing) {
-                    Text("Floor plan")
-                        .font(VuuroFont.body(13, weight: .bold))
-                        .foregroundStyle(VuuroColor.textSecondary)
-                        .textCase(.uppercase)
-
-                    if isFetchingImage {
-                        VStack(spacing: 10) {
-                            ProgressView()
-                            Text("Rendering your floor plan…")
-                                .font(VuuroFont.body(12.5))
-                                .foregroundStyle(VuuroColor.textSecondary)
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 160)
-                    } else if let floorPlanImage {
-                        Image(uiImage: floorPlanImage)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxHeight: 220)
-                            .frame(maxWidth: .infinity)
-                            .clipShape(RoundedRectangle(cornerRadius: VuuroMetrics.cardRadius, style: .continuous))
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                if let floorPlanImageURL {
-                                    fullScreenPreviewURL = floorPlanImageURL
-                                    showFullScreenPreview = true
-                                }
-                            }
-                        Text("Tap to view full screen")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-
-                        HStack(spacing: 10) {
-                            if let floorPlanImageURL {
-                                ShareLink(item: floorPlanImageURL) {
-                                    Label("Save image", systemImage: "square.and.arrow.up")
-                                }
-                                .buttonStyle(.vuuroSecondary)
-                            }
-                            Button {
-                                Task { await loadImage() }
-                            } label: {
-                                Label("Refresh", systemImage: "arrow.clockwise")
-                            }
-                            .buttonStyle(.vuuroSecondary)
-                        }
-                    } else if imageLoadFailed {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Couldn't render the floor plan preview.")
-                                .font(VuuroFont.body(13, weight: .semibold))
-                                .foregroundStyle(VuuroColor.warningText)
-                            Button {
-                                Task { await loadImage() }
-                            } label: {
-                                Text("Try again")
-                            }
-                            .buttonStyle(.vuuroSecondary)
-                        }
-                    }
-
-                    HStack(spacing: 10) {
-                        Button {
-                            Task {
-                                if floorPlanPDFURL == nil { await loadPDF() }
-                                if let floorPlanPDFURL {
-                                    fullScreenPreviewURL = floorPlanPDFURL
-                                    showFullScreenPreview = true
-                                }
-                            }
-                        } label: {
-                            if isFetchingPDF {
-                                ProgressView()
-                            } else {
-                                Text("View PDF")
-                            }
-                        }
-                        .buttonStyle(.vuuroSecondary)
-                        .disabled(isFetchingPDF)
-
-                        if let floorPlanPDFURL {
-                            ShareLink(item: floorPlanPDFURL) {
-                                Label("Save PDF", systemImage: "square.and.arrow.up")
-                            }
-                            .buttonStyle(.vuuroSecondary)
-                        }
-                    }
-
-                    if let appError {
-                        ErrorCodeView(error: appError)
-                    }
-                }
-                .padding()
-                .vuuroCard()
-                .task {
-                    guard floorPlanImage == nil, !imageLoadFailed else { return }
-                    await loadImage()
-                }
-
-                NavigationLink("Access log") {
-                    AccessLogView(sessionId: session.id, accessToken: session.accessToken)
-                }
-                .font(VuuroFont.body(15, weight: .semibold))
-                .foregroundStyle(VuuroColor.textPrimary)
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .vuuroCard()
-
-                Button("Done") {
-                    cleanUpExportedFiles()
-                    onDone()
-                }
-                .buttonStyle(.vuuroPrimary)
-            }
-            .padding()
-        }
-        .background(VuuroColor.surfaceMuted)
-        .navigationTitle("Scan result")
-        .fullScreenCover(isPresented: $showFullScreenPreview) {
-            if let fullScreenPreviewURL {
-                QuickLookPreview(url: fullScreenPreviewURL)
-                    .ignoresSafeArea()
-            }
-        }
-    }
-
-    @MainActor
-    private func cleanUpExportedFiles() {
-        for url in [floorPlanImageURL, floorPlanPDFURL].compactMap({ $0 }) {
-            try? FileManager.default.removeItem(at: url)
-        }
-        floorPlanImageURL = nil
-        floorPlanPDFURL = nil
-    }
-
-    @MainActor
-    private func loadImage() async {
-        imageLoadFailed = false
-        let alreadyCached = FloorPlanImageCache.shared.cachedData(sessionId: session.id, unit: exportUnit) != nil
-        isFetchingImage = !alreadyCached
-        defer { isFetchingImage = false }
-        guard let data = await FloorPlanImageCache.shared.prefetch(sessionId: session.id, accessToken: session.accessToken, unit: exportUnit, client: client).value else {
-            appError = AppError(site: .resultImageLoad, underlying: FloorPlanImageCache.shared.lastError(sessionId: session.id, unit: exportUnit))
-            imageLoadFailed = true
-            return
-        }
-        applyFloorPlanImageData(data)
-    }
-
-    @MainActor
-    private func applyFloorPlanImageData(_ data: Data) {
-        guard let image = UIImage(data: data) else {
-            appError = AppError(site: .resultImageDecode, underlying: nil)
-            imageLoadFailed = true
-            return
-        }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(session.id).png")
-        do {
-            try data.write(to: url)
-        } catch {
-            appError = AppError(site: .resultImageLoad, underlying: error)
-            imageLoadFailed = true
-            return
-        }
-        floorPlanImage = image
-        floorPlanImageURL = url
-        appError = nil
-    }
-
-    @MainActor
-    private func loadPDF() async {
-        isFetchingPDF = true
-        defer { isFetchingPDF = false }
-        do {
-            let data = try await client.fetchFloorPlanPDF(sessionId: session.id, accessToken: session.accessToken, unit: exportUnit)
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(session.id).pdf")
-            try data.write(to: url)
-            floorPlanPDFURL = url
-            appError = nil
-            VuuroToast.shared.show("PDF ready")
-        } catch {
-            appError = AppError(site: .resultPDFLoad, underlying: error)
-        }
-    }
-}
-
-private struct ErrorView: View {
-    let error: AppError
-    let onRetry: () -> Void
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Text("Something went wrong").font(.headline)
-            ErrorCodeView(error: error)
-                .multilineTextAlignment(.center)
-            Button("Try again", action: onRetry).buttonStyle(.vuuroPrimary)
-        }
-        .padding()
     }
 }

@@ -1,10 +1,3 @@
-//
-//  ScanServiceClient.swift
-//  VuuroScan
-//
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
-//
-
 import Foundation
 
 enum ScanServiceError: Error {
@@ -56,8 +49,6 @@ private struct ScanServiceErrorBody: Decodable {
     let message: String
 }
 
-/// Response from `POST /scan-sessions/{id}/photo-uploads` — the `url` here
-/// is what gets passed straight into `addPhoto(url:)` below, unchanged.
 struct PhotoUploadResponse: Decodable {
     let url: String
     let photoUploadId: String
@@ -116,6 +107,34 @@ struct ScanServiceClient {
     private static func isLoopbackHost(_ host: String) -> Bool {
         let lowered = host.lowercased()
         return lowered == "127.0.0.1" || lowered == "localhost" || lowered == "::1"
+    }
+
+    private static func defaultPort(for scheme: String) -> Int? {
+        switch scheme.lowercased() {
+        case "http": return 80
+        case "https": return 443
+        case "ws": return 80
+        case "wss": return 443
+        case "ftp": return 21
+        default: return nil
+        }
+    }
+
+    private static func effectivePort(of url: URL) -> Int? {
+        if let explicit = url.port { return explicit }
+        guard let scheme = url.scheme else { return nil }
+        return defaultPort(for: scheme)
+    }
+
+    private static func isSameOrigin(_ lhs: URL, _ rhs: URL) -> Bool {
+        guard let lhsScheme = lhs.scheme?.lowercased(),
+              let rhsScheme = rhs.scheme?.lowercased(),
+              let lhsHost = lhs.host?.lowercased(),
+              let rhsHost = rhs.host?.lowercased()
+        else { return false }
+        return lhsScheme == rhsScheme
+            && lhsHost == rhsHost
+            && effectivePort(of: lhs) == effectivePort(of: rhs)
     }
 
     private static let sharedSession: URLSession = {
@@ -192,7 +211,12 @@ struct ScanServiceClient {
 
     func fetchPhotoData(url: String, accessToken: String) async throws -> Data {
         let resolved = URL(string: url, relativeTo: baseURL)?.absoluteURL ?? baseURL.appendingPathComponent(url)
-        guard resolved.scheme == baseURL.scheme, resolved.host == baseURL.host, resolved.port == baseURL.port else {
+        // FIX (bug #8): `URL.port` is nil when the URL omits an explicit
+        // port, even though the effective port is the scheme default.
+        // Comparing `resolved.port == baseURL.port` treated
+        // `http://host` and `http://host:80` as different origins.
+        // `isSameOrigin` normalizes the port using the scheme default.
+        guard Self.isSameOrigin(resolved, baseURL) else {
             let (data, response) = try await session.data(from: resolved)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
                 throw ScanServiceError.unexpectedStatus((response as? HTTPURLResponse)?.statusCode ?? -1, body: "")
@@ -269,11 +293,6 @@ struct ScanServiceClient {
         try await get(path: "/scan-sessions/\(sessionId)/access-log", accessToken: accessToken)
     }
 
-    /// Uploads real image bytes and gets back a url — pass that straight into
-    /// `addPhoto(url:)` below, same as any externally-hosted photo url would
-    /// be. Two separate calls, not one, so the existing /photos contract
-    /// (and its own room_id/caption validation) never has to know whether a
-    /// url came from this upload path or from somewhere else.
     func uploadPhoto(sessionId: String, accessToken: String, imageData: Data, filename: String, mimeType: String) async throws -> PhotoUploadResponse {
         let boundary = "Boundary-\(UUID().uuidString)"
         var request = URLRequest(url: baseURL.appendingPathComponent("/scan-sessions/\(sessionId)/photo-uploads"))

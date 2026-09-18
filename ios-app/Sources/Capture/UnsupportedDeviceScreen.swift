@@ -1,35 +1,28 @@
 import SwiftUI
 
 struct UnsupportedDeviceScreen: View {
-  
     var onGoBack: (() -> Void)? = nil
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 48))
-                .foregroundStyle(VuuroColor.primary)
-
-            Text("LiDAR scanning isn't available on this device")
-                .font(VuuroFont.display(19))
+        VuuroCenterView {
+            VuuroIconBadge(systemName: "exclamationmark.triangle", tint: VuuroColor.accent, background: VuuroColor.accent.opacity(0.12), size: 72, iconSize: 34)
+            Text("LiDAR not available")
+                .font(.system(size: 20, weight: .bold))
+                .tracking(-0.4)
                 .foregroundStyle(VuuroColor.textPrimary)
-                .multilineTextAlignment(.center)
-
             Text(DeviceCapability.unsupportedReason)
-                .font(VuuroFont.body(15))
+                .font(.system(size: 15))
+                .lineSpacing(5)
                 .foregroundStyle(VuuroColor.textSecondary)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+                .frame(maxWidth: 300)
 
             if let onGoBack {
                 Button("Go back", action: onGoBack)
-                    .buttonStyle(.vuuroSecondary)
-                    .padding(.horizontal, 40)
-                    .padding(.top, 8)
+                    .buttonStyle(.vuuroGhostSmall)
+                    .padding(.top, 20)
+                    .frame(maxWidth: 200)
             }
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(VuuroColor.surfaceMuted)
     }
 }

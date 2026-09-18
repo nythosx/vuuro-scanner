@@ -9,6 +9,7 @@ struct MultiRoomCaptureFlowView: View {
     let onGoBack: () -> Void
 
     @StateObject private var coordinator = MultiRoomCaptureCoordinator()
+    @StateObject private var uploadProgress = UploadProgressCoordinator()
     @State private var isUploading = false
     @State private var uploadTask: Task<Void, Never>?
     @State private var didRequestStopRoom = false
@@ -22,9 +23,9 @@ struct MultiRoomCaptureFlowView: View {
     @State private var capturedLocation: CaptureLocation?
     @State private var capturedHeadingDeg: Double?
     @State private var preUploadedSession: (session: ScanSessionResponse, floorPlan: FloorPlan)?
-    @State private var isRoomsButtonCompact = false
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
-    @State private var isGuessToggleCompact = false
+    @State private var didStart = false
+    @State private var showCorrectionDialog = false
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
@@ -58,33 +59,21 @@ struct MultiRoomCaptureFlowView: View {
                 EmptyView()
                 #endif
             } else if isFinishingUnit {
-                VStack(spacing: 16) {
-                    ProgressView("Merging rooms…")
-                    Button("Cancel", role: .destructive) {
-                        coordinator.cancelMerge()
-                    }
-                }
-                .padding()
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                MergingView(
+                    title: "Combining your rooms",
+                    subtitle: "Aligning floors and removing duplicate walls.",
+                    steps: mergeSteps,
+                    onCancel: { coordinator.cancelMerge() }
+                )
             } else if isUploading {
-                UploadProgressView(message: "Uploading rooms…", onCancel: { uploadTask?.cancel() })
-                    .padding()
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                UploadingView(
+                    coordinator: uploadProgress,
+                    onPause: { uploadTask?.cancel() }
+                )
             } else {
                 ZStack {
                     MultiRoomCaptureScreen(coordinator: coordinator)
                         .ignoresSafeArea()
-
-                    if coordinator.state == .scanning, let guess = coordinator.liveRoomTypeGuess {
-                        VStack {
-                            RoomTypeGuessOverlay(
-                                guess: guess,
-                                onConfirm: { coordinator.confirmRoomTypeGuess() },
-                                onReject: { picked in coordinator.rejectRoomTypeGuess(correctedTo: picked) }
-                            )
-                            Spacer()
-                        }
-                    }
 
                     if isDegenerateCapture {
                         resolutionOverlay {
@@ -114,122 +103,22 @@ struct MultiRoomCaptureFlowView: View {
                             .padding()
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
                     } else if coordinator.state == .scanning {
-                        VStack {
-                            HStack {
-                                Button {
-                                    showDiscardConfirmation = true
-                                } label: {
-                                    Image(systemName: "chevron.backward")
-                                        .font(.headline)
-                                        .padding(10)
-                                        .background(.regularMaterial, in: Circle())
-                                }
-                                .padding(.leading, 20)
-                                .padding(.top, 8)
-
-                                Spacer()
-                                Button {
-                                    roomTypeGuessOn.toggle()
-                                    RoomTypeGuessSettings.isEnabled = roomTypeGuessOn
-                                    VuuroToast.shared.show(roomTypeGuessOn ? "Room-type guessing on" : "Room-type guessing off")
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: roomTypeGuessOn ? "wand.and.stars" : "wand.and.stars.inverse")
-                                        if !isGuessToggleCompact {
-                                            Text("Room-type guessing")
-                                                .transition(.opacity)
-                                        }
-                                    }
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(roomTypeGuessOn ? VuuroColor.textPrimary : .white)
-                                    .padding(.horizontal, isGuessToggleCompact ? 0 : 12)
-                                    .frame(width: isGuessToggleCompact ? 36 : nil, height: 36)
-                                    .background(
-                                        roomTypeGuessOn ? VuuroColor.accentLime : Color.white.opacity(0.16),
-                                        in: Capsule()
-                                    )
-                                }
-                                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: isGuessToggleCompact)
-                                .padding(.trailing, 20)
-                                .padding(.top, 8)
-                                .onAppear {
-                                    isGuessToggleCompact = false
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.7) {
-                                        isGuessToggleCompact = true
-                                    }
-                                }
-                            }
-                            Spacer()
-                            if coordinator.capturedRooms.count >= MultiRoomCaptureCoordinator.roomCountWarningThreshold {
-                                Text("\(coordinator.capturedRooms.count) rooms captured — you may be approaching a device limit soon.")
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                                    .padding(.bottom, 8)
-                            }
-                            if coordinator.isApproachingSizeLimit {
-                                Text("This room looks larger than RoomPlan's practical scanning range (~9m) — accuracy may degrade beyond this size.")
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                                    .multilineTextAlignment(.center)
-                                    .padding(.horizontal)
-                                    .padding(.bottom, 8)
-                            }
-                            HStack(spacing: 12) {
-                                Button("Done with this room") {
-                                    didRequestStopRoom = true
-                                    coordinator.stopCurrentRoom()
-                                }
-                                .buttonStyle(.vuuroPrimary)
-                                if !coordinator.capturedRooms.isEmpty {
-                                    Button {
-                                        showCapturedRoomsList = true
-                                    } label: {
-                                        HStack(spacing: 6) {
-                                            Image(systemName: "square.stack.3d.up.fill")
-                                            if !isRoomsButtonCompact {
-                                                Text("Rooms (\(coordinator.capturedRooms.count))")
-                                                    .transition(.opacity)
-                                            }
-                                        }
-                                        .frame(width: isRoomsButtonCompact ? 40 : nil, height: isRoomsButtonCompact ? 40 : nil)
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .tint(isRoomsButtonCompact ? VuuroColor.textPrimary : nil)
-                                    Button("Finish unit") {
-                                        showFinishConfirmation = true
-                                    }
-                                    .buttonStyle(.vuuroSecondary)
-                                }
-                            }
-                            .animation(.spring(response: 0.45, dampingFraction: 0.8), value: isRoomsButtonCompact)
-                            .onAppear {
-                                isRoomsButtonCompact = false
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.7) {
-                                    isRoomsButtonCompact = true
-                                }
-                            }
-                            .padding(.bottom, 40)
-                            .alert("Finish this unit?", isPresented: $showFinishConfirmation) {
-                                Button("Finish") {
-                                    pendingFinishUnit = true
-                                    didRequestStopRoom = true
-                                    coordinator.stopCurrentRoom()
-                                }
-                                Button("Keep scanning", role: .cancel) {}
-                            } message: {
-                                Text("\(coordinator.capturedRooms.count) room(s) captured so far will be merged and uploaded.")
-                            }
-                        }
+                        multiCaptureOverlay
                     }
                 }
                 .onAppear {
+                    guard !didStart else { return }
+                    didStart = true
                     coordinator.start()
                     Task { capturedLocation = await locationProvider.currentLocation() }
                     Task { capturedHeadingDeg = await headingProvider.currentHeadingDeg() }
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     if newPhase == .background, coordinator.state == .scanning {
-                        DiagnosticsLog.shared.record("App backgrounded mid-scan (multi-room) — ARKit/RoomPlan behavior here is unverified.", category: .state)
+                        DiagnosticsLog.shared.record(
+                            "App backgrounded mid-scan (multi-room) — ARKit/RoomPlan behavior here is unverified.",
+                            category: .state
+                        )
                     }
                 }
             }
@@ -243,9 +132,150 @@ struct MultiRoomCaptureFlowView: View {
         } message: {
             Text("\(coordinator.capturedRooms.count) room(s) captured so far will be lost.")
         }
+        .alert("Finish this unit?", isPresented: $showFinishConfirmation) {
+            Button("Finish") {
+                pendingFinishUnit = true
+                didRequestStopRoom = true
+                coordinator.stopCurrentRoom()
+            }
+            Button("Keep scanning", role: .cancel) {}
+        } message: {
+            Text("\(coordinator.capturedRooms.count) room(s) captured so far will be merged and uploaded.")
+        }
         .sheet(isPresented: $showCapturedRoomsList) {
             CapturedRoomsListView(coordinator: coordinator)
         }
+    }
+
+    // MARK: - Overlay
+
+    private var roomHintText: String {
+        let number = coordinator.capturedRooms.count + 1
+        if let guess = coordinator.liveRoomTypeGuess {
+            return "Room \(number) · \(RoomTypeClassifier.displayName(for: guess.type))"
+        }
+        return "Scanning room \(number)"
+    }
+
+    private var multiCaptureOverlay: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                VuuroCaptureCircleButton(
+                    systemName: "xmark",
+                    accessibilityLabel: "Discard scan"
+                ) {
+                    showDiscardConfirmation = true
+                }
+                Spacer(minLength: 0)
+                VuuroCaptureTogglePill(isOn: roomTypeGuessOn) {
+                    roomTypeGuessOn.toggle()
+                    RoomTypeGuessSettings.isEnabled = roomTypeGuessOn
+                    VuuroToast.shared.show(roomTypeGuessOn ? "Room-type guessing on" : "Room-type guessing off")
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+
+            Spacer().frame(height: 24)
+
+            VuuroScanRing(walls: coordinator.liveStats.walls)
+
+            Spacer().frame(height: 14)
+
+            VuuroScanHint(text: roomHintText)
+
+            if let guess = coordinator.liveRoomTypeGuess, !coordinator.hasAnsweredRoomType {
+                Spacer().frame(height: 20)
+                multiGuessPill(for: guess)
+            }
+
+            Spacer(minLength: 20)
+
+            if coordinator.capturedRooms.count >= MultiRoomCaptureCoordinator.roomCountWarningThreshold {
+                Text("\(coordinator.capturedRooms.count) rooms captured — you may be approaching a device limit soon.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 4)
+            }
+
+            if coordinator.isApproachingSizeLimit {
+                Text("This room looks larger than RoomPlan's practical scanning range (~9m) — accuracy may degrade beyond this size.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 4)
+            }
+
+            VuuroLiveStatsRow(stats: coordinator.liveStats)
+                .padding(.horizontal, 20)
+
+            Spacer().frame(height: 12)
+
+            HStack(spacing: 10) {
+                VuuroFinishRoomButton(label: "Save & next") {
+                    didRequestStopRoom = true
+                    coordinator.stopCurrentRoom()
+                }
+
+                if !coordinator.capturedRooms.isEmpty {
+                    VuuroRoomsButton(count: coordinator.capturedRooms.count) {
+                        showCapturedRoomsList = true
+                    }
+
+                    VuuroFinishSecondaryButton(label: "Finish") {
+                        showFinishConfirmation = true
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 24)
+        }
+    }
+
+    @ViewBuilder
+    private func multiGuessPill(for guess: RoomTypeClassifier.Guess) -> some View {
+        VuuroCaptureGuessPill(
+            typeName: RoomTypeClassifier.displayName(for: guess.type),
+            onConfirm: { coordinator.confirmRoomTypeGuess() },
+            onReject: { showCorrectionDialog = true }
+        )
+        .confirmationDialog(
+            "What kind of room is this?",
+            isPresented: $showCorrectionDialog,
+            titleVisibility: .visible
+        ) {
+            ForEach(RoomTypeClassifier.allTypes.filter { $0 != guess.type }, id: \.self) { type in
+                Button(RoomTypeClassifier.displayName(for: type)) {
+                    coordinator.rejectRoomTypeGuess(correctedTo: type)
+                }
+            }
+            Button("Other") {
+                coordinator.rejectRoomTypeGuess(correctedTo: "other")
+            }
+            Button("Not sure", role: .cancel) {
+                coordinator.rejectRoomTypeGuess(correctedTo: nil)
+            }
+        }
+    }
+
+    private var mergeSteps: [VuuroMergeStep] {
+        var steps: [VuuroMergeStep] = []
+        for index in coordinator.capturedRooms.indices {
+            steps.append(VuuroMergeStep(label: "\(roomLabel(at: index)) aligned", isDone: true))
+        }
+        steps.append(VuuroMergeStep(label: "Fusing structure…", isDone: false))
+        return steps
+    }
+
+    private func roomLabel(at index: Int) -> String {
+        if coordinator.roomTypeConfirmations.indices.contains(index),
+           let value = coordinator.roomTypeConfirmations[index]?.value {
+            return RoomTypeClassifier.displayName(for: value)
+        }
+        return "Room \(index + 1)"
     }
 
     @ViewBuilder
@@ -287,10 +317,14 @@ struct MultiRoomCaptureFlowView: View {
             uploadTask = Task { await submitFused(structure) }
         case .mergeFailed(let message):
             isFinishingUnit = false
-            finishWithPreUploadOrError(AppError(site: .captureFailed, underlying: PlainError(message: message)))
+            finishWithPreUploadOrError(
+                AppError(site: .captureFailed, underlying: PlainError(message: message))
+            )
         case .mergeTimedOut, .mergeCancelled:
             isFinishingUnit = false
-            finishWithPreUploadOrError(AppError(site: .captureFailed, underlying: PlainError(message: "Merging rooms didn't complete.")))
+            finishWithPreUploadOrError(
+                AppError(site: .captureFailed, underlying: PlainError(message: "Merging rooms didn't complete."))
+            )
         }
     }
 
@@ -318,6 +352,7 @@ struct MultiRoomCaptureFlowView: View {
 
     @MainActor
     private func beginFinishUnit() async {
+        isFinishingUnit = true
         let exports = coordinator.capturedRooms.indices.map { index in
             CapturedRoomExporter.export(
                 coordinator.capturedRooms[index],
@@ -326,58 +361,127 @@ struct MultiRoomCaptureFlowView: View {
                 headingDeg: capturedHeadingDeg
             )
         }
-        guard let result = await submitExports(exports) else { return }
+        let labels = roomLabels(for: exports)
+        uploadProgress.begin(roomLabels: labels)
+        for index in labels.indices {
+            uploadProgress.markUploading(index: index)
+        }
+        guard let result = await submitExportsSilent(exports) else {
+            isFinishingUnit = false
+            return
+        }
         preUploadedSession = result
         coordinator.finishUnit()
     }
 
     @MainActor
     private func submitFused(_ structure: CapturedStructure) async {
-        isFinishingUnit = false
-        guard let preUploadedSession else { return }
+        guard let preUploadedSession else {
+            isFinishingUnit = false
+            DiagnosticsLog.shared.record(
+                "submitFused called without a pre-uploaded session — surfacing error",
+                category: .error
+            )
+            onError(
+                AppError(
+                    site: .captureFailed,
+                    underlying: PlainError(message: "The pre-upload session was lost. Please retry from History.")
+                ),
+                existingSession
+            )
+            return
+        }
+
         let exports = CapturedStructureExporter.export(
             structure,
             roomTypeConfirmationsByIdentifier: coordinator.roomTypeConfirmationsForStructure(structure),
             roomWalkPathsByIdentifier: coordinator.walkPathsForStructure(structure),
             headingDeg: capturedHeadingDeg
         )
+
         guard exports.allSatisfy({ $0.hasUsableFloorOutline }) else {
-            DiagnosticsLog.shared.record("Fused structure had a degenerate floor outline in \(exports.filter { !$0.hasUsableFloorOutline }.count) of \(exports.count) room(s) — falling back to unfused per-room tiles.", category: .error)
+            DiagnosticsLog.shared.record(
+                "Fused structure had a degenerate floor outline in \(exports.filter { !$0.hasUsableFloorOutline }.count) of \(exports.count) room(s) — falling back to unfused per-room tiles.",
+                category: .error
+            )
+            isFinishingUnit = false
             self.preUploadedSession = nil
             onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
             return
         }
+
+        let labels = roomLabels(for: exports)
+        uploadProgress.begin(roomLabels: labels)
         isUploading = true
+        isFinishingUnit = false
         defer { isUploading = false }
+
+        for index in labels.indices {
+            uploadProgress.markUploading(index: index)
+        }
+
         do {
-            let floorPlan = try await client.replaceRooms(sessionId: preUploadedSession.session.id, accessToken: preUploadedSession.session.accessToken, exports: exports, location: capturedLocation)
+            let floorPlan = try await client.replaceRooms(
+                sessionId: preUploadedSession.session.id,
+                accessToken: preUploadedSession.session.accessToken,
+                exports: exports,
+                location: capturedLocation
+            )
+            for index in labels.indices {
+                uploadProgress.markDone(index: index, areaM2: exports[index].floorAreaM2)
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
             self.preUploadedSession = nil
             onFinished(preUploadedSession.session, floorPlan)
+        } catch is CancellationError {
+            self.preUploadedSession = nil
+            DiagnosticsLog.shared.record(
+                "Fused upload cancelled — falling back to unfused per-room tiles.",
+                category: .info
+            )
+            onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
         } catch {
-            DiagnosticsLog.shared.record("replaceRooms failed while submitting the fused structure — falling back to unfused per-room tiles: \(error.localizedDescription)", category: .error)
+            DiagnosticsLog.shared.record(
+                "replaceRooms failed while submitting the fused structure — falling back to unfused per-room tiles: \(error.localizedDescription)",
+                category: .error
+            )
+            for index in labels.indices {
+                uploadProgress.markFailed(index: index)
+            }
             self.preUploadedSession = nil
             onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
         }
     }
 
     @MainActor
-    private func submitExports(_ exports: [RoomPlanCaptureExport]) async -> (session: ScanSessionResponse, floorPlan: FloorPlan)? {
-        isUploading = true
-        defer { isUploading = false }
-
+    private func submitExportsSilent(
+        _ exports: [RoomPlanCaptureExport]
+    ) async -> (session: ScanSessionResponse, floorPlan: FloorPlan)? {
         guard !exports.isEmpty else {
             onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
             return nil
         }
         guard exports.allSatisfy({ $0.hasUsableFloorOutline }) else {
-            onError(AppError(site: .captureFailed, underlying: PlainError(message: "One or more merged rooms had a degenerate floor outline.")), existingSession)
+            onError(
+                AppError(
+                    site: .captureFailed,
+                    underlying: PlainError(message: "One or more merged rooms had a degenerate floor outline.")
+                ),
+                existingSession
+            )
             return nil
         }
 
         var captures: [PendingUploadState.PendingCapture] = []
         for export in exports {
             guard let bodyJSON = try? client.encodeCaptureBody(capture: export, location: capturedLocation) else {
-                onError(AppError(site: .captureFailed, underlying: PlainError(message: "Could not prepare a captured room for upload.")), existingSession)
+                onError(
+                    AppError(
+                        site: .captureFailed,
+                        underlying: PlainError(message: "Could not prepare a captured room for upload.")
+                    ),
+                    existingSession
+                )
                 return nil
             }
             captures.append(.init(idempotencyKey: UUID().uuidString, bodyJSON: bodyJSON))
@@ -418,7 +522,12 @@ struct MultiRoomCaptureFlowView: View {
         var floorPlan: FloorPlan?
         for capture in pending.captures {
             do {
-                floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: capture.idempotencyKey, bodyJSON: capture.bodyJSON)
+                floorPlan = try await client.uploadCapture(
+                    sessionId: session.id,
+                    accessToken: session.accessToken,
+                    idempotencyKey: capture.idempotencyKey,
+                    bodyJSON: capture.bodyJSON
+                )
             } catch is CancellationError {
                 onError(AppError(site: .uploadCancelled, underlying: nil), session)
                 return nil
@@ -432,7 +541,34 @@ struct MultiRoomCaptureFlowView: View {
             return nil
         }
         PendingUploadStore.clear()
+        ScanHistoryStore.shared.updateRoomSummary(
+            sessionId: session.id,
+            summary: RoomSummary.text(for: floorPlan.rooms)
+        )
         return (session, floorPlan)
+    }
+
+    @MainActor
+    private func submitExports(
+        _ exports: [RoomPlanCaptureExport]
+    ) async -> (session: ScanSessionResponse, floorPlan: FloorPlan)? {
+        isUploading = true
+        defer { isUploading = false }
+        return await submitExportsSilent(exports)
+    }
+
+    // MARK: - Helpers
+
+    private func roomLabels(for exports: [RoomPlanCaptureExport]) -> [String] {
+        exports.enumerated().map { index, export in
+            if let confirmed = export.roomType?.confirmed, !confirmed.isEmpty {
+                return RoomTypeClassifier.displayName(for: confirmed)
+            }
+            if let guess = export.roomType?.guess, !guess.isEmpty {
+                return RoomTypeClassifier.displayName(for: guess)
+            }
+            return "Room \(index + 1)"
+        }
     }
 }
 
@@ -443,7 +579,8 @@ struct PartialRoomChoiceView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("Scan interrupted").font(.headline)
+            Text("Scan interrupted")
+                .font(.headline)
             Text(message)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -451,7 +588,8 @@ struct PartialRoomChoiceView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Keep this room", action: onKeep).buttonStyle(.borderedProminent)
+            Button("Keep this room", action: onKeep)
+                .buttonStyle(.borderedProminent)
             Button("Discard and rescan", role: .destructive, action: onDiscard)
         }
         .padding()

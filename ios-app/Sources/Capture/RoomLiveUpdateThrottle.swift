@@ -1,5 +1,9 @@
-
 import Foundation
+
+struct RoomLiveUpdateDecision: Sendable {
+    let shouldProcess: Bool
+    let roomTypeAnswered: Bool
+}
 
 final class RoomLiveUpdateThrottle: @unchecked Sendable {
     private let lock = NSLock()
@@ -10,7 +14,16 @@ final class RoomLiveUpdateThrottle: @unchecked Sendable {
     init(interval: TimeInterval = 0.15) {
         self.interval = interval
     }
-
+    func decideUpdate() -> RoomLiveUpdateDecision {
+        lock.lock()
+        defer { lock.unlock() }
+        let now = Date()
+        let shouldProcess = now.timeIntervalSince(lastUpdateAt) >= interval
+        if shouldProcess {
+            lastUpdateAt = now
+        }
+        return RoomLiveUpdateDecision(shouldProcess: shouldProcess, roomTypeAnswered: isAnswered)
+    }
     func shouldProcessUpdate() -> Bool {
         lock.lock()
         defer { lock.unlock() }

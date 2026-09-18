@@ -12,10 +12,14 @@ struct PendingUploadRecoveryView: View {
     @State private var showRetryConfirmation = false
 
     private static let largeUnitRoomCount = 8
-
     private let client = ScanServiceClient()
 
-    init(state: PendingUploadState, onFinished: @escaping (ScanSessionResponse, FloorPlan) -> Void, onDiscarded: @escaping () -> Void, onSkipped: @escaping () -> Void) {
+    init(
+        state: PendingUploadState,
+        onFinished: @escaping (ScanSessionResponse, FloorPlan) -> Void,
+        onDiscarded: @escaping () -> Void,
+        onSkipped: @escaping () -> Void
+    ) {
         _currentState = State(initialValue: state)
         self.onFinished = onFinished
         self.onDiscarded = onDiscarded
@@ -23,63 +27,106 @@ struct PendingUploadRecoveryView: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.system(size: 40))
-                .foregroundStyle(.orange)
-            Text("An earlier scan upload didn't finish")
-                .font(.headline)
-            Text("\(currentState.captures.count) room(s) captured earlier are still on this device and ready to upload. Retry now, or discard them and start over.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
+        VStack(spacing: 0) {
+            VuuroNavBar(
+                title: "Pending upload",
+                leading: { VuuroNavSpacer() },
+                trailing: { VuuroNavSpacer() }
+            )
 
-            if let lastError {
-                ErrorCodeView(error: lastError)
-            }
+            VuuroCenterView {
+                VuuroIconBadge(
+                    systemName: "arrow.triangle.2.circlepath",
+                    tint: VuuroColor.accent,
+                    background: VuuroColor.accent.opacity(0.15)
+                )
 
-            if isRetrying {
-                UploadProgressView(message: "Uploading…", onCancel: { retryTask?.cancel() })
-            } else {
-                Button("Retry upload") {
-                    showRetryConfirmation = true
+                Text("An earlier upload didn't finish")
+                    .font(.system(size: 20, weight: .bold))
+                    .tracking(-0.4)
+                    .foregroundStyle(VuuroColor.textPrimary)
+                    .multilineTextAlignment(.center)
+
+                Text(subtitle)
+                    .font(.system(size: 15))
+                    .lineSpacing(4)
+                    .foregroundStyle(VuuroColor.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 320)
+
+                if let lastError {
+                    ErrorCodeView(error: lastError)
+                        .frame(maxWidth: 320)
                 }
-                .buttonStyle(.borderedProminent)
 
-                Button("Skip for now") {
-                    onSkipped()
-                }
-                .buttonStyle(.bordered)
+                if isRetrying {
+                    ProgressView()
+                        .tint(VuuroColor.accent)
+                        .padding(.top, 16)
+                } else {
+                    VStack(spacing: 10) {
+                        Button("Retry upload") {
+                            showRetryConfirmation = true
+                        }
+                        .buttonStyle(.vuuroPrimary)
 
-                Button("Discard", role: .destructive) {
-                    DiagnosticsLog.shared.record("Pending upload discarded by user: \(currentState.captures.count) capture(s), session \(currentState.session?.id ?? "not yet created")", category: .info)
-                    PendingUploadStore.clear()
-                    onDiscarded()
+                        Button("Skip for now", action: onSkipped)
+                            .buttonStyle(.vuuroGhostSmall)
+
+                        Button("Discard pending") {
+                            DiagnosticsLog.shared.record(
+                                "Pending upload discarded by user: \(currentState.captures.count) capture(s), session \(currentState.session?.id ?? "not yet created")",
+                                category: .info
+                            )
+                            PendingUploadStore.clear()
+                            onDiscarded()
+                        }
+                        .buttonStyle(.vuuroDestructiveSmall)
+                    }
+                    .padding(.top, 24)
+                    .frame(maxWidth: 320)
                 }
             }
         }
-        .padding()
+        .background(VuuroColor.bgApp)
         .alert("Retry upload?", isPresented: $showRetryConfirmation) {
             Button("Retry") {
+                retryTask?.cancel()
                 retryTask = Task { await retry() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(currentState.captures.count >= Self.largeUnitRoomCount
-                ? "This will re-upload all \(currentState.captures.count) rooms, which may take a while for a unit this size. Make sure you meant to tap this."
-                : "This will re-upload \(currentState.captures.count) room(s) captured earlier.")
+            Text(retryConfirmationMessage)
         }
         .onAppear {
-            DiagnosticsLog.shared.record("Pending upload recovery shown: \(currentState.captures.count) capture(s), session \(currentState.session?.id ?? "not yet created")", category: .info)
+            DiagnosticsLog.shared.record(
+                "Pending upload recovery shown: \(currentState.captures.count) capture(s), session \(currentState.session?.id ?? "not yet created")",
+                category: .info
+            )
         }
         .onDisappear {
             retryTask?.cancel()
         }
     }
 
+    private var subtitle: String {
+        let count = currentState.captures.count
+        let roomText = "\(count) room\(count == 1 ? "" : "s")"
+        let verb = count == 1 ? "is" : "are"
+        return "\(roomText) \(verb) saved on this device and ready to upload. Retry, or start fresh."
+    }
+
+    private var retryConfirmationMessage: String {
+        let count = currentState.captures.count
+        if count >= Self.largeUnitRoomCount {
+            return "This will re-upload all \(count) rooms, which may take a while for a unit this size. Make sure you meant to tap this."
+        }
+        return "This will re-upload \(count) room\(count == 1 ? "" : "s") captured earlier."
+    }
+
     @MainActor
     private func retry() async {
+        guard !isRetrying else { return }
         isRetrying = true
         defer { isRetrying = false }
         lastError = nil
@@ -118,9 +165,15 @@ struct PendingUploadRecoveryView: View {
         }
 
         while let capture = currentState.captures.first {
+            if Task.isCancelled { return }
             let floorPlan: FloorPlan
             do {
-                floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: capture.idempotencyKey, bodyJSON: capture.bodyJSON)
+                floorPlan = try await client.uploadCapture(
+                    sessionId: session.id,
+                    accessToken: session.accessToken,
+                    idempotencyKey: capture.idempotencyKey,
+                    bodyJSON: capture.bodyJSON
+                )
             } catch is CancellationError {
                 return
             } catch {
@@ -131,7 +184,10 @@ struct PendingUploadRecoveryView: View {
             PendingUploadStore.save(currentState)
             if currentState.captures.isEmpty {
                 PendingUploadStore.clear()
-                DiagnosticsLog.shared.record("Pending upload recovered successfully into session \(session.id)", category: .info)
+                DiagnosticsLog.shared.record(
+                    "Pending upload recovered successfully into session \(session.id)",
+                    category: .info
+                )
                 onFinished(session, floorPlan)
                 return
             }
