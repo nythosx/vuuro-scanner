@@ -88,7 +88,6 @@ struct OnboardingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
         .ignoresSafeArea()
-        .animation(.easeInOut(duration: 0.55), value: index)
     }
 
     private var topBar: some View {
@@ -118,7 +117,7 @@ struct OnboardingView: View {
                 .lineSpacing(2)
                 .foregroundStyle(.white)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 320, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.bottom, 14)
 
             Text(slides[index].body)
@@ -127,7 +126,7 @@ struct OnboardingView: View {
                 .lineSpacing(5)
                 .foregroundStyle(.white.opacity(0.78))
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 340, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.bottom, 26)
 
             HStack(spacing: 6) {
@@ -135,7 +134,6 @@ struct OnboardingView: View {
                     Capsule()
                         .fill(i == index ? Color.white : Color.white.opacity(0.35))
                         .frame(width: i == index ? 22 : 6, height: 6)
-                        .animation(.easeInOut(duration: 0.32), value: index)
                 }
             }
             .padding(.bottom, 22)

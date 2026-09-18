@@ -281,6 +281,13 @@ struct StartScanSheet: View {
             showReagreeSheet = true
             return
         }
+        #if DEBUG
+        if FakeLidarMode.isEnabled {
+            healthCheckError = nil
+            onStart(currentIdentity)
+            return
+        }
+        #endif
         isCheckingHealth = true
         defer { isCheckingHealth = false }
         do {

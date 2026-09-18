@@ -366,8 +366,31 @@ private struct RoomCaptureFlowStep: View {
                 )
             } else if !DeviceCapability.isRoomPlanSupported {
                 #if DEBUG
-                ProgressView("Generating fake capture (Debug)…")
-                    .onAppear { Task { await submit(FakeCaptureGenerator.random()) } }
+                if isUploading {
+                    UploadProgressView(message: "Uploading fake capture…", onCancel: { uploadTask?.cancel() })
+                        .padding()
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                } else {
+                    VuuroCenterView {
+                        VuuroIconBadge(systemName: "wand.and.stars", tint: VuuroColor.accent, background: VuuroColor.accentSoft)
+                        Text("Debug: fake capture")
+                            .font(.system(size: 20, weight: .bold))
+                            .tracking(-0.4)
+                            .foregroundStyle(VuuroColor.textPrimary)
+                        Text("This device/simulator has no LiDAR. Tap Scan to generate synthetic RoomPlan-shaped data and upload it to the configured Scan Service.")
+                            .font(.system(size: 14))
+                            .lineSpacing(4)
+                            .foregroundStyle(VuuroColor.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 300)
+                        Button("Scan (fake data)") {
+                            uploadTask = Task { await submit(FakeCaptureGenerator.random()) }
+                        }
+                        .buttonStyle(.vuuroPrimary)
+                        .padding(.top, 12)
+                        .frame(maxWidth: 340)
+                    }
+                }
                 #else
                 EmptyView()
                 #endif

@@ -44,10 +44,21 @@ struct MultiRoomCaptureFlowView: View {
         Group {
             if !DeviceCapability.isRoomPlanSupported && !debugFakeCaptureActive {
                 UnsupportedDeviceScreen(onGoBack: onGoBack)
-            } else if !DeviceCapability.isRoomPlanSupported {
+            } else if !DeviceCapability.isRoomPlanSupported && !isUploading {
                 #if DEBUG
-                ProgressView("Generating fake multi-room capture (Debug)…")
-                    .onAppear {
+                VuuroCenterView {
+                    VuuroIconBadge(systemName: "wand.and.stars", tint: VuuroColor.accent, background: VuuroColor.accentSoft)
+                    Text("Debug: fake multi-room capture")
+                        .font(.system(size: 20, weight: .bold))
+                        .tracking(-0.4)
+                        .foregroundStyle(VuuroColor.textPrimary)
+                    Text("This device/simulator has no LiDAR. Tap Scan to generate 2-4 synthetic rooms and upload them to the configured Scan Service.")
+                        .font(.system(size: 14))
+                        .lineSpacing(4)
+                        .foregroundStyle(VuuroColor.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 300)
+                    Button("Scan (fake data)") {
                         uploadTask = Task {
                             let exports = (0..<Int.random(in: 2...4)).map { _ in FakeCaptureGenerator.random() }
                             if let result = await submitExports(exports) {
@@ -55,6 +66,10 @@ struct MultiRoomCaptureFlowView: View {
                             }
                         }
                     }
+                    .buttonStyle(.vuuroPrimary)
+                    .padding(.top, 12)
+                    .frame(maxWidth: 340)
+                }
                 #else
                 EmptyView()
                 #endif
