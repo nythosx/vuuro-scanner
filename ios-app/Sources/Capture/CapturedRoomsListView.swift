@@ -1,169 +1,170 @@
+import RoomPlan
 import SwiftUI
 
-private struct VuuroOnboardingSlide: Identifiable {
-    let id = UUID()
-    let title: String
-    let body: String
-    let imageURL: URL?
-    let fallbackColors: [Color]
-}
-
-struct OnboardingView: View {
-    let onSkip: () -> Void
-    let onGetStarted: () -> Void
-
-    @State private var index = 0
-
-    private let slides: [VuuroOnboardingSlide] = [
-        VuuroOnboardingSlide(
-            title: "Capture any room in minutes",
-            body: "Point your iPhone, walk the room, and get a precise, shareable floor plan. No extra hardware required.",
-            imageURL: URL(string: "https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?w=1200&q=80&auto=format&fit=crop"),
-            fallbackColors: [
-                Color(red: 0.12, green: 0.11, blue: 0.10),
-                Color(red: 0.06, green: 0.06, blue: 0.07),
-            ]
-        ),
-        VuuroOnboardingSlide(
-            title: "Multi-room, one plan",
-            body: "Walk through an entire unit. Vuuro Scan aligns every room into one fused floor plan automatically.",
-            imageURL: URL(string: "https://images.unsplash.com/photo-1503387762-592deb58ef4e?w=1200&q=80&auto=format&fit=crop"),
-            fallbackColors: [
-                Color(red: 0.06, green: 0.09, blue: 0.12),
-                Color(red: 0.04, green: 0.05, blue: 0.07),
-            ]
-        ),
-        VuuroOnboardingSlide(
-            title: "Ready for your workflow",
-            body: "Notes, photos, and exports designed for property professionals. Full audit trails and shareable access.",
-            imageURL: URL(string: "https://images.unsplash.com/photo-1556761175-b413da4baf72?w=1200&q=80&auto=format&fit=crop"),
-            fallbackColors: [
-                Color(red: 0.09, green: 0.10, blue: 0.08),
-                Color(red: 0.05, green: 0.05, blue: 0.06),
-            ]
-        ),
-    ]
+struct CapturedRoomsListView: View {
+    @ObservedObject var coordinator: MultiRoomCaptureCoordinator
+    @Environment(\.dismiss) private var dismiss
+    @State private var pendingDeleteId: UUID?
+    @State private var retryTargetId: UUID?
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            backgroundLayer
-            VStack(spacing: 0) {
-                topBar
-                Spacer(minLength: 0)
-                bottomContent
-            }
-        }
-        .preferredColorScheme(.dark)
-    }
-
-    private var backgroundLayer: some View {
-        ZStack {
-            LinearGradient(
-                colors: slides[index].fallbackColors,
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            if let url = slides[index].imageURL {
-                AsyncImage(url: url) { phase in
-                    if case .success(let image) = phase {
-                        image.resizable().scaledToFill()
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(Array(coordinator.capturedRooms.enumerated()), id: \.element.identifier) { index, room in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Text(label(for: index))
+                                    VuuroBadge("Captured", systemImage: "checkmark", style: .good)
+                                }
+                                Text("\(room.walls.count) wall(s), \(room.floors.count) floor(s)")
+                                    .font(VuuroFont.body(12))
+                                    .foregroundStyle(VuuroColor.textSecondary)
+                            }
+                            Spacer()
+                            Button { retryTargetId = room.identifier } label: {
+                                Image(systemName: "arrow.counterclockwise")
+                            }
+                            .buttonStyle(VuuroIconButtonStyle(tint: VuuroColor.textPrimary, background: VuuroColor.surfaceMuted))
+                            Button { pendingDeleteId = room.identifier } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(VuuroIconButtonStyle(tint: VuuroColor.danger, background: VuuroColor.danger.opacity(0.14)))
+                        }
                     }
                 }
-                .id(url)
-                .transition(.opacity)
-            }
-            LinearGradient(
-                stops: [
-                    .init(color: .black.opacity(0.45), location: 0.00),
-                    .init(color: .black.opacity(0.08), location: 0.22),
-                    .init(color: .black.opacity(0.05), location: 0.45),
-                    .init(color: .black.opacity(0.55), location: 0.72),
-                    .init(color: .black.opacity(0.92), location: 1.00),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipped()
-        .ignoresSafeArea()
-        .animation(.easeInOut(duration: 0.55), value: index)
-    }
-
-    private var topBar: some View {
-        HStack {
-            Text("Vuuro Scan")
-                .font(.system(size: 16, weight: .bold))
-                .tracking(-0.3)
-                .foregroundStyle(.white)
-            Spacer()
-            Button("Skip", action: onSkip)
-                .font(.system(size: 14, weight: .semibold))
-                .tracking(-0.2)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Color.white.opacity(0.18), in: Capsule())
-        }
-        .padding(.horizontal, 20)
-        .frame(height: 52)
-    }
-
-    private var bottomContent: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(slides[index].title)
-                .font(.system(size: 34, weight: .bold))
-                .tracking(-1)
-                .lineSpacing(2)
-                .foregroundStyle(.white)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 320, alignment: .leading)
-                .padding(.bottom, 14)
-
-            Text(slides[index].body)
-                .font(.system(size: 15))
-                .tracking(-0.2)
-                .lineSpacing(5)
-                .foregroundStyle(.white.opacity(0.78))
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 340, alignment: .leading)
-                .padding(.bottom, 26)
-
-            HStack(spacing: 6) {
-                ForEach(0..<slides.count, id: \.self) { i in
-                    Capsule()
-                        .fill(i == index ? Color.white : Color.white.opacity(0.35))
-                        .frame(width: i == index ? 22 : 6, height: 6)
-                        .animation(.easeInOut(duration: 0.32), value: index)
+                Section {
+                    Button {
+                        DiagnosticsLog.shared.record("Add room tapped from captured-rooms list (multi-room)", category: .info)
+                        dismiss()
+                    } label: {
+                        Label("Scan Another Room", systemImage: "plus.circle")
+                    }
+                    .buttonStyle(.vuuroSecondary)
                 }
             }
-            .padding(.bottom, 22)
-
-            Button(action: advance) {
-                Text(index == slides.count - 1 ? "Get started" : "Continue")
-                    .font(.system(size: 16, weight: .bold))
-                    .tracking(-0.2)
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 17)
-                    .background(VuuroColor.accent, in: Capsule())
-                    .shadow(color: VuuroColor.accent.opacity(0.28), radius: 20, x: 0, y: 6)
+            .navigationTitle("Captured Rooms")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
             }
-            .buttonStyle(.plain)
+            .alert(
+                "Delete this room?",
+                isPresented: Binding(
+                    get: { pendingDeleteId != nil },
+                    set: { if !$0 { pendingDeleteId = nil } }
+                )
+            ) {
+                Button("Delete", role: .destructive) {
+                    if let id = pendingDeleteId, let index = coordinator.capturedRooms.firstIndex(where: { $0.identifier == id }) {
+                        coordinator.removeCapturedRoom(at: index)
+                        VuuroToast.shared.show("Room deleted")
+                    }
+                    pendingDeleteId = nil
+                }
+                Button("Cancel", role: .cancel) { pendingDeleteId = nil }
+            } message: {
+                Text("This room will be removed from the unit and won't be included in the final upload.")
+            }
+            .sheet(item: retryTargetBinding) { target in
+                RetryReasonSheet(
+                    roomLabel: label(forId: target.id),
+                    onCancel: { retryTargetId = nil },
+                    onConfirm: { reason in
+                        if let reason, !reason.isEmpty {
+                            DiagnosticsLog.shared.record(
+                                "Retry reason (\(label(forId: target.id))): \(reason)",
+                                category: .info
+                            )
+                        }
+                        if let index = coordinator.capturedRooms.firstIndex(where: { $0.identifier == target.id }) {
+                            coordinator.removeCapturedRoom(at: index)
+                        }
+                        retryTargetId = nil
+                        VuuroToast.shared.show("Room removed — rescan it now")
+                        DispatchQueue.main.async {
+                            dismiss()
+                        }
+                    }
+                )
+            }
         }
-        .padding(.horizontal, 24)
-        .padding(.bottom, 36)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func advance() {
-        if index < slides.count - 1 {
-            withAnimation(.easeInOut(duration: 0.35)) {
-                index += 1
+    private struct RetryTarget: Identifiable {
+        let id: UUID
+    }
+
+    private var retryTargetBinding: Binding<RetryTarget?> {
+        Binding(
+            get: { retryTargetId.map(RetryTarget.init) },
+            set: { retryTargetId = $0?.id }
+        )
+    }
+
+    private func label(for index: Int) -> String {
+        if coordinator.roomTypeConfirmations.indices.contains(index),
+           let value = coordinator.roomTypeConfirmations[index]?.value {
+            return value.capitalized
+        }
+        return "Room \(index + 1)"
+    }
+
+    private func label(forId id: UUID) -> String {
+        guard let index = coordinator.capturedRooms.firstIndex(where: { $0.identifier == id }) else {
+            return "this room"
+        }
+        return label(for: index)
+    }
+}
+
+private struct RetryReasonSheet: View {
+    let roomLabel: String
+    let onCancel: () -> Void
+    let onConfirm: (String?) -> Void
+
+    @State private var reason = ""
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Why are you retrying \(roomLabel)? Optional — leave blank and just tap Retry.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                ZStack(alignment: .topLeading) {
+                    if reason.isEmpty {
+                        Text("e.g. missed a corner, wrong room type, walls look off…")
+                            .foregroundStyle(.tertiary)
+                            .padding(.top, 8)
+                            .padding(.leading, 5)
+                    }
+                    TextEditor(text: $reason)
+                        .frame(minHeight: 120)
+                }
+                .padding(8)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                Spacer()
             }
-        } else {
-            onGetStarted()
+            .padding()
+            .navigationTitle("Retry room")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        onCancel()
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Retry") {
+                        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+                        onConfirm(trimmed.isEmpty ? nil : trimmed)
+                    }
+                }
+            }
         }
     }
 }
