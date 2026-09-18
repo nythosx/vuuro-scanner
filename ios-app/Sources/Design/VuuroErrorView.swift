@@ -6,33 +6,46 @@ struct ErrorView: View {
     let onRetry: () -> Void
 
     var body: some View {
-        VuuroCenterView {
-            VuuroIconBadge(
-                systemName: "exclamationmark.circle",
-                tint: VuuroColor.danger,
-                background: VuuroColor.dangerTint
+        VStack(spacing: 0) {
+            VuuroNavBar(
+                title: "Error",
+                leading: { VuuroNavSpacer() },
+                trailing: {
+                    Button("Done", action: onRetry)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(VuuroColor.accent)
+                }
             )
 
-            Text(title)
-                .font(.system(size: 20, weight: .bold))
-                .tracking(-0.4)
-                .foregroundStyle(VuuroColor.textPrimary)
-                .multilineTextAlignment(.center)
+            VuuroCenterView {
+                VuuroIconBadge(
+                    systemName: "exclamationmark.circle",
+                    tint: VuuroColor.danger,
+                    background: VuuroColor.dangerTint
+                )
 
-            Text(subtitle)
-                .font(.system(size: 15))
-                .lineSpacing(4)
-                .foregroundStyle(VuuroColor.textSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 320)
+                Text(title)
+                    .font(.system(size: 20, weight: .bold))
+                    .tracking(-0.4)
+                    .foregroundStyle(VuuroColor.textPrimary)
+                    .multilineTextAlignment(.center)
 
-            errorCodeCard
+                Text(subtitle)
+                    .font(.system(size: 15))
+                    .lineSpacing(4)
+                    .foregroundStyle(VuuroColor.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 320)
 
-            Button("Try again", action: onRetry)
-                .buttonStyle(.vuuroPrimary)
-                .padding(.top, 8)
-                .frame(maxWidth: 320)
+                errorCodeCard
+
+                Button("Try again", action: onRetry)
+                    .buttonStyle(.vuuroPrimary)
+                    .padding(.top, 8)
+                    .frame(maxWidth: 320)
+            }
         }
+        .background(VuuroColor.bgApp)
     }
 
     private var title: String {

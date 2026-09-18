@@ -32,29 +32,34 @@ struct VuuroScanRing: View {
     var size: CGFloat = 76
     var lineWidth: CGFloat = 5
 
-    private var progress: Double {
-        min(Double(walls) / 6.0, 0.95)
-    }
-
-    private var percentage: Int {
-        Int((progress * 100).rounded())
-    }
+    @State private var rotation: Double = 0
 
     var body: some View {
         ZStack {
             Circle()
                 .stroke(Color.white.opacity(0.12), lineWidth: lineWidth)
             Circle()
-                .trim(from: 0, to: max(progress, 0.02))
+                .trim(from: 0, to: 0.25)
                 .stroke(VuuroColor.lime, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .animation(.easeInOut(duration: 0.35), value: progress)
-            Text("\(percentage)%")
-                .font(.system(size: 20, weight: .bold))
-                .tracking(-0.5)
-                .foregroundStyle(.white)
+                .rotationEffect(.degrees(rotation))
+            VStack(spacing: 1) {
+                Text("\(walls)")
+                    .font(.system(size: 20, weight: .bold))
+                    .tracking(-0.5)
+                    .foregroundStyle(.white)
+                Text("WALLS")
+                    .font(.system(size: 8, weight: .bold))
+                    .tracking(0.6)
+                    .foregroundStyle(Color.white.opacity(0.6))
+            }
         }
         .frame(width: size, height: size)
+        .accessibilityLabel("\(walls) walls detected")
+        .onAppear {
+            withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
+                rotation = 360
+            }
+        }
     }
 }
 
@@ -127,10 +132,21 @@ struct VuuroLiveStatsRow: View {
         return String(format: "%.1f", height)
     }
 
+    private var areaText: String {
+        if stats.areaM2 <= 0.01 {
+            return "—"
+        }
+        return String(format: "%.1f", stats.areaM2)
+    }
+
+    private var areaUnit: String? {
+        stats.areaM2 <= 0.01 ? nil : "m²"
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             VuuroLiveStat(value: "\(stats.walls)", unit: nil, label: "Walls")
-            VuuroLiveStat(value: String(format: "%.1f", stats.areaM2), unit: "m²", label: "Area")
+            VuuroLiveStat(value: areaText, unit: areaUnit, label: "Area (est.)")
             VuuroLiveStat(value: heightText, unit: stats.heightM == nil ? nil : "m", label: "Height")
         }
     }

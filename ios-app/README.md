@@ -107,14 +107,14 @@ outside this repo.
    Find your Mac's LAN IP: `ipconfig getifaddr en0` (try `en1` if that's blank).
 6. In Xcode, **Edit Scheme -> Run -> Arguments -> Environment Variables**, add:
    - `SCAN_SERVICE_BASE_URL` = `http://<your-mac-lan-ip>:8089`
-   - `FAKE_LIDAR_MODE` = `0` — **must be set explicitly.** As of the appetize.io
-     debug-testing pass, `FakeLidarMode`'s fallback (used when the env var is unset)
-     defaults to `true` and `DebugScanServiceURL`'s fallback points at a debug
-     tunnel URL, specifically so appetize.io sessions work with zero per-session
-     config. Leaving `FAKE_LIDAR_MODE` unset for a real-device Xcode run will
-     silently route through `FakeCaptureGenerator`'s synthetic data instead of real
-     RoomPlan — see `Sources/Debug/FakeLidarMode.swift` and
-     `Sources/Debug/DebugScanServiceURL.swift`.
+   - Leave `FAKE_LIDAR_MODE` unset (or set it to `0`) — this is what forces the app
+     down the real RoomPlan path instead of `FakeCaptureGenerator`'s synthetic data.
+     Both `Sources/Debug/FakeLidarMode.swift` and
+     `Sources/Debug/DebugScanServiceURL.swift` default to disabled/unset when their
+     env var isn't set — safe by default for a real-device run. (A temporary
+     appetize.io-only debug pass briefly flipped these fallbacks to `true`/a tunnel
+     URL for zero-config cloud-simulator testing; reverted before real-device
+     testing.)
 
    These env vars only work for a Debug build run directly from Xcode
    (`Sources/Debug/DebugScanServiceURL.swift`, compiled out of Release). Any build

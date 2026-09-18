@@ -45,19 +45,22 @@ struct OnboardingView: View {
     ]
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            backgroundLayer
-            VStack(spacing: 0) {
-                topBar
-                Spacer(minLength: 0)
-                bottomContent
+        GeometryReader { proxy in
+            ZStack {
+                Color.black.ignoresSafeArea()
+                backgroundLayer(width: proxy.size.width, height: proxy.size.height)
+                VStack(spacing: 0) {
+                    topBar
+                    Spacer(minLength: 0)
+                    bottomContent(width: proxy.size.width)
+                }
+                .frame(width: proxy.size.width, alignment: .leading)
             }
         }
         .preferredColorScheme(.dark)
     }
 
-    private var backgroundLayer: some View {
+    private func backgroundLayer(width: CGFloat, height: CGFloat) -> some View {
         ZStack {
             LinearGradient(
                 colors: slides[index].fallbackColors,
@@ -65,13 +68,20 @@ struct OnboardingView: View {
                 endPoint: .bottom
             )
             if let url = slides[index].imageURL {
-                AsyncImage(url: url) { phase in
-                    if case .success(let image) = phase {
-                        image.resizable().scaledToFill()
+                Color.clear
+                    .overlay {
+                        AsyncImage(url: url) { phase in
+                            if case .success(let image) = phase {
+                                image
+                                    .resizable()
+                                    .scaledToFill()
+                            }
+                        }
                     }
-                }
-                .id(url)
-                .transition(.opacity)
+                    .frame(width: width, height: height)
+                    .clipped()
+                    .id(url)
+                    .transition(.opacity)
             }
             LinearGradient(
                 stops: [
@@ -85,7 +95,7 @@ struct OnboardingView: View {
                 endPoint: .bottom
             )
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(width: width, height: height)
         .clipped()
         .ignoresSafeArea()
     }
@@ -121,15 +131,17 @@ struct OnboardingView: View {
         )
     }
 
-    private var bottomContent: some View {
-        VStack(alignment: .leading, spacing: 0) {
+    private func bottomContent(width: CGFloat) -> some View {
+        let contentWidth = max(0, width - 48)
+        return VStack(alignment: .leading, spacing: 0) {
             Text(slides[index].title)
                 .font(.system(size: 34, weight: .bold))
                 .tracking(-1)
                 .lineSpacing(2)
                 .foregroundStyle(.white)
+                .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: contentWidth, alignment: .leading)
                 .padding(.bottom, 14)
 
             Text(slides[index].body)
@@ -137,8 +149,9 @@ struct OnboardingView: View {
                 .tracking(-0.2)
                 .lineSpacing(5)
                 .foregroundStyle(.white.opacity(0.78))
+                .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: contentWidth, alignment: .leading)
                 .padding(.bottom, 26)
 
             HStack(spacing: 6) {
@@ -155,17 +168,18 @@ struct OnboardingView: View {
                     .font(.system(size: 16, weight: .bold))
                     .tracking(-0.2)
                     .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
+                    .frame(width: contentWidth)
                     .padding(.vertical, 17)
                     .background(VuuroColor.accent, in: Capsule())
                     .shadow(color: VuuroColor.accent.opacity(0.28), radius: 20, x: 0, y: 6)
             }
             .buttonStyle(.plain)
         }
+        .frame(width: contentWidth, alignment: .leading)
         .padding(.horizontal, 24)
         .padding(.top, 28)
         .padding(.bottom, 36)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(width: width, alignment: .leading)
         .background(
             LinearGradient(
                 colors: [.black.opacity(0.55), .black.opacity(0.6), .black.opacity(0.88)],

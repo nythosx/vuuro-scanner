@@ -86,8 +86,24 @@ struct ScanResultsReportView: View {
         }
         .fullScreenCover(isPresented: $showPDFPreview) {
             if let pdfURL {
-                QuickLookPreview(url: pdfURL)
-                    .ignoresSafeArea()
+                QuickLookPreview(url: pdfURL) {
+                    showPDFPreview = false
+                }
+                .ignoresSafeArea()
+            } else {
+                ZStack {
+                    Color.black.ignoresSafeArea()
+                    VStack(spacing: 16) {
+                        Text("Couldn't load the PDF.")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Button("Close") {
+                            showPDFPreview = false
+                        }
+                        .buttonStyle(.vuuroPrimary)
+                        .frame(maxWidth: 200)
+                    }
+                }
             }
         }
         .alert("Forget this scan?", isPresented: $showForgetConfirmation) {
@@ -315,6 +331,7 @@ struct ScanResultsReportView: View {
                 RoomResultCard(
                     room: room,
                     showsRibbon: false,
+                    isFused: floorPlan.rooms.count > 1,
                     photos: floorPlan.photos.filter { $0.roomId == room.roomId },
                     notes: floorPlan.notes.filter { $0.roomId == room.roomId },
                     session: entry.asResumableSession()
@@ -407,6 +424,8 @@ struct ScanResultsReportView: View {
                     accessToken: entry.accessToken
                 )
                 appError = nil
+            } catch is CancellationError {
+                DiagnosticsLog.shared.record("Session fetch cancelled for \(entry.sessionId)", category: .info)
             } catch {
                 appError = AppError(site: .historySessionFetch, underlying: error)
             }
@@ -530,6 +549,11 @@ struct ScanResultsReportView: View {
             ScanHistoryStore.shared.remove(sessionId: entry.sessionId)
             onDelete?()
             dismiss()
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record(
+                "Server delete cancelled for session \(entry.sessionId)",
+                category: .info
+            )
         } catch {
             appError = AppError(site: .historyServerDelete, underlying: error)
         }

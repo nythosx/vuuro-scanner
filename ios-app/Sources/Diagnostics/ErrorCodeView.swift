@@ -1,5 +1,3 @@
-
-
 import SwiftUI
 import UIKit
 
@@ -14,7 +12,7 @@ struct ErrorCodeView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(error.userMessage)
                         .font(.callout)
-                    Text(error.isLikelyRetryable ? "Try again — this can happen on a spotty connection." : "Please try again in a moment.")
+                    Text(hint)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -31,5 +29,15 @@ struct ErrorCodeView: View {
                 }
             }
         }
+    }
+
+    private var hint: String {
+        if error.underlying is CancellationError {
+            return "Cancelled."
+        }
+        if error.isLikelyRetryable {
+            return "Try again — this can happen on a spotty connection."
+        }
+        return "Please try again in a moment."
     }
 }

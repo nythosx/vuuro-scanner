@@ -467,6 +467,11 @@ struct ScanHistoryView: View {
             DiagnosticsLog.shared.record("Session \(refreshed.sessionId) deleted from server", category: .info)
             appError = nil
             deleteEntry(refreshed)
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record(
+                "Server delete cancelled for session \(refreshed.sessionId)",
+                category: .info
+            )
         } catch {
             appError = AppError(site: .historyServerDelete, underlying: error)
         }
@@ -505,6 +510,12 @@ struct ScanHistoryView: View {
             ScanHistoryStore.shared.add(updated)
             reloadEntries()
             return updated
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record(
+                "Token rotation cancelled for session \(entry.sessionId)",
+                category: .info
+            )
+            return nil
         } catch {
             DiagnosticsLog.shared.record(
                 "Token rotation failed for session \(entry.sessionId): \(error.localizedDescription)",
@@ -558,6 +569,11 @@ struct ScanHistoryView: View {
             cleanUpTempFiles()
             dismiss()
             onAttachToSession?(entry, floorPlan)
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record(
+                "Attach fetch cancelled for session \(entry.sessionId)",
+                category: .info
+            )
         } catch {
             attachErrors[entry.sessionId] = AppError(site: .historySessionFetch, underlying: error)
         }
@@ -597,6 +613,11 @@ struct ScanHistoryView: View {
             try data.write(to: url, options: .atomic)
             perEntryImageURLs[entry.sessionId] = url
             appError = nil
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record(
+                "Image download cancelled for session \(entry.sessionId)",
+                category: .info
+            )
         } catch {
             appError = AppError(site: .historyImageDownload, underlying: error)
         }
@@ -616,6 +637,11 @@ struct ScanHistoryView: View {
             try data.write(to: url, options: .atomic)
             perEntryPDFURLs[entry.sessionId] = url
             appError = nil
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record(
+                "PDF download cancelled for session \(entry.sessionId)",
+                category: .info
+            )
         } catch {
             appError = AppError(site: .historyPDFDownload, underlying: error)
         }
@@ -641,6 +667,12 @@ struct ScanHistoryView: View {
                     .appendingPathComponent("floorplan-\(entry.sessionId).png")
                 try data.write(to: url, options: .atomic)
                 urls.append(url)
+            } catch is CancellationError {
+                DiagnosticsLog.shared.record(
+                    "Bulk image download cancelled after \(urls.count) image(s)",
+                    category: .info
+                )
+                return
             } catch {
                 skipped += 1
                 DiagnosticsLog.shared.record(
@@ -679,6 +711,12 @@ struct ScanHistoryView: View {
                     .appendingPathComponent("floorplan-\(entry.sessionId).pdf")
                 try data.write(to: url, options: .atomic)
                 urls.append(url)
+            } catch is CancellationError {
+                DiagnosticsLog.shared.record(
+                    "Bulk PDF download cancelled after \(urls.count) PDF(s)",
+                    category: .info
+                )
+                return
             } catch {
                 skipped += 1
                 DiagnosticsLog.shared.record(

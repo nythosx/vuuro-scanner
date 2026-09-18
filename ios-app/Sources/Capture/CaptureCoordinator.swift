@@ -104,9 +104,6 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     private func startWalkPathTracking() {
         stopWalkPathTracking()
         capturedRoomWalkPath = []
-        // [weak self] breaks the retain cycle: the task no longer owns
-        // the coordinator, so the coordinator's deinit can fire and cancel
-        // the task. The task exits on the next iteration when self is nil.
         walkPathTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
@@ -128,22 +125,96 @@ final class CaptureCoordinator: NSObject, ObservableObject {
 
     nonisolated static func computeStats(_ room: CapturedRoom) -> CaptureLiveStats {
         let walls = room.walls.count
-        let area = room.floors.reduce(0.0) { sum, floor in
-            let corners = floor.polygonCorners.map { corner -> (x: Double, z: Double) in
-                let world = floor.transform * simd_float4(corner, 1)
-                return (Double(world.x), Double(world.z))
-            }
-            guard corners.count >= 3 else { return sum }
-            var polygonArea = 0.0
-            for i in corners.indices {
-                let a = corners[i]
-                let b = corners[(i + 1) % corners.count]
-                polygonArea += a.x * b.z - b.x * a.z
-            }
-            return sum + abs(polygonArea) / 2.0
-        }
+        let area = computeLiveAreaFromWalls(room)
         let height = room.walls.map { Double($0.dimensions.y) }.max()
         return CaptureLiveStats(walls: walls, areaM2: area, heightM: height)
+    }
+
+    nonisolated private static func computeLiveAreaFromWalls(_ room: CapturedRoom) -> Double {
+        guard !room.walls.isEmpty else { return 0 }
+
+        var points: [SIMD2<Double>] = []
+        points.reserveCapacity(room.walls.count * 4)
+
+        for wall in room.walls {
+            for corner in wall.polygonCorners {
+                let world = wall.transform * simd_float4(corner, 1)
+                let x = Double(world.x)
+                let z = Double(world.z)
+                guard x.isFinite, z.isFinite else { continue }
+                points.append(SIMD2<Double>(x, z))
+            }
+        }
+
+        guard points.count >= 3 else { return 0 }
+
+        let hull = convexHull(points)
+        guard hull.count >= 3 else { return 0 }
+
+        var area = 0.0
+        for i in hull.indices {
+            let a = hull[i]
+            let b = hull[(i + 1) % hull.count]
+            area += a.x * b.y - b.x * a.y
+        }
+        return abs(area) / 2.0
+    }
+
+    nonisolated private static func convexHull(_ points: [SIMD2<Double>]) -> [SIMD2<Double>] {
+        let unique = Array(Set(points.map { PointKey(x: $0.x, y: $0.y) }))
+            .map { SIMD2<Double>($0.x, $0.y) }
+
+        guard unique.count >= 3 else { return unique }
+
+        let sorted = unique.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+
+        func cross(_ o: SIMD2<Double>, _ a: SIMD2<Double>, _ b: SIMD2<Double>) -> Double {
+            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+        }
+
+        var lower: [SIMD2<Double>] = []
+        lower.reserveCapacity(sorted.count)
+        for p in sorted {
+            while lower.count >= 2 && cross(lower[lower.count - 2], lower[lower.count - 1], p) <= 0 {
+                lower.removeLast()
+            }
+            lower.append(p)
+        }
+
+        var upper: [SIMD2<Double>] = []
+        upper.reserveCapacity(sorted.count)
+        for p in sorted.reversed() {
+            while upper.count >= 2 && cross(upper[upper.count - 2], upper[upper.count - 1], p) <= 0 {
+                upper.removeLast()
+            }
+            upper.append(p)
+        }
+
+        lower.removeLast()
+        upper.removeLast()
+
+        let hull = lower + upper
+
+        return hull
+    }
+
+    private struct PointKey: Hashable {
+        let x: Double
+        let y: Double
+
+        init(x: Double, y: Double) {
+            self.x = x == 0 ? 0 : x
+            self.y = y == 0 ? 0 : y
+        }
+
+        static func == (lhs: PointKey, rhs: PointKey) -> Bool {
+            lhs.x == rhs.x && lhs.y == rhs.y
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(x)
+            hasher.combine(y)
+        }
     }
 }
 

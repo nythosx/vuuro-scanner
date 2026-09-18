@@ -3,6 +3,7 @@ import SwiftUI
 struct RoomResultCard: View {
     let room: FloorPlan.Room
     var showsRibbon: Bool = false
+    var isFused: Bool = false
     let photos: [FloorPlan.Photo]
     let notes: [FloorPlan.Note]
     let session: ScanSessionResponse
@@ -67,7 +68,7 @@ struct RoomResultCard: View {
         } else if let confirmed = room.roomType?.confirmed, !confirmed.isEmpty {
             VuuroBadge(RoomTypeClassifier.displayName(for: confirmed), style: .info)
         } else {
-            VuuroBadge("Fused", style: .info)
+            VuuroBadge("Captured", style: .good)
         }
     }
 

@@ -257,11 +257,9 @@ struct ScanFlowView: View {
         }
         .navigationDestination(isPresented: $showTerms) {
             TermsAndPrivacyView()
-                .toolbar(.hidden, for: .navigationBar)
         }
         .navigationDestination(isPresented: $showDiagnostics) {
             DiagnosticsLogView()
-                .toolbar(.hidden, for: .navigationBar)
         }
     }
 }
@@ -321,7 +319,10 @@ private struct RoomCaptureFlowStep: View {
                     message: partialCaptureFailureMessage,
                     onUsePartial: {
                         self.partialCaptureFailureMessage = nil
-                        let room = coordinator.capturedRoom!
+                        guard let room = coordinator.capturedRoom else {
+                            onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
+                            return
+                        }
                         isUploadingPartialCapture = true
                         uploadTask = Task {
                             await submit(CapturedRoomExporter.export(

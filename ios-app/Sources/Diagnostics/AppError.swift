@@ -38,9 +38,6 @@ struct AppError {
         case historyServerDelete = "HISTORY_SERVER_DELETE"
         case uploadCancelled = "UPLOAD_CANCELLED"
 
-        /// Only used when there's no thrown Error to describe the failure
-        /// (e.g. capture finished but RoomPlan reported no usable room) —
-        /// a real, code-checked state, not a placeholder for "unknown."
         var defaultMessage: String {
             switch self {
             case .captureNoRoom:
@@ -67,6 +64,9 @@ struct AppError {
     }
 
     private var reasonSuffix: String? {
+        if underlying is CancellationError {
+            return "CANCELLED"
+        }
         guard let underlying else { return nil }
         if let scanError = underlying as? ScanServiceError {
             switch scanError {
@@ -88,6 +88,9 @@ struct AppError {
     }
 
     var userMessage: String {
+        if underlying is CancellationError {
+            return "Cancelled."
+        }
         guard let scanError = underlying as? ScanServiceError else {
             return underlying?.localizedDescription ?? site.defaultMessage
         }
@@ -100,6 +103,9 @@ struct AppError {
     }
 
     var isLikelyRetryable: Bool {
+        if underlying is CancellationError {
+            return false
+        }
         guard let scanError = underlying as? ScanServiceError else { return true }
         switch scanError {
         case .unexpectedStatus(let status, _):
@@ -115,7 +121,6 @@ struct AppError {
             return false
         }
     }
-
 
     var copyableDetails: String {
         var lines = [

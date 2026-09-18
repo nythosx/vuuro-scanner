@@ -1,15 +1,13 @@
-
 import SwiftUI
 
 struct AccessLogView: View {
     let sessionId: String
     let accessToken: String
 
+    @Environment(\.dismiss) private var dismiss
     @State private var isLoading = false
     @State private var log: [AccessLogEntry] = []
     @State private var appError: AppError?
-
-    @Environment(\.dismiss) private var dismiss
 
     private let client = ScanServiceClient()
 
@@ -57,14 +55,13 @@ struct AccessLogView: View {
         }
         .background(VuuroColor.surfaceMuted)
         .navigationTitle("Access log")
-        .navigationBarBackButtonHidden(true)
         .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                Button {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") {
                     dismiss()
-                } label: {
-                    Label("Back", systemImage: "chevron.backward")
                 }
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(VuuroColor.accent)
             }
         }
         .task { await load() }
@@ -82,6 +79,8 @@ struct AccessLogView: View {
             let response = try await client.fetchAccessLog(sessionId: sessionId, accessToken: accessToken)
             log = response.accessLog
             appError = nil
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record("Access log fetch cancelled.", category: .info)
         } catch {
             appError = AppError(site: .accessLog, underlying: error)
         }

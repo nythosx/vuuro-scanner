@@ -1,10 +1,10 @@
-
 import SwiftUI
 
 struct SessionGalleryView: View {
     let entry: ScanHistoryEntry
     var onEdit: ((ScanHistoryEntry, FloorPlan) -> Void)?
 
+    @Environment(\.dismiss) private var dismiss
     @State private var floorPlan: FloorPlan?
     @State private var isLoading = true
     @State private var appError: AppError?
@@ -14,8 +14,6 @@ struct SessionGalleryView: View {
     @State private var removingPhotoIds: Set<String> = []
     @State private var removingNoteIds: Set<String> = []
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
-
-    @Environment(\.dismiss) private var dismiss
 
     private var exportUnit: MeasurementUnit {
         MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
@@ -63,6 +61,13 @@ struct SessionGalleryView: View {
         .background(VuuroColor.surfaceMuted)
         .navigationTitle(entry.nickname?.isEmpty == false ? entry.nickname! : "\(entry.propertyId) — \(entry.unitId)")
         .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") {
+                    dismiss()
+                }
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(VuuroColor.accent)
+            }
             if let onEdit, let floorPlan {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Edit") {
@@ -180,6 +185,11 @@ struct SessionGalleryView: View {
         do {
             floorPlan = try await client.fetchSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
             appError = nil
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record(
+                "Session gallery fetch cancelled for \(entry.sessionId)",
+                category: .info
+            )
         } catch {
             appError = AppError(site: .historySessionFetch, underlying: error)
         }
@@ -207,6 +217,7 @@ struct SessionGalleryView: View {
             floorPlan = try await client.deletePhoto(sessionId: entry.sessionId, accessToken: entry.accessToken, photoId: photoId)
             appError = nil
             VuuroToast.shared.show("Photo removed")
+        } catch is CancellationError {
         } catch {
             appError = AppError(site: .photoDelete, underlying: error)
         }
@@ -221,6 +232,7 @@ struct SessionGalleryView: View {
             floorPlan = try await client.deleteNote(sessionId: entry.sessionId, accessToken: entry.accessToken, noteId: noteId)
             appError = nil
             VuuroToast.shared.show("Note removed")
+        } catch is CancellationError {
         } catch {
             appError = AppError(site: .noteDelete, underlying: error)
         }

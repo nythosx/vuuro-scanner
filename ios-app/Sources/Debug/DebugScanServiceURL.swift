@@ -9,6 +9,6 @@ enum DebugScanServiceURL {
         return fallback.flatMap(URL.init(string:))
     }
 
-    private static let fallback: String? = "https://clean-monkeys-melt.loca.lt"
+    private static let fallback: String? = nil
 }
 #endif

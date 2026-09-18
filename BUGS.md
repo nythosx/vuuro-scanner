@@ -1,52 +1,115 @@
-Bug # File Bug
-1 MultiRoomCaptureFlowView.swift .onChange(of: coordinator.state) was attached to the ZStack inside the final else branch. When finishUnit() set state = .merging, the handle(.merging) case flipped isFinishingUnit = true, which switched the view to the else if isFinishingUnit branch and removed the ZStack (and its .onChange modifier) from the hierarchy. Subsequent transitions to .unitFinished, .mergeFailed, .mergeTimedOut, and .mergeCancelled were never observed, so the upload never started and the app hung on "Merging rooms…" forever. Fix moved the observer to the outer Group.
-2 VuuroScanApp.swift In RoomCaptureFlowStep.submit(_:), the catch block set uploadRejection but never reset isUploadingPartialCapture = false. Since the body checks else if isUploadingPartialCapture before else if let uploadRejection, the UI stayed stuck on "Uploading capture…" forever after a partial-upload failure. Additionally, onUsePartial and onRetryUpload spawned Task { ... } without storing the task, so the Cancel button (uploadTask?.cancel()) was a no-op, and partialCaptureFailureMessage was never cleared, causing the failure prompt to loop back into itself. Fixed with a defer { isUploadingPartialCapture = false }, partialCaptureFailureMessage = nil before starting, and storing the task in uploadTask.
-3 MultiRoomCaptureCoordinator.swift + MultiRoomCaptureFlowView.swift roomTypeConfirmationsByIdentifier and roomWalkPathsByIdentifier were keyed by the original CapturedRoom.identifier. After StructureBuilder.capturedStructure(from:), merged rooms get brand-new UUIDs, so every lookup in CapturedStructureExporter.export returned nil and user-confirmed room types plus walk paths were silently dropped from the fused export. Fixed by adding mapMergedRoomsToOriginals (wall-identifier overlap with floor-area fallback), roomTypeConfirmationsForStructure, and walkPathsForStructure, and switching the call site in submitFused(_:) to use those.
-4 PendingUploadRecoveryView.swift The retry loop uploaded every capture sequentially and never persisted progress after each success. If capture #3 of 5 failed, captures #1 and #2 were already on the server but PendingUploadStore still held all five, so the next retry re-uploaded everything from scratch — wasted bandwidth and possible duplicates. Fixed by switching state to @State private var currentState, iterating with while let capture = currentState.captures.first, and calling removeFirst() + PendingUploadStore.save(currentState) after every successful upload.
-5 KeychainTokenStore.swift Both SecItemDelete(query) and SecItemAdd(attributes, nil) return values were discarded. If the delete failed transiently, the add failed with errSecDuplicateItem and the token was silently lost — the user then received 401 on every subsequent session call, with no error surfaced. Fixed by checking both OSStatus values, falling back to SecItemUpdate on errSecDuplicateItem, and logging any non-recoverable failure.
-6 ScanServiceClient.swift url(for:) used URL(string: path, relativeTo: baseURL)?.absoluteURL, which replaces the entire base path when the incoming path starts with /. For a base URL like https://api.example.com/scanner plus /scan-sessions, the result became https://api.example.com/scan-sessions — the /scanner prefix was silently dropped, breaking reverse-proxy deployments. Fixed by always using baseURL.appendingPathComponent(...) after stripping the leading /, while preserving query strings via URLComponents.
-7 FloorPlanImageCache.swift invalidate(sessionId:) filtered inFlightTasks but never called task.cancel() on the removed tasks. An orphaned in-flight task could still complete and write its result back into entries, effectively undoing the invalidation and caching a stale floor plan image. Fixed by calling task.cancel() on every filtered task and adding a Task.isCancelled guard inside the prefetch closure before writing to entries.
-8 CapturedRoomsListView.swift ForEach(Array(coordinator.capturedRooms.enumerated()), id: \.offset) used array indices as SwiftUI identities, and pendingDeleteIndex / retryTargetIndex stored Int? indices. When a middle room was deleted, all subsequent indices shifted — SwiftUI produced broken diffs and the retry/delete action could target the wrong room. Fixed by switching to id: \.element.identifier, storing UUID? in state, and resolving UUID → index at action time via firstIndex(where:).
-9 MultiRoomCaptureCoordinator.swift finishUnit() called captureSession?.stop(pauseARSession: false) and then immediately arSession.pause(). Since pauseARSession: false is meant to keep the AR session alive for the next room, using it on the final step was redundant at best and a potential race at worst. Left as-is after review — the end state is identical and there is no observable race.
-10 PendingUploadRecoveryView.swift retryTask was stored in @State but there was no .onDisappear handler cancelling it. If the user navigated away mid-retry, the task kept mutating @State (isRetrying, lastError, currentState) on a view that had already been dismissed. Fixed by adding .onDisappear { retryTask?.cancel() }.
-11 ScanServiceClient.swift configuration.timeoutIntervalForResource was set to 30 seconds for the entire request lifetime. Per-request timeoutSeconds: 45 only overrides URLRequest.timeoutInterval, not the session-level resource timeout, so multi-room uploads on slow connections were being cut off at 30s. Fixed by raising the session resource timeout to 120 seconds.
-12 CapturedStructureExporter.swift structureOriginM(for:) indexed into each polygonCorners element with $0[0] and $0[2] without first checking the array length. If any polygon had fewer than 3 corners, this crashed with an index-out-of-range — and this ran before the hasUsableFloorOutline guard, which only runs at the export boundary. Fixed by filtering corners with .filter { $0.count >= 3 } before mapping.
-13 VuuroScanApp.swift AttachmentsScreen.finish() iterated current.rooms and executed return on the first catch, silently dropping note-saves for every remaining room. If room 1's note failed, rooms 2 through N were never saved and the user had no indication. Fixed by accumulating a failureCount and lastFailure, continuing the loop, and showing a summary error at the end when anything failed.
-14 ScanHistoryView.swift rotateTokenIfNeeded(_:) created a brand-new ScanHistoryEntry from the rotation response without passing cachedRoomSummary. Because ScanHistoryStore.add(_:) replaces entries with the same sessionId, the previous summary was silently discarded. Fixed by passing cachedRoomSummary: entry.cachedRoomSummary (and the other preserved fields) into the new entry.
-15 ScanShareCode.swift encode(_:) base64-encodes the full ScanHistoryEntry JSON, including the raw accessToken. Base64 is an encoding, not encryption — anyone who intercepts the code can trivially decode it and obtain full access to the scan (view, export, delete). The suggested fix of deriving an AES key from the token itself is circular. Left as-is; real hardening requires a server-side exchange endpoint, which is out of scope for a client-only patch.
-16 AppError.swift userMessage returned underlying?.localizedDescription directly for transport errors, which surfaces raw strings like "Couldn't reach the Scan Service at http://127.0.0.1:8089: …" — leaking internal base URLs and technical details into the UI. Fixed by routing .transport through site.defaultMessage and keeping the underlying description only in copyableDetails for diagnostics.
-17 ScanServiceClient.swift fetchPhotoData(url:accessToken:) did not attach the auth token when the resolved URL pointed at a foreign host. Initially flagged as a security issue, but on review this is the correct behavior — sending our session token to a third-party CDN would be a leak. The "Add a link" feature intentionally fetches arbitrary external URLs. Left as-is.
-18 MultiRoomCaptureCoordinator.swift runMerge(rooms:timeoutSeconds:) computed UInt64(timeoutSeconds \* 1_000_000_000). The multiplication is performed in Double and can overflow the UInt64 cast for large values — safe at 45s but fragile under any future change. Fixed by switching to try await Task.sleep(for: .seconds(timeoutSeconds)), which avoids the manual multiplication entirely.
-19 FloorPlanImageCache.swift The prefetch closure's generic catch captured CancellationError and stored it in lastErrors. Later, when the view called lastError(sessionId:unit:) to display a retry prompt, it showed a "cancelled" error to the user, which is misleading and non-actionable. Fixed by catching CancellationError separately and returning early without storing it.
-20 ScanHistoryView.swift rotateTokenIfNeeded(_:) returned the original entry (with a possibly expired token) when rotation failed, only logging the error. Downstream operations like deleteFromServer and attach then failed with a generic error, and the user never learned the root cause. Fixed by setting appError = AppError(site: .historySessionFetch, underlying: error) inside the catch so the failure surfaces into the visible error banner.
-21 VuuroScanApp.swift ScanFlowView.init() checked PendingUploadStore.load() and, if non-nil, forced the app into .resumingUpload(pending) on launch. The recovery view only offered "Retry" or "Discard" — no way to skip. A user in a hurry had to either retry a failing upload or wipe it. Fixed by adding a "Skip for now" button wired through an onSkipped closure that navigates to .intake without clearing the pending state.
-22 VuuroScanApp.swift init() synchronously called KeychainTokenStore.resetIfReinstalled(), which reads UserDefaults and may call SecItemDelete — both can be slow on first launch and blocked the app's main thread before any UI appeared. Fixed by dispatching resetIfReinstalled() to DispatchQueue.global(qos: .utility).async so it runs after launch.
-23 CaptureCoordinator.swift startWalkPathTracking used while !Task.isCancelled { ...; try? await Task.sleep(...) } with the cancellation check only at the top of the loop. The original report claimed the task ran an extra iteration after cancel. On review this is incorrect — Task.sleep throws immediately when already cancelled and the swallowed error causes the loop to exit cleanly on the next while check, before doing any work. Left as-is.
-24 RoomLiveUpdateThrottle.swift Uses NSLock rather than OSAllocatedUnfairLock (iOS 16+) or Mutex (Swift 6). The throttle is called at roughly 10 Hz from RoomPlan's live updates, so the difference is measurable but tiny. Not a correctness issue — a micro-optimization. Left as-is.
-25 ScanServiceClient.swift logRequest(_:status:) was async and did await DiagnosticsLog.shared.record(...), which forced a main-actor hop on every network call — including every image download in bulk export flows. Dozens of hops in quick succession caused UI jank. Fixed by making DiagnosticsLog.record nonisolated and dispatching the entry append to the main actor asynchronously, so callers no longer pay for the hop.
-26 RoomSizeGuard.swift exceedsPracticalLimit used the axis-aligned bounding box of the floor polygon. A room 8m × 8m rotated 45° has an AABB of ~11.3m × 11.3m, which falsely triggered the 9 m threshold. Fixed by computing a PCA-derived oriented bounding box along the polygon's principal axis, so the extents reflect the room's true width and length rather than its world-axis projection.
-27 DiagnosticsLog.swift record(_:category:) unconditionally called print(...), even in release builds. This drains performance on high-frequency log sites and can leak session IDs to the system console. Fixed by wrapping the print in #if DEBUG.
-28 RoomTypeGuessOverlay.swift The parent uses .id(guess.type), which recreates the overlay view on every change of guess type and restarts the 6-second auto-hide .task. If the classifier flickers rapidly between guesses, the overlay never auto-hides. Left as-is — the throttle (150 ms) and classifier stability make this unreachable in practice, and the "restart on new guess" behavior is arguably desirable. Only reproducible with a device under unusual conditions.
-29 VuuroScanApp.swift detectedMimeType(for:) checked bytes 4..8 for "ftyp" to detect HEIC, but "ftyp" is present in any ISO-BMFF container, including MP4. Fixed by additionally checking bytes 8..12 for a known HEIC brand (heic, heix, hevc, mif1) before classifying the data as HEIC.
-30 ScanHistoryStore.swift readRedacted() returned [] on JSON decode failure and only wrote the corrupted blob to a backup key — it never cleared the original key. Every subsequent read re-read, re-failed, re-backed-up, and returned [], so new scans could not persist until the corrupted key was overwritten. Fixed by calling defaults.removeObject(forKey: key) after writing the backup, so the store starts clean.
-31 ScanHistoryStore.swift add, remove, updateNickname, and updateRoomSummary all performed a read-modify-write cycle on UserDefaults. UserDefaults is not atomic across those operations, and concurrent writes from different threads could clobber each other. Fixed by wrapping every mutation in a shared NSLock so read-modify-write is fully serialized.
-32 MultiRoomCaptureFlowView.swift capturedLocation and capturedHeadingDeg were captured once in .onAppear and reused for every room in the multi-room walkthrough. Later rooms in a long walkthrough could be tagged with an inaccurate location or heading. Fixed by capturing them per-room (at stopCurrentRoom() time, stored alongside each CapturedRoom).
-33 IdentityIntakeScreen.swift startIfHealthy unconditionally called LegalAgreementStore.recordAgreement(), which always stamped LegalDocument.currentVersion. There was no check that the user had agreed to the current version, so a terms update silently overwrote the previous agreement without re-prompting. Fixed by comparing agreedVersion with currentVersion and presenting a ReagreeTermsView sheet that must be accepted before scanning.
-34 IdentityIntakeScreen.swift loadPreviouslyUsedValues called ScanHistoryStore.shared.all() directly on the main thread in .onAppear. That method loads tokens from the Keychain for every entry, which can block the UI on a device with a large history. Fixed by moving the read into Task.detached(priority: .userInitiated) and assigning the result back on the main actor, using static helper functions to avoid capturing the View struct.
-35 ScanHistoryEntry.swift asResumableSession() and asResumableIdentity() hardcoded occupied: false and consentObtained: false. Resuming a scan from History therefore lost the original occupancy and consent status — a legal/compliance risk for occupied units. Fixed by adding occupied and consentObtained properties to ScanHistoryEntry, persisting them, and using them in both resumption methods.
-36 VuuroScanApp.swift After a successful scan, historyButtonTitle was set to "Saved" and reset to "History" two seconds later via DispatchQueue.main.asyncAfter. If the user navigated away and back within that window, the stale timer reset it prematurely — or if a second save happened, the first timer clobbered the second save's "Saved" state. Fixed by introducing a historyButtonResetToken: UUID generation check: the async closure only resets the title if its captured token still matches the current one.
-37 ScanServiceClient.swift fetchPhotoData(url:accessToken:) routed same-host absolute photo URLs through getData(path: url). Because getData → url(for:) calls baseURL.appendingPathComponent(...), passing an absolute URL like http://example.com/photos/123.jpg as a "path" produced a malformed URL with the entire absolute URL percent-encoded inside the path component. Every same-host absolute photo URL failed to load, so thumbnails silently showed the placeholder icon. Fixed by sending same-host requests directly with the resolved URL (still attaching X-Scan-Access-Token) and keeping getData only for genuinely relative paths.
-38 CaptureCoordinator.swift + MultiRoomCaptureCoordinator.swift walkPathTask (single-room) and walkPathTask / mergeTask / heartbeatTask (multi-room) were created with Task { ... self ... }, capturing self strongly, and stored on self. There was no deinit cancelling them. If the owning SwiftUI view was torn down without calling stop() / finishUnit() (e.g., a SwiftUI identity change or navigation pop), the tasks ran indefinitely, retaining the coordinator, its ARSession, and every captured room — a compounding memory leak. Fixed by marking the task properties nonisolated(unsafe) and adding a deinit that cancels all stored tasks.
-39 CaptureCoordinator.swift In captureSession(_:didEndWith:error:), the hasUsableGeometry check (!room.walls.isEmpty || !room.floors.isEmpty) only ran when an error was present. When error == nil, the code unconditionally set .finished(roomAvailable: true) — even if RoomBuilder returned a geometry-less room. Downstream submit(_:) eventually caught this via hasUsableFloorOutline, but the intermediate state was wrong and confusing. Fixed by checking hasUsableGeometry on both paths and reporting .finished(roomAvailable: false) when the room is empty.
-40 MultiRoomCaptureCoordinator.swift keepPendingPartialRoom() unconditionally appended the pending partial room to capturedRooms, without validating the floor outline the way the normal success path in didEndWith does. A degenerate partial capture (e.g., only one wall detected before interruption) could therefore enter the merged structure and cause StructureBuilder to fail — losing the entire multi-room session because the user tapped "Keep this room" on a plausible-looking but unusable partial. Fixed by adding the same CapturedRoomExporter.export(room).hasUsableFloorOutline guard; if the room fails validation it is silently dropped instead of poisoning the merge.
-41 HeadingProvider.swift + LocationProvider.swift Each call to currentHeadingDeg() / currentLocation() spawned a timeout Task that captured self and called self.finish(nil) after 5 s / 8 s. finish() only guarded against double-resuming the same continuation — it could not distinguish between continuations from different calls. If an older call's timeout fired while a newer call was waiting, it resumed the newer call's continuation with nil prematurely, silently returning empty heading or location even though the sensor was fine. Fixed with a monotonically increasing callToken: each timeout checks token == self.callToken before calling finish, and stale timeouts return without touching the current continuation.
-42 LocationProvider.swift When authorization status was .notDetermined, currentLocation() called requestWhenInUseAuthorization() and then immediately manager.requestLocation(). requestWhenInUseAuthorization is asynchronous — it presents a system dialog and returns. requestLocation() therefore ran with authorization still .notDetermined, and Core Location either did nothing or fired didFailWithError. First-ever location capture silently returned nil, and the user was never re-prompted because the dialog was still pending. Fixed by handling locationManagerDidChangeAuthorization(_:), setting a pendingLocationRequest flag, and only calling requestLocation() from the delegate once the authorization status is granted.
-43 LocationProvider.swift + HeadingProvider.swift The timeout Task was never cancelled when a valid location or heading arrived. Even if the sensor responded in 100 ms, the timeout task kept sleeping for the full 5 s / 8 s and then called finish(nil) — a no-op because the continuation was already consumed, but still wasted CPU and battery on every single capture. Fixed by storing the timeout task in a timeoutTask property and cancelling it inside finish().
-44 ScanHistoryStore.swift On JSON decode failure, readRedacted() copied the corrupted blob to corruptedBackupKey but left the original key intact. Every subsequent read re-read the same corrupted data, re-failed, re-backed-up (overwriting the previous backup), and returned [] — the user saw "No scans yet on this device" forever, even after creating new scans, until something eventually overwrote the key. Fixed by calling defaults.removeObject(forKey: key) after the backup write so the store starts clean on the next read.
-45 ScanHistoryStore.swift In add(_:), KeychainTokenStore.save(...) ran outside the NSLock. Two concurrent add() calls for the same sessionId could interleave SecItemDelete and SecItemAdd, leaving the history entry with a token that did not match the stored Keychain value. In all(), the lock was released before KeychainTokenStore.loadToken(...), so a concurrent remove(sessionId:) could delete a token that all() was about to read. Fixed by moving the Keychain save and load inside the lock, serializing them against every other read-modify-write operation.
-46 VuuroScanApp.swift AttachmentsScreen.uploadSelectedPhoto and AttachedPhotoThumbnail.downsampledThumbnail performed UIImage(data:) and image.jpegData(compressionQuality:) on @MainActor. For a 12 MP HEIC photo, decode + JPEG re-encode takes 200–500 ms; with 10 photos selected, the UI froze for 2–5 seconds. Thumbnail downsampling via CGImageSourceCreateThumbnailAtIndex blocked the main actor per thumbnail as well. Fixed by wrapping both operations in Task.detached(priority: .userInitiated), leaving only the final image = ... assignment on the main actor.
-47 VuuroToast (VuuroDesign.swift) VuuroToast.show(\_:) cancelled the previous dismissTask before starting a new one, but Task.sleep is cooperative: if the previous task had already passed the guard !Task.isCancelled check and was between that check and self.message = nil, cancellation had no effect — the stale task would clear the new toast's message. Fixed by introducing a toastToken generation counter; each dismiss task checks token == self.toastToken before mutating message, so only the most recent toast's task can dismiss it.
-48 ScanHistoryStore.swift Bug #45's fix moved add(_:)'s Keychain write inside the NSLock but left remove(sessionId:) calling KeychainTokenStore.deleteToken(forSessionId:) before acquiring the lock. A concurrent add()/remove() for the same sessionId could still interleave the Keychain delete with add()'s Keychain save, leaving Keychain and UserDefaults out of sync again — the exact race #45 was meant to close, just for a different method pair. Fixed by moving the deleteToken call inside the lock, after lock.lock().
-49 MultiRoomCaptureCoordinator.swift Bug #3's fix (mapMergedRoomsToOriginals) picked a merged room's best-matching original room independently per merged room, with nothing preventing two merged rooms from claiming the same original room index on a tie (equal wall overlap and near-equal area) — one original room's confirmed type/walk path got duplicated onto both merged rooms while the other original room's data was silently dropped, reproducing bug #3's symptom in a narrower case. Separately, confirmed against Apple's own RoomPlan developer forum threads that StructureBuilder can fuse multiple original CapturedRooms into a single merged room (no guaranteed 1:1), which the original bestIndex-per-merged-room approach couldn't represent at all — any original room fused into an already-claimed merged room lost its data outright. Fixed by rewriting the mapping to key off each original room's walls (which persist across the merge) to find its best merged room, returning [UUID: [Int]] so multiple originals can correctly map to one fused merged room; roomTypeConfirmationsForStructure takes the first confirmed type among contributors, walkPathsForStructure concatenates all contributors' walk paths. Floor-area-nearest match remains the fallback for any original room whose walls were entirely shared/re-keyed.
-50 MultiRoomCaptureCoordinator.swift roomTypeConfirmationsByIdentifier and roomWalkPathsByIdentifier (computed properties keyed by pre-merge CapturedRoom.identifier — the exact lookup bug #3 fixed) were left in the class after the fix landed, unused by any call site but sitting next to their correct *ForStructure replacements under near-identical names. A future edit reaching for "the identifier-keyed confirmations" could easily grab the dead, still-buggy property instead. Removed.
-51 MultiRoomCaptureCoordinator.swift + RoomSizeGuard.swift New /// doc comments and a // MARK explanatory block were added alongside the bug #3 and #26 fixes, violating this repo's CLAUDE.md rule against adding code comments unless explicitly requested. Removed; no user request for comments was made in either case.
+Phone review on 9e0fc06. Full notes + 17 screenshots are on Momenta card LIDAR-17. Please open that card and work from the shots, not this summary. Diagnostics log attached here.
+
+One product note, because you asked: preparing the UI as if this could go public is useful, and it shows. The app already looks and feels a lot better because you picked that up without waiting. Thank you for that. For now we will move forward to first starting to use it ourselves first (admin, to be linked to our real estate platform / internal test scans) until the product is actually used, thought through, and solid enough that a wider release is worth it. Store-ready polish is welcome as a side effect, not the current goal. Device reliability and the list below come first.
+
+Worked: add note, Share PDF, Share image. The "Scan interrupted / World tracking failure" screen itself recovered cleanly (Upload what was captured). That interrupt is not a bug to chase.
+
+Please fix first:
+
+Save image: white screen, app hangs (same class as the earlier QuickLook hang).
+Terms/Policy, Activity log, and the in-app PDF viewer: no Close/Done. I have to force-quit.
+Notes: cannot take a new camera photo, library only.
+VS-NOTE_ADD-ERR: raw Swift.CancellationError in the Dutch UI, dressed as a "spotty connection". Your cancellation-as-not-an-error fix does not cover this path.
+Then the live capture HUD, this is what actually broke the scan:
+
+Progress ring stuck at 95% and never reaches 100%. AREA stayed 0.0 m2 the whole time while walls and height did update (8 then 12 walls, height 3.1 to 3.5 m). After upload the same room is 53.5 m2. I kept scanning because the HUD said "almost done" and "no area yet", then tracking died. Say what the % measures, or do not show a number that looks like completion. Live m2 has to move during capture.
+Tap the floor-plan image still does not zoom.
+Also:
+
+Onboarding copy is clipped on the left (only "flow", "perty professionals", "...extra hardware required.").
+Doublecheck spacing on labels run together on device ("Finishroom", "Scaninterrupted").
+Result screen badges a single room as FUSED while the sheet says rooms are not laid out relative to each other. Pick one truth.
+Dark mode toggle lags vs the other toggles on Settings.
+Sign out is there even though I never signed in.
+App icon is still the placeholder in Spotlight.
+SHA + GitHub Actions compile run on that exact commit, P0s first. I will retest after your fixing of these items on LIDAR-17 (
+
+https://momentamonster.com/board/projects?task=LIDAR-17) and your "Ready to test" full update (incl. other items you mentioned) and release.
+
+Today
+M
+Mark
+19:24
+Not a fully aligned correct start screen.
+
+screenshot-2026-09-18-132445.png
+screenshot-2026-09-18-132450.png
+screenshot-2026-09-18-132455.png
+🙂+
+What is the % indicating? User might think almost full room done (which is not the case)
+
+screenshot-2026-09-18-132510.png
+🙂+
+I never manage to get it to 100% so I am not sure now when to set it “Done” while I think I am about ready with this room.
+
+And the m2 is not counting in any way.
+
+screenshot-2026-09-18-132529.png
+🙂+
+After taking previous screenshot, capture errored
+
+screenshot-2026-09-18-132545.png
+🙂+
+Add note works
+Take and add a new picture isn’t
+
+screenshot-2026-09-18-132703.png
+🙂+
+Got an error…
+
+screenshot-2026-09-18-132714.png
+🙂+
+I am tapping the image, expecting to zoom in - but that’s not working
+
+screenshot-2026-09-18-132724.png
+🙂+
+Not clear on how to exit this PDF viewer in-app
+
+screenshot-2026-09-18-132738.png
+🙂+
+Save image and got white screen / app halts
+
+screenshot-2026-09-18-132747.png
+🙂+
+Toggle dark mode not responsive enough (the other toggles in this screen are)
+
+screenshot-2026-09-18-132759.png
+🙂+
+In app settings, choose Terms / Policy and cannot exit this screen anymore.
+
+Now I need to restart the app again.
+
+screenshot-2026-09-18-132810.png
+🙂+
+Share PDF and image seems to work properly
+
+screenshot-2026-09-18-132828.png
+🙂+
+With viewing log cannot exit screen as well, need to restart the app again then.
+
+screenshot-2026-09-18-132839.png
+🙂+
+Sign out functionality, but I didn’t sign inwith any account I believe?
+
+screenshot-2026-09-18-132850.png
+🙂+
+Apply Vuuro Scan app icon
+
+screenshot-2026-09-18-132900.png
+🙂+
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132900.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132839.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132828.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132810.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132759.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132747.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132738.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132724.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132714.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132703.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132545.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132529.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132510.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132455.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132450.png"
+"C:\Users\Acer\Downloads\screenshot-2026-09-18-132445.png"

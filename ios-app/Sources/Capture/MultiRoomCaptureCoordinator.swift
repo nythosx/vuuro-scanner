@@ -143,8 +143,6 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     private func startWalkPathTracking() {
         stopWalkPathTracking()
         currentRoomWalkPath = []
-        // [weak self] breaks the retain cycle: coordinator can deinit,
-        // which then cancels the task, which exits on the next iteration.
         walkPathTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }

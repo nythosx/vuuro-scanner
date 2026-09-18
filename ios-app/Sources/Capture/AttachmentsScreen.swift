@@ -182,6 +182,9 @@ private struct AttachmentRoomCard: View {
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var labelSaveTask: Task<Void, Never>?
     @State private var noteSaveTask: Task<Void, Never>?
+    @State private var showCameraPicker = false
+    @State private var showPhotoSourceDialog = false
+    @State private var showPhotoPicker = false
 
     private let client = ScanServiceClient()
 
@@ -222,6 +225,32 @@ private struct AttachmentRoomCard: View {
         .padding(.bottom, 12)
         .onAppear { seedNote() }
         .onDisappear { flushPendingSaves() }
+        .confirmationDialog("Add a photo", isPresented: $showPhotoSourceDialog, titleVisibility: .visible) {
+            Button("Take Photo") {
+                showCameraPicker = true
+            }
+            Button("Choose from Library") {
+                showPhotoPicker = true
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .fullScreenCover(isPresented: $showCameraPicker) {
+            CameraPickerView(
+                onImageCaptured: { image in
+                    if let data = image.jpegData(compressionQuality: 0.8) {
+                        Task { await uploadPhotoData(data) }
+                    }
+                },
+                onDismiss: {
+                    showCameraPicker = false
+                }
+            )
+        }
+        .photosPicker(isPresented: $showPhotoPicker, selection: $photoPickerItems, maxSelectionCount: 1, matching: .images)
+        .onChange(of: photoPickerItems) { _, items in
+            guard let item = items.first else { return }
+            Task { await uploadPhoto(item) }
+        }
     }
 
     private var header: some View {
@@ -283,11 +312,9 @@ private struct AttachmentRoomCard: View {
                     }
                 }
 
-                PhotosPicker(
-                    selection: $photoPickerItems,
-                    maxSelectionCount: 1,
-                    matching: .images
-                ) {
+                Button {
+                    showPhotoSourceDialog = true
+                } label: {
                     ZStack {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(VuuroColor.bgInset)
@@ -307,10 +334,6 @@ private struct AttachmentRoomCard: View {
                     .frame(width: 64, height: 64)
                 }
                 .disabled(isUploadingPhoto)
-                .onChange(of: photoPickerItems) { _, items in
-                    guard let item = items.first else { return }
-                    Task { await uploadPhoto(item) }
-                }
             }
             .padding(.vertical, 2)
         }
@@ -359,6 +382,8 @@ private struct AttachmentRoomCard: View {
             )
             committedLabel = trimmed
             onUpdate(updated)
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record("Label save task was cancelled.", category: .info)
         } catch {
             onError(AppError(site: .roomLabelUpdate, underlying: error))
             labelDraft = committedLabel
@@ -422,6 +447,8 @@ private struct AttachmentRoomCard: View {
                 .noteId ?? existingId
             committedNote = text
             onUpdate(updated)
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record("Note save task was cancelled.", category: .info)
         } catch {
             onError(AppError(site: .noteAdd, underlying: error))
         }
@@ -459,6 +486,77 @@ private struct AttachmentRoomCard: View {
         } catch is CancellationError {
         } catch {
             onError(AppError(site: .photoUpload, underlying: error))
+        }
+    }
+
+    @MainActor
+    private func uploadPhotoData(_ data: Data) async {
+        guard !isUploadingPhoto else { return }
+        isUploadingPhoto = true
+        defer { isUploadingPhoto = false }
+        do {
+            if data.count > 25 * 1024 * 1024 {
+                throw PlainError(message: AppError.Site.photoTooLarge.defaultMessage)
+            }
+            let upload = try await client.uploadPhoto(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                imageData: data,
+                filename: "room-\(room.roomId).jpg",
+                mimeType: "image/jpeg"
+            )
+            let updated = try await client.addPhoto(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                url: upload.url,
+                caption: "",
+                roomId: room.roomId
+            )
+            onUpdate(updated)
+            VuuroToast.shared.show("Photo added")
+        } catch is CancellationError {
+        } catch {
+            onError(AppError(site: .photoUpload, underlying: error))
+        }
+    }
+}
+
+struct CameraPickerView: UIViewControllerRepresentable {
+    let onImageCaptured: (UIImage) -> Void
+    let onDismiss: () -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onImageCaptured: onImageCaptured, onDismiss: onDismiss)
+    }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let onImageCaptured: (UIImage) -> Void
+        let onDismiss: () -> Void
+
+        init(onImageCaptured: @escaping (UIImage) -> Void, onDismiss: @escaping () -> Void) {
+            self.onImageCaptured = onImageCaptured
+            self.onDismiss = onDismiss
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                onImageCaptured(image)
+            }
+            onDismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            onDismiss()
         }
     }
 }
@@ -566,21 +664,6 @@ private struct AttachmentPhotoViewer: View {
             }
         }
         .task { await loadImage() }
-        .alert("Delete this photo?", isPresented: deleteConfirmation) {
-            Button("Delete", role: .destructive) {
-                Task { await deletePhoto() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This removes the photo from the scan and the PDF export.")
-        }
-    }
-
-    private var deleteConfirmation: Binding<Bool> {
-        Binding(
-            get: { false },
-            set: { _ in }
-        )
     }
 
     private var header: some View {

@@ -1,4 +1,3 @@
-
 import SwiftUI
 
 struct TermsAndPrivacyView: View {
@@ -23,6 +22,7 @@ struct TermsAndPrivacyView: View {
         }
     }
 
+    @Environment(\.dismiss) private var dismiss
     @State private var selected: Document = .terms
 
     var body: some View {
@@ -60,5 +60,14 @@ struct TermsAndPrivacyView: View {
         }
         .background(VuuroColor.surfaceMuted)
         .navigationTitle("Terms & Privacy")
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") {
+                    dismiss()
+                }
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(VuuroColor.accent)
+            }
+        }
     }
 }

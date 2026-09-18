@@ -12,7 +12,7 @@ struct ResultSummaryView: View {
     @State private var imageFailed = false
     @State private var shareImageURL: URL?
     @State private var pdfURL: URL?
-    @State private var showImageShare = false
+    @State private var showImagePreview = false
     @State private var showPDFPreview = false
     @State private var isFetchingPDF = false
     @State private var showForgetConfirmation = false
@@ -34,7 +34,11 @@ struct ResultSummaryView: View {
             VuuroNavBar(
                 title: "Scan result",
                 leading: { VuuroNavSpacer() },
-                trailing: { VuuroNavSpacer() }
+                trailing: {
+                    Button("Done", action: onDone)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(VuuroColor.accent)
+                }
             )
 
             ScrollView {
@@ -45,6 +49,7 @@ struct ResultSummaryView: View {
                         RoomResultCard(
                             room: room,
                             showsRibbon: false,
+                            isFused: floorPlan.rooms.count > 1,
                             photos: floorPlan.photos.filter { $0.roomId == room.roomId },
                             notes: floorPlan.notes.filter { $0.roomId == room.roomId },
                             session: session
@@ -72,15 +77,52 @@ struct ResultSummaryView: View {
         }
         .background(VuuroColor.bgApp)
         .task { await loadImage() }
-        .sheet(isPresented: $showImageShare) {
-            if let shareImageURL {
-                ActivityShareSheet(items: [shareImageURL])
+        .fullScreenCover(isPresented: $showImagePreview) {
+            if let shareImageURL,
+               let imageData = try? Data(contentsOf: shareImageURL),
+               let image = UIImage(data: imageData) {
+                ImagePreviewView(image: image) {
+                    showImagePreview = false
+                }
+            } else {
+                ZStack {
+                    Color.black.ignoresSafeArea()
+                    VStack(spacing: 16) {
+                        Image(systemName: "photo")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.white.opacity(0.5))
+                        Text("Couldn't load the image.")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Button("Close") {
+                            showImagePreview = false
+                        }
+                        .buttonStyle(.vuuroPrimary)
+                        .frame(maxWidth: 200)
+                    }
+                }
             }
         }
         .fullScreenCover(isPresented: $showPDFPreview) {
             if let pdfURL {
-                QuickLookPreview(url: pdfURL)
-                    .ignoresSafeArea()
+                QuickLookPreview(url: pdfURL) {
+                    showPDFPreview = false
+                }
+                .ignoresSafeArea()
+            } else {
+                ZStack {
+                    Color.black.ignoresSafeArea()
+                    VStack(spacing: 16) {
+                        Text("Couldn't load the PDF.")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                        Button("Close") {
+                            showPDFPreview = false
+                        }
+                        .buttonStyle(.vuuroPrimary)
+                        .frame(maxWidth: 200)
+                    }
+                }
             }
         }
         .alert("Forget this scan?", isPresented: $showForgetConfirmation) {
@@ -128,7 +170,7 @@ struct ResultSummaryView: View {
     private var floorPlanCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Fused floor plan")
+                Text("Floor plan")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(0.6)
                     .textCase(.uppercase)
@@ -155,12 +197,17 @@ struct ResultSummaryView: View {
                 }
             }
             .frame(height: 220)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard floorPlanImage != nil else { return }
+                Task { await fetchAndPreviewImage() }
+            }
 
             HStack(spacing: 8) {
                 Button {
-                    Task { await fetchAndShareImage() }
+                    Task { await fetchAndPreviewImage() }
                 } label: {
-                    Text("Save image")
+                    Text("View image")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.vuuroOutlineSmall)
@@ -305,10 +352,10 @@ struct ResultSummaryView: View {
     }
 
     @MainActor
-    private func fetchAndShareImage() async {
+    private func fetchAndPreviewImage() async {
         if let cachedURL = cachedFileURL(suffix: "png"), FileManager.default.fileExists(atPath: cachedURL.path) {
             shareImageURL = cachedURL
-            showImageShare = true
+            showImagePreview = true
             return
         }
         do {
@@ -321,7 +368,7 @@ struct ResultSummaryView: View {
                 .appendingPathComponent("floorplan-\(session.id).png")
             try data.write(to: url, options: .atomic)
             shareImageURL = url
-            showImageShare = true
+            showImagePreview = true
         } catch is CancellationError {
         } catch {
             appError = AppError(site: .historyImageDownload, underlying: error)

@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
     @State private var roomTypeGuess = RoomTypeGuessSettings.isEnabled
     @State private var cacheSizeLabel: String = "—"
+    @State private var darkModeLocal: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -28,9 +29,12 @@ struct SettingsView: View {
                     VuuroSectionLabel(text: "Appearance")
                     VuuroInputGroup {
                         VuuroInputRow(leadingIcon: "moon", label: "Dark mode", showsDivider: false) {
-                            Toggle("", isOn: $darkMode)
+                            Toggle("", isOn: $darkModeLocal)
                                 .labelsHidden()
                                 .tint(VuuroColor.lime)
+                                .onChange(of: darkModeLocal) { _, newValue in
+                                    darkMode = newValue
+                                }
                         }
                     }
                     .padding(.horizontal, 20)
@@ -109,10 +113,6 @@ struct SettingsView: View {
                     VStack(spacing: 10) {
                         Button("Terms & Privacy Policy", action: onOpenTerms)
                             .buttonStyle(.vuuroGhostSmall)
-                        Button("Sign out") {
-                            VuuroToast.shared.show("Signed out")
-                        }
-                        .buttonStyle(.vuuroDestructiveSmall)
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 20)
@@ -123,7 +123,15 @@ struct SettingsView: View {
             .scrollIndicators(.hidden)
         }
         .background(VuuroColor.bgApp)
-        .onAppear { computeCacheSize() }
+        .onAppear {
+            darkModeLocal = darkMode
+            computeCacheSize()
+        }
+        .onChange(of: darkMode) { _, newValue in
+            if darkModeLocal != newValue {
+                darkModeLocal = newValue
+            }
+        }
     }
 
     private var identity: some View {

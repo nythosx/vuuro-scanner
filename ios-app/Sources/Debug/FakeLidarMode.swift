@@ -11,6 +11,6 @@ enum FakeLidarMode {
         return fallback
     }
 
-    private static let fallback = true
+    private static let fallback = false
 }
 #endif
