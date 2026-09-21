@@ -100,6 +100,10 @@ echo "\n== SVG export ==\n";
 check('SVG export returns HTTP 200', $svgStatus === 200, "got HTTP $svgStatus");
 check('SVG export has image/svg+xml content type', str_contains($svgContentType, 'image/svg+xml'), "got $svgContentType");
 check('SVG bytes start with an <svg root element', str_starts_with($svgBytes, '<svg '));
+check('SVG has cream #f2f1ec background', str_contains($svgBytes, '#f2f1ec'));
+check('SVG has no wall drop-shadow filter applied', !str_contains($svgBytes, 'wall-shadow'));
+check('SVG walls are rendered pure black #000000', str_contains($svgBytes, 'fill="#000000"'));
+check('SVG uses the updated grid line color #e7e6e0', str_contains($svgBytes, '#e7e6e0'));
 check("SVG content contains the first room's label ($room1Label)", str_contains($svgBytes, $room1Label));
 check('SVG content contains the second room\'s label', str_contains($svgBytes, $floorPlan['rooms'][1]['label']));
 
@@ -112,6 +116,31 @@ check('SVG export rejects an invalid layout value as invalid_layout', $svgBadLay
 [$svgTilesStatus, , $svgTilesBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?layout=tiles", null, $accessToken);
 check('SVG export accepts layout=tiles', $svgTilesStatus === 200, "got HTTP $svgTilesStatus");
 check('layout=tiles SVG still contains both room labels', str_contains($svgTilesBytes, $room1Label) && str_contains($svgTilesBytes, $floorPlan['rooms'][1]['label']));
+
+echo "\n== Signed .vuuroscan bundle export ==\n";
+[$bundleStatus, $bundleContentType, $bundleBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/vuuroscan", null, $accessToken);
+check('vuuroscan export returns HTTP 200', $bundleStatus === 200, "got HTTP $bundleStatus");
+check('vuuroscan export has JSON content type', str_contains($bundleContentType, 'application/json'), "got $bundleContentType");
+check('vuuroscan export has Content-Disposition attachment header', true, 'header presence asserted below via net_http_headers');
+
+[$_, $bundleHeaders] = net_http_headers('GET', "$baseUrl/scan-sessions/$sessionId/export/vuuroscan", $accessToken);
+check('Content-Disposition header names a .vuuroscan file', stripos($bundleHeaders, 'Content-Disposition: attachment') !== false && stripos($bundleHeaders, '.vuuroscan') !== false, 'headers: ' . trim($bundleHeaders));
+
+$bundle = json_decode($bundleBytes, true);
+check('vuuroscan bundle parses as JSON', is_array($bundle), 'body was not valid JSON');
+check('bundle format field is vuuroscan/1', ($bundle['format'] ?? null) === 'vuuroscan/1');
+check('bundle carries session metadata', isset($bundle['session']['id'], $bundle['session']['property_id'], $bundle['session']['unit_id']));
+check('bundle session id matches request', ($bundle['session']['id'] ?? null) === $sessionId);
+check('bundle carries the full floor plan contract', isset($bundle['floor_plan']['rooms']) && is_array($bundle['floor_plan']['rooms']));
+check('bundle exports.png_base64 is a non-empty base64 string', is_string($bundle['exports']['png_base64'] ?? null) && strlen($bundle['exports']['png_base64']) > 100);
+check('decoded bundle PNG has the real PNG magic bytes', str_starts_with((string) base64_decode((string) ($bundle['exports']['png_base64'] ?? ''), true), "\x89PNG"));
+check('bundle exports.pdf_base64 is a non-empty base64 string', is_string($bundle['exports']['pdf_base64'] ?? null) && strlen($bundle['exports']['pdf_base64']) > 100);
+check('decoded bundle PDF has the real PDF header', str_starts_with((string) base64_decode((string) ($bundle['exports']['pdf_base64'] ?? ''), true), '%PDF-1.4'));
+check('bundle carries exported_at timestamp', is_string($bundle['exported_at'] ?? null) && $bundle['exported_at'] !== '');
+check('bundle carries scan_service_base_url', is_string($bundle['scan_service_base_url'] ?? null));
+
+[$bundleNoAuthStatus, ] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/vuuroscan");
+check('vuuroscan export without an access token is rejected (HTTP 401)', $bundleNoAuthStatus === 401, "got HTTP $bundleNoAuthStatus");
 
 echo "\n== Adversarial: a fused layout spread far beyond the render-size sanity bound is rejected, not silently oversized ==\n";
 [, $hugeFusedSession] = net_http_json('POST', "$baseUrl/scan-sessions", [

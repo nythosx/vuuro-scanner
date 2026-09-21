@@ -151,12 +151,14 @@ struct FloorPlan: Codable {
         }
     }
 
-    struct CapturedObject: Codable {
+    struct CapturedObject: Codable, Equatable {
         let objectId: String
         let category: String
         let positionM: [Double]
         let dimensionsM: [Double]
         let confidence: String
+        let customName: String?
+        let excluded: Bool
 
         enum CodingKeys: String, CodingKey {
             case objectId = "object_id"
@@ -164,6 +166,24 @@ struct FloorPlan: Codable {
             case positionM = "position_m"
             case dimensionsM = "dimensions_m"
             case confidence
+            case customName = "custom_name"
+            case excluded
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            objectId = try c.decode(String.self, forKey: .objectId)
+            category = try c.decode(String.self, forKey: .category)
+            positionM = try c.decode([Double].self, forKey: .positionM)
+            dimensionsM = try c.decode([Double].self, forKey: .dimensionsM)
+            confidence = try c.decode(String.self, forKey: .confidence)
+            customName = try c.decodeIfPresent(String.self, forKey: .customName)
+            excluded = try c.decodeIfPresent(Bool.self, forKey: .excluded) ?? false
+        }
+
+        var displayName: String {
+            if let customName, !customName.isEmpty { return customName }
+            return ObjectCategoryCatalog.displayName(for: category)
         }
     }
 

@@ -82,3 +82,27 @@ CREATE TABLE IF NOT EXISTS access_log (
 -- access_log USING INDEX ... after). Composite on (scan_session_id, id) to
 -- also satisfy the query's ORDER BY id ASC directly from the index.
 CREATE INDEX IF NOT EXISTS idx_access_log_session ON access_log(scan_session_id, id);
+
+-- Admin imports: bundles imported from other Scan Service instances.
+-- Each row is one .vuuroscan bundle the admin has uploaded, kept alongside
+-- native sessions in this same database. De-duplication is deliberately
+-- not enforced: re-importing the same bundle creates a new row, and the
+-- admin panel shows every import so duplicates are visible and can be
+-- cleaned up explicitly.
+CREATE TABLE IF NOT EXISTS imported_scans (
+    import_id TEXT PRIMARY KEY,
+    format TEXT NOT NULL,
+    exported_at TEXT NOT NULL,
+    imported_at TEXT NOT NULL,
+    scan_service_base_url TEXT,
+    session_id TEXT NOT NULL,
+    property_id TEXT NOT NULL,
+    unit_id TEXT NOT NULL,
+    organisation_id TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    signature_status TEXT NOT NULL,
+    signature_algorithm TEXT,
+    payload_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_imported_scans_filters ON imported_scans(property_id, unit_id, organisation_id);
+CREATE INDEX IF NOT EXISTS idx_imported_scans_imported_at ON imported_scans(imported_at DESC);

@@ -14,6 +14,7 @@ use VuuroScan\Storage\Database;
 ini_set('display_errors', '0');
 error_reporting(E_ALL);
 set_exception_handler(static function (\Throwable $e): void {
+    error_log("VuuroScan UNCAUGHT " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
     http_response_code(500);
     header('Content-Type: application/json');
     echo json_encode([
@@ -30,8 +31,38 @@ if (($_SERVER['HTTP_ORIGIN'] ?? null) === $corsOrigin) {
     header('Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS');
     header('Access-Control-Allow-Headers: Content-Type, X-Scan-Access-Token, Idempotency-Key');
 }
+
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
+    return;
+}
+
+$adminStaticPath = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+if ($adminStaticPath !== false && ($adminStaticPath === '/admin' || str_starts_with($adminStaticPath, '/admin/'))) {
+    $relative = $adminStaticPath === '/admin' ? 'index.html' : ltrim(substr($adminStaticPath, strlen('/admin/')), '/');
+    if ($relative === '') {
+        $relative = 'index.html';
+    }
+    $adminDir = realpath(__DIR__ . '/admin');
+    $adminFile = $adminDir !== false ? realpath($adminDir . DIRECTORY_SEPARATOR . $relative) : false;
+    if ($adminDir !== false && $adminFile !== false && str_starts_with($adminFile, $adminDir) && is_file($adminFile)) {
+        $ext = strtolower(pathinfo($adminFile, PATHINFO_EXTENSION));
+        $mimeMap = [
+            'html' => 'text/html; charset=utf-8',
+            'css' => 'text/css; charset=utf-8',
+            'js' => 'application/javascript; charset=utf-8',
+            'svg' => 'image/svg+xml',
+            'png' => 'image/png',
+            'jpg' => 'image/jpeg',
+            'ico' => 'image/x-icon',
+        ];
+        header('Content-Type: ' . ($mimeMap[$ext] ?? 'application/octet-stream'));
+        readfile($adminFile);
+        return;
+    }
+    http_response_code(404);
+    header('Content-Type: text/plain; charset=utf-8');
+    echo 'Admin asset not found.';
     return;
 }
 
@@ -178,6 +209,60 @@ function deleteUploadedPhotoFileIfOwned(string $sessionId, ?string $url): void
     }
 }
 
+function canonicalSortRecursive(array $data): array
+{
+    if (array_is_list($data)) {
+        return array_map(static fn ($v) => is_array($v) ? canonicalSortRecursive($v) : $v, $data);
+    }
+    ksort($data);
+    foreach ($data as $key => $value) {
+        if (is_array($value)) {
+            $data[$key] = canonicalSortRecursive($value);
+        }
+    }
+    return $data;
+}
+
+function canonicalJson(array $data): string
+{
+    $sorted = canonicalSortRecursive($data);
+    return json_encode($sorted, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+}
+
+function verifyBundleSignature(array $bundle, ?string $secret): array
+{
+    $signatureBlock = $bundle['signature'] ?? null;
+    if (!is_array($signatureBlock)) {
+        return ['status' => 'unsigned', 'algorithm' => null];
+    }
+    $algorithm = $signatureBlock['algorithm'] ?? null;
+    $received = $signatureBlock['value'] ?? null;
+
+    if (!is_string($algorithm) || $algorithm !== 'hmac-sha256' || !is_string($received) || $received === '') {
+        return ['status' => 'unsigned', 'algorithm' => null];
+    }
+
+    if (!is_string($secret) || $secret === '') {
+        return ['status' => 'unverified', 'algorithm' => $algorithm];
+    }
+
+    $payloadForVerification = $bundle;
+    unset($payloadForVerification['signature']);
+    unset($payloadForVerification['signature_note']);
+
+    try {
+        $canonical = canonicalJson($payloadForVerification);
+    } catch (\JsonException $e) {
+        return ['status' => 'invalid', 'algorithm' => $algorithm];
+    }
+
+    $expected = hash_hmac('sha256', $canonical, $secret);
+    if (hash_equals($expected, $received)) {
+        return ['status' => 'valid', 'algorithm' => $algorithm];
+    }
+    return ['status' => 'invalid', 'algorithm' => $algorithm];
+}
+
 function clientIp(): string
 {
     // No reverse proxy / load balancer in front of this local-dev service
@@ -248,10 +333,21 @@ function adminAuthorized(): bool
     return is_string($presentedKey) && $presentedKey !== '' && hash_equals($configuredKey, $presentedKey);
 }
 
+
+const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload', 'publish_to_platform'];
+
 function authorizeSession(ScanSessionRepository $repo, string $sessionId, string $action): ?array
 {
     $session = $repo->find($sessionId);
     $token = presented_token() ?? '';
+
+    if ($session !== null && adminAuthorized() && in_array($action, ADMIN_READ_ACTIONS, true)) {
+        if (rateLimited($repo, clientIp() . ':admin_session_read', 120, 300)) {
+            return null;
+        }
+        $repo->logAccess($session['id'], $action, 'granted_admin');
+        return $session;
+    }
 
     if ($session !== null) {
         $granted = $repo->tokenMatches($session, $token);
@@ -1286,6 +1382,389 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)$#', $path, $m)) {
     }
 
     respond(200, $floorPlan);
+    return;
+}
+
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/publish-to-platform$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'publish_to_platform');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':publish_to_platform', 10, 300)) {
+        return;
+    }
+
+    $webhookUrl = getenv('SCAN_SERVICE_PLATFORM_WEBHOOK_URL');
+    if (!is_string($webhookUrl) || $webhookUrl === '') {
+        respondError(503, 'platform_webhook_not_configured', 'Push-to-platform is not configured on this server. Set SCAN_SERVICE_PLATFORM_WEBHOOK_URL to enable it.');
+        return;
+    }
+    if (!preg_match('#^https?://#i', $webhookUrl)) {
+        respondError(500, 'invalid_platform_webhook_url', 'The configured platform webhook URL is not a valid HTTP(S) URL.');
+        return;
+    }
+
+    $floorPlan = $repo->findFloorPlan($session['id']);
+    if ($floorPlan === null) {
+        respondError(404, 'no_floor_plan_yet', 'This session has no captured floor plan yet - nothing to publish.');
+        return;
+    }
+
+    $scheme = (($_SERVER['HTTPS'] ?? 'off') !== 'off') ? 'https' : 'http';
+    $selfBase = "{$scheme}://{$_SERVER['HTTP_HOST']}";
+
+    $payload = [
+        'event' => 'scan.published',
+        'published_at' => gmdate('c'),
+        'scan_service_base_url' => $selfBase,
+        'session' => [
+            'id' => $session['id'],
+            'property_id' => $session['property_id'],
+            'unit_id' => $session['unit_id'],
+            'organisation_id' => $session['organisation_id'],
+            'purpose' => $session['purpose'],
+            'created_at' => $session['created_at'],
+            'occupied' => (bool) $session['occupied'],
+            'consent_obtained' => (bool) $session['consent_obtained'],
+        ],
+        'floor_plan' => $floorPlan,
+        'exports' => [
+            'png' => "{$selfBase}/scan-sessions/{$session['id']}/export/floorplan.png",
+            'pdf' => "{$selfBase}/scan-sessions/{$session['id']}/export/floorplan.pdf",
+            'svg' => "{$selfBase}/scan-sessions/{$session['id']}/export/floorplan.svg",
+        ],
+        'api' => [
+            'get_session' => "{$selfBase}/scan-sessions/{$session['id']}",
+            'auth_header' => 'X-Admin-Api-Key',
+        ],
+    ];
+
+    try {
+        $payloadJson = json_encode($payload, JSON_THROW_ON_ERROR);
+    } catch (\JsonException $e) {
+        $repo->logAccess($session['id'], 'publish_to_platform', 'failed_encoding');
+        respondError(500, 'publish_encoding_failed', 'Could not encode the scan payload for delivery.');
+        return;
+    }
+
+    $context = stream_context_create([
+        'http' => [
+            'method' => 'POST',
+            'header' => "Content-Type: application/json\r\n" .
+                        "X-Vuuro-Scan-Session: {$session['id']}\r\n" .
+                        "Content-Length: " . strlen($payloadJson) . "\r\n",
+            'content' => $payloadJson,
+            'timeout' => 15,
+            'ignore_errors' => true,
+        ],
+    ]);
+
+    $responseBody = @file_get_contents($webhookUrl, false, $context);
+    $responseCode = 0;
+    if (isset($http_response_header[0]) && preg_match('#^HTTP/\S+\s+(\d+)#', $http_response_header[0], $statusMatch)) {
+        $responseCode = (int) $statusMatch[1];
+    }
+
+    if ($responseBody === false && $responseCode === 0) {
+        $repo->logAccess($session['id'], 'publish_to_platform', 'failed_transport');
+        respondError(502, 'platform_unreachable', 'Could not reach the platform webhook URL. Check that the URL is correct and reachable from the Scan Service host.');
+        return;
+    }
+
+    if ($responseCode < 200 || $responseCode >= 300) {
+        $repo->logAccess($session['id'], 'publish_to_platform', 'failed_status_' . $responseCode);
+        respondError(502, 'platform_rejected', 'The platform returned HTTP ' . $responseCode . '. The scan was NOT published.', [
+            'platform_status' => $responseCode,
+            'platform_response' => substr((string) $responseBody, 0, 500),
+        ]);
+        return;
+    }
+
+    $repo->logAccess($session['id'], 'publish_to_platform', 'published');
+    respond(200, [
+        'published' => true,
+        'platform_status' => $responseCode,
+        'platform_response' => substr((string) $responseBody, 0, 500),
+    ]);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/objects/batch$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'update_objects');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+
+    if (rateLimited($repo, $sessionId . ':update_objects', 60, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    if (!isset($body['changes']) || !is_array($body['changes']) || !array_is_list($body['changes'])) {
+        respondError(422, 'missing_changes', "Please include a 'changes' array of object updates.");
+        return;
+    }
+    if (count($body['changes']) === 0) {
+        respondError(422, 'empty_changes', "The 'changes' array must contain at least one entry.");
+        return;
+    }
+    if (count($body['changes']) > 500) {
+        respondError(422, 'too_many_changes', 'A maximum of 500 changes per request is allowed.');
+        return;
+    }
+    foreach ($body['changes'] as $i => $change) {
+        if (!is_array($change) || !isset($change['room_id']) || !is_string($change['room_id']) || $change['room_id'] === '') {
+            respondError(422, 'invalid_change', "changes[$i].room_id is required and must be a non-empty string.");
+            return;
+        }
+        if (!isset($change['object_id']) || !is_string($change['object_id']) || $change['object_id'] === '') {
+            respondError(422, 'invalid_change', "changes[$i].object_id is required and must be a non-empty string.");
+            return;
+        }
+        if (array_key_exists('custom_name', $change) && $change['custom_name'] !== null && !is_string($change['custom_name'])) {
+            respondError(422, 'invalid_change', "changes[$i].custom_name must be a string or null.");
+            return;
+        }
+        if (array_key_exists('excluded', $change) && !is_bool($change['excluded'])) {
+            respondError(422, 'invalid_change', "changes[$i].excluded must be a boolean.");
+            return;
+        }
+        if (array_key_exists('delete', $change) && !is_bool($change['delete'])) {
+            respondError(422, 'invalid_change', "changes[$i].delete must be a boolean.");
+            return;
+        }
+    }
+
+    try {
+        $floorPlan = $repo->batchUpdateObjects($sessionId, $body['changes']);
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', $e->getMessage());
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'invalid_object_change', $e->getMessage());
+        return;
+    }
+
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/vuuroscan$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'export_vuuroscan');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':export_vuuroscan', 30, 300)) {
+        return;
+    }
+
+    $floorPlan = $repo->findFloorPlan($session['id']);
+    if ($floorPlan === null) {
+        respondError(404, 'no_floor_plan_yet', 'This session doesn\'t have a captured floor plan yet — capture at least one room before exporting.');
+        return;
+    }
+
+    $pngBytes = null;
+    try {
+        $pngBytes = (new FloorPlanImageRenderer())->render($floorPlan);
+    } catch (\Throwable $e) {
+        $pngBytes = null;
+    }
+
+    $pdfBytes = null;
+    try {
+        $photoLoader = static function (string $url) use ($session): ?string {
+            $filePath = ownedPhotoFilePath($session['id'], $url);
+            return $filePath !== null ? file_get_contents($filePath) : null;
+        };
+        $pdfBytes = (new FloorPlanPdfRenderer())->render($floorPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, $photoLoader);
+    } catch (\Throwable $e) {
+        $pdfBytes = null;
+    }
+
+    $scheme = (($_SERVER['HTTPS'] ?? 'off') !== 'off') ? 'https' : 'http';
+    $selfBase = "{$scheme}://{$_SERVER['HTTP_HOST']}";
+
+    $payload = [
+        'format' => 'vuuroscan/1',
+        'exported_at' => gmdate('c'),
+        'scan_service_base_url' => $selfBase,
+        'session' => [
+            'id' => $session['id'],
+            'property_id' => $session['property_id'],
+            'unit_id' => $session['unit_id'],
+            'organisation_id' => $session['organisation_id'],
+            'purpose' => $session['purpose'],
+            'created_at' => $session['created_at'],
+            'occupied' => (bool) $session['occupied'],
+            'consent_obtained' => (bool) $session['consent_obtained'],
+        ],
+        'floor_plan' => $floorPlan,
+        'exports' => [
+            'png_base64' => $pngBytes !== null ? base64_encode($pngBytes) : null,
+            'pdf_base64' => $pdfBytes !== null ? base64_encode($pdfBytes) : null,
+        ],
+    ];
+
+    $secret = getenv('SCAN_SERVICE_EXPORT_SECRET');
+    $bundle = $payload;
+    if (is_string($secret) && $secret !== '') {
+        $canonical = canonicalJson($payload);
+        $bundle['signature'] = [
+            'algorithm' => 'hmac-sha256',
+            'value' => hash_hmac('sha256', $canonical, $secret),
+        ];
+    } else {
+        $bundle['signature'] = null;
+        $bundle['signature_note'] = 'No SCAN_SERVICE_EXPORT_SECRET configured on this Scan Service — this bundle is unsigned.';
+    }
+
+    $safeProp = preg_replace('/[^A-Za-z0-9_\-]/', '-', (string) $session['property_id']);
+    $safeUnit = preg_replace('/[^A-Za-z0-9_\-]/', '-', (string) $session['unit_id']);
+    $filename = 'scan-' . $safeProp . '-' . $safeUnit . '.vuuroscan';
+
+    header('Content-Type: application/json; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    echo json_encode($bundle, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    return;
+}
+
+if ($method === 'POST' && $path === '/imported-scans') {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':admin_import', 30, 300)) {
+        return;
+    }
+
+    if (!isset($_FILES['file']) || !is_array($_FILES['file'])) {
+        respondError(422, 'missing_file', "Please include a 'file' field (multipart/form-data) with the .vuuroscan bundle.");
+        return;
+    }
+
+    $upload = $_FILES['file'];
+    if ($upload['error'] !== UPLOAD_ERR_OK) {
+        respondError(422, 'upload_failed', 'The upload failed. Please try again.');
+        return;
+    }
+
+    $raw = @file_get_contents($upload['tmp_name']);
+    if ($raw === false || $raw === '') {
+        respondError(422, 'empty_file', 'The uploaded file was empty.');
+        return;
+    }
+
+    $bundle = json_decode($raw, true);
+    if (!is_array($bundle)) {
+        respondError(422, 'invalid_json', 'The uploaded file is not valid JSON.');
+        return;
+    }
+
+    if (($bundle['format'] ?? null) !== 'vuuroscan/1') {
+        respondError(422, 'unsupported_format', "Only .vuuroscan bundles with format 'vuuroscan/1' are accepted.");
+        return;
+    }
+
+    $sessionBlock = $bundle['session'] ?? null;
+    $floorPlan = $bundle['floor_plan'] ?? null;
+    if (!is_array($sessionBlock) || !is_array($floorPlan)) {
+        respondError(422, 'malformed_bundle', 'The bundle is missing the session or floor_plan section.');
+        return;
+    }
+
+    foreach (['id', 'property_id', 'unit_id', 'organisation_id', 'purpose'] as $field) {
+        if (!isset($sessionBlock[$field]) || !is_string($sessionBlock[$field]) || $sessionBlock[$field] === '') {
+            respondError(422, 'malformed_bundle', "The bundle's session.$field is missing or invalid.");
+            return;
+        }
+    }
+
+    if (!isset($floorPlan['rooms']) || !is_array($floorPlan['rooms'])) {
+        respondError(422, 'malformed_bundle', "The bundle's floor_plan.rooms is missing or invalid.");
+        return;
+    }
+
+    $secret = getenv('SCAN_SERVICE_EXPORT_SECRET');
+    $signature = verifyBundleSignature($bundle, is_string($secret) ? $secret : null);
+
+    if ($signature['status'] === 'invalid') {
+        respondError(422, 'signature_invalid', "The bundle's HMAC signature does not match. The file may have been tampered with, or it was signed with a different export secret than the one configured on this server.");
+        return;
+    }
+
+    $importId = \VuuroScan\ScanSessionRepository::uuid();
+    $record = [
+        'import_id' => $importId,
+        'format' => (string) $bundle['format'],
+        'exported_at' => is_string($bundle['exported_at'] ?? null) ? $bundle['exported_at'] : gmdate('c'),
+        'imported_at' => gmdate('c'),
+        'scan_service_base_url' => is_string($bundle['scan_service_base_url'] ?? null) ? $bundle['scan_service_base_url'] : '',
+        'session_id' => (string) $sessionBlock['id'],
+        'property_id' => (string) $sessionBlock['property_id'],
+        'unit_id' => (string) $sessionBlock['unit_id'],
+        'organisation_id' => (string) $sessionBlock['organisation_id'],
+        'purpose' => (string) $sessionBlock['purpose'],
+        'signature_status' => $signature['status'],
+        'signature_algorithm' => $signature['algorithm'],
+        'payload_json' => json_encode($bundle, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+    ];
+
+    try {
+        $stored = $repo->insertImportedScan($record);
+    } catch (\Throwable $e) {
+        respondError(500, 'import_failed', 'Could not save the imported scan.');
+        return;
+    }
+
+    respond(201, $stored);
+    return;
+}
+
+if ($method === 'GET' && $path === '/imported-scans') {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':admin_imports_list', 60, 300)) {
+        return;
+    }
+
+    $propertyId = isset($_GET['property_id']) && is_string($_GET['property_id']) && $_GET['property_id'] !== '' ? $_GET['property_id'] : null;
+    $unitId = isset($_GET['unit_id']) && is_string($_GET['unit_id']) && $_GET['unit_id'] !== '' ? $_GET['unit_id'] : null;
+    $organisationId = isset($_GET['organisation_id']) && is_string($_GET['organisation_id']) && $_GET['organisation_id'] !== '' ? $_GET['organisation_id'] : null;
+
+    respond(200, ['imports' => $repo->findImportedScans($propertyId, $unitId, $organisationId)]);
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/imported-scans/([^/]+)$#', $path, $m)) {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':admin_imports_read', 120, 300)) {
+        return;
+    }
+
+    $import = $repo->findImportedScan($m[1]);
+    if ($import === null) {
+        respondError(404, 'import_not_found', 'No imported scan with that id exists on this server.');
+        return;
+    }
+
+    respond(200, $import);
     return;
 }
 

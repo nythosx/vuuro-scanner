@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vuuro Scan - Admin</title>
+<link rel="stylesheet" href="/admin/admin.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">Vuuro Scan <span class="brand-sub">Admin</span></div>
+  <div class="topbar-right">
+    <span id="keyStatus"></span>
+    <button id="signOutBtn" class="hidden">Sign out</button>
+  </div>
+</header>
+
+<nav id="topnav" class="topnav hidden">
+  <button class="nav-btn active" data-nav="search" type="button">Search</button>
+  <button class="nav-btn" data-nav="imports" type="button">Imports</button>
+</nav>
+
+<main id="view">
+
+  <section id="view-login" class="view">
+    <h1>Sign in</h1>
+    <p>Enter the admin API key to continue.</p>
+    <input type="password" id="adminKeyInput" placeholder="Admin API key" autocomplete="off">
+    <button id="loginBtn" class="primary">Sign in</button>
+    <p class="hint">The key is set by the Scan Service operator via the <code>SCAN_SERVICE_ADMIN_API_KEY</code> environment variable.</p>
+    <p id="loginError" class="error hidden"></p>
+  </section>
+
+  <section id="view-search" class="view hidden">
+    <h1>Look up scans</h1>
+    <p>Provide at least one of the following to find scans.</p>
+    <form id="searchForm">
+      <div class="field"><label>Property ID</label><input name="property_id" placeholder="e.g. prop-oosterpark-14"></div>
+      <div class="field"><label>Unit ID</label><input name="unit_id" placeholder="e.g. unit-2b"></div>
+      <div class="field"><label>Organisation ID</label><input name="organisation_id" placeholder="e.g. org-athome-vastgoed"></div>
+      <button type="submit" class="primary">Search</button>
+    </form>
+    <div id="searchResults"></div>
+  </section>
+
+  <section id="view-detail" class="view hidden">
+    <button id="backBtn" class="ghost">&larr; Back</button>
+    <div id="detailContent"></div>
+  </section>
+
+  <section id="view-imports" class="view hidden">
+    <h1>Import scans</h1>
+    <p>Upload a <code>.vuuroscan</code> bundle that was exported from another Scan Service instance. Imported scans are stored alongside this server's own scans and remain read-only.</p>
+
+    <div id="importDropZone" class="drop-zone">
+      <input type="file" id="importFileInput" accept=".vuuroscan,application/json" hidden>
+      <div class="drop-zone-content">
+        <strong>Drop a .vuuroscan file here</strong>
+        <span>or click to choose a file</span>
+      </div>
+    </div>
+
+    <div id="importResult" class="hidden"></div>
+
+    <h2>Imported scans</h2>
+    <div id="importsList"><p class="muted">Loading…</p></div>
+  </section>
+
+</main>
+
+<script src="/admin/admin.js"></script>
+</body>
+</html>

@@ -22,7 +22,7 @@ final class FloorPlanImageRenderer
         [240, 231, 247],
         [224, 244, 240],
     ];
-    private const WALL_COLOR = [39, 39, 41];
+    private const WALL_COLOR = [0, 0, 0];
     private const HEADER_ACCENT_COLOR = [255, 130, 18];
     private const DEFAULT_LINE_THICKNESS_PX = 1;
     private const FONT_SMALL = 1;
@@ -735,6 +735,12 @@ final class FloorPlanImageRenderer
             $line !== null ? imageellipse($image, $cx, $cy, (int) round($rw * 2 * self::PIXELS_PER_METER), (int) round($rd * 2 * self::PIXELS_PER_METER), $line) : null,
         ];
 
+        $rectFillAt = function (float $ox, float $oz, float $hw, float $hd, int $fill, int $line) use ($image, $pose, $toPx, $mx, $mz): void {
+            $pts = $this->localRectPoints($pose, $toPx, $mx + $ox, $mz + $oz, $hw, $hd);
+            imagefilledpolygon($image, $pts, $fill);
+            imagepolygon($image, $pts, $line);
+        };
+
         switch ($category) {
             case 'sink':
                 $rectFill($halfW, $halfD, $fixtureLight, $fixtureLine);
@@ -746,16 +752,21 @@ final class FloorPlanImageRenderer
                 return true;
             case 'bathtub':
                 $rectFill($halfW, $halfD, $white, $fixtureLine);
+                $rectFill(max($halfW - 0.05, $halfW * 0.85), max($halfD - 0.05, $halfD * 0.85), $fixtureLight, $fixtureLine);
                 return true;
             case 'stove':
             case 'oven':
                 $rectFill($halfW, $halfD, $fixtureFill, $fixtureLine);
-                $ellipse($halfW * 0.3, $halfD * 0.3, $fixtureLight, null);
+                $rectFillAt(-$halfW * 0.5, -$halfD * 0.5, $halfW * 0.28, $halfD * 0.28, $fixtureLight, $fixtureLine);
+                $rectFillAt($halfW * 0.5, -$halfD * 0.5, $halfW * 0.28, $halfD * 0.28, $fixtureLight, $fixtureLine);
+                $rectFillAt(-$halfW * 0.5, $halfD * 0.5, $halfW * 0.28, $halfD * 0.28, $fixtureLight, $fixtureLine);
+                $rectFillAt($halfW * 0.5, $halfD * 0.5, $halfW * 0.28, $halfD * 0.28, $fixtureLight, $fixtureLine);
                 return true;
             case 'refrigerator':
             case 'dishwasher':
             case 'storage':
                 $rectFill($halfW, $halfD, $fixtureFill, $fixtureLine);
+                $rectFillAt(0, 0, $halfW * 0.85, $halfD * 0.15, $fixtureLine, $fixtureLine);
                 return true;
             case 'washerdryer':
             case 'washer_dryer':
@@ -765,16 +776,27 @@ final class FloorPlanImageRenderer
             case 'bed':
                 $bedFill = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BED_FRAME_FILL));
                 $rectFill($halfW, $halfD, $bedFill, $fixtureLine);
-                $rectFill($halfW, $halfD * 0.22, $white, $fixtureLine);
+                $rectFillAt(0, $halfD * 0.60, $halfW * 0.95, $halfD * 0.38, $white, $fixtureLine);
                 return true;
             case 'sofa':
                 $rectFill($halfW, $halfD, $fixtureLight, $fixtureLine);
+                $rectFillAt(0, -$halfD + $halfD * 0.15, $halfW * 0.95, $halfD * 0.22, $fixtureFill, $fixtureLine);
+                return true;
+            case 'chair':
+                $rectFill($halfW, $halfD, $white, $fixtureLine);
+                $rectFillAt(0, -$halfD + $halfD * 0.12, $halfW * 0.95, $halfD * 0.18, $fixtureFill, $fixtureLine);
                 return true;
             case 'table':
                 $rectFill($halfW, $halfD, $white, $fixtureLine);
+                $ellipse(min($halfW, $halfD) * 0.30, min($halfW, $halfD) * 0.30, $fixtureLight, $fixtureLine);
+                return true;
+            case 'television':
+                $rectFill($halfW, $halfD, $hearth, $fixtureLine);
+                $rectFillAt(0, 0, $halfW * 0.85, max($halfD * 0.40, 0.02), $white, $fixtureLine);
                 return true;
             case 'fireplace':
                 $rectFill($halfW, $halfD, $hearth, $fixtureLine);
+                $rectFillAt(0, $halfD * 0.5, $halfW * 0.7, $halfD * 0.25, $fixtureFill, $fixtureLine);
                 return true;
             case 'stairs':
                 $rectFill($halfW, $halfD, $white, $wallColor);
@@ -796,6 +818,9 @@ final class FloorPlanImageRenderer
     private function drawObjects($image, array $room, array $pose, callable $toPx, int $color, int $textColor, array &$labelDraws): void
     {
         foreach ($room['objects'] ?? [] as $object) {
+            if (!empty($object['excluded'])) {
+                continue;
+            }
             [$mx, $mz] = $object['position_m'];
             $dims = $object['dimensions_m'] ?? [0.5, 0.0, 0.5];
             $halfWidth = ((float) ($dims[0] ?? 0.5)) / 2;
@@ -804,13 +829,15 @@ final class FloorPlanImageRenderer
             if ($this->drawObjectIcon($image, $pose, $toPx, $category, $mx, $mz, $halfWidth, $halfDepth)) {
                 continue;
             }
-            [$w1x, $w1z] = RoomFusionSolver::transformPoint($pose, $mx - $halfWidth, $mz - $halfDepth);
-            [$x1, $y1] = $toPx($w1x, $w1z);
-            [$w2x, $w2z] = RoomFusionSolver::transformPoint($pose, $mx + $halfWidth, $mz + $halfDepth);
-            [$x2, $y2] = $toPx($w2x, $w2z);
-            imagerectangle($image, $x1, $y1, $x2, $y2, $color);
-            $categoryLabel = $this->asciiSafe($object['category']);
-            $labelDraws[] = fn () => $this->drawText($image, self::FONT_SMALL, min($x1, $x2) + 2, min($y1, $y2) - 10, $categoryLabel, $textColor);
+            $pts = $this->localRectPoints($pose, $toPx, $mx, $mz, $halfWidth, $halfDepth);
+            imagepolygon($image, $pts, $color);
+            $labelText = isset($object['custom_name']) && is_string($object['custom_name']) && $object['custom_name'] !== ''
+                ? $object['custom_name']
+                : (string) $object['category'];
+            $categoryLabel = $this->asciiSafe($labelText);
+            [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $mx, $mz);
+            [$cx, $cy] = $toPx($wx, $wz);
+            $labelDraws[] = fn () => $this->drawText($image, self::FONT_SMALL, $cx - (int) round($halfWidth * self::PIXELS_PER_METER) + 2, $cy - (int) round($halfDepth * self::PIXELS_PER_METER) - 10, $categoryLabel, $textColor);
         }
     }
 

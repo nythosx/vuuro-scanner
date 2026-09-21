@@ -478,6 +478,73 @@ final class ScanSessionRepository
         });
     }
 
+    public function batchUpdateObjects(string $sessionId, array $changes): array
+    {
+        return $this->withWriteLock(function () use ($sessionId, $changes) {
+            $floorPlan = $this->findFloorPlan($sessionId);
+            if ($floorPlan === null) {
+                throw new \RuntimeException(
+                    "Cannot update objects on scan session $sessionId before it has a captured FloorPlan."
+                );
+            }
+
+            foreach ($changes as $change) {
+                $roomId = (string) $change['room_id'];
+                $objectId = (string) $change['object_id'];
+
+                $roomIndex = null;
+                foreach ($floorPlan['rooms'] as $i => $room) {
+                    if ($room['room_id'] === $roomId) {
+                        $roomIndex = $i;
+                        break;
+                    }
+                }
+                if ($roomIndex === null) {
+                    throw new \InvalidArgumentException("room_id '{$roomId}' does not match any room captured in this session.");
+                }
+
+                $objectIndex = null;
+                $objects = $floorPlan['rooms'][$roomIndex]['objects'] ?? [];
+                foreach ($objects as $j => $object) {
+                    if ($object['object_id'] === $objectId) {
+                        $objectIndex = $j;
+                        break;
+                    }
+                }
+                if ($objectIndex === null) {
+                    if (!empty($change['delete'])) {
+                        continue;
+                    }
+                    throw new \InvalidArgumentException("object_id '{$objectId}' does not match any object in room '{$roomId}'.");
+                }
+
+                if (!empty($change['delete'])) {
+                    array_splice($floorPlan['rooms'][$roomIndex]['objects'], $objectIndex, 1);
+                    continue;
+                }
+
+                if (array_key_exists('custom_name', $change)) {
+                    $name = $change['custom_name'];
+                    if ($name !== null) {
+                        $name = trim((string) $name);
+                        if ($name === '') {
+                            $name = null;
+                        } elseif (mb_strlen($name, 'UTF-8') > 60) {
+                            throw new \InvalidArgumentException('Custom object name must be 60 characters or fewer.');
+                        }
+                    }
+                    $floorPlan['rooms'][$roomIndex]['objects'][$objectIndex]['custom_name'] = $name;
+                }
+                if (array_key_exists('excluded', $change)) {
+                    $floorPlan['rooms'][$roomIndex]['objects'][$objectIndex]['excluded'] = (bool) $change['excluded'];
+                }
+            }
+
+            $this->saveFloorPlan($sessionId, $floorPlan);
+            return $floorPlan;
+        });
+    }
+
     private const IDEMPOTENCY_PENDING_MARKER = '__pending__';
 
 
@@ -578,5 +645,103 @@ final class ScanSessionRepository
         $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
         $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
         return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
+    }
+
+    public function insertImportedScan(array $record): array
+    {
+        $stmt = $this->db->prepare(
+            'INSERT INTO imported_scans (
+                import_id, format, exported_at, imported_at, scan_service_base_url,
+                session_id, property_id, unit_id, organisation_id, purpose,
+                signature_status, signature_algorithm, payload_json
+            ) VALUES (
+                :import_id, :format, :exported_at, :imported_at, :scan_service_base_url,
+                :session_id, :property_id, :unit_id, :organisation_id, :purpose,
+                :signature_status, :signature_algorithm, :payload_json
+            )'
+        );
+        $stmt->execute([
+            'import_id' => $record['import_id'],
+            'format' => $record['format'],
+            'exported_at' => $record['exported_at'],
+            'imported_at' => $record['imported_at'],
+            'scan_service_base_url' => $record['scan_service_base_url'],
+            'session_id' => $record['session_id'],
+            'property_id' => $record['property_id'],
+            'unit_id' => $record['unit_id'],
+            'organisation_id' => $record['organisation_id'],
+            'purpose' => $record['purpose'],
+            'signature_status' => $record['signature_status'],
+            'signature_algorithm' => $record['signature_algorithm'],
+            'payload_json' => $record['payload_json'],
+        ]);
+
+        return [
+            'import_id' => $record['import_id'],
+            'format' => $record['format'],
+            'exported_at' => $record['exported_at'],
+            'imported_at' => $record['imported_at'],
+            'scan_service_base_url' => $record['scan_service_base_url'],
+            'session_id' => $record['session_id'],
+            'property_id' => $record['property_id'],
+            'unit_id' => $record['unit_id'],
+            'organisation_id' => $record['organisation_id'],
+            'purpose' => $record['purpose'],
+            'signature_status' => $record['signature_status'],
+            'signature_algorithm' => $record['signature_algorithm'],
+        ];
+    }
+
+    public function findImportedScans(?string $propertyId, ?string $unitId, ?string $organisationId, int $limit = 100): array
+    {
+        $conditions = [];
+        $params = [];
+        if ($propertyId !== null) {
+            $conditions[] = 'property_id = :property_id';
+            $params['property_id'] = $propertyId;
+        }
+        if ($unitId !== null) {
+            $conditions[] = 'unit_id = :unit_id';
+            $params['unit_id'] = $unitId;
+        }
+        if ($organisationId !== null) {
+            $conditions[] = 'organisation_id = :organisation_id';
+            $params['organisation_id'] = $organisationId;
+        }
+
+        $where = $conditions === [] ? '' : 'WHERE ' . implode(' AND ', $conditions);
+        $stmt = $this->db->prepare(
+            "SELECT import_id, format, exported_at, imported_at, scan_service_base_url,
+                    session_id, property_id, unit_id, organisation_id, purpose,
+                    signature_status, signature_algorithm
+             FROM imported_scans $where
+             ORDER BY imported_at DESC
+             LIMIT :limit"
+        );
+        foreach ($params as $key => $value) {
+            $stmt->bindValue(":$key", $value, PDO::PARAM_STR);
+        }
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function findImportedScan(string $importId): ?array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT import_id, format, exported_at, imported_at, scan_service_base_url,
+                    session_id, property_id, unit_id, organisation_id, purpose,
+                    signature_status, signature_algorithm, payload_json
+             FROM imported_scans WHERE import_id = :id'
+        );
+        $stmt->execute(['id' => $importId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$row) {
+            return null;
+        }
+        $payload = json_decode((string) $row['payload_json'], true, 512, JSON_THROW_ON_ERROR);
+        unset($row['payload_json']);
+        $row['payload'] = $payload;
+        return $row;
     }
 }

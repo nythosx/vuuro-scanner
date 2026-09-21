@@ -293,6 +293,17 @@ struct ScanServiceClient {
         try await get(path: "/scan-sessions/\(sessionId)/access-log", accessToken: accessToken)
     }
 
+    func batchUpdateObjects(sessionId: String, accessToken: String, changes: [ObjectChangeRequest]) async throws -> FloorPlan {
+        struct Body: Encodable {
+            let changes: [ObjectChangeRequest]
+        }
+        return try await post(
+            path: "/scan-sessions/\(sessionId)/objects/batch",
+            body: Body(changes: changes),
+            accessToken: accessToken
+        )
+    }
+
     func uploadPhoto(sessionId: String, accessToken: String, imageData: Data, filename: String, mimeType: String) async throws -> PhotoUploadResponse {
         let boundary = "Boundary-\(UUID().uuidString)"
         var request = URLRequest(url: baseURL.appendingPathComponent("/scan-sessions/\(sessionId)/photo-uploads"))

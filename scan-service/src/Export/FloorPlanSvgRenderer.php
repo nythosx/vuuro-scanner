@@ -22,9 +22,9 @@ final class FloorPlanSvgRenderer
     private const NOTE_LINE_HEIGHT = 15;
     private const GRID_STEP = 60.0;
 
-    private const CANVAS = '#ffffff';
-    private const GRID_LINE = '#ececee';
-    private const WALL = '#272729';
+    private const CANVAS = '#f2f1ec';
+    private const GRID_LINE = '#e7e6e0';
+    private const WALL = '#000000';
     private const OPENING_FILL = '#ffffff';
     private const TEXT = '#272729';
     private const SUBTEXT = '#87878a';
@@ -118,9 +118,6 @@ final class FloorPlanSvgRenderer
   <marker id="ar-e" markerWidth="7" markerHeight="7" refX="6.5" refY="3.5" orient="auto">
     <path d="M 0 0.6 L 6.5 3.5 L 0 6.4 Z" fill="{$this->esc(self::TEXT)}"/>
   </marker>
-  <filter id="wall-shadow" x="-30%" y="-30%" width="160%" height="160%">
-    <feDropShadow dx="0.8" dy="1.2" stdDeviation="1" flood-color="#000000" flood-opacity="0.35"/>
-  </filter>
 </defs>
 SVG;
     }
@@ -375,7 +372,7 @@ SVG;
             }
             $out .= '<polygon points="' . implode(' ', $pts) . '" fill="' . self::WALL . '"/>';
         }
-        return $out === '' ? '' : '<g filter="url(#wall-shadow)">' . $out . '</g>';
+        return $out === '' ? '' : '<g>' . $out . '</g>';
     }
 
     private function wallLengthLabelsSvg(array $outlineM, array $pose, callable $toPx, string $unit, array $roomEdgeTiers): string
@@ -612,22 +609,36 @@ SVG;
         $bodyRect = fn (float $hw, float $hd, string $fill, string $stroke) => '<polygon points="' . $this->localRectPolygon($pose, $toPx, $mx, $mz, $hw, $hd) . '" fill="' . $fill . '" stroke="' . $stroke . '" stroke-width="0.9"/>';
         $ellipse = fn (float $rw, float $rd, string $fill, string $stroke) => '<ellipse cx="' . $this->num($cx) . '" cy="' . $this->num($cy) . '" rx="' . $this->num($rw * self::PX_PER_M) . '" ry="' . $this->num($rd * self::PX_PER_M) . '" fill="' . $fill . '" stroke="' . $stroke . '" stroke-width="0.9" transform="rotate(' . $this->num($rotationDeg) . ' ' . $this->num($cx) . ' ' . $this->num($cy) . ')"/>';
 
+        $bodyRectAt = fn (float $ox, float $oz, float $hw, float $hd, string $fill, string $stroke) => '<polygon points="' . $this->localRectPolygon($pose, $toPx, $mx + $ox, $mz + $oz, $hw, $hd) . '" fill="' . $fill . '" stroke="' . $stroke . '" stroke-width="0.9"/>';
+
         return match ($category) {
             'sink' => $bodyRect($halfW, $halfD, FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE)
                 . $ellipse(min($halfW, $halfD) * 0.6, min($halfW, $halfD) * 0.6, self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE),
             'toilet' => $bodyRect($halfW, $halfD, FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE)
                 . $ellipse($halfW * 0.65, $halfD * 0.55, self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE),
-            'bathtub' => $bodyRect($halfW, $halfD, self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE),
+            'bathtub' => $bodyRect($halfW, $halfD, self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE)
+                . $bodyRect(max($halfW - 0.05, $halfW * 0.85), max($halfD - 0.05, $halfD * 0.85), FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE),
             'stove', 'oven' => $bodyRect($halfW, $halfD, FloorPlanPalette::FIXTURE_FILL, FloorPlanPalette::FIXTURE_LINE)
-                . $ellipse($halfW * 0.3, $halfD * 0.3, FloorPlanPalette::FIXTURE_LIGHT, 'none'),
-            'refrigerator', 'dishwasher', 'storage' => $bodyRect($halfW, $halfD, FloorPlanPalette::FIXTURE_FILL, FloorPlanPalette::FIXTURE_LINE),
+                . $bodyRectAt(-$halfW * 0.5, -$halfD * 0.5, $halfW * 0.28, $halfD * 0.28, FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE)
+                . $bodyRectAt($halfW * 0.5, -$halfD * 0.5, $halfW * 0.28, $halfD * 0.28, FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE)
+                . $bodyRectAt(-$halfW * 0.5, $halfD * 0.5, $halfW * 0.28, $halfD * 0.28, FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE)
+                . $bodyRectAt($halfW * 0.5, $halfD * 0.5, $halfW * 0.28, $halfD * 0.28, FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE),
+            'refrigerator', 'dishwasher', 'storage' => $bodyRect($halfW, $halfD, FloorPlanPalette::FIXTURE_FILL, FloorPlanPalette::FIXTURE_LINE)
+                . $bodyRectAt(0, 0, $halfW * 0.85, $halfD * 0.15, FloorPlanPalette::FIXTURE_LINE, FloorPlanPalette::FIXTURE_LINE),
             'washerdryer', 'washer_dryer' => $bodyRect($halfW, $halfD, FloorPlanPalette::FIXTURE_FILL, FloorPlanPalette::FIXTURE_LINE)
                 . $ellipse(min($halfW, $halfD) * 0.55, min($halfW, $halfD) * 0.55, FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE),
             'bed' => $bodyRect($halfW, $halfD, FloorPlanPalette::BED_FRAME_FILL, FloorPlanPalette::FIXTURE_LINE)
-                . $bodyRect($halfW, $halfD * 0.22, self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE),
-            'sofa' => $bodyRect($halfW, $halfD, FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE),
-            'table' => $bodyRect($halfW, $halfD, self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE),
-            'fireplace' => $bodyRect($halfW, $halfD, FloorPlanPalette::HEARTH_FILL, FloorPlanPalette::FIXTURE_LINE),
+                . $bodyRectAt(0, $halfD * 0.60, $halfW * 0.95, $halfD * 0.38, self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE),
+            'sofa' => $bodyRect($halfW, $halfD, FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE)
+                . $bodyRectAt(0, -$halfD + $halfD * 0.15, $halfW * 0.95, $halfD * 0.22, FloorPlanPalette::FIXTURE_FILL, FloorPlanPalette::FIXTURE_LINE),
+            'chair' => $bodyRect($halfW, $halfD, self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE)
+                . $bodyRectAt(0, -$halfD + $halfD * 0.12, $halfW * 0.95, $halfD * 0.18, FloorPlanPalette::FIXTURE_FILL, FloorPlanPalette::FIXTURE_LINE),
+            'table' => $bodyRect($halfW, $halfD, self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE)
+                . $ellipse(min($halfW, $halfD) * 0.30, min($halfW, $halfD) * 0.30, FloorPlanPalette::FIXTURE_LIGHT, FloorPlanPalette::FIXTURE_LINE),
+            'television' => $bodyRect($halfW, $halfD, FloorPlanPalette::HEARTH_FILL, FloorPlanPalette::FIXTURE_LINE)
+                . $bodyRectAt(0, 0, $halfW * 0.85, max($halfD * 0.40, 0.02), self::OPENING_FILL, FloorPlanPalette::FIXTURE_LINE),
+            'fireplace' => $bodyRect($halfW, $halfD, FloorPlanPalette::HEARTH_FILL, FloorPlanPalette::FIXTURE_LINE)
+                . $bodyRectAt(0, $halfD * 0.5, $halfW * 0.7, $halfD * 0.25, FloorPlanPalette::FIXTURE_FILL, FloorPlanPalette::FIXTURE_LINE),
             'stairs' => $this->stairsIconSvg($pose, $toPx, $mx, $mz, $halfW, $halfD),
             default => null,
         };
@@ -652,6 +663,9 @@ SVG;
     {
         $out = '<g id="objects" stroke="' . self::OBJECT . '" fill="none" font-size="8">';
         foreach ($room['objects'] ?? [] as $object) {
+            if (!empty($object['excluded'])) {
+                continue;
+            }
             [$mx, $mz] = $object['position_m'];
             $dims = $object['dimensions_m'] ?? [0.5, 0.0, 0.5];
             $halfWidth = ((float) ($dims[0] ?? 0.5)) / 2;
@@ -662,12 +676,14 @@ SVG;
                 $out .= $icon;
                 continue;
             }
-            [$w1x, $w1z] = RoomFusionSolver::transformPoint($pose, $mx - $halfWidth, $mz - $halfDepth);
-            [$x1, $y1] = $toPx($w1x, $w1z);
-            [$w2x, $w2z] = RoomFusionSolver::transformPoint($pose, $mx + $halfWidth, $mz + $halfDepth);
-            [$x2, $y2] = $toPx($w2x, $w2z);
-            $out .= '<rect x="' . $this->num(min($x1, $x2)) . '" y="' . $this->num(min($y1, $y2)) . '" width="' . $this->num(abs($x2 - $x1)) . '" height="' . $this->num(abs($y2 - $y1)) . '"/>';
-            $labels .= '<text x="' . $this->num(min($x1, $x2) + 2) . '" y="' . $this->num(min($y1, $y2) - 3) . '" fill="' . self::SUBTEXT . '" stroke="none">' . $this->esc($object['category']) . '</text>';
+            $pts = $this->localRectPolygon($pose, $toPx, $mx, $mz, $halfWidth, $halfDepth);
+            $out .= '<polygon points="' . $pts . '" fill="none" stroke="' . self::OBJECT . '" stroke-width="0.9"/>';
+            $labelText = isset($object['custom_name']) && is_string($object['custom_name']) && $object['custom_name'] !== ''
+                ? $object['custom_name']
+                : (string) $object['category'];
+            [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $mx, $mz);
+            [$labelX, $labelY] = $toPx($wx, $wz);
+            $labels .= '<text x="' . $this->num($labelX - $halfWidth * self::PX_PER_M) . '" y="' . $this->num($labelY - $halfDepth * self::PX_PER_M - 3) . '" fill="' . self::SUBTEXT . '" stroke="none">' . $this->esc($labelText) . '</text>';
         }
         $out .= '</g>';
         return $out;

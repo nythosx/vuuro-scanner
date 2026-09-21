@@ -410,6 +410,10 @@ x_check('tiled SVG contains both room labels', str_contains($tiledSvg, 'Room A')
 $fusedSvg = $svgRenderer->render($fusedPlan);
 x_check('fused SVG starts with an <svg> root element', str_starts_with($fusedSvg, '<svg '));
 x_check('fused SVG differs from the tiled SVG for the same rooms once positions are known', $fusedSvg !== $tiledSvg);
+x_check('fused SVG uses cream #f2f1ec background', str_contains($fusedSvg, '#f2f1ec'));
+x_check('fused SVG has no wall drop-shadow filter applied', !str_contains($fusedSvg, 'wall-shadow'));
+x_check('fused SVG walls are rendered pure black #000000', str_contains($fusedSvg, 'fill="#000000"'));
+x_check('fused SVG uses the updated grid line color #e7e6e0', str_contains($fusedSvg, '#e7e6e0'));
 
 $forcedTilesSvg = $svgRenderer->render($fusedPlan, 'tiles');
 x_check('layout=tiles forces the per-room SVG sheet even when fusion is available', $forcedTilesSvg !== $fusedSvg);

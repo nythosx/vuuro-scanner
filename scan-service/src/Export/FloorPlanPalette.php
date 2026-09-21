@@ -16,7 +16,7 @@ final class FloorPlanPalette
     public const BRAND_ACCENT_CYAN = '#2ec3ff';
     public const BRAND_INK = '#272729';
     public const BRAND_INK_MUTED = '#87878a';
-    public const BRAND_SURFACE = '#ffffff';
+    public const BRAND_SURFACE = '#f2f1ec';
     public const BRAND_SURFACE_MUTED = '#f9f9fb';
     public const BRAND_BORDER = '#ececee';
     public const BRAND_DANGER = '#d6453e';

@@ -7,6 +7,9 @@ struct ResultSummaryView: View {
     let floorPlan: FloorPlan
     let onDone: () -> Void
 
+    @State private var currentFloorPlan: FloorPlan
+    @State private var pendingObjectChanges: [ObjectChangeKey: PendingObjectChange] = [:]
+    @State private var isSavingChanges = false
     @State private var floorPlanImage: UIImage?
     @State private var isLoadingImage = false
     @State private var imageFailed = false
@@ -17,6 +20,7 @@ struct ResultSummaryView: View {
     @State private var isFetchingPDF = false
     @State private var showForgetConfirmation = false
     @State private var appError: AppError?
+    @State private var saveSuccessVisible = false
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
 
     private var exportUnit: MeasurementUnit {
@@ -26,7 +30,18 @@ struct ResultSummaryView: View {
     private let client = ScanServiceClient()
 
     private var totalAreaM2: Double {
-        floorPlan.rooms.reduce(0.0) { $0 + $1.floorAreaM2 }
+        currentFloorPlan.rooms.reduce(0.0) { $0 + $1.floorAreaM2 }
+    }
+
+    private var hasPendingChanges: Bool {
+        !pendingObjectChanges.isEmpty
+    }
+
+    init(session: ScanSessionResponse, floorPlan: FloorPlan, onDone: @escaping () -> Void) {
+        self.session = session
+        self.floorPlan = floorPlan
+        self.onDone = onDone
+        _currentFloorPlan = State(initialValue: floorPlan)
     }
 
     var body: some View {
@@ -45,19 +60,27 @@ struct ResultSummaryView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     summaryHero
                     floorPlanCard
-                    ForEach(floorPlan.rooms, id: \.roomId) { room in
+                    ForEach(currentFloorPlan.rooms, id: \.roomId) { room in
                         RoomResultCard(
                             room: room,
                             showsRibbon: false,
-                            isFused: floorPlan.rooms.count > 1,
-                            photos: floorPlan.photos.filter { $0.roomId == room.roomId },
-                            notes: floorPlan.notes.filter { $0.roomId == room.roomId },
-                            session: session
+                            isFused: currentFloorPlan.rooms.count > 1,
+                            photos: currentFloorPlan.photos.filter { $0.roomId == room.roomId },
+                            notes: currentFloorPlan.notes.filter { $0.roomId == room.roomId },
+                            session: session,
+                            pendingObjectChanges: pendingObjectChanges,
+                            onObjectChange: { key, change in
+                                if let change {
+                                    pendingObjectChanges[key] = change
+                                } else {
+                                    pendingObjectChanges.removeValue(forKey: key)
+                                }
+                            }
                         )
                     }
 
-                    if !floorPlan.photos.filter({ $0.roomId == nil }).isEmpty
-                        || !floorPlan.notes.filter({ $0.roomId == nil }).isEmpty {
+                    if !currentFloorPlan.photos.filter({ $0.roomId == nil }).isEmpty
+                        || !currentFloorPlan.notes.filter({ $0.roomId == nil }).isEmpty {
                         unitAttachmentsCard
                     }
 
@@ -77,6 +100,23 @@ struct ResultSummaryView: View {
         }
         .background(VuuroColor.bgApp)
         .task { await loadImage() }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if hasPendingChanges {
+                saveBar
+            }
+        }
+        .overlay(alignment: .top) {
+            if saveSuccessVisible {
+                Text("Changes saved")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Color.black.opacity(0.85), in: Capsule())
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
         .fullScreenCover(isPresented: $showImagePreview) {
             if let shareImageURL,
                let imageData = try? Data(contentsOf: shareImageURL),
@@ -136,6 +176,46 @@ struct ResultSummaryView: View {
         }
     }
 
+    private var saveBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                pendingObjectChanges.removeAll()
+            } label: {
+                Text("Discard")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(VuuroColor.textPrimary)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .background(VuuroColor.bgInset, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(isSavingChanges)
+
+            Button {
+                Task { await saveChanges() }
+            } label: {
+                if isSavingChanges {
+                    ProgressView().tint(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                } else {
+                    Text("Save changes")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+            }
+            .buttonStyle(.plain)
+            .background(VuuroColor.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .disabled(isSavingChanges)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .background(.regularMaterial)
+    }
+
     private var summaryHero: some View {
         VStack(spacing: 10) {
             ZStack {
@@ -146,7 +226,7 @@ struct ResultSummaryView: View {
             }
             .frame(width: 64, height: 64)
 
-            Text(floorPlan.rooms.count == 1 ? "Room captured" : "Unit captured")
+            Text(currentFloorPlan.rooms.count == 1 ? "Room captured" : "Unit captured")
                 .font(.system(size: 28, weight: .bold))
                 .tracking(-0.6)
                 .foregroundStyle(VuuroColor.textPrimary)
@@ -161,10 +241,10 @@ struct ResultSummaryView: View {
     }
 
     private var summarySubtitle: String {
-        let count = floorPlan.rooms.count
+        let count = currentFloorPlan.rooms.count
         let roomsText = "\(count) room\(count == 1 ? "" : "s")"
-        let areaText = String(format: "%.1f m² total", totalAreaM2)
-        return "\(roomsText) · \(areaText)"
+        let areaText = String(format: "%.1f m\u{00B2} total", totalAreaM2)
+        return "\(roomsText) \u{00B7} \(areaText)"
     }
 
     private var floorPlanCard: some View {
@@ -176,7 +256,7 @@ struct ResultSummaryView: View {
                     .textCase(.uppercase)
                     .foregroundStyle(VuuroColor.textSecondary)
                 Spacer()
-                VuuroBadge("\(floorPlan.rooms.count) room\(floorPlan.rooms.count == 1 ? "" : "s")", style: .info)
+                VuuroBadge("\(currentFloorPlan.rooms.count) room\(currentFloorPlan.rooms.count == 1 ? "" : "s")", style: .info)
             }
 
             ZStack {
@@ -240,7 +320,7 @@ struct ResultSummaryView: View {
     private var schematicPlaceholder: some View {
         let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
         return LazyVGrid(columns: columns, spacing: 8) {
-            ForEach(floorPlan.rooms, id: \.roomId) { room in
+            ForEach(currentFloorPlan.rooms, id: \.roomId) { room in
                 ZStack {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(VuuroColor.accent.opacity(0.06))
@@ -268,8 +348,8 @@ struct ResultSummaryView: View {
                 .foregroundStyle(VuuroColor.textSecondary)
             RoomAttachmentsList(
                 session: session,
-                photos: floorPlan.photos.filter { $0.roomId == nil },
-                notes: floorPlan.notes.filter { $0.roomId == nil }
+                photos: currentFloorPlan.photos.filter { $0.roomId == nil },
+                notes: currentFloorPlan.notes.filter { $0.roomId == nil }
             )
         }
         .padding(16)
@@ -349,6 +429,54 @@ struct ResultSummaryView: View {
             return
         }
         floorPlanImage = image
+    }
+
+    @MainActor
+    private func saveChanges() async {
+        guard !isSavingChanges, !pendingObjectChanges.isEmpty else { return }
+        isSavingChanges = true
+        defer { isSavingChanges = false }
+
+        let requests: [ObjectChangeRequest] = pendingObjectChanges.map { key, change in
+            ObjectChangeRequest(
+                roomId: key.roomId,
+                objectId: key.objectId,
+                customName: change.delete == true ? nil : change.customName,
+                customNameChanged: change.delete != true && change.customNameChanged,
+                excluded: change.delete == true ? nil : change.excluded,
+                delete: change.delete == true ? true : nil
+            )
+        }
+
+        do {
+            let updated = try await client.batchUpdateObjects(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                changes: requests
+            )
+            currentFloorPlan = updated
+            pendingObjectChanges.removeAll()
+            FloorPlanImageCache.shared.invalidate(sessionId: session.id)
+            floorPlanImage = nil
+            imageFailed = false
+            if let cachedPNG = cachedFileURL(suffix: "png") {
+                try? FileManager.default.removeItem(at: cachedPNG)
+            }
+            if let cachedPDF = cachedFileURL(suffix: "pdf") {
+                try? FileManager.default.removeItem(at: cachedPDF)
+            }
+            await loadImage()
+            withAnimation(.easeInOut(duration: 0.2)) {
+                saveSuccessVisible = true
+            }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            withAnimation(.easeInOut(duration: 0.2)) {
+                saveSuccessVisible = false
+            }
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .roomTypeUpdate, underlying: error)
+        }
     }
 
     @MainActor
