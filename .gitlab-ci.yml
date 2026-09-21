@@ -7,6 +7,7 @@ scan-service-net:
   tags:
     - windows-shell
   script:
+    - Get-Process | Where-Object { $_.ProcessName -eq 'php' } | ForEach-Object { Stop-Process -Id $_.Id -Force }
     - cd scan-service
     - php tests/adapter_test.php
     - php tests/repository_test.php
