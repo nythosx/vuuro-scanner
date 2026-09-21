@@ -38,6 +38,11 @@ jobs:
 
       - name: Start the Scan Service (fresh DB)
         working-directory: scan-service
+        env:
+          SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX: "2000"
+          SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_WINDOW_SECONDS: "600"
+          SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_MAX: "4000"
+          SCAN_SERVICE_ADMIN_API_KEY: "ci-test-admin-key"
         run: |
           rm -f data/scan_service.sqlite
           php -d post_max_size=30M -d upload_max_filesize=26M -d display_errors=0 -S 127.0.0.1:8089 public/index.php &
@@ -70,6 +75,8 @@ jobs:
       # other script's session/capture calls sharing 127.0.0.1).
       - name: The standalone post-body-read rate-limit net
         working-directory: scan-service
+        env:
+          SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_MAX: "4000"
         run: |
           rm -f data/scan_service.sqlite
           php -d post_max_size=30M -d upload_max_filesize=26M -d display_errors=0 -S 127.0.0.1:9499 public/index.php &
