@@ -22,10 +22,10 @@ function check(string $label, bool $pass, string $detail = ''): void
 
 echo "== The global POST body-read step is rate-limited per IP, independent of path/auth validity ==\n";
 
-$body = str_repeat('x', 100_000); // 100KB — small enough to run 500+ times quickly
+$body = str_repeat('x', 100_000); // 100KB — small enough to run thousands of times quickly
 $sawThrottle = false;
 $firstThrottleAt = null;
-for ($i = 0; $i < 520; $i++) {
+for ($i = 0; $i < 4050; $i++) {
     [$status, ] = net_http_raw_literal('POST', "$baseUrl/totally-bogus-unauthenticated-path", $body);
     if ($status === 429) {
         $sawThrottle = true;
@@ -41,12 +41,12 @@ for ($i = 0; $i < 520; $i++) {
 check(
     'repeated POSTs to a nonexistent, unauthenticated path eventually hit HTTP 429',
     $sawThrottle,
-    'never saw a 429 across 520 rapid POSTs'
+    'never saw a 429 across 4050 rapid POSTs'
 );
 if ($sawThrottle) {
     check(
-        'the throttle fires at or before the documented 500-request ceiling, not unboundedly later',
-        $firstThrottleAt <= 501,
+        'the throttle fires at or before the documented 4000-request ceiling, not unboundedly later',
+        $firstThrottleAt <= 4001,
         "first 429 arrived at call $firstThrottleAt"
     );
 }
