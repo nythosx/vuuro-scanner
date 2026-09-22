@@ -101,7 +101,7 @@ final class RoomPlanSimulatorAdapter
         ];
     }
 
-    /** @param array<int, array{0: float, 1: float}> $points */
+
     private static function polygonArea(array $points): float
     {
         $n = count($points);
@@ -114,7 +114,7 @@ final class RoomPlanSimulatorAdapter
         return abs($sum) / 2.0;
     }
 
-    /** @param array<int, array{0: float, 1: float}> $points */
+
     private static function polygonPerimeter(array $points): float
     {
         $n = count($points);
@@ -127,10 +127,7 @@ final class RoomPlanSimulatorAdapter
         return $sum;
     }
 
-    /**
-     * @param array<int, array{0: float, 1: float}> $points
-     * @return array{0: float, 1: float}
-     */
+
     private static function boundingDimensions(array $points): array
     {
         $xs = array_column($points, 0);
@@ -138,10 +135,7 @@ final class RoomPlanSimulatorAdapter
         return [max($xs) - min($xs), max($ys) - min($ys)];
     }
 
-    /**
-     * @param array<int, array{0: float, 1: float}> $points
-     * @return array<int, array{0: float, 1: float}>
-     */
+
     private static function roomLocalOutline(array $points): array
     {
         [$minX, $minZ] = self::minXZ($points);
@@ -152,18 +146,13 @@ final class RoomPlanSimulatorAdapter
         );
     }
 
-    /**
-     * @param array<int, array{0: float, 1: float}> $points
-     * @return array{0: float, 1: float}
-     */
+
     private static function minXZ(array $points): array
     {
         return [min(array_column($points, 0)), min(array_column($points, 1))];
     }
 
-    /**
-     * @return array<int, array{opening_id: string, category: string, position_m: array{0: float, 1: float}, confidence: string}>
-     */
+
     private static function mapOpenings(array $rawCapture, float $minX, float $minZ): array
     {
         $openings = [];
@@ -244,9 +233,7 @@ final class RoomPlanSimulatorAdapter
         return empty($heights) ? null : max($heights);
     }
 
-    /**
-     * @return array<int, array{object_id: string, category: string, position_m: array{0: float, 1: float}, dimensions_m: array{0: float, 1: float, 2: float}, confidence: string}>
-     */
+
     private static function mapObjects(array $rawCapture, float $minX, float $minZ): array
     {
         $items = $rawCapture['objects'] ?? [];
@@ -487,9 +474,7 @@ final class RoomPlanSimulatorAdapter
         }
     }
 
-    /**
-     * @param array<int, mixed> $points
-     */
+
     private static function validatePoints(string $label, array $points): void
     {
         foreach ($points as $point) {

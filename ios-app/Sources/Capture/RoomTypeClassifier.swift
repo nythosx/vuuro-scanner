@@ -51,7 +51,7 @@ enum RoomTypeClassifier {
 
     private static func guessFromSections(_ sections: [CapturedRoom.Section]) -> Guess? {
         guard !sections.isEmpty else { return nil }
-  
+
         var counts: [String: Int] = [:]
         for section in sections {
             guard let label = mapSectionLabel(section.label) else { continue }

@@ -9,11 +9,12 @@ struct HomeView: View {
 
     @State private var recentScan: ScanHistoryEntry?
 
-    private static let metaDateFormatter: DateFormatter = {
+    private static func metaDateFormatter() -> DateFormatter {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d, yyyy"
+        formatter.locale = AppLanguageSettings.effectiveLocale
         return formatter
-    }()
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -103,6 +104,6 @@ struct HomeView: View {
     }
 
     private func metaLine(for entry: ScanHistoryEntry) -> String {
-        "\(entry.purpose.displayName) · \(Self.metaDateFormatter.string(from: entry.createdAt))"
+        "\(entry.purpose.displayName) · \(Self.metaDateFormatter().string(from: entry.createdAt))"
     }
 }

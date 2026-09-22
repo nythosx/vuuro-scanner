@@ -86,8 +86,8 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
         return;
     }
 
-    // The card's own required check: every positioned door/window in the
-    // capture has a matching openings[] entry — none silently dropped.
+
+
     check('openings[] total count matches the fixture\'s positioned doors/windows/openings',
         count($room['openings'] ?? []) === $wantOpeningTotal,
         'API=' . count($room['openings'] ?? []) . " expected=$wantOpeningTotal");
@@ -106,12 +106,12 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
         $gotCounts === $wantOpeningCounts,
         'API=' . json_encode($gotCounts) . ' expected=' . json_encode($wantOpeningCounts));
 
-    // height_m / volume_m3_indicative: null must stay null, never a
-    // fabricated 0, and a real value must match the independently
-    // recomputed tallest wall height.
+
+
+
     if ($wantHeight === null) {
-        // `?? 'missing'` would wrongly treat a present-but-null value the
-        // same as a missing key — array_key_exists() is required here.
+
+
         check('height_m is null when the fixture has no usable wall height',
             array_key_exists('height_m', $room) && $room['height_m'] === null,
             'API=' . json_encode($room['height_m'] ?? 'key missing'));

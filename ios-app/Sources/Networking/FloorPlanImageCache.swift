@@ -4,7 +4,13 @@ import Foundation
 final class FloorPlanImageCache {
     static let shared = FloorPlanImageCache()
 
-    private var entries: [String: Data] = [:]
+    private let entries: NSCache<NSString, NSData> = {
+        let cache = NSCache<NSString, NSData>()
+        cache.countLimit = 40
+        cache.totalCostLimit = 60 * 1024 * 1024
+        return cache
+    }()
+    private var knownKeys: Set<String> = []
     private var inFlightTasks: [String: Task<Data?, Never>] = [:]
     private var lastErrors: [String: Error] = [:]
 
@@ -20,8 +26,8 @@ final class FloorPlanImageCache {
         if let existing = inFlightTasks[cacheKey] {
             return existing
         }
-        if let cached = entries[cacheKey] {
-            return Task { cached }
+        if let cached = entries.object(forKey: cacheKey as NSString) {
+            return Task { cached as Data }
         }
         let task = Task<Data?, Never> {
             let data: Data?
@@ -45,7 +51,8 @@ final class FloorPlanImageCache {
                 return nil
             }
             if let data {
-                self.entries[cacheKey] = data
+                self.entries.setObject(data as NSData, forKey: cacheKey as NSString, cost: data.count)
+                self.knownKeys.insert(cacheKey)
             }
             self.inFlightTasks[cacheKey] = nil
             return data
@@ -55,7 +62,7 @@ final class FloorPlanImageCache {
     }
 
     func cachedData(sessionId: String, unit: MeasurementUnit) -> Data? {
-        entries[key(sessionId: sessionId, unit: unit)]
+        entries.object(forKey: key(sessionId: sessionId, unit: unit) as NSString) as Data?
     }
 
     func lastError(sessionId: String, unit: MeasurementUnit) -> Error? {
@@ -64,7 +71,10 @@ final class FloorPlanImageCache {
 
     func invalidate(sessionId: String) {
         let prefix = "\(sessionId)|"
-        entries = entries.filter { !$0.key.hasPrefix(prefix) }
+        for cacheKey in knownKeys where cacheKey.hasPrefix(prefix) {
+            entries.removeObject(forKey: cacheKey as NSString)
+        }
+        knownKeys = knownKeys.filter { !$0.hasPrefix(prefix) }
         for (cacheKey, task) in inFlightTasks where cacheKey.hasPrefix(prefix) {
             task.cancel()
         }
@@ -76,7 +86,8 @@ final class FloorPlanImageCache {
         for (_, task) in inFlightTasks {
             task.cancel()
         }
-        entries.removeAll()
+        entries.removeAllObjects()
+        knownKeys.removeAll()
         inFlightTasks.removeAll()
         lastErrors.removeAll()
     }

@@ -31,7 +31,7 @@ function x_check_pdf_graph(string $label, string $pdfBytes): void
     x_check("$label: object graph is fully valid", $problems === [], implode('; ', $problems));
 }
 
-/** @return array<int, array{label: string, floor_area_m2: float, perimeter_m: float, confidence: string}> */
+
 function build_many_rooms(int $n): array
 {
     $rooms = [];
@@ -95,25 +95,25 @@ $pdfWithoutMetrics = $renderer->render(build_floor_plan([$roomWithoutMetrics]));
 x_check('a room with no height_m/openings keys at all still renders, no fabricated metrics line', !str_contains($pdfWithoutMetrics, 'm height'));
 x_check_pdf_graph('PDF with no metrics', $pdfWithoutMetrics);
 
-// Review finding: height_m present but volume_m3_indicative null used to
-// print a fabricated "0.00 m3 indicative capacity" instead of omitting it.
+
+
 $roomHeightNoVolume = ['label' => 'Room HeightOnly', 'floor_area_m2' => 12.0, 'perimeter_m' => 14.0, 'confidence' => 'high', 'height_m' => 2.5, 'volume_m3_indicative' => null];
 $pdfHeightNoVolume = $renderer->render(build_floor_plan([$roomHeightNoVolume]));
 x_check('height with no volume still prints the height line', str_contains($pdfHeightNoVolume, '2.50 m height'));
 x_check('height with no volume does NOT fabricate a 0.00 m3 line', !str_contains($pdfHeightNoVolume, 'm3'));
 x_check_pdf_graph('PDF with height but no volume', $pdfHeightNoVolume);
 
-// buildTextLines() emits 10 fixed lines (header/disclaimer/totals — the
-// photos/notes summary line is omitted here since build_many_rooms()'s
-// floor plan has neither) plus one line per room; paginate() fits 44 lines
-// per page (intdiv(740-50, 16) + 1). 8790 rooms -> 8800 lines -> exactly
-// 200 pages, the last one allowed by MAX_PAGES. 8791 rooms -> 8801 lines ->
-// 201 pages, one past it. If either constant ever changes, this test's
-// math has to change with it — that coupling is intentional, not fragile:
-// it proves the boundary is really being hit, not just "a big number".
+
+
+
+
+
+
+
+
 $linesPerPage = 44;
 $fixedLineCount = 10;
-$maxPages = 200; // mirrors FloorPlanPdfRenderer::MAX_PAGES (private)
+$maxPages = 200;
 
 $roomsAtBoundary = $maxPages * $linesPerPage - $fixedLineCount;
 $roomsOverBoundary = $roomsAtBoundary + 1;
@@ -164,9 +164,7 @@ function build_room_with_outline(string $label, array $outlineM, ?array $structu
     ];
 }
 
-/** Scans every pixel of a decoded PNG for an exact RGB match — avoids
- * coupling to the renderer's internal layout math (unlike the MAX_PAGES
- * boundary math above, which is deliberately coupled to it). */
+
 function png_contains_color(string $pngBytes, int $r, int $g, int $b): bool
 {
     $img = imagecreatefromstring($pngBytes);

@@ -22,7 +22,7 @@ function check(string $label, bool $pass, string $detail = ''): void
 
 echo "== The global POST body-read step is rate-limited per IP, independent of path/auth validity ==\n";
 
-$body = str_repeat('x', 100_000); // 100KB — small enough to run thousands of times quickly
+$body = str_repeat('x', 100_000);
 $sawThrottle = false;
 $firstThrottleAt = null;
 for ($i = 0; $i < 4050; $i++) {
@@ -60,3 +60,4 @@ if ($failures !== []) {
     exit(1);
 }
 fwrite(STDERR, "\nNET VERDICT: GREEN\n");
+exit(0);

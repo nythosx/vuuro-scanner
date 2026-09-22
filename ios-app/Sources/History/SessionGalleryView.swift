@@ -216,7 +216,7 @@ struct SessionGalleryView: View {
         do {
             floorPlan = try await client.deletePhoto(sessionId: entry.sessionId, accessToken: entry.accessToken, photoId: photoId)
             appError = nil
-            VuuroToast.shared.show("Photo removed")
+            VuuroToast.shared.show(String(localized: "Photo removed"))
         } catch is CancellationError {
         } catch {
             appError = AppError(site: .photoDelete, underlying: error)
@@ -231,7 +231,7 @@ struct SessionGalleryView: View {
         do {
             floorPlan = try await client.deleteNote(sessionId: entry.sessionId, accessToken: entry.accessToken, noteId: noteId)
             appError = nil
-            VuuroToast.shared.show("Note removed")
+            VuuroToast.shared.show(String(localized: "Note removed"))
         } catch is CancellationError {
         } catch {
             appError = AppError(site: .noteDelete, underlying: error)

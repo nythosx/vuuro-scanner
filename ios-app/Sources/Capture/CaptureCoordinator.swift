@@ -199,12 +199,14 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     }
 
     private struct PointKey: Hashable {
+        private static let precision: Double = 1000
+
         let x: Double
         let y: Double
 
         init(x: Double, y: Double) {
-            self.x = x == 0 ? 0 : x
-            self.y = y == 0 ? 0 : y
+            self.x = (x * Self.precision).rounded() / Self.precision
+            self.y = (y * Self.precision).rounded() / Self.precision
         }
 
         static func == (lhs: PointKey, rhs: PointKey) -> Bool {

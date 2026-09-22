@@ -8,7 +8,7 @@ $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';
 $failures = [];
 $checks = 0;
 
-/** @param array<int, array{0: float, 1: float}> $xz */
+
 function expected_area(array $xz): float
 {
     $total = 0.0;
@@ -21,7 +21,7 @@ function expected_area(array $xz): float
     return abs($total) / 2.0;
 }
 
-/** @param array<int, array{0: float, 1: float}> $xz */
+
 function expected_perimeter(array $xz): float
 {
     $total = 0.0;
@@ -35,10 +35,7 @@ function expected_perimeter(array $xz): float
     return $total;
 }
 
-/**
- * @param array<int, array{0: float, 1: float}> $xz
- * @return array{0: float, 1: float}
- */
+
 function expected_bbox(array $xz): array
 {
     $xs = array_map(static fn ($p) => $p[0], $xz);
@@ -46,7 +43,7 @@ function expected_bbox(array $xz): array
     return [max($xs) - min($xs), max($zs) - min($zs)];
 }
 
-/** @param array<int, array{0: float, 1: float, 2: float}> $corners3d */
+
 function to_xz(array $corners3d): array
 {
     return array_map(static fn ($p) => [(float) $p[0], (float) $p[2]], $corners3d);

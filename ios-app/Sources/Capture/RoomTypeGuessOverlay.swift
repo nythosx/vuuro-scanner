@@ -1,9 +1,9 @@
-//
-//  RoomTypeGuessOverlay.swift
-//  VuuroScan
-//
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
-//
+
+
+
+
+
+
 
 import SwiftUI
 import UIKit

@@ -23,6 +23,21 @@ set_exception_handler(static function (\Throwable $e): void {
     ], JSON_PRETTY_PRINT);
 });
 
+const DEFAULT_ADMIN_API_KEY = 'change-me-local-dev';
+const DEFAULT_EXPORT_SECRET = 'change-me-local-dev-signing';
+
+$scanServiceEnv = getenv('SCAN_SERVICE_ENV') ?: 'development';
+if ($scanServiceEnv === 'production') {
+    $adminKey = getenv('SCAN_SERVICE_ADMIN_API_KEY');
+    $exportSecret = getenv('SCAN_SERVICE_EXPORT_SECRET');
+    if ($adminKey === false || $adminKey === '' || $adminKey === DEFAULT_ADMIN_API_KEY) {
+        throw new \RuntimeException('SCAN_SERVICE_ENV=production requires SCAN_SERVICE_ADMIN_API_KEY to be set to a real, non-default value.');
+    }
+    if ($exportSecret === false || $exportSecret === '' || $exportSecret === DEFAULT_EXPORT_SECRET) {
+        throw new \RuntimeException('SCAN_SERVICE_ENV=production requires SCAN_SERVICE_EXPORT_SECRET to be set to a real, non-default value.');
+    }
+}
+
 header('X-Content-Type-Options: nosniff');
 
 $corsOrigin = getenv('SCAN_SERVICE_CORS_ORIGIN') ?: 'http://127.0.0.1:8090';
@@ -57,6 +72,9 @@ if ($adminStaticPath !== false && ($adminStaticPath === '/admin' || str_starts_w
             'ico' => 'image/x-icon',
         ];
         header('Content-Type: ' . ($mimeMap[$ext] ?? 'application/octet-stream'));
+        if ($ext === 'html') {
+            header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none';");
+        }
         readfile($adminFile);
         return;
     }
@@ -91,8 +109,7 @@ function json_body(string $raw): array
 
 function rateLimited(ScanSessionRepository $repo, string $bucket, int $max, int $windowSeconds): bool
 {
-    $repo->recordEvent($bucket);
-    $count = $repo->countRecentEvents($bucket, $windowSeconds);
+    $count = $repo->recordAndCountRecentEvents($bucket, $windowSeconds);
     if ($count > $max) {
         header("Retry-After: $windowSeconds");
         $windowMinutes = max(1, (int) round($windowSeconds / 60));
@@ -157,26 +174,40 @@ function backupDatabaseIfDue(PDO $db): void
         return;
     }
 
-    $lastBackupMarker = $backupDir . '/.last_backup_at';
-    $lastBackupAt = is_file($lastBackupMarker) ? (int) filemtime($lastBackupMarker) : 0;
-    if ($lastBackupAt !== 0 && time() - $lastBackupAt < BACKUP_MIN_INTERVAL_SECONDS) {
+    $lockPath = $backupDir . '/.backup.lock';
+    $lockHandle = fopen($lockPath, 'c');
+    if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
+        if ($lockHandle !== false) {
+            fclose($lockHandle);
+        }
         return;
     }
 
-    $backupPath = $backupDir . '/' . gmdate('Ymd\THis\Z') . '.sqlite';
     try {
-        $db->exec('VACUUM INTO ' . $db->quote($backupPath));
-    } catch (\PDOException $e) {
-        error_log('backupDatabaseIfDue: VACUUM INTO failed: ' . $e->getMessage());
-        return;
-    }
-    touch($lastBackupMarker);
+        $lastBackupMarker = $backupDir . '/.last_backup_at';
+        $lastBackupAt = is_file($lastBackupMarker) ? (int) filemtime($lastBackupMarker) : 0;
+        if ($lastBackupAt !== 0 && time() - $lastBackupAt < BACKUP_MIN_INTERVAL_SECONDS) {
+            return;
+        }
 
-    $all = glob($backupDir . '/*.sqlite') ?: [];
-    sort($all);
-    $excess = count($all) - BACKUP_MAX_KEPT;
-    for ($i = 0; $i < $excess; $i++) {
-        unlink($all[$i]);
+        $backupPath = $backupDir . '/' . gmdate('Ymd\THis\Z') . '.sqlite';
+        try {
+            $db->exec('VACUUM INTO ' . $db->quote($backupPath));
+        } catch (\PDOException $e) {
+            error_log('backupDatabaseIfDue: VACUUM INTO failed: ' . $e->getMessage());
+            return;
+        }
+        touch($lastBackupMarker);
+
+        $all = glob($backupDir . '/*.sqlite') ?: [];
+        sort($all);
+        $excess = count($all) - BACKUP_MAX_KEPT;
+        for ($i = 0; $i < $excess; $i++) {
+            unlink($all[$i]);
+        }
+    } finally {
+        flock($lockHandle, LOCK_UN);
+        fclose($lockHandle);
     }
 }
 
@@ -263,18 +294,72 @@ function verifyBundleSignature(array $bundle, ?string $secret): array
     return ['status' => 'invalid', 'algorithm' => $algorithm];
 }
 
+function ipInCidr(string $ip, string $cidr): bool
+{
+    if (!str_contains($cidr, '/')) {
+        return $ip === $cidr;
+    }
+    [$subnet, $bits] = explode('/', $cidr, 2);
+    $ipBin = @inet_pton($ip);
+    $subnetBin = @inet_pton($subnet);
+    if ($ipBin === false || $subnetBin === false || strlen($ipBin) !== strlen($subnetBin)) {
+        return false;
+    }
+    $bits = (int) $bits;
+    $bytes = intdiv($bits, 8);
+    $remainderBits = $bits % 8;
+    if ($bytes > 0 && substr($ipBin, 0, $bytes) !== substr($subnetBin, 0, $bytes)) {
+        return false;
+    }
+    if ($remainderBits === 0) {
+        return true;
+    }
+    $mask = ~(0xFF >> $remainderBits) & 0xFF;
+    return (ord($ipBin[$bytes]) & $mask) === (ord($subnetBin[$bytes]) & $mask);
+}
+
+function isTrustedProxy(string $ip): bool
+{
+    static $trustedProxies = null;
+    if ($trustedProxies === null) {
+        $configured = getenv('SCAN_SERVICE_TRUSTED_PROXIES');
+        $trustedProxies = is_string($configured) && $configured !== ''
+            ? array_map('trim', explode(',', $configured))
+            : ['127.0.0.1', '::1', '172.16.0.0/12'];
+    }
+    foreach ($trustedProxies as $cidr) {
+        if (ipInCidr($ip, $cidr)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function clientIp(): string
 {
-    // No reverse proxy / load balancer in front of this local-dev service
-    // today, so REMOTE_ADDR is trustworthy — deliberately NOT trusting
-    // X-Forwarded-For, since that header is caller-supplied.
-    return $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $remote = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    if ($remote !== 'unknown' && isTrustedProxy($remote)) {
+        $forwarded = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '';
+        if (is_string($forwarded) && $forwarded !== '') {
+            $ips = array_map('trim', explode(',', $forwarded));
+            if ($ips[0] !== '') {
+                return $ips[0];
+            }
+        }
+    }
+    return $remote;
 }
 
 function respond(int $status, array $body): void
 {
     http_response_code($status);
     echo json_encode($body, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR);
+}
+
+function requestScheme(): string
+{
+    $https = $_SERVER['HTTPS'] ?? '';
+    return (is_string($https) && $https !== '' && $https !== 'off') ? 'https' : 'http';
 }
 
 function respondError(int $status, string $errorCode, string $message, array $extra = []): void
@@ -302,9 +387,9 @@ function first_too_long(array $body, array $maxLengths): ?array
 {
     foreach ($maxLengths as $field => $max) {
         $value = $body[$field] ?? null;
-        // mb_strlen(), not strlen(): every caller of this function tells the
-        // client the limit is in "characters," and strlen() counts bytes.
-        // json_body() already guarantees valid UTF-8.
+
+
+
         if (is_string($value) && mb_strlen($value, 'UTF-8') > $max) {
             return [$field, $max];
         }
@@ -376,7 +461,7 @@ function authorizeSession(ScanSessionRepository $repo, string $sessionId, string
     }
 
     if ($repo->isTokenExpired($session)) {
-      
+
         if ($action === 'rotate_token' && !$repo->isBeyondRotateGracePeriod($session)) {
             $repo->logAccess($session['id'], $action, 'granted_grace_rotation');
             return $session;
@@ -407,6 +492,16 @@ if ($method === 'POST') {
     $postBodyReadMax = (int) (getenv('SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_MAX') ?: 500);
     $postBodyReadWindowSeconds = (int) (getenv('SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_WINDOW_SECONDS') ?: 300);
     if (rateLimited($repo, clientIp() . ':post_body_read', $postBodyReadMax, $postBodyReadWindowSeconds)) {
+        return;
+    }
+
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+    $isMultipart = is_string($contentType) && stripos($contentType, 'multipart/form-data') === 0;
+
+    $declaredLength = $_SERVER['CONTENT_LENGTH'] ?? null;
+    if (!$isMultipart && is_string($declaredLength) && ctype_digit($declaredLength) && (int) $declaredLength > MAX_REQUEST_BODY_BYTES) {
+        $maxMb = round(MAX_REQUEST_BODY_BYTES / (1024 * 1024), 1);
+        respondError(413, 'payload_too_large', "This request is larger than the {$maxMb}MB limit. If this is a real capture, check for an unexpectedly large field rather than retrying as-is.", ['max_bytes' => MAX_REQUEST_BODY_BYTES]);
         return;
     }
 
@@ -519,7 +614,7 @@ if ($method === 'POST' && $path === '/scan-sessions') {
 
 if ($method === 'GET' && $path === '/scan-sessions') {
     if (!adminAuthorized()) {
-        if (rateLimited($repo, clientIp() . ':denied_admin_auth', 20, 300)) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:list_sessions', 20, 300)) {
             return;
         }
         respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header, and set SCAN_SERVICE_ADMIN_API_KEY on the server to enable this endpoint at all.');
@@ -694,6 +789,15 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         }
         respondError(422, 'too_many_rooms', $e->getMessage() . ' Start a new scan session to continue capturing rooms.');
         return;
+    } catch (\RuntimeException $e) {
+        if ($holdsIdempotencyClaim) {
+            $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+        }
+        if (str_contains($e->getMessage(), 'room_id(s) already present')) {
+            respondError(409, 'room_id_conflict', 'One or more room IDs in this capture already exist on this session. Regenerate the room_id(s) and retry.', ['retry_after_ms' => 250]);
+            return;
+        }
+        throw $e;
     } catch (\Throwable $e) {
         if ($holdsIdempotencyClaim) {
             $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
@@ -798,10 +902,14 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
         respondError(422, 'invalid_url_scheme', "The photo 'url' must start with http:// or https://.");
         return;
     }
-    $tooLong = first_too_long($body, ['url' => 2000, 'caption' => 2000]);
+    $tooLong = first_too_long($body, ['url' => 2000, 'caption' => 2000, 'taken_at' => 100]);
     if ($tooLong !== null) {
         [$tooLongField, $tooLongMax] = $tooLong;
         respondError(422, 'field_too_long', "'$tooLongField' is too long — please keep it to $tooLongMax characters or fewer.", ['field' => $tooLongField, 'max_length' => $tooLongMax]);
+        return;
+    }
+    if (array_key_exists('room_id', $body) && $body['room_id'] !== null && !is_string($body['room_id'])) {
+        respondError(422, 'field_must_be_string', "'room_id' must be a string.", ['field' => 'room_id']);
         return;
     }
     if (array_key_exists('tags', $body) && (!is_array($body['tags']) || !\VuuroScan\InspectionTag::isValidList($body['tags']))) {
@@ -821,8 +929,8 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
     try {
         $floorPlan = $repo->appendPhoto($sessionId, $photo);
     } catch (\OverflowException $e) {
-        // Caught BEFORE \RuntimeException below — \OverflowException
-        // extends \RuntimeException in PHP's SPL hierarchy.
+
+
         respondError(422, 'too_many_photos', $e->getMessage() . ' Start a new scan session to continue attaching photos.');
         return;
     } catch (\RuntimeException $e) {
@@ -881,9 +989,9 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#',
         return;
     }
 
-    // Sniffs the actual bytes rather than trusting the client-supplied
-    // filename/Content-Type — same "don't trust the client's own label"
-    // principle as is_http_url()'s scheme check above.
+
+
+
     $mime = (new \finfo(FILEINFO_MIME_TYPE))->file($file['tmp_name']);
     if (!isset(PHOTO_UPLOAD_MIME_EXTENSIONS[$mime])) {
         $repo->logAccess($sessionId, 'upload_photo', 'rejected_unsupported_type');
@@ -911,7 +1019,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#',
     }
 
     $repo->logAccess($sessionId, 'upload_photo', 'stored');
-    $scheme = (($_SERVER['HTTPS'] ?? 'off') !== 'off') ? 'https' : 'http';
+    $scheme = requestScheme();
     $url = "{$scheme}://{$_SERVER['HTTP_HOST']}/scan-sessions/{$sessionId}/photo-uploads/{$filename}";
     respond(201, ['url' => $url, 'photo_upload_id' => $photoUploadId]);
     return;
@@ -966,6 +1074,10 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, 
     if ($tooLong !== null) {
         [$tooLongField, $tooLongMax] = $tooLong;
         respondError(422, 'field_too_long', "'$tooLongField' is too long — please keep it to $tooLongMax characters or fewer.", ['field' => $tooLongField, 'max_length' => $tooLongMax]);
+        return;
+    }
+    if (array_key_exists('room_id', $body) && $body['room_id'] !== null && !is_string($body['room_id'])) {
+        respondError(422, 'field_must_be_string', "'room_id' must be a string.", ['field' => 'room_id']);
         return;
     }
     if (array_key_exists('tags', $body) && (!is_array($body['tags']) || !\VuuroScan\InspectionTag::isValidList($body['tags']))) {
@@ -1198,9 +1310,9 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         return;
     }
 
-    // Rendering is expensive (FloorPlanImageRenderer can allocate up to a
-    // 4000x4000 truecolor canvas per call) — bounded generously per
-    // session, well above any real workflow.
+
+
+
     if (rateLimited($repo, $session['id'] . ':export_png', 30, 300)) {
         return;
     }
@@ -1289,8 +1401,8 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         return;
     }
 
-    // PDF rendering can walk up to MAX_PAGES (200) pages per call, an
-    // independent and comparably expensive cost to PNG export.
+
+
     if (rateLimited($repo, $session['id'] . ':export_pdf', 30, 300)) {
         return;
     }
@@ -1411,7 +1523,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/publish-to-platfo
         return;
     }
 
-    $scheme = (($_SERVER['HTTPS'] ?? 'off') !== 'off') ? 'https' : 'http';
+    $scheme = requestScheme();
     $selfBase = "{$scheme}://{$_SERVER['HTTP_HOST']}";
 
     $payload = [
@@ -1584,7 +1696,19 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/vuuroscan$#
         $pdfBytes = null;
     }
 
-    $scheme = (($_SERVER['HTTPS'] ?? 'off') !== 'off') ? 'https' : 'http';
+    $maxEmbedBytes = 20 * 1024 * 1024;
+    $pngOmitted = false;
+    $pdfOmitted = false;
+    if ($pngBytes !== null && strlen($pngBytes) > $maxEmbedBytes) {
+        $pngBytes = null;
+        $pngOmitted = true;
+    }
+    if ($pdfBytes !== null && strlen($pdfBytes) > $maxEmbedBytes) {
+        $pdfBytes = null;
+        $pdfOmitted = true;
+    }
+
+    $scheme = requestScheme();
     $selfBase = "{$scheme}://{$_SERVER['HTTP_HOST']}";
 
     $payload = [
@@ -1605,6 +1729,8 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/vuuroscan$#
         'exports' => [
             'png_base64' => $pngBytes !== null ? base64_encode($pngBytes) : null,
             'pdf_base64' => $pdfBytes !== null ? base64_encode($pdfBytes) : null,
+            'png_omitted_too_large' => $pngOmitted,
+            'pdf_omitted_too_large' => $pdfOmitted,
         ],
     ];
 
@@ -1633,7 +1759,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/vuuroscan$#
 
 if ($method === 'POST' && $path === '/imported-scans') {
     if (!adminAuthorized()) {
-        if (rateLimited($repo, clientIp() . ':denied_admin_auth', 20, 300)) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:import', 20, 300)) {
             return;
         }
         respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
@@ -1671,6 +1797,14 @@ if ($method === 'POST' && $path === '/imported-scans') {
         return;
     }
 
+    $secret = getenv('SCAN_SERVICE_EXPORT_SECRET');
+    $signature = verifyBundleSignature($bundle, is_string($secret) ? $secret : null);
+
+    if ($signature['status'] === 'invalid') {
+        respondError(422, 'signature_invalid', "The bundle's HMAC signature does not match. The file may have been tampered with, or it was signed with a different export secret than the one configured on this server.");
+        return;
+    }
+
     $sessionBlock = $bundle['session'] ?? null;
     $floorPlan = $bundle['floor_plan'] ?? null;
     if (!is_array($sessionBlock) || !is_array($floorPlan)) {
@@ -1687,14 +1821,6 @@ if ($method === 'POST' && $path === '/imported-scans') {
 
     if (!isset($floorPlan['rooms']) || !is_array($floorPlan['rooms'])) {
         respondError(422, 'malformed_bundle', "The bundle's floor_plan.rooms is missing or invalid.");
-        return;
-    }
-
-    $secret = getenv('SCAN_SERVICE_EXPORT_SECRET');
-    $signature = verifyBundleSignature($bundle, is_string($secret) ? $secret : null);
-
-    if ($signature['status'] === 'invalid') {
-        respondError(422, 'signature_invalid', "The bundle's HMAC signature does not match. The file may have been tampered with, or it was signed with a different export secret than the one configured on this server.");
         return;
     }
 
@@ -1718,6 +1844,7 @@ if ($method === 'POST' && $path === '/imported-scans') {
     try {
         $stored = $repo->insertImportedScan($record);
     } catch (\Throwable $e) {
+        error_log('Import failed: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
         respondError(500, 'import_failed', 'Could not save the imported scan.');
         return;
     }
@@ -1728,7 +1855,7 @@ if ($method === 'POST' && $path === '/imported-scans') {
 
 if ($method === 'GET' && $path === '/imported-scans') {
     if (!adminAuthorized()) {
-        if (rateLimited($repo, clientIp() . ':denied_admin_auth', 20, 300)) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:imports_list', 20, 300)) {
             return;
         }
         respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
@@ -1748,7 +1875,7 @@ if ($method === 'GET' && $path === '/imported-scans') {
 
 if ($method === 'GET' && preg_match('#^/imported-scans/([^/]+)$#', $path, $m)) {
     if (!adminAuthorized()) {
-        if (rateLimited($repo, clientIp() . ':denied_admin_auth', 20, 300)) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:imports_read', 20, 300)) {
             return;
         }
         respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');

@@ -7,6 +7,7 @@ struct AttachmentsScreen: View {
     let floorPlan: FloorPlan
     let onFinished: (FloorPlan) -> Void
     let onAddRoom: () -> Void
+    let onBack: () -> Void
 
     @State private var current: FloorPlan
     @State private var isSaving = false
@@ -19,12 +20,14 @@ struct AttachmentsScreen: View {
         session: ScanSessionResponse,
         floorPlan: FloorPlan,
         onFinished: @escaping (FloorPlan) -> Void,
-        onAddRoom: @escaping () -> Void
+        onAddRoom: @escaping () -> Void,
+        onBack: @escaping () -> Void
     ) {
         self.session = session
         self.floorPlan = floorPlan
         self.onFinished = onFinished
         self.onAddRoom = onAddRoom
+        self.onBack = onBack
         _current = State(initialValue: floorPlan)
     }
 
@@ -32,7 +35,7 @@ struct AttachmentsScreen: View {
         VStack(spacing: 0) {
             VuuroNavBar(
                 title: "Notes & photos",
-                leading: { VuuroNavSpacer() },
+                leading: { VuuroNavButton("Home", icon: "chevron.left", action: onBack) },
                 trailing: { VuuroNavSpacer() }
             )
 
@@ -482,7 +485,7 @@ private struct AttachmentRoomCard: View {
                 roomId: room.roomId
             )
             onUpdate(updated)
-            VuuroToast.shared.show("Photo added")
+            VuuroToast.shared.show(String(localized: "Photo added"))
         } catch is CancellationError {
         } catch {
             onError(AppError(site: .photoUpload, underlying: error))
@@ -513,7 +516,7 @@ private struct AttachmentRoomCard: View {
                 roomId: room.roomId
             )
             onUpdate(updated)
-            VuuroToast.shared.show("Photo added")
+            VuuroToast.shared.show(String(localized: "Photo added"))
         } catch is CancellationError {
         } catch {
             onError(AppError(site: .photoUpload, underlying: error))
@@ -783,7 +786,7 @@ private struct AttachmentPhotoViewer: View {
                 photoId: photo.photoId
             )
             PhotoImageCache.shared.remove(for: photo.url)
-            VuuroToast.shared.show("Photo removed")
+            VuuroToast.shared.show(String(localized: "Photo removed"))
             onDelete(updated)
         } catch {
             deleteError = AppError(site: .photoDelete, underlying: error)
@@ -795,23 +798,29 @@ private struct AttachmentPhotoViewer: View {
 final class PhotoImageCache {
     static let shared = PhotoImageCache()
 
-    private var entries: [String: UIImage] = [:]
+    private let entries: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 100
+        cache.totalCostLimit = 80 * 1024 * 1024
+        return cache
+    }()
 
     private init() {}
 
     func image(for url: String) -> UIImage? {
-        entries[url]
+        entries.object(forKey: url as NSString)
     }
 
     func store(_ image: UIImage, for url: String) {
-        entries[url] = image
+        let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
+        entries.setObject(image, forKey: url as NSString, cost: cost)
     }
 
     func remove(for url: String) {
-        entries.removeValue(forKey: url)
+        entries.removeObject(forKey: url as NSString)
     }
 
     func clear() {
-        entries.removeAll()
+        entries.removeAllObjects()
     }
 }

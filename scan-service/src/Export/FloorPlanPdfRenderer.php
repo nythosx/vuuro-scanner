@@ -21,7 +21,7 @@ final class FloorPlanPdfRenderer
     private const IMAGE_MAX_DISPLAY_WIDTH = 540;
     private const IMAGE_MAX_DISPLAY_HEIGHT = 640;
 
-    /** style => [font resource name, size] */
+
     private const STYLE_FONTS = [
         'title' => ['F2', 17],
         'label' => ['F2', 12],
@@ -42,7 +42,7 @@ final class FloorPlanPdfRenderer
     private const ACCENT = [255, 130, 18];
     private const BORDER = [236, 236, 238];
 
-    /** style => [r, g, b] (0-255); defaults to INK when a style is absent */
+
     private const STYLE_COLORS = [
         'body' => self::INK_MUTED,
         'italic' => self::INK_MUTED,
@@ -75,7 +75,7 @@ final class FloorPlanPdfRenderer
         }
 
         $objects = [];
-        $objects[1] = null; 
+        $objects[1] = null;
         $regularFontObjNum = 3;
         $boldFontObjNum = 4;
         $italicFontObjNum = 5;
@@ -129,7 +129,7 @@ final class FloorPlanPdfRenderer
         return $this->assemblePdf($objects);
     }
 
-    /** @return array<int, array{jpeg: string, width: int, height: int, caption: array<int, array{text: string, style: string}>, drawWidth: float, drawHeight: float, pageWidth: float, pageHeight: float}> */
+
     private function buildImagePages(array $floorPlan, string $layout, ?string $roomId, string $unit, ?string $label, ?callable $photoLoader): array
     {
         $pages = [];
@@ -174,10 +174,7 @@ final class FloorPlanPdfRenderer
         return $pages;
     }
 
-    /**
-     * @param array{jpeg: string, width: int, height: int} $normalized
-     * @param array<int, array{text: string, style: string}> $caption
-     */
+
     private function layoutImagePage(array $normalized, array $caption): array
     {
         $captionHeight = count($caption) * self::LINE_HEIGHT;
@@ -201,7 +198,7 @@ final class FloorPlanPdfRenderer
         ];
     }
 
-    /** @return ?array{jpeg: string, width: int, height: int} */
+
     private function toEmbeddableJpeg(string $imageBytes): ?array
     {
         $image = @imagecreatefromstring($imageBytes);
@@ -305,15 +302,7 @@ final class FloorPlanPdfRenderer
         return rtrim($stream);
     }
 
-    /**
-     * Splits lines across pages so every line lands within the visible
-     * MediaBox. Always returns at least one page, even for zero lines, so a
-     * session with rooms but otherwise-empty text still gets a real (if
-     * sparse) PDF.
-     *
-     * @param array<int, array{text: string, style: string}> $lines
-     * @return array<int, array<int, array{text: string, style: string}>>
-     */
+
     private function paginate(array $lines): array
     {
         $maxLinesPerPage = intdiv(self::PAGE_TOP_Y - self::PAGE_BOTTOM_MARGIN_Y, self::LINE_HEIGHT) + 1;
@@ -321,7 +310,7 @@ final class FloorPlanPdfRenderer
         return $pages === [] ? [[]] : $pages;
     }
 
-    /** @return array<int, array{text: string, style: string}> */
+
     private function buildTextLines(array $floorPlan, string $layout = 'auto', string $unit = UnitFormatter::METRIC, ?string $label = null): array
     {
         $lines = [];
@@ -444,7 +433,7 @@ final class FloorPlanPdfRenderer
         return $lines;
     }
 
-    /** @return string[] */
+
     private function wrapTextLines(string $text, int $maxChars): array
     {
         $wrapped = wordwrap($text, $maxChars, "\n", true);
@@ -456,7 +445,7 @@ final class FloorPlanPdfRenderer
         return sprintf('%.3f %.3f %.3f rg', $rgb[0] / 255, $rgb[1] / 255, $rgb[2] / 255);
     }
 
-    /** @param array<int, array{text: string, style: string, bullet?: array{0:int,1:int,2:int}}> $lines */
+
     private function buildContentStream(array $lines): string
     {
         $stream = '';
@@ -475,10 +464,10 @@ final class FloorPlanPdfRenderer
             if ($line['text'] !== '') {
                 [$font, $size] = self::STYLE_FONTS[$line['style']];
                 $color = self::STYLE_COLORS[$line['style']] ?? self::INK;
-                // Base-14 Helvetica in a plain PDF string literal is
-                // single-byte StandardEncoding, not UTF-8 — raw multi-byte
-                // characters (e.g. an em dash) would render as mojibake in a
-                // real viewer, so this stays ASCII-only rather than risk that.
+
+
+
+
                 $ascii = preg_replace('/[^\x20-\x7E]/', '-', $line['text']) ?? $line['text'];
                 $escaped = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $ascii);
                 $stream .= 'q' . "\n" . $this->rgOp($color) . "\nBT\n/{$font} {$size} Tf\n1 0 0 1 " . self::PAGE_MARGIN_X . " {$y} Tm\n({$escaped}) Tj\nET\nQ\n";
@@ -488,7 +477,7 @@ final class FloorPlanPdfRenderer
         return rtrim($stream);
     }
 
-    /** @param array<int, string> $objects Object bodies keyed by object number (1-indexed, contiguous) */
+
     private function assemblePdf(array $objects): string
     {
         $pdf = "%PDF-1.4\n";

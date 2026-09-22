@@ -1,25 +1,16 @@
 services:
   scan-service:
     build: .
+    environment:
+      SCAN_SERVICE_ADMIN_API_KEY: ${SCAN_SERVICE_ADMIN_API_KEY:-change-me-local-dev}
+      SCAN_SERVICE_EXPORT_SECRET: ${SCAN_SERVICE_EXPORT_SECRET:-change-me-local-dev-signing}
     volumes:
       - ./data:/app/data
-    expose:
-      - "8089"
-
-  caddy:
-    image: caddy:2-alpine
-    depends_on:
-      - scan-service
     ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      SCAN_SERVICE_DOMAIN: ${SCAN_SERVICE_DOMAIN:?set SCAN_SERVICE_DOMAIN to a real domain pointed at this host before running}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-
-volumes:
-  caddy_data:
-  caddy_config:
+      - "127.0.0.1:8089:8089"
+    healthcheck:
+      test: ["CMD-SHELL", "frankenphp php-cli -r \"exit(@file_get_contents('http://127.0.0.1:8089/health') === false ? 1 : 0);\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s

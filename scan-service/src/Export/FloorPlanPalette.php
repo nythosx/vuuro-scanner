@@ -9,8 +9,8 @@ final class FloorPlanPalette
     public const EXTERIOR_WALL_THICKNESS_M = 0.30;
     public const INTERIOR_WALL_THICKNESS_M = 0.12;
 
-    // Vuuro brand palette (see ios-app/Sources/Design/VuuroDesign.swift) —
-    // exports should look like they came from the same product as the app.
+
+
     public const BRAND_PRIMARY = '#ff8212';
     public const BRAND_ACCENT_LIME = '#afdf25';
     public const BRAND_ACCENT_CYAN = '#2ec3ff';

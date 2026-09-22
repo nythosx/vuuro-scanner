@@ -71,10 +71,15 @@ struct OnboardingView: View {
                 Color.clear
                     .overlay {
                         AsyncImage(url: url) { phase in
-                            if case .success(let image) = phase {
+                            switch phase {
+                            case .success(let image):
                                 image
                                     .resizable()
                                     .scaledToFill()
+                            case .empty, .failure:
+                                Color.clear
+                            @unknown default:
+                                Color.clear
                             }
                         }
                     }

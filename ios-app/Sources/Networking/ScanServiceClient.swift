@@ -145,8 +145,8 @@ struct ScanServiceClient {
     }()
 
     func createSession(identity: ScanIdentity) async throws -> ScanSessionResponse {
-        // The only call with no access token to present yet — the Scan
-        // Service issues one in the response.
+
+
         try await post(path: "/scan-sessions", body: identity, accessToken: nil)
     }
 
@@ -189,7 +189,7 @@ struct ScanServiceClient {
         request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
         request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
         request.httpBody = bodyJSON
-        return try await send(request, timeoutSeconds: 45)
+        return try await send(request, timeoutSeconds: 90)
     }
 
     struct ReplaceRoomsBody: Encodable {
@@ -198,7 +198,7 @@ struct ScanServiceClient {
 
     func replaceRooms(sessionId: String, accessToken: String, exports: [RoomPlanCaptureExport], provider: String = "roomplan", location: CaptureLocation?) async throws -> FloorPlan {
         let body = ReplaceRoomsBody(captures: exports.map { CaptureBody(rawCapture: $0, captureProvider: provider, captureLocation: location) })
-        return try await post(path: "/scan-sessions/\(sessionId)/rooms", body: body, accessToken: accessToken, timeoutSeconds: 45)
+        return try await post(path: "/scan-sessions/\(sessionId)/rooms", body: body, accessToken: accessToken, timeoutSeconds: 90)
     }
 
     func fetchSession(sessionId: String, accessToken: String) async throws -> FloorPlan {
@@ -211,11 +211,11 @@ struct ScanServiceClient {
 
     func fetchPhotoData(url: String, accessToken: String) async throws -> Data {
         let resolved = URL(string: url, relativeTo: baseURL)?.absoluteURL ?? baseURL.appendingPathComponent(url)
-        // FIX (bug #8): `URL.port` is nil when the URL omits an explicit
-        // port, even though the effective port is the scheme default.
-        // Comparing `resolved.port == baseURL.port` treated
-        // `http://host` and `http://host:80` as different origins.
-        // `isSameOrigin` normalizes the port using the scheme default.
+
+
+
+
+
         guard Self.isSameOrigin(resolved, baseURL) else {
             let (data, response) = try await session.data(from: resolved)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -319,7 +319,7 @@ struct ScanServiceClient {
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
         request.httpBody = body
 
-        return try await send(request, timeoutSeconds: 45)
+        return try await send(request, timeoutSeconds: 90)
     }
 
     func addPhoto(sessionId: String, accessToken: String, url: String, caption: String? = nil, roomId: String? = nil) async throws -> FloorPlan {
@@ -406,8 +406,8 @@ struct ScanServiceClient {
         return try await send(request)
     }
 
-    /// Like `get`, but for the two export routes, which return image/png or
-    /// application/pdf bytes rather than JSON — nothing here to decode.
+
+
     private func getData(path: String, accessToken: String) async throws -> Data {
         guard isConfigured else { throw ScanServiceError.notConfigured }
         var request = URLRequest(url: url(for: path))

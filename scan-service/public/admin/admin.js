@@ -221,6 +221,11 @@ function renderDetail(data, sessionId) {
       '<p class="muted">This session has no captured rooms yet (status: ' + escapeHtml(data.status || 'unknown') + ').</p>';
     return;
   }
+  if (!Array.isArray(data.rooms)) {
+    container.innerHTML = '<h1>Session ' + escapeHtml(sessionId) + '</h1>' +
+      '<p class="error">This session\'s data looks malformed (rooms is not a list).</p>';
+    return;
+  }
 
   const rooms = data.rooms || [];
   const photos = data.photos || [];
@@ -338,19 +343,36 @@ async function downloadVuuroscanFile(sessionId, fp) {
 
 function copyShareUrl(sessionId) {
   const url = location.origin + '/admin?session=' + encodeURIComponent(sessionId);
-  copyToClipboard(url, 'Share URL copied to clipboard:');
+  copyToClipboard(url, 'Share URL');
 }
 
 function copyApiUrl(sessionId) {
   const url = location.origin + '/scan-sessions/' + encodeURIComponent(sessionId);
   const hint = 'GET ' + url + '\nHeader: X-Admin-Api-Key: <your-admin-key>';
-  copyToClipboard(hint, 'API endpoint copied to clipboard:');
+  copyToClipboard(hint, 'API endpoint');
+}
+
+function showToast(message) {
+  let toast = document.getElementById('adminToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'adminToast';
+    toast.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);' +
+      'background:#222;color:#fff;padding:10px 16px;border-radius:6px;font-size:14px;' +
+      'z-index:9999;opacity:0;transition:opacity 0.2s;pointer-events:none;max-width:80vw;' +
+      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.style.opacity = '1';
+  clearTimeout(toast._hideTimer);
+  toast._hideTimer = setTimeout(() => { toast.style.opacity = '0'; }, 2000);
 }
 
 function copyToClipboard(text, label) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(() => {
-      alert(label + '\n\n' + text);
+      showToast(label + ' copied to clipboard');
     }).catch(() => {
       prompt(label, text);
     });

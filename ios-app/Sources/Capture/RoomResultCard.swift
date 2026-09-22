@@ -260,20 +260,31 @@ struct RoomResultCard: View {
         let displayName = (name?.isEmpty == false ? name! : ObjectCategoryCatalog.displayName(for: object.category))
         let renamed = (name?.isEmpty == false) && name != object.category
 
+        let icon = ZStack {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(VuuroColor.bgCard)
+            Image(systemName: ObjectCategoryCatalog.systemImage(for: object.category))
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(VuuroColor.textPrimary)
+        }
+        .frame(width: 36, height: 36)
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(VuuroColor.borderSoft, lineWidth: 1)
+        )
+        .opacity(excluded ? 0.4 : 1)
+
         return HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(VuuroColor.bgCard)
-                Image(systemName: ObjectCategoryCatalog.systemImage(for: object.category))
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(VuuroColor.textPrimary)
+            if editingEnabled {
+                Button {
+                    categoryTarget = key
+                } label: {
+                    icon
+                }
+                .buttonStyle(.plain)
+            } else {
+                icon
             }
-            .frame(width: 36, height: 36)
-            .overlay(
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .stroke(VuuroColor.borderSoft, lineWidth: 1)
-            )
-            .opacity(excluded ? 0.4 : 1)
 
             VStack(alignment: .leading, spacing: 1) {
                 Button {

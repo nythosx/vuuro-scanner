@@ -129,7 +129,7 @@ $repo = new ScanSessionRepository($db);
 $lock = new ReflectionMethod(ScanSessionRepository::class, 'withWriteLock');
 $lock->setAccessible(true);
 $lock->invoke($repo, function () {
-    sleep(6);
+    sleep(18);
 });
 PHP;
 $lockHoldingWorkerFile = sys_get_temp_dir() . '/vuuro_scan_idempotency_lock_worker_' . bin2hex(random_bytes(6)) . '.php';

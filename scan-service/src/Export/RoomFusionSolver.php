@@ -14,6 +14,7 @@ final class RoomFusionSolver
     private const SEAM_WEIGHT_CAP_M = 2.0;
     private const REGULARIZATION = 1e-6;
     private const GAUSS_NEWTON_ITERATIONS = 4;
+    private const MAX_SOLVABLE_ROOMS = 80;
 
     public static function solve(array $rooms): array
     {
@@ -29,7 +30,7 @@ final class RoomFusionSolver
         }
 
         $eligible = array_values(array_filter(array_keys($rooms), static fn (int $i) => !isset($overlapSet[$i])));
-        if (count($eligible) < 2) {
+        if (count($eligible) < 2 || count($eligible) > self::MAX_SOLVABLE_ROOMS) {
             return ['overlapping' => $overlapping, 'poses' => $poses, 'edgeTiers' => $edgeTiers];
         }
 

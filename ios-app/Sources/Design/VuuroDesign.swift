@@ -110,16 +110,14 @@ enum VuuroMetrics {
 }
 
 enum VuuroFont {
+    static let familyName = "Open Sans"
+
     static func display(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
-        .system(size: size, weight: weight)
+        .custom(familyName, size: size).weight(weight)
     }
     static func body(_ size: CGFloat = 17, weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight)
+        .custom(familyName, size: size).weight(weight)
     }
-}
-
-enum VuuroFontRegistration {
-    static func registerBundledFonts() {}
 }
 
 enum VuuroBadgeStyle {

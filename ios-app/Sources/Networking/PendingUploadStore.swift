@@ -4,6 +4,7 @@ struct PendingUploadState: Codable {
     var session: ScanSessionResponse?
     let identity: ScanIdentity
     var captures: [PendingCapture]
+    var skippedAt: Date? = nil
 
     struct PendingCapture: Codable {
         let idempotencyKey: String
@@ -27,6 +28,12 @@ enum PendingUploadStore {
     static func load() -> PendingUploadState? {
         guard let data = try? Data(contentsOf: fileURL) else { return nil }
         return try? JSONDecoder().decode(PendingUploadState.self, from: data)
+    }
+
+    static func markSkipped() {
+        guard var state = load() else { return }
+        state.skippedAt = Date()
+        save(state)
     }
 
     static func clear() {

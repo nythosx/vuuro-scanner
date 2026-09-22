@@ -402,14 +402,15 @@ if ($readRateLimitSessionId !== null && $readRateLimitToken !== null) {
 echo "\n== Session-creation rate limit ==\n";
 
 $sawRateLimited = false;
-for ($i = 0; $i < 2050; $i++) {
+$sessionCreationLoopMax = (int) (getenv('VERIFY_SESSION_CREATION_LOOP_MAX') ?: 2050);
+for ($i = 0; $i < $sessionCreationLoopMax; $i++) {
     [$status, ] = net_http_json('POST', "$baseUrl/scan-sessions", base_payload());
     if ($status === 429) {
         $sawRateLimited = true;
         break;
     }
 }
-check('repeated rapid session creation eventually hits HTTP 429', $sawRateLimited, 'never saw a 429 across 2050 rapid session-creation calls');
+check('repeated rapid session creation eventually hits HTTP 429', $sawRateLimited, "never saw a 429 across $sessionCreationLoopMax rapid session-creation calls");
 
 echo "\n== Repeated lookups of NONEXISTENT session ids are also throttled ==\n";
 

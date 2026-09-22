@@ -1,0 +1,27 @@
+# Production overlay — adds Caddy + a real domain on top of the local base.
+# Not needed for local dev, and never touched by the README's local steps.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+services:
+  scan-service:
+    ports: !reset []
+    environment:
+      SCAN_SERVICE_ENV: production
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - scan-service
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SCAN_SERVICE_DOMAIN: ${SCAN_SERVICE_DOMAIN:?set SCAN_SERVICE_DOMAIN to a real domain pointed at this host before running}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

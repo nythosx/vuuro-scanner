@@ -1,0 +1,13 @@
+{
+	frankenphp
+	admin off
+}
+
+:8089 {
+	root * /app/public
+	encode gzip
+
+	php_server {
+		try_files /index.php
+	}
+}

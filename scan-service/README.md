@@ -4,6 +4,16 @@ The single backend in this repo. Plain PHP 8.1+, PDO/SQLite, no framework, no Co
 dependency. See root `ARCHITECTURE.md` section 3.2.1 for the full component
 description, and `docs/adr/0001-scan-service-stack.md` for why this stack.
 
+## Cross-platform note
+
+The Scan Service and admin panel run identically on Mac, Windows, and Linux via
+Docker. The Python scripts in this repo (run\*server.py, install\*\*.py) are
+Windows-only dev tooling used on the original dev machine — end users never need
+them.
+
+This path is used by the original dev machine on Windows with XAMPP. Mac and Linux
+users should prefer the Docker path below.
+
 ## Run it (native PHP, no Docker)
 
 ```
@@ -22,16 +32,30 @@ The schema in `migrations/schema.sql` is applied fresh on boot — no separate m
 step. The database file lives at `data/scan_service.sqlite` (gitignored) or wherever
 `SCAN_SERVICE_DB_PATH` points.
 
-## Run it (Docker, host-independent)
+## Run it (Docker — any OS)
 
 ```
 cd scan-service
-docker build -t vuuro-scan-service .
-docker run -p 8089:8089 -v "$(pwd)/data:/app/data" vuuro-scan-service
+docker compose up
+open http://localhost:8089/admin in a browser
 ```
 
-The `Dockerfile` installs both `pdo_sqlite` and `gd` — PNG export needs `gd` and will
-500 without it (see "Known limits").
+Sign in with the `SCAN_SERVICE_ADMIN_API_KEY` value (default is
+`change-me-local-dev` if no `.env` was created).
+
+Note: the default key is intentionally weak for local testing, and only works
+because `SCAN_SERVICE_ENV` defaults to `development`. `docker-compose.prod.yml`
+sets `SCAN_SERVICE_ENV=production`, which makes the app refuse to boot at all
+(hard `RuntimeException`, not a silent fallback) if `SCAN_SERVICE_ADMIN_API_KEY`
+or `SCAN_SERVICE_EXPORT_SECRET` is missing or still set to its default value —
+see "Known limits". For anything shared with anyone else, copy `.env.example`
+to `.env` and set both secrets regardless.
+
+The `Dockerfile` builds on [FrankenPHP](https://frankenphp.dev/) (PHP embedded in
+Caddy) rather than `php -S`, so it can actually serve concurrent requests instead of
+one at a time — see "Known limits" for why the old built-in server was a problem.
+It installs both `pdo_sqlite` and `gd` — PNG export needs `gd` and will 500 without
+it.
 
 ## Testing this locally from a real device (not just Simulator/curl)
 
@@ -74,12 +98,25 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
 
 ## Known limits
 
+- **Single-instance runtime**: the app itself is still a single PHP process handling
+  SQLite writes serially — FrankenPHP gives it a real concurrent HTTP server (no more
+  one-request-at-a-time queuing on slow requests like large exports), but it is not a
+  multi-node deployment. Fine for a single-instance pilot; a real production rollout
+  would still want multiple app replicas behind a load balancer for anything beyond
+  that.
+- **Production secrets are fail-fast, not silently defaulted**: `SCAN_SERVICE_ENV`
+  defaults to `development`, which allows the weak `change-me-local-dev` /
+  `change-me-local-dev-signing` defaults so local setup works with zero config.
+  `docker-compose.prod.yml` sets `SCAN_SERVICE_ENV=production`, and in that mode the
+  app throws at boot (every request 500s until fixed) if `SCAN_SERVICE_ADMIN_API_KEY`
+  or `SCAN_SERVICE_EXPORT_SECRET` is unset or still equal to its default value.
 - **Body-size enforcement order**: `post_max_size` must stay set *above*
   `MAX_REQUEST_BODY_BYTES` (8MB). If they're equal, PHP's own SAPI-level check fires
   first, emitting a raw startup Warning that bypasses `set_exception_handler` (a
   Warning is not a `Throwable`) and leaves the HTTP status at 200 instead of the app's
-  own `413`. This applies to both the native `php -S` invocation above and the
-  Dockerfile's `CMD`.
+  own `413`. This applies both to the native `php -S` invocation above and to the
+  Docker image, which sets the same `post_max_size`/`upload_max_filesize` via
+  `conf.d/scan-service.ini`.
 - **Rate limiting**: per-session and per-caller-IP fixed-window buckets on session
   creation (default 60 per 600s window, overridable via
   `SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX` /

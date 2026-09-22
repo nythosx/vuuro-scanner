@@ -31,4 +31,8 @@ enum AppLanguageSettings {
     static var current: AppLanguage {
         AppLanguage(rawValue: UserDefaults.standard.string(forKey: storageKey) ?? AppLanguage.system.rawValue) ?? .system
     }
+
+    static var effectiveLocale: Locale {
+        current.locale ?? Locale.autoupdatingCurrent
+    }
 }

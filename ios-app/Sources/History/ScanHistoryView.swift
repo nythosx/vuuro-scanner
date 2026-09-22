@@ -31,6 +31,8 @@ struct ScanHistoryView: View {
     @State private var bulkPDFURLs: [URL] = []
     @State private var isBulkFetchingImages = false
     @State private var isBulkFetchingPDFs = false
+    @State private var bulkImageProgress: (done: Int, total: Int)?
+    @State private var bulkPDFProgress: (done: Int, total: Int)?
 
     @State private var appError: AppError?
     @State private var errorMessage: String?
@@ -115,10 +117,10 @@ struct ScanHistoryView: View {
                 )
             }
         }
-        // FIX (bug #1): the previous version declared this exact
-        // `.sheet(isPresented: $showImportView)` modifier twice. SwiftUI
-        // only honors the last one, so the first was dead code. Only one
-        // is kept now.
+
+
+
+
         .sheet(isPresented: $showImportView) {
             NavigationStack {
                 ImportScanView(
@@ -357,7 +359,12 @@ struct ScanHistoryView: View {
                     Task { await downloadAllImages() }
                 } label: {
                     if isBulkFetchingImages {
-                        ProgressView().tint(VuuroColor.textPrimary)
+                        HStack(spacing: 6) {
+                            ProgressView().tint(VuuroColor.textPrimary)
+                            if let bulkImageProgress {
+                                Text("\(bulkImageProgress.done) of \(bulkImageProgress.total)")
+                            }
+                        }
                     } else {
                         Text("Download all images")
                     }
@@ -379,7 +386,12 @@ struct ScanHistoryView: View {
                     Task { await downloadAllPDFs() }
                 } label: {
                     if isBulkFetchingPDFs {
-                        ProgressView().tint(VuuroColor.textPrimary)
+                        HStack(spacing: 6) {
+                            ProgressView().tint(VuuroColor.textPrimary)
+                            if let bulkPDFProgress {
+                                Text("\(bulkPDFProgress.done) of \(bulkPDFProgress.total)")
+                            }
+                        }
                     } else {
                         Text("Download all PDFs")
                     }
@@ -479,6 +491,10 @@ struct ScanHistoryView: View {
 
     @MainActor
     private func rotateTokenIfNeeded(_ entry: ScanHistoryEntry) async -> ScanHistoryEntry? {
+        guard !entry.accessToken.isEmpty else {
+            appError = AppError(site: .historyTokenMissing, underlying: nil)
+            return nil
+        }
         if let expiresAtString = entry.expiresAt, !expiresAtString.isEmpty,
            let expiresAt = ISO8601DateFormatter().date(from: expiresAtString),
            expiresAt.timeIntervalSinceNow >= 14 * 24 * 60 * 60 {
@@ -601,6 +617,10 @@ struct ScanHistoryView: View {
 
     @MainActor
     private func downloadImage(for entry: ScanHistoryEntry) async {
+        guard !entry.accessToken.isEmpty else {
+            appError = AppError(site: .historyTokenMissing, underlying: nil)
+            return
+        }
         do {
             let data = try await client.fetchFloorPlanImage(
                 sessionId: entry.sessionId,
@@ -625,6 +645,10 @@ struct ScanHistoryView: View {
 
     @MainActor
     private func downloadPDF(for entry: ScanHistoryEntry) async {
+        guard !entry.accessToken.isEmpty else {
+            appError = AppError(site: .historyTokenMissing, underlying: nil)
+            return
+        }
         do {
             let data = try await client.fetchFloorPlanPDF(
                 sessionId: entry.sessionId,
@@ -651,11 +675,15 @@ struct ScanHistoryView: View {
     private func downloadAllImages() async {
         guard !isBulkFetchingImages else { return }
         isBulkFetchingImages = true
-        defer { isBulkFetchingImages = false }
+        bulkImageProgress = (0, entries.count)
+        defer {
+            isBulkFetchingImages = false
+            bulkImageProgress = nil
+        }
 
         var urls: [URL] = []
         var skipped = 0
-        for entry in entries {
+        for (index, entry) in entries.enumerated() {
             do {
                 let data = try await client.fetchFloorPlanImage(
                     sessionId: entry.sessionId,
@@ -680,6 +708,7 @@ struct ScanHistoryView: View {
                     category: .error
                 )
             }
+            bulkImageProgress = (index + 1, entries.count)
         }
         bulkImageURLs = urls
         if urls.isEmpty {
@@ -695,11 +724,15 @@ struct ScanHistoryView: View {
     private func downloadAllPDFs() async {
         guard !isBulkFetchingPDFs else { return }
         isBulkFetchingPDFs = true
-        defer { isBulkFetchingPDFs = false }
+        bulkPDFProgress = (0, entries.count)
+        defer {
+            isBulkFetchingPDFs = false
+            bulkPDFProgress = nil
+        }
 
         var urls: [URL] = []
         var skipped = 0
-        for entry in entries {
+        for (index, entry) in entries.enumerated() {
             do {
                 let data = try await client.fetchFloorPlanPDF(
                     sessionId: entry.sessionId,
@@ -724,6 +757,7 @@ struct ScanHistoryView: View {
                     category: .error
                 )
             }
+            bulkPDFProgress = (index + 1, entries.count)
         }
         bulkPDFURLs = urls
         if urls.isEmpty {
@@ -803,11 +837,12 @@ private struct HistoryCard: View {
     let onTap: () -> Void
     let onAction: (HistoryCardAction) -> Void
 
-    private static let metaFormatter: DateFormatter = {
+    private static func metaFormatter() -> DateFormatter {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d, yyyy · h:mm a"
+        formatter.locale = AppLanguageSettings.effectiveLocale
         return formatter
-    }()
+    }
 
     private var displayName: String {
         if let nickname = entry.nickname, !nickname.isEmpty {
@@ -817,7 +852,7 @@ private struct HistoryCard: View {
     }
 
     private var metaLine: String {
-        "\(entry.purpose.displayName) · \(Self.metaFormatter.string(from: entry.createdAt))"
+        "\(entry.purpose.displayName) · \(Self.metaFormatter().string(from: entry.createdAt))"
     }
 
     private var pills: ([String], Int) {

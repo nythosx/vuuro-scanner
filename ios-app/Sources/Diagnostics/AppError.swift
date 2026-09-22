@@ -36,6 +36,7 @@ struct AppError {
         case historyPDFDownload = "HISTORY_PDF_DOWNLOAD"
         case historySessionFetch = "HISTORY_SESSION_FETCH"
         case historyServerDelete = "HISTORY_SERVER_DELETE"
+        case historyTokenMissing = "HISTORY_TOKEN_MISSING"
         case uploadCancelled = "UPLOAD_CANCELLED"
 
         var defaultMessage: String {
@@ -50,6 +51,8 @@ struct AppError {
                 return "Photos are limited to 25MB. Please choose a smaller photo."
             case .uploadCancelled:
                 return "Upload cancelled."
+            case .historyTokenMissing:
+                return "This scan's access token is gone from this device (likely a backup restore). Delete it from history and re-share the original link to get a working one."
             default:
                 return "Something went wrong."
             }

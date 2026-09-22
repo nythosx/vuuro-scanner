@@ -15,7 +15,7 @@ struct DiagnosticsLogView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(entry.message)
                         .font(.system(.caption, design: .monospaced))
-                    Text("\(entry.category.rawValue) · \(entry.timestamp.formatted(date: .omitted, time: .standard))")
+                    Text("\(entry.category.rawValue) · \(entry.timestamp.formatted(Date.FormatStyle(date: .omitted, time: .standard).locale(AppLanguageSettings.effectiveLocale)))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

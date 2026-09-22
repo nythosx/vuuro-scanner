@@ -331,7 +331,15 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
                     let hasUsableGeometry = !room.walls.isEmpty || !room.floors.isEmpty
                     self.pendingPartialRoom = hasUsableGeometry ? room : nil
                     self.pendingPartialRoomWalkPath = hasUsableGeometry ? self.currentRoomWalkPath : []
-                    self.state = .failed(error.localizedDescription, partialRoomAvailable: hasUsableGeometry)
+                    let message: String
+                    if case RoomCaptureSession.CaptureError.exceedSceneSizeLimit = error {
+                        message = hasUsableGeometry
+                            ? "This unit has grown too large for ARKit to track reliably in one session. Save what's captured so far, then start a new unit scan to continue with the remaining rooms."
+                            : "This unit has grown too large for ARKit to track reliably in one session. Start a new unit scan to continue with the remaining rooms."
+                    } else {
+                        message = error.localizedDescription
+                    }
+                    self.state = .failed(message, partialRoomAvailable: hasUsableGeometry)
                 } else {
                     if CapturedRoomExporter.export(room).hasUsableFloorOutline {
                         self.capturedRooms.append(room)

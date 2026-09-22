@@ -24,10 +24,19 @@ final class Database
         $pdo = new PDO('sqlite:' . $path);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $pdo->exec('PRAGMA foreign_keys = ON;');
+        $pdo->exec('PRAGMA journal_mode = WAL;');
+        $pdo->exec('PRAGMA synchronous = NORMAL;');
         $pdo->exec('PRAGMA busy_timeout = 5000;');
 
         $schema = __DIR__ . '/../../migrations/schema.sql';
-        $pdo->exec((string) file_get_contents($schema));
+        if (!is_file($schema)) {
+            throw new \RuntimeException("Schema file not found at {$schema}");
+        }
+        $schemaSql = file_get_contents($schema);
+        if ($schemaSql === false || trim($schemaSql) === '') {
+            throw new \RuntimeException("Schema file at {$schema} is empty or unreadable");
+        }
+        $pdo->exec($schemaSql);
 
         try {
             $pdo->exec("ALTER TABLE scan_sessions ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''");

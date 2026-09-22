@@ -162,7 +162,7 @@ struct MultiRoomCaptureFlowView: View {
         }
     }
 
-    // MARK: - Overlay
+
 
     private var roomHintText: String {
         let number = coordinator.capturedRooms.count + 1
@@ -572,7 +572,7 @@ struct MultiRoomCaptureFlowView: View {
         return await submitExportsSilent(exports)
     }
 
-    // MARK: - Helpers
+
 
     private func roomLabels(for exports: [RoomPlanCaptureExport]) -> [String] {
         exports.enumerated().map { index, export in

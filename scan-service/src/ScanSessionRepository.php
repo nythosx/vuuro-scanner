@@ -206,14 +206,33 @@ final class ScanSessionRepository
 
     private function withWriteLock(callable $fn): mixed
     {
-        $this->db->exec('BEGIN IMMEDIATE');
-        try {
-            $result = $fn();
-            $this->db->exec('COMMIT');
-            return $result;
-        } catch (\Throwable $e) {
-            $this->db->exec('ROLLBACK');
-            throw $e;
+        $attempts = 0;
+        $maxAttempts = 3;
+        while (true) {
+            try {
+                $this->db->exec('BEGIN IMMEDIATE');
+            } catch (\PDOException $e) {
+                if (str_contains($e->getMessage(), 'database is locked') && ++$attempts < $maxAttempts) {
+                    usleep(100_000 * $attempts);
+                    continue;
+                }
+                throw $e;
+            }
+            try {
+                $result = $fn();
+                $this->db->exec('COMMIT');
+                return $result;
+            } catch (\PDOException $e) {
+                $this->db->exec('ROLLBACK');
+                if (str_contains($e->getMessage(), 'database is locked') && ++$attempts < $maxAttempts) {
+                    usleep(100_000 * $attempts);
+                    continue;
+                }
+                throw $e;
+            } catch (\Throwable $e) {
+                $this->db->exec('ROLLBACK');
+                throw $e;
+            }
         }
     }
 
@@ -267,6 +286,15 @@ final class ScanSessionRepository
             if ($mergedRoomCount > self::MAX_ROOMS_PER_SESSION) {
                 throw new \OverflowException(
                     "This session already has " . count($existing['rooms']) . " of the maximum " . self::MAX_ROOMS_PER_SESSION . " rooms."
+                );
+            }
+
+            $existingRoomIds = array_column($existing['rooms'], 'room_id');
+            $newRoomIds = array_column($newFloorPlan['rooms'], 'room_id');
+            $duplicateRoomIds = array_intersect($existingRoomIds, $newRoomIds);
+            if (!empty($duplicateRoomIds)) {
+                throw new \RuntimeException(
+                    'Capture retried with room_id(s) already present on this session: ' . implode(', ', $duplicateRoomIds) . '. Refusing to merge to avoid corrupting an existing room.'
                 );
             }
 
@@ -629,6 +657,20 @@ final class ScanSessionRepository
         $id = (int) $this->db->lastInsertId();
         if ($id % 100 === 0) {
             $this->pruneOldRateLimitEvents();
+        }
+    }
+
+    public function recordAndCountRecentEvents(string $bucket, int $windowSeconds): int
+    {
+        $this->db->exec('BEGIN IMMEDIATE');
+        try {
+            $this->recordEvent($bucket);
+            $count = $this->countRecentEvents($bucket, $windowSeconds);
+            $this->db->exec('COMMIT');
+            return $count;
+        } catch (\Throwable $e) {
+            $this->db->exec('ROLLBACK');
+            throw $e;
         }
     }
 

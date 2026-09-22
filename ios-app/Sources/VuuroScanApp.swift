@@ -12,7 +12,6 @@ struct VuuroScanApp: App {
         DispatchQueue.global(qos: .utility).async {
             KeychainTokenStore.resetIfReinstalled()
         }
-        VuuroFontRegistration.registerBundledFonts()
     }
 
     var body: some Scene {
@@ -93,7 +92,7 @@ struct ScanFlowView: View {
     @AppStorage(AppLanguageSettings.storageKey) private var appLanguageRaw: String = AppLanguage.system.rawValue
 
     init() {
-        if let pending = PendingUploadStore.load() {
+        if let pending = PendingUploadStore.load(), pending.skippedAt == nil {
             _stage = State(initialValue: .resumingUpload(pending))
         } else {
             _stage = State(initialValue: .home)
@@ -126,7 +125,10 @@ struct ScanFlowView: View {
                         stage = .attachments(session: session, floorPlan: floorPlan, identity: pending.identity)
                     },
                     onDiscarded: { stage = .home },
-                    onSkipped: { stage = .home }
+                    onSkipped: {
+                        PendingUploadStore.markSkipped()
+                        stage = .home
+                    }
                 )
                 .toolbar(.hidden, for: .navigationBar)
 
@@ -179,6 +181,9 @@ struct ScanFlowView: View {
                     stage = .summary(session: session, floorPlan: updated)
                 } onAddRoom: {
                     stage = .capturing(identity: identity, session: session, attempt: UUID())
+                } onBack: {
+                    PendingUploadStore.clear()
+                    stage = .home
                 }
                 .toolbar(.hidden, for: .navigationBar)
 

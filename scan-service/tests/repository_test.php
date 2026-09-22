@@ -194,14 +194,20 @@ r_check('two recorded events count as 2 within the window', $repo->countRecentEv
 
 r_check('a different, unused bucket is unaffected by bucket-a\'s events', $repo->countRecentEvents('bucket-b', 600) === 0);
 
+r_check(
+    'recordAndCountRecentEvents() records then returns the up-to-date count atomically',
+    $repo->recordAndCountRecentEvents('bucket-a', 600) === 3
+);
+r_check('recordAndCountRecentEvents() actually persisted the event', $repo->countRecentEvents('bucket-a', 600) === 3);
+
 $db->exec("INSERT INTO rate_limit_events (bucket, occurred_at) VALUES ('bucket-a', '" . gmdate('c', time() - 3600) . "')");
 r_check(
     'an event from an hour ago does NOT count within a 10-minute (600s) window',
-    $repo->countRecentEvents('bucket-a', 600) === 2
+    $repo->countRecentEvents('bucket-a', 600) === 3
 );
 r_check(
     'the same old event DOES count within a window wide enough to include it',
-    $repo->countRecentEvents('bucket-a', 7200) === 3
+    $repo->countRecentEvents('bucket-a', 7200) === 4
 );
 echo "\n";
 
@@ -227,7 +233,7 @@ r_check('a recent row is NOT pruned', (int) $recentStmt->fetchColumn() === 1);
 
 r_check(
     'pruning older buckets does not disturb an unrelated live window still being counted (bucket-a)',
-    $repo->countRecentEvents('bucket-a', 600) === 2
+    $repo->countRecentEvents('bucket-a', 600) === 3
 );
 echo "\n";
 
@@ -382,7 +388,7 @@ try {
 echo "\n";
 
 echo "== capture_location: session-wide, set once, never nulled back out ==\n";
-function build_capture_for_location(string $sessionId, ?array $location): array
+function build_capture_for_location(string $sessionId, ?array $location, string $roomId = 'room-loc-1'): array
 {
     return [
         'scan_session_id' => $sessionId,
@@ -390,7 +396,7 @@ function build_capture_for_location(string $sessionId, ?array $location): array
         'capture_provider' => 'test', 'captured_at' => gmdate('c'),
         'measurement_basis' => 'indicative_nen2580_inspired', 'purpose' => 'listing',
         'rooms' => [[
-            'room_id' => 'room-loc-1', 'label' => 'Room 1', 'floor_area_m2' => 10.0,
+            'room_id' => $roomId, 'label' => 'Room 1', 'floor_area_m2' => 10.0,
             'perimeter_m' => 12.0, 'bounding_dimensions_m' => ['width_m' => 3, 'length_m' => 3],
             'confidence' => 'high', 'outline_m' => [[0, 0], [3, 0], [3, 3], [0, 3]],
             'coverage' => ['score' => 90, 'confidence_counts' => ['high' => 1, 'medium' => 0, 'low' => 0], 'usable' => true, 'message' => null],
@@ -404,14 +410,21 @@ $locSession = fresh_session($repo);
 $afterFirstLoc = $repo->appendCapture($locSession['id'], build_capture_for_location($locSession['id'], ['lat' => 52.09, 'lon' => 5.12, 'accuracy_m' => 8.5, 'captured_at' => gmdate('c')]));
 r_check('first capture with a location stores it', $afterFirstLoc['capture_location']['lat'] === 52.09);
 
-$afterSecondNoLoc = $repo->appendCapture($locSession['id'], build_capture_for_location($locSession['id'], null));
+$afterSecondNoLoc = $repo->appendCapture($locSession['id'], build_capture_for_location($locSession['id'], null, 'room-loc-2'));
 r_check('a later capture with no location does not null out the session\'s stored location', $afterSecondNoLoc['capture_location']['lat'] === 52.09);
 
 $noLocSession = fresh_session($repo);
 $afterFirstNoLoc = $repo->appendCapture($noLocSession['id'], build_capture_for_location($noLocSession['id'], null));
 r_check('a session that never got a location stays null, not fabricated', $afterFirstNoLoc['capture_location'] === null);
 
-$afterSecondWithLoc = $repo->appendCapture($noLocSession['id'], build_capture_for_location($noLocSession['id'], ['lat' => 1.0, 'lon' => 2.0, 'accuracy_m' => 5.0, 'captured_at' => gmdate('c')]));
+try {
+    $repo->appendCapture($locSession['id'], build_capture_for_location($locSession['id'], null, 'room-loc-1'));
+    r_check('appendCapture() rejects a retry that reuses an existing room_id', false, 'no exception was thrown');
+} catch (\RuntimeException) {
+    r_check('appendCapture() rejects a retry that reuses an existing room_id', true);
+}
+
+$afterSecondWithLoc = $repo->appendCapture($noLocSession['id'], build_capture_for_location($noLocSession['id'], ['lat' => 1.0, 'lon' => 2.0, 'accuracy_m' => 5.0, 'captured_at' => gmdate('c')], 'room-loc-2'));
 r_check('a later capture CAN fill in a location the first capture missed', $afterSecondWithLoc['capture_location']['lat'] === 1.0);
 echo "\n";
 

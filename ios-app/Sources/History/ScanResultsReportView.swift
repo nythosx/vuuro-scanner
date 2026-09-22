@@ -35,11 +35,12 @@ struct ScanResultsReportView: View {
 
     private let client = ScanServiceClient()
 
-    private static let headerDateFormatter: DateFormatter = {
+    private static func headerDateFormatter() -> DateFormatter {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d, yyyy · h:mm a"
+        formatter.locale = AppLanguageSettings.effectiveLocale
         return formatter
-    }()
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -193,7 +194,7 @@ struct ScanResultsReportView: View {
                     .padding(.vertical, 5)
                     .background(VuuroColor.accent.opacity(0.12), in: Capsule())
 
-                Text(Self.headerDateFormatter.string(from: entry.createdAt))
+                Text(Self.headerDateFormatter().string(from: entry.createdAt))
                     .font(.system(size: 12))
                     .foregroundStyle(VuuroColor.textSecondary)
             }
