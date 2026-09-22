@@ -108,7 +108,9 @@ struct ScanHistoryView: View {
         }
         .background(VuuroColor.bgApp)
         .toolbar(.hidden, for: .navigationBar)
+        .navigationBarBackButtonHidden(false)
         .onAppear { reloadEntries() }
+        .onDisappear { cleanUpTempFiles() }
         .sheet(item: $selectedEntryForReport) { entry in
             NavigationStack {
                 ScanResultsReportView(
@@ -267,9 +269,7 @@ struct ScanHistoryView: View {
                     onTap: { selectedEntryForReport = entry },
                     onAction: { action in handle(action, for: entry) }
                 )
-            }
 
-            ForEach(filteredEntries) { entry in
                 if let attachError = attachErrors[entry.sessionId] {
                     ErrorCodeView(error: attachError)
                         .padding(.horizontal, 20)

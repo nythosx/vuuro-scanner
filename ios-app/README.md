@@ -13,6 +13,11 @@
 - **NOT yet verified**: real RoomPlan capture on real LiDAR hardware. Nothing in this
   app has touched a real LiDAR sensor yet — this is the single biggest open item. See
   the checklist below.
+- **Known gap, pending a product decision**: `ScanShareCode.encode` embeds the full
+  session access token with no revocation path. Mark needs to decide between (a)
+  accepting current behavior, (b) adding an explicit "revoke previous shares" action,
+  or (c) rotating the token on every share with a clear UI explanation of what that
+  does to previously-shared codes.
 
 Evidence over theatre: never round "CI-compiled and simulator-tested" up to "verified."
 Fixture/simulator proof and real-capture proof are not the same claim.

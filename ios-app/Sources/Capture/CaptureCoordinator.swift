@@ -125,9 +125,31 @@ final class CaptureCoordinator: NSObject, ObservableObject {
 
     nonisolated static func computeStats(_ room: CapturedRoom) -> CaptureLiveStats {
         let walls = room.walls.count
-        let area = computeLiveAreaFromWalls(room)
+        let floorsArea = computeLiveAreaFromFloors(room)
+        let area = floorsArea > 0 ? floorsArea : computeLiveAreaFromWalls(room)
         let height = room.walls.map { Double($0.dimensions.y) }.max()
         return CaptureLiveStats(walls: walls, areaM2: area, heightM: height)
+    }
+
+    nonisolated private static func computeLiveAreaFromFloors(_ room: CapturedRoom) -> Double {
+        guard !room.floors.isEmpty else { return 0 }
+
+        var total = 0.0
+        for floor in room.floors {
+            guard floor.polygonCorners.count >= 3 else { return 0 }
+            let worldCorners = floor.polygonCorners.map { corner -> (x: Double, z: Double) in
+                let world = floor.transform * simd_float4(corner, 1)
+                return (Double(world.x), Double(world.z))
+            }
+            var area = 0.0
+            for i in worldCorners.indices {
+                let a = worldCorners[i]
+                let b = worldCorners[(i + 1) % worldCorners.count]
+                area += a.x * b.z - b.x * a.z
+            }
+            total += abs(area) / 2.0
+        }
+        return total
     }
 
     nonisolated private static func computeLiveAreaFromWalls(_ room: CapturedRoom) -> Double {

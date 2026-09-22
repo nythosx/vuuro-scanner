@@ -61,7 +61,8 @@ struct HomeView: View {
                         VuuroRecentScanCard(
                             name: displayName(for: recentScan),
                             meta: metaLine(for: recentScan),
-                            badge: "Ready",
+                            badge: "Local",
+                            badgeStyle: .neutral,
                             onTap: onOpenHistory
                         )
                     } else {

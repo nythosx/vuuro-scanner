@@ -6,6 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.0
+    MARKETING_VERSION: 1.0.0
+    CURRENT_PROJECT_VERSION: 1
 targets:
   VuuroScan:
     type: application
@@ -20,6 +22,8 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: Vuuro Scan
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSCameraUsageDescription: Vuuro Scan uses the camera and LiDAR sensor to capture room geometry for floor plans.
         NSLocationWhenInUseUsageDescription: Vuuro Scan can record the approximate location of a scan so it's attached to the right property. Denying this only skips the location - the scan still works.
         NSLocalNetworkUsageDescription: Vuuro Scan uploads captures to your own Scan Service on this network.

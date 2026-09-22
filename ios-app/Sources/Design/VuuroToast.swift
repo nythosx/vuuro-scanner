@@ -14,6 +14,9 @@ final class VuuroToast: ObservableObject {
     private var undoAction: (() -> Void)?
     private var dismissTask: Task<Void, Never>?
     private var toastToken = 0
+    private var visibleSince: Date?
+    private var pendingPresentTask: Task<Void, Never>?
+    private static let minimumDisplayDuration: TimeInterval = 0.3
 
     private init() {}
 
@@ -33,10 +36,30 @@ final class VuuroToast: ObservableObject {
     }
 
     private func present(_ content: Content, undo: (() -> Void)?) {
+        pendingPresentTask?.cancel()
+        pendingPresentTask = nil
+
+        if let visibleSince, self.content != nil {
+            let elapsed = Date().timeIntervalSince(visibleSince)
+            if elapsed < Self.minimumDisplayDuration {
+                let remaining = Self.minimumDisplayDuration - elapsed
+                pendingPresentTask = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+                    guard let self, !Task.isCancelled else { return }
+                    self.presentNow(content, undo: undo)
+                }
+                return
+            }
+        }
+        presentNow(content, undo: undo)
+    }
+
+    private func presentNow(_ content: Content, undo: (() -> Void)?) {
         toastToken += 1
         let token = toastToken
         dismissTask?.cancel()
         undoAction = undo
+        visibleSince = Date()
         withAnimation(.easeOut(duration: 0.2)) {
             self.content = content
         }
@@ -52,6 +75,7 @@ final class VuuroToast: ObservableObject {
             self.content = nil
         }
         self.undoAction = nil
+        self.visibleSince = nil
     }
 }
 

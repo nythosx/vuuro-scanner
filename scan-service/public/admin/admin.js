@@ -46,7 +46,7 @@ async function apiBlob(path) {
 }
 
 function handleAuthFailure() {
-  localStorage.removeItem(STORAGE_KEY);
+  sessionStorage.removeItem(STORAGE_KEY);
   state.adminKey = '';
   state.currentSessionId = null;
   showLogin('Your admin key is no longer accepted. Please sign in again.');
@@ -123,7 +123,7 @@ async function login() {
   state.adminKey = key;
   try {
     await testKey();
-    localStorage.setItem(STORAGE_KEY, key);
+    sessionStorage.setItem(STORAGE_KEY, key);
     input.value = '';
     if (state.pendingSession) {
       const sid = state.pendingSession;
@@ -141,7 +141,7 @@ async function login() {
 
 function signOut() {
   if (!confirm('Sign out of admin?')) return;
-  localStorage.removeItem(STORAGE_KEY);
+  sessionStorage.removeItem(STORAGE_KEY);
   state.adminKey = '';
   state.currentSessionId = null;
   showLogin();
@@ -790,7 +790,7 @@ function init() {
   const urlSession = new URLSearchParams(location.search).get('session');
   state.pendingSession = urlSession || null;
 
-  const stored = localStorage.getItem(STORAGE_KEY);
+  const stored = sessionStorage.getItem(STORAGE_KEY);
   if (stored) {
     state.adminKey = stored;
     testKey().then(() => {
@@ -803,7 +803,7 @@ function init() {
       }
     }).catch(() => {
       state.adminKey = '';
-      localStorage.removeItem(STORAGE_KEY);
+      sessionStorage.removeItem(STORAGE_KEY);
       showLogin(state.pendingSession ? 'Sign in to open the shared scan.' : null);
     });
   } else {

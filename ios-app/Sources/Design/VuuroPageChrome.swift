@@ -83,6 +83,7 @@ struct VuuroRecentScanCard: View {
     let name: String
     let meta: String
     let badge: String
+    var badgeStyle: VuuroBadgeStyle = .good
     let onTap: () -> Void
 
     var body: some View {
@@ -100,7 +101,7 @@ struct VuuroRecentScanCard: View {
                         .multilineTextAlignment(.leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                VuuroBadge(badge, style: .good)
+                VuuroBadge(badge, style: badgeStyle)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -131,22 +132,6 @@ struct VuuroInfoBanner: View {
         .padding(14)
         .background(VuuroColor.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .padding(.horizontal, 20)
-    }
-}
-
-struct VuuroCenterIconBadge: View {
-    let systemName: String
-    let tint: Color
-    let background: Color
-    var size: CGFloat = 80
-    var iconSize: CGFloat = 34
-
-    var body: some View {
-        Image(systemName: systemName)
-            .font(.system(size: iconSize, weight: .regular))
-            .foregroundStyle(tint)
-            .frame(width: size, height: size)
-            .background(background, in: Circle())
     }
 }
 

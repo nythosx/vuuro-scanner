@@ -43,7 +43,7 @@ struct UploadingView: View {
                         .padding(.horizontal, 20)
                     }
 
-                    Button("Pause & work offline", action: onPause)
+                    Button("Cancel upload", action: onPause)
                         .buttonStyle(.vuuroGhostSmall)
                         .padding(.horizontal, 20)
                         .padding(.top, 16)

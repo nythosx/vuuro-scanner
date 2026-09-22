@@ -391,7 +391,6 @@ struct ResultSummaryView: View {
     private var actionButtons: some View {
         VStack(spacing: 10) {
             Button("Save & return home") {
-                VuuroToast.shared.show("Scan saved to history")
                 onDone()
             }
             .buttonStyle(.vuuroPrimary)

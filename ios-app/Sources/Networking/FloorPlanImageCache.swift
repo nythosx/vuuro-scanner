@@ -13,6 +13,7 @@ final class FloorPlanImageCache {
     private var knownKeys: Set<String> = []
     private var inFlightTasks: [String: Task<Data?, Never>] = [:]
     private var lastErrors: [String: Error] = [:]
+    private var generation = 0
 
     private init() {}
 
@@ -30,6 +31,7 @@ final class FloorPlanImageCache {
             return Task { cached as Data }
         }
         let task = Task<Data?, Never> {
+            let capturedGeneration = self.generation
             let data: Data?
             do {
                 data = try await client.fetchFloorPlanImage(sessionId: sessionId, accessToken: accessToken, unit: unit)
@@ -37,7 +39,9 @@ final class FloorPlanImageCache {
                     self.lastErrors[cacheKey] = nil
                 }
             } catch is CancellationError {
-                self.inFlightTasks[cacheKey] = nil
+                if capturedGeneration == self.generation {
+                    self.inFlightTasks[cacheKey] = nil
+                }
                 return nil
             } catch {
                 DiagnosticsLog.shared.record("Floor plan image prefetch failed for session \(sessionId): \(error.localizedDescription)", category: .error)
@@ -47,7 +51,12 @@ final class FloorPlanImageCache {
                 }
             }
             guard !Task.isCancelled else {
-                self.inFlightTasks[cacheKey] = nil
+                if capturedGeneration == self.generation {
+                    self.inFlightTasks[cacheKey] = nil
+                }
+                return nil
+            }
+            guard capturedGeneration == self.generation else {
                 return nil
             }
             if let data {
@@ -70,6 +79,7 @@ final class FloorPlanImageCache {
     }
 
     func invalidate(sessionId: String) {
+        generation += 1
         let prefix = "\(sessionId)|"
         for cacheKey in knownKeys where cacheKey.hasPrefix(prefix) {
             entries.removeObject(forKey: cacheKey as NSString)

@@ -61,6 +61,7 @@ struct AttachmentsScreen: View {
                 }
             }
             .scrollIndicators(.hidden)
+            .disabled(isSaving)
         }
         .background(VuuroColor.bgApp)
         .sheet(item: $preview) { item in
@@ -155,6 +156,7 @@ struct AttachmentsScreen: View {
 
             Button("Scan another room", action: onAddRoom)
                 .buttonStyle(.vuuroGhostSmall)
+                .disabled(isSaving)
         }
         .padding(.horizontal, 20)
         .padding(.top, 16)
@@ -188,6 +190,7 @@ private struct AttachmentRoomCard: View {
     @State private var showCameraPicker = false
     @State private var showPhotoSourceDialog = false
     @State private var showPhotoPicker = false
+    @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
 
@@ -228,6 +231,11 @@ private struct AttachmentRoomCard: View {
         .padding(.bottom, 12)
         .onAppear { seedNote() }
         .onDisappear { flushPendingSaves() }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase != .active {
+                flushPendingSaves()
+            }
+        }
         .confirmationDialog("Add a photo", isPresented: $showPhotoSourceDialog, titleVisibility: .visible) {
             Button("Take Photo") {
                 showCameraPicker = true

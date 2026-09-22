@@ -12,7 +12,7 @@ enum ScanShareCode {
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let prefixRange = trimmed.range(of: prefix) else { return nil }
         let afterPrefix = trimmed[prefixRange.upperBound...]
-        let base64 = afterPrefix.components(separatedBy: .whitespacesAndNewlines).first ?? ""
+        let base64 = afterPrefix.components(separatedBy: .whitespacesAndNewlines).joined()
         guard let data = Data(base64Encoded: base64) else { return nil }
         return try? JSONDecoder().decode(ScanHistoryEntry.self, from: data)
     }

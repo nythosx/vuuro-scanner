@@ -770,7 +770,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
             'unit_id' => $session['unit_id'],
             'organisation_id' => $session['organisation_id'],
             'purpose' => $session['purpose'],
-            'capture_provider' => $body['capture_provider'] ?? 'roomplan_simulator_fixture',
+            'capture_provider' => $body['capture_provider'] ?? 'roomplan',
             'capture_location' => $body['capture_location'] ?? null,
         ], $roomIndexOffset);
     } catch (\InvalidArgumentException $e) {
@@ -778,6 +778,13 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
             $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
         }
         respondError(422, 'unprocessable_capture', "This capture couldn't be processed: " . $e->getMessage() . ' Please rescan this room.');
+        return;
+    } catch (\Throwable $e) {
+        if ($holdsIdempotencyClaim) {
+            $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+        }
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
         return;
     }
     try {
@@ -832,7 +839,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms$#', $path, 
 
     $adapter = new RoomPlanSimulatorAdapter();
     $rooms = [];
-    $captureProvider = 'roomplan_simulator_fixture';
+    $captureProvider = 'roomplan';
     $capturedAt = gmdate('c');
     foreach ($body['captures'] as $index => $capture) {
         if (!is_array($capture) || empty($capture['raw_capture']) || !is_array($capture['raw_capture'])) {
@@ -850,11 +857,15 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms$#', $path, 
                 'unit_id' => $session['unit_id'],
                 'organisation_id' => $session['organisation_id'],
                 'purpose' => $session['purpose'],
-                'capture_provider' => $capture['capture_provider'] ?? 'roomplan_simulator_fixture',
+                'capture_provider' => $capture['capture_provider'] ?? 'roomplan',
                 'capture_location' => $capture['capture_location'] ?? null,
             ], count($rooms));
         } catch (\InvalidArgumentException $e) {
             respondError(422, 'unprocessable_capture', "captures[$index] couldn't be processed: " . $e->getMessage());
+            return;
+        } catch (\Throwable $e) {
+            error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+            respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
             return;
         }
         $rooms = array_merge($rooms, $adapted['rooms']);
@@ -938,6 +949,10 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
         return;
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unknown_room_id', $e->getMessage() . ' Omit room_id to attach this photo to the session generally, or check it against a room_id already returned by a capture call.');
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
         return;
     }
 
@@ -1104,6 +1119,10 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, 
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unknown_room_id', $e->getMessage() . ' Omit room_id to attach this note to the session generally, or check it against a room_id already returned by a capture call.');
         return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
     }
 
     respond(201, $floorPlan);
@@ -1135,6 +1154,10 @@ if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)/photos/([^/]+)$
         return;
     } catch (\InvalidArgumentException $e) {
         respondError(404, 'photo_not_found', $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
         return;
     }
 
@@ -1169,6 +1192,10 @@ if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)/notes/([^/]+)$#
         return;
     } catch (\InvalidArgumentException $e) {
         respondError(404, 'note_not_found', $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
         return;
     }
 
@@ -1221,6 +1248,10 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes/([^/]+)$#',
     } catch (\InvalidArgumentException $e) {
         respondError(404, 'note_not_found', $e->getMessage());
         return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
     }
 
     respond(200, $floorPlan);
@@ -1261,6 +1292,10 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)/roo
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unknown_room_id', $e->getMessage());
         return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
     }
 
     respond(200, $floorPlan);
@@ -1297,6 +1332,10 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)/lab
         return;
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unknown_room_id', $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
         return;
     }
 
@@ -1345,6 +1384,10 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
     }
     header('Content-Type: image/png');
     echo $png;
@@ -1388,6 +1431,10 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         $svg = (new FloorPlanSvgRenderer())->render($floorPlan, $layout, $roomId, $unit, $label);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
         return;
     }
     header('Content-Type: image/svg+xml');
@@ -1439,6 +1486,10 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         $pdf = (new FloorPlanPdfRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $photoLoader);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
         return;
     }
     header('Content-Type: application/pdf');
@@ -1656,6 +1707,10 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/objects/batch$#',
         return;
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'invalid_object_change', $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
         return;
     }
 
