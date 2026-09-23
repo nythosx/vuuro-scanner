@@ -56,6 +56,31 @@ jobs:
           path: ios-app/build/Build/Products/Debug-iphonesimulator/VuuroScan.app
           if-no-files-found: error
 
+  device-compile-check:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios-app
+        run: xcodegen generate
+
+      - name: Build for generic iOS device (no signing required)
+        working-directory: ios-app
+        run: |
+          xcodebuild build \
+            -project VuuroScan.xcodeproj \
+            -scheme VuuroScan \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-device \
+            CODE_SIGNING_ALLOWED=NO
+
   signed-archive:
     # Only runs once an Apple Developer Team ID and a distribution
     # certificate/provisioning profile exist as repo secrets — none do yet.
