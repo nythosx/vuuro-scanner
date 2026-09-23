@@ -46,7 +46,31 @@ final class Database
             $pdo->exec("ALTER TABLE idempotency_keys ADD COLUMN request_fingerprint TEXT NOT NULL DEFAULT ''");
         } catch (\PDOException $e) {
         }
+        try {
+            $pdo->exec("ALTER TABLE scan_sessions ADD COLUMN access_token_hash TEXT NOT NULL DEFAULT ''");
+        } catch (\PDOException $e) {
+        }
+        self::hashPlaintextTokens($pdo);
 
         return $pdo;
+    }
+
+    private static function hashPlaintextTokens(PDO $pdo): void
+    {
+        if ($pdo->query("SELECT 1 FROM scan_sessions WHERE access_token <> '' LIMIT 1")->fetchColumn() === false) {
+            return;
+        }
+        $pdo->exec('BEGIN IMMEDIATE');
+        try {
+            $rows = $pdo->query("SELECT id, access_token FROM scan_sessions WHERE access_token <> ''")->fetchAll(PDO::FETCH_ASSOC);
+            $update = $pdo->prepare("UPDATE scan_sessions SET access_token_hash = :hash, access_token = '' WHERE id = :id");
+            foreach ($rows as $row) {
+                $update->execute(['hash' => hash('sha256', $row['access_token']), 'id' => $row['id']]);
+            }
+            $pdo->exec('COMMIT');
+        } catch (\Throwable $e) {
+            $pdo->exec('ROLLBACK');
+            throw $e;
+        }
     }
 }

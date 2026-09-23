@@ -34,6 +34,26 @@ if ($sessionId === null || $accessToken === null) {
     exit(1);
 }
 
+echo "== Access token is stored hashed at rest, never in plaintext ==\n";
+$dbPath = getenv('SCAN_SERVICE_DB_PATH') ?: __DIR__ . '/../data/scan_service.sqlite';
+if (!is_file($dbPath)) {
+    check('server database file is readable by this test', false, "no database at $dbPath — run this against a local server sharing SCAN_SERVICE_DB_PATH");
+} else {
+    $atRestDb = new PDO('sqlite:' . $dbPath, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+    $atRestStmt = $atRestDb->prepare('SELECT access_token, access_token_hash FROM scan_sessions WHERE id = :id');
+    $atRestStmt->execute(['id' => $sessionId]);
+    $atRestRow = $atRestStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    check('the session row exists in the server database', $atRestRow !== [], "no row for $sessionId in $dbPath");
+    check('the plaintext access_token column is empty in the database', ($atRestRow['access_token'] ?? null) === '', 'got: ' . var_export($atRestRow['access_token'] ?? null, true));
+    check(
+        'access_token_hash equals sha256 of the token returned by POST /scan-sessions',
+        hash_equals((string) ($atRestRow['access_token_hash'] ?? ''), hash('sha256', $accessToken))
+    );
+    check('POST /scan-sessions does not expose access_token_hash', !array_key_exists('access_token_hash', $session));
+    $atRestDb = null;
+}
+echo "\n";
+
 $validFixture = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_single_room.json'), true, 512, JSON_THROW_ON_ERROR);
 net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $validFixture], $accessToken);
 

@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS scan_sessions (
     -- rotation/expiry" as a known limit). expires_at is set at creation from
     -- either a caller-supplied access_token_ttl_seconds or a 90-day default,
     -- and refreshed on every POST .../rotate-token call.
-    expires_at TEXT NOT NULL DEFAULT ''
+    expires_at TEXT NOT NULL DEFAULT '',
+    access_token_hash TEXT NOT NULL DEFAULT ''
 );
 
 -- Idempotency for POST .../capture (enterprise reliability hardening): a

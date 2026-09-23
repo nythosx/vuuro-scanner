@@ -68,6 +68,44 @@ r_check('the OLD token no longer matches after rotation', !$repo->tokenMatches($
 r_check('the NEW token matches after rotation', $repo->tokenMatches($refetched, $rotated['access_token']));
 echo "\n";
 
+echo "== Access tokens are stored only as a sha256 hash ==\n";
+$hashSession = fresh_session($repo);
+$hashRow = $db->query('SELECT access_token, access_token_hash FROM scan_sessions WHERE id = ' . $db->quote($hashSession['id']))->fetch(PDO::FETCH_ASSOC);
+r_check('the plaintext access_token column is blank after create()', $hashRow['access_token'] === '', 'got: ' . $hashRow['access_token']);
+r_check('access_token_hash is sha256 of the token returned to the caller', hash_equals($hashRow['access_token_hash'], hash('sha256', $hashSession['access_token'])));
+r_check('create() does not return the stored hash to the caller', !array_key_exists('access_token_hash', $hashSession));
+$rotRow = $db->query('SELECT access_token, access_token_hash FROM scan_sessions WHERE id = ' . $db->quote($rotSession['id']))->fetch(PDO::FETCH_ASSOC);
+r_check('the plaintext column stays blank after rotateToken()', $rotRow['access_token'] === '');
+r_check('rotateToken() stores the hash of the NEW token', hash_equals($rotRow['access_token_hash'], hash('sha256', $rotated['access_token'])));
+r_check('the stored hash itself is not accepted as a token', !$repo->tokenMatches($repo->find($hashSession['id']), $hashRow['access_token_hash']));
+r_check('an empty presented token is rejected', !$repo->tokenMatches($repo->find($hashSession['id']), ''));
+r_check('a null presented token is rejected', !$repo->tokenMatches($repo->find($hashSession['id']), null));
+echo "\n";
+
+echo "== Legacy plaintext tokens are hashed in place on connect ==\n";
+$legacyPath = tempnam(sys_get_temp_dir(), 'vuuro-legacy-');
+$legacyDb = Database::connect($legacyPath);
+$legacyToken = '11111111-2222-3333-4444-555555555555';
+$legacyDb->exec("INSERT INTO scan_sessions (id, property_id, unit_id, organisation_id, purpose, created_at, access_token, access_token_hash) VALUES ('legacy-1', 'p', 'u', 'o', 'listing', '2026-01-01T00:00:00+00:00', '$legacyToken', '')");
+$legacyDb = null;
+$migratedDb = Database::connect($legacyPath);
+$migratedRow = $migratedDb->query("SELECT access_token, access_token_hash FROM scan_sessions WHERE id = 'legacy-1'")->fetch(PDO::FETCH_ASSOC);
+r_check('the legacy plaintext column is blanked on the next connect', $migratedRow['access_token'] === '');
+r_check('the legacy token is hashed with sha256', hash_equals($migratedRow['access_token_hash'], hash('sha256', $legacyToken)));
+$migratedRepo = new ScanSessionRepository($migratedDb);
+r_check('the legacy token still authenticates after migration', $migratedRepo->tokenMatches($migratedRepo->find('legacy-1'), $legacyToken));
+Database::connect($legacyPath);
+$afterSecondConnect = $migratedDb->query("SELECT access_token_hash FROM scan_sessions WHERE id = 'legacy-1'")->fetchColumn();
+r_check('a second connect does not re-hash an already-migrated row', $afterSecondConnect === hash('sha256', $legacyToken));
+$migratedDb = null;
+$migratedRepo = null;
+foreach ([$legacyPath, "$legacyPath-wal", "$legacyPath-shm"] as $leftover) {
+    if (is_file($leftover)) {
+        @unlink($leftover);
+    }
+}
+echo "\n";
+
 echo "== isTokenExpired() ==\n";
 $futureSession = ['expires_at' => gmdate('c', time() + 3600)];
 $pastSession = ['expires_at' => gmdate('c', time() - 3600)];

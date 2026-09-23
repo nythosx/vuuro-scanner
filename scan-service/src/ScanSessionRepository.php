@@ -40,8 +40,8 @@ final class ScanSessionRepository
         $createdAt = gmdate('c');
         $expiresAt = gmdate('c', time() + $tokenTtlSeconds);
         $stmt = $this->db->prepare(
-            'INSERT INTO scan_sessions (id, property_id, unit_id, organisation_id, purpose, created_at, status, access_token, occupied, consent_obtained, expires_at)
-             VALUES (:id, :property_id, :unit_id, :organisation_id, :purpose, :created_at, :status, :access_token, :occupied, :consent_obtained, :expires_at)'
+            "INSERT INTO scan_sessions (id, property_id, unit_id, organisation_id, purpose, created_at, status, access_token, access_token_hash, occupied, consent_obtained, expires_at)
+             VALUES (:id, :property_id, :unit_id, :organisation_id, :purpose, :created_at, :status, '', :access_token_hash, :occupied, :consent_obtained, :expires_at)"
         );
         $stmt->execute([
             'id' => $id,
@@ -51,13 +51,13 @@ final class ScanSessionRepository
             'purpose' => $purpose,
             'created_at' => $createdAt,
             'status' => 'created',
-            'access_token' => $accessToken,
+            'access_token_hash' => hash('sha256', $accessToken),
             'occupied' => $occupied ? 1 : 0,
             'consent_obtained' => $consentObtained ? 1 : 0,
             'expires_at' => $expiresAt,
         ]);
 
-        return $this->find($id);
+        return self::withPlaintextToken($this->find($id), $accessToken);
     }
 
     public function rotateToken(string $sessionId, int $tokenTtlSeconds = self::DEFAULT_TOKEN_TTL_SECONDS): array
@@ -65,15 +65,22 @@ final class ScanSessionRepository
         $newToken = self::uuid();
         $expiresAt = gmdate('c', time() + $tokenTtlSeconds);
         $stmt = $this->db->prepare(
-            'UPDATE scan_sessions SET access_token = :access_token, expires_at = :expires_at WHERE id = :id'
+            "UPDATE scan_sessions SET access_token = '', access_token_hash = :access_token_hash, expires_at = :expires_at WHERE id = :id"
         );
         $stmt->execute([
-            'access_token' => $newToken,
+            'access_token_hash' => hash('sha256', $newToken),
             'expires_at' => $expiresAt,
             'id' => $sessionId,
         ]);
 
-        return $this->find($sessionId);
+        return self::withPlaintextToken($this->find($sessionId), $newToken);
+    }
+
+    private static function withPlaintextToken(array $session, string $token): array
+    {
+        unset($session['access_token_hash']);
+        $session['access_token'] = $token;
+        return $session;
     }
 
     public function isTokenExpired(array $session): bool
@@ -173,7 +180,8 @@ final class ScanSessionRepository
 
     public function tokenMatches(array $session, ?string $presentedToken): bool
     {
-        return $presentedToken !== null && hash_equals($session['access_token'], $presentedToken);
+        $storedHash = (string) ($session['access_token_hash'] ?? '');
+        return $presentedToken !== null && $storedHash !== '' && hash_equals($storedHash, hash('sha256', $presentedToken));
     }
 
     public function logAccess(string $sessionId, string $action, string $outcome): void
