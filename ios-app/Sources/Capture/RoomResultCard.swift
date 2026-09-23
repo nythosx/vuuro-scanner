@@ -101,6 +101,7 @@ struct RoomResultCard: View {
     let session: ScanSessionResponse
     var pendingObjectChanges: [ObjectChangeKey: PendingObjectChange] = [:]
     var onObjectChange: ((ObjectChangeKey, PendingObjectChange?) -> Void)? = nil
+    var onAddMissingItem: (() -> Void)? = nil
 
     @State private var renameTarget: ObjectChangeKey?
     @State private var renameDraft: String = ""
@@ -118,6 +119,9 @@ struct RoomResultCard: View {
             }
             if !photos.isEmpty || !notes.isEmpty {
                 attachments
+            }
+            if let onAddMissingItem {
+                missingItemRow(action: onAddMissingItem)
             }
             disclaimer
         }
@@ -166,7 +170,7 @@ struct RoomResultCard: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(room.label)
+                    Text(displayTitle)
                         .font(.system(size: 18, weight: .bold))
                         .tracking(-0.3)
                         .foregroundStyle(VuuroColor.textPrimary)
@@ -185,14 +189,26 @@ struct RoomResultCard: View {
         }
     }
 
+    private var confirmedTypeName: String? {
+        guard let confirmed = room.roomType?.confirmed, !confirmed.isEmpty else { return nil }
+        return RoomTypeClassifier.displayName(for: confirmed)
+    }
+
+    private var displayTitle: String {
+        confirmedTypeName ?? room.label
+    }
+
     private var subtitleText: String? {
-        if let confirmed = room.roomType?.confirmed, !confirmed.isEmpty {
-            return RoomTypeClassifier.displayName(for: confirmed)
+        var parts: [String] = []
+        if let floor = room.floor, !floor.isEmpty {
+            parts.append(floor)
         }
-        if let guess = room.roomType?.guess, !guess.isEmpty {
-            return "\(RoomTypeClassifier.displayName(for: guess)) (suggested)"
+        if confirmedTypeName != nil {
+            parts.append(room.label)
+        } else if let guess = room.roomType?.guess, !guess.isEmpty {
+            parts.append("\(RoomTypeClassifier.displayName(for: guess)) (suggested)")
         }
-        return nil
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     @ViewBuilder
@@ -382,6 +398,22 @@ struct RoomResultCard: View {
         updated.customNameChanged = true
         onObjectChange?(key, updated)
         categoryTarget = nil
+    }
+
+    private func missingItemRow(action: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider().background(VuuroColor.borderSoft)
+            Button(action: action) {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus.circle")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("Add missing item")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .foregroundStyle(VuuroColor.accent)
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     private var attachments: some View {

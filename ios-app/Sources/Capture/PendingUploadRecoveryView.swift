@@ -155,7 +155,8 @@ struct PendingUploadRecoveryView: View {
                 createdAt: Date(),
                 expiresAt: session.expiresAt,
                 occupied: currentState.identity.occupied,
-                consentObtained: currentState.identity.consentObtained
+                consentObtained: currentState.identity.consentObtained,
+                floor: currentState.identity.floor
             ))
         }
 

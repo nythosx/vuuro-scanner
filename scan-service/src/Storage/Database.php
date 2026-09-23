@@ -50,6 +50,10 @@ final class Database
             $pdo->exec("ALTER TABLE scan_sessions ADD COLUMN access_token_hash TEXT NOT NULL DEFAULT ''");
         } catch (\PDOException $e) {
         }
+        try {
+            $pdo->exec("ALTER TABLE scan_sessions ADD COLUMN default_floor TEXT NOT NULL DEFAULT ''");
+        } catch (\PDOException $e) {
+        }
         self::hashPlaintextTokens($pdo);
 
         return $pdo;

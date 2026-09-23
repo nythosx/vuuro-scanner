@@ -13,14 +13,14 @@ struct ResultSummaryView: View {
     @State private var floorPlanImage: UIImage?
     @State private var isLoadingImage = false
     @State private var imageFailed = false
-    @State private var shareImageURL: URL?
     @State private var pdfURL: URL?
-    @State private var showImagePreview = false
+    @State private var previewImage: PreviewImage?
     @State private var showPDFPreview = false
     @State private var isFetchingPDF = false
     @State private var showForgetConfirmation = false
     @State private var appError: AppError?
     @State private var saveSuccessVisible = false
+    @State private var missingItemTarget: MissingItemTarget?
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
 
     private var exportUnit: MeasurementUnit {
@@ -75,6 +75,9 @@ struct ResultSummaryView: View {
                                 } else {
                                     pendingObjectChanges.removeValue(forKey: key)
                                 }
+                            },
+                            onAddMissingItem: {
+                                missingItemTarget = MissingItemTarget(room: room)
                             }
                         )
                     }
@@ -117,30 +120,9 @@ struct ResultSummaryView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        .fullScreenCover(isPresented: $showImagePreview) {
-            if let shareImageURL,
-               let imageData = try? Data(contentsOf: shareImageURL),
-               let image = UIImage(data: imageData) {
-                ImagePreviewView(image: image) {
-                    showImagePreview = false
-                }
-            } else {
-                ZStack {
-                    Color.black.ignoresSafeArea()
-                    VStack(spacing: 16) {
-                        Image(systemName: "photo")
-                            .font(.system(size: 40))
-                            .foregroundStyle(.white.opacity(0.5))
-                        Text("Couldn't load the image.")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white)
-                        Button("Close") {
-                            showImagePreview = false
-                        }
-                        .buttonStyle(.vuuroPrimary)
-                        .frame(maxWidth: 200)
-                    }
-                }
+        .fullScreenCover(item: $previewImage) { preview in
+            ImagePreviewView(image: preview.image) {
+                previewImage = nil
             }
         }
         .fullScreenCover(isPresented: $showPDFPreview) {
@@ -165,6 +147,21 @@ struct ResultSummaryView: View {
                 }
             }
         }
+        .sheet(item: $missingItemTarget) { target in
+            MissingItemSheet(
+                session: session,
+                room: target.room,
+                onSaved: { updated in
+                    currentFloorPlan = updated
+                    missingItemTarget = nil
+                    discardRenderedExports()
+                    Task { await loadImage() }
+                    VuuroToast.shared.show("Missing item added")
+                },
+                onCancel: { missingItemTarget = nil }
+            )
+            .presentationDetents([.medium, .large])
+        }
         .alert("Forget this scan?", isPresented: $showForgetConfirmation) {
             Button("Forget", role: .destructive) {
                 ScanHistoryStore.shared.remove(sessionId: session.id)
@@ -174,6 +171,16 @@ struct ResultSummaryView: View {
         } message: {
             Text("This removes the local record on this device. Server data isn't affected.")
         }
+    }
+
+    private struct PreviewImage: Identifiable {
+        let id = UUID()
+        let image: UIImage
+    }
+
+    private struct MissingItemTarget: Identifiable {
+        let room: FloorPlan.Room
+        var id: String { room.roomId }
     }
 
     private var saveBar: some View {
@@ -455,15 +462,7 @@ struct ResultSummaryView: View {
             )
             currentFloorPlan = updated
             pendingObjectChanges.removeAll()
-            FloorPlanImageCache.shared.invalidate(sessionId: session.id)
-            floorPlanImage = nil
-            imageFailed = false
-            if let cachedPNG = cachedFileURL(suffix: "png") {
-                try? FileManager.default.removeItem(at: cachedPNG)
-            }
-            if let cachedPDF = cachedFileURL(suffix: "pdf") {
-                try? FileManager.default.removeItem(at: cachedPDF)
-            }
+            discardRenderedExports()
             await loadImage()
             withAnimation(.easeInOut(duration: 0.2)) {
                 saveSuccessVisible = true
@@ -479,10 +478,21 @@ struct ResultSummaryView: View {
     }
 
     @MainActor
+    private func discardRenderedExports() {
+        FloorPlanImageCache.shared.invalidate(sessionId: session.id)
+        ExportNaming.removeExports(sessionId: session.id)
+        floorPlanImage = nil
+        imageFailed = false
+        pdfURL = nil
+    }
+
+    @MainActor
     private func fetchAndPreviewImage() async {
-        if let cachedURL = cachedFileURL(suffix: "png"), FileManager.default.fileExists(atPath: cachedURL.path) {
-            shareImageURL = cachedURL
-            showImagePreview = true
+        if floorPlanImage == nil {
+            await loadImage()
+        }
+        if let floorPlanImage {
+            previewImage = PreviewImage(image: floorPlanImage)
             return
         }
         do {
@@ -491,11 +501,12 @@ struct ResultSummaryView: View {
                 accessToken: session.accessToken,
                 unit: exportUnit
             )
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("floorplan-\(session.id).png")
-            try data.write(to: url, options: .atomic)
-            shareImageURL = url
-            showImagePreview = true
+            guard let decoded = UIImage(data: data) else {
+                throw PlainError(message: "The floor plan image came back from the Scan Service but could not be decoded.")
+            }
+            floorPlanImage = decoded
+            imageFailed = false
+            previewImage = PreviewImage(image: decoded)
         } catch is CancellationError {
         } catch {
             appError = AppError(site: .historyImageDownload, underlying: error)
@@ -519,8 +530,15 @@ struct ResultSummaryView: View {
                 accessToken: session.accessToken,
                 unit: exportUnit
             )
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("floorplan-\(session.id).pdf")
+            let url = try ExportNaming.url(
+                sessionId: session.id,
+                property: session.propertyId,
+                unit: session.unitId,
+                room: nil,
+                date: Date(),
+                suffix: "floorplan",
+                ext: "pdf"
+            )
             try data.write(to: url, options: .atomic)
             pdfURL = url
             showPDFPreview = true
@@ -528,10 +546,5 @@ struct ResultSummaryView: View {
         } catch {
             appError = AppError(site: .resultPDFLoad, underlying: error)
         }
-    }
-
-    private func cachedFileURL(suffix: String) -> URL? {
-        FileManager.default.temporaryDirectory
-            .appendingPathComponent("floorplan-\(session.id).\(suffix)")
     }
 }

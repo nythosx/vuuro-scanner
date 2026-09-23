@@ -14,6 +14,7 @@ on:
   pull_request:
     paths:
       - "ios-app/**"
+      - ".github/workflows/ios-build.yml"
   workflow_dispatch: {}
 
 jobs:
@@ -79,7 +80,9 @@ jobs:
             -scheme VuuroScan \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build-device \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
 
   signed-archive:
     # Only runs once an Apple Developer Team ID and a distribution
@@ -88,7 +91,7 @@ jobs:
     # account this should sign under), not something this workflow can
     # decide on its own. Until those secrets exist this job is skipped, not
     # failed, so it never blocks compile-check.
-    needs: compile-check
+    needs: [compile-check, device-compile-check]
     if: ${{ vars.IOS_SIGNING_CONFIGURED == 'true' }}
     runs-on: macos-15
     steps:

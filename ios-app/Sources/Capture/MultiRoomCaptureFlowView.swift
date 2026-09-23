@@ -20,12 +20,14 @@ struct MultiRoomCaptureFlowView: View {
     @State private var partialRoomFailureMessage: String?
     @State private var showCapturedRoomsList = false
     @State private var showDiscardConfirmation = false
+    @State private var showMultiFloorPrompt = false
     @State private var capturedLocation: CaptureLocation?
     @State private var capturedHeadingDeg: Double?
     @State private var preUploadedSession: (session: ScanSessionResponse, floorPlan: FloorPlan)?
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
     @State private var didStart = false
     @State private var showCorrectionDialog = false
+    @State private var capturedFloor: String = ""
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
@@ -124,6 +126,7 @@ struct MultiRoomCaptureFlowView: View {
                 .onAppear {
                     guard !didStart else { return }
                     didStart = true
+                    capturedFloor = (existingSession?.defaultFloor ?? identity.floor ?? "")
                     coordinator.start()
                     Task { capturedLocation = await locationProvider.currentLocation() }
                     Task { capturedHeadingDeg = await headingProvider.currentHeadingDeg() }
@@ -159,6 +162,40 @@ struct MultiRoomCaptureFlowView: View {
         }
         .sheet(isPresented: $showCapturedRoomsList) {
             CapturedRoomsListView(coordinator: coordinator)
+        }
+        .alert("Which floor?", isPresented: $showMultiFloorPrompt) {
+            TextField("e.g. Attic, 1st floor", text: $capturedFloor)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+            Button("Save") {
+                Task { await persistMultiFloor() }
+            }
+            Button("Clear", role: .destructive) {
+                capturedFloor = ""
+                Task { await persistMultiFloor() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Applies to the next room you scan, and to the rest of this session, until you change it.")
+        }
+        .portraitLocked()
+    }
+
+    @MainActor
+    private func persistMultiFloor() async {
+        guard let session = existingSession ?? preUploadedSession?.session else { return }
+        let trimmed = capturedFloor.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            _ = try await client.setDefaultFloor(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                floor: trimmed.isEmpty ? nil : trimmed
+            )
+            capturedFloor = trimmed
+            ScanHistoryStore.shared.updateFloor(sessionId: session.id, floor: trimmed.isEmpty ? nil : trimmed)
+        } catch is CancellationError {
+        } catch {
+            DiagnosticsLog.shared.record("Failed to update default floor (multi-room): \(error.localizedDescription)", category: .error)
         }
     }
 
@@ -234,6 +271,29 @@ struct MultiRoomCaptureFlowView: View {
                     didRequestStopRoom = true
                     coordinator.stopCurrentRoom()
                 }
+
+                HStack(spacing: 8) {
+                    Button {
+                        showMultiFloorPrompt = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "building.2")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(capturedFloor.isEmpty ? "Set floor" : capturedFloor)
+                                .font(.system(size: 12, weight: .semibold))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .background(Color.black.opacity(0.4), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 4)
 
                 if !coordinator.capturedRooms.isEmpty {
                     VuuroRoomsButton(count: coordinator.capturedRooms.count) {
@@ -440,7 +500,11 @@ struct MultiRoomCaptureFlowView: View {
                 sessionId: preUploadedSession.session.id,
                 accessToken: preUploadedSession.session.accessToken,
                 exports: exports,
-                location: capturedLocation
+                location: capturedLocation,
+                floor: {
+                    let trimmed = capturedFloor.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmed.isEmpty ? nil : trimmed
+                }()
             )
             for index in labels.indices {
                 uploadProgress.markDone(index: index, areaM2: exports[index].floorAreaM2)
@@ -487,9 +551,17 @@ struct MultiRoomCaptureFlowView: View {
             return nil
         }
 
+        let floorForCaptures: String? = {
+            let trimmed = (capturedFloor).trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }()
         var captures: [PendingUploadState.PendingCapture] = []
         for export in exports {
-            guard let bodyJSON = try? client.encodeCaptureBody(capture: export, location: capturedLocation) else {
+            guard let bodyJSON = try? client.encodeCaptureBody(
+                capture: export,
+                location: capturedLocation,
+                floor: floorForCaptures
+            ) else {
                 onError(
                     AppError(
                         site: .captureFailed,
@@ -510,7 +582,7 @@ struct MultiRoomCaptureFlowView: View {
             session = existingSession
         } else {
             do {
-                session = try await client.createSession(identity: identity)
+                session = try await client.createSession(identity: identity.withFloor(capturedFloor))
             } catch is CancellationError {
                 onError(AppError(site: .uploadCancelled, underlying: nil), existingSession)
                 return nil
@@ -530,7 +602,8 @@ struct MultiRoomCaptureFlowView: View {
                 createdAt: Date(),
                 expiresAt: session.expiresAt,
                 occupied: identity.occupied,
-                consentObtained: identity.consentObtained
+                consentObtained: identity.consentObtained,
+                floor: session.defaultFloor ?? identity.floor
             ))
         }
 

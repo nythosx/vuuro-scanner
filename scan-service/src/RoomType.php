@@ -49,6 +49,17 @@ final class RoomType
         return self::LABELS[$value] ?? $value;
     }
 
+    public static function displayLabelForRoom(array $room): string
+    {
+        $roomType = is_array($room['room_type'] ?? null) ? $room['room_type'] : [];
+        $confirmed = $roomType['confirmed'] ?? null;
+        $label = (string) ($room['label'] ?? '');
+        if (is_string($confirmed) && trim($confirmed) !== '' && preg_match('/^Room \d+$/', trim($label)) === 1) {
+            return sprintf('%s (%s)', self::labelFor($confirmed), trim($label));
+        }
+        return self::displayLabel($label, $confirmed ?? $roomType['guess'] ?? null);
+    }
+
     public static function displayLabel(string $label, ?string $roomTypeValue): string
     {
         if ($roomTypeValue === null) {

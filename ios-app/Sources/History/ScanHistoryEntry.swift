@@ -14,14 +14,15 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
     var cachedRoomSummary: String? = nil
     var occupied: Bool = false
     var consentObtained: Bool = false
+    var floor: String? = nil
 
     var id: String { sessionId }
 
     enum CodingKeys: String, CodingKey {
-        case sessionId, accessToken, propertyId, unitId, organisationId, purpose, createdAt, expiresAt, nickname, cachedRoomSummary, occupied, consentObtained
+        case sessionId, accessToken, propertyId, unitId, organisationId, purpose, createdAt, expiresAt, nickname, cachedRoomSummary, occupied, consentObtained, floor
     }
 
-    init(sessionId: String, accessToken: String, propertyId: String, unitId: String, organisationId: String, purpose: ScanPurpose, createdAt: Date, expiresAt: String?, nickname: String? = nil, cachedRoomSummary: String? = nil, occupied: Bool = false, consentObtained: Bool = false) {
+    init(sessionId: String, accessToken: String, propertyId: String, unitId: String, organisationId: String, purpose: ScanPurpose, createdAt: Date, expiresAt: String?, nickname: String? = nil, cachedRoomSummary: String? = nil, occupied: Bool = false, consentObtained: Bool = false, floor: String? = nil) {
         self.sessionId = sessionId
         self.accessToken = accessToken
         self.propertyId = propertyId
@@ -34,6 +35,7 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
         self.cachedRoomSummary = cachedRoomSummary
         self.occupied = occupied
         self.consentObtained = consentObtained
+        self.floor = floor
     }
 
     init(from decoder: Decoder) throws {
@@ -50,6 +52,7 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
         cachedRoomSummary = try container.decodeIfPresent(String.self, forKey: .cachedRoomSummary)
         occupied = try container.decodeIfPresent(Bool.self, forKey: .occupied) ?? false
         consentObtained = try container.decodeIfPresent(Bool.self, forKey: .consentObtained) ?? false
+        floor = try container.decodeIfPresent(String.self, forKey: .floor)
     }
 
     func asResumableSession() -> ScanSessionResponse {
@@ -64,7 +67,8 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
             occupied: occupied,
             consentObtained: consentObtained,
             accessToken: accessToken,
-            expiresAt: expiresAt ?? ""
+            expiresAt: expiresAt ?? "",
+            defaultFloor: floor
         )
     }
 
@@ -75,7 +79,8 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
             organisationId: organisationId,
             purpose: purpose,
             occupied: occupied,
-            consentObtained: consentObtained
+            consentObtained: consentObtained,
+            floor: floor
         )
     }
 }

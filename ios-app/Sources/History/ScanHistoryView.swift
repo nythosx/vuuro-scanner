@@ -521,7 +521,8 @@ struct ScanHistoryView: View {
                 nickname: entry.nickname,
                 cachedRoomSummary: entry.cachedRoomSummary,
                 occupied: entry.occupied,
-                consentObtained: entry.consentObtained
+                consentObtained: entry.consentObtained,
+                floor: entry.floor
             )
             ScanHistoryStore.shared.add(updated)
             reloadEntries()
@@ -554,18 +555,11 @@ struct ScanHistoryView: View {
         perEntryPDFURLs[entry.sessionId] = nil
         attachErrors[entry.sessionId] = nil
 
-        let imageName = "floorplan-\(entry.sessionId).png"
-        let pdfName = "floorplan-\(entry.sessionId).pdf"
-
-        for url in bulkImageURLs where url.lastPathComponent == imageName {
-            try? FileManager.default.removeItem(at: url)
-        }
-        bulkImageURLs.removeAll { $0.lastPathComponent == imageName }
-
-        for url in bulkPDFURLs where url.lastPathComponent == pdfName {
-            try? FileManager.default.removeItem(at: url)
-        }
-        bulkPDFURLs.removeAll { $0.lastPathComponent == pdfName }
+        let entryDirectory = ExportNaming.directory(sessionId: entry.sessionId).standardizedFileURL.path
+        let belongsToEntry: (URL) -> Bool = { $0.deletingLastPathComponent().standardizedFileURL.path == entryDirectory }
+        bulkImageURLs.removeAll(where: belongsToEntry)
+        bulkPDFURLs.removeAll(where: belongsToEntry)
+        ExportNaming.removeExports(sessionId: entry.sessionId)
 
         ScanHistoryStore.shared.remove(sessionId: entry.sessionId)
         reloadEntries()
@@ -628,8 +622,15 @@ struct ScanHistoryView: View {
                 unit: currentExportUnit,
                 label: entry.nickname
             )
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("floorplan-\(entry.sessionId).png")
+            let url = try ExportNaming.url(
+                sessionId: entry.sessionId,
+                property: entry.propertyId,
+                unit: entry.unitId,
+                room: nil,
+                date: entry.createdAt,
+                suffix: "floorplan",
+                ext: "png"
+            )
             try data.write(to: url, options: .atomic)
             perEntryImageURLs[entry.sessionId] = url
             appError = nil
@@ -656,8 +657,15 @@ struct ScanHistoryView: View {
                 unit: currentExportUnit,
                 label: entry.nickname
             )
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("floorplan-\(entry.sessionId).pdf")
+            let url = try ExportNaming.url(
+                sessionId: entry.sessionId,
+                property: entry.propertyId,
+                unit: entry.unitId,
+                room: nil,
+                date: entry.createdAt,
+                suffix: "floorplan",
+                ext: "pdf"
+            )
             try data.write(to: url, options: .atomic)
             perEntryPDFURLs[entry.sessionId] = url
             appError = nil
@@ -691,8 +699,15 @@ struct ScanHistoryView: View {
                     unit: currentExportUnit,
                     label: entry.nickname
                 )
-                let url = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("floorplan-\(entry.sessionId).png")
+                let url = try ExportNaming.url(
+                    sessionId: entry.sessionId,
+                    property: entry.propertyId,
+                    unit: entry.unitId,
+                    room: nil,
+                    date: entry.createdAt,
+                    suffix: "floorplan",
+                    ext: "png"
+                )
                 try data.write(to: url, options: .atomic)
                 urls.append(url)
             } catch is CancellationError {
@@ -740,8 +755,15 @@ struct ScanHistoryView: View {
                     unit: currentExportUnit,
                     label: entry.nickname
                 )
-                let url = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("floorplan-\(entry.sessionId).pdf")
+                let url = try ExportNaming.url(
+                    sessionId: entry.sessionId,
+                    property: entry.propertyId,
+                    unit: entry.unitId,
+                    room: nil,
+                    date: entry.createdAt,
+                    suffix: "floorplan",
+                    ext: "pdf"
+                )
                 try data.write(to: url, options: .atomic)
                 urls.append(url)
             } catch is CancellationError {
@@ -852,7 +874,10 @@ private struct HistoryCard: View {
     }
 
     private var metaLine: String {
-        "\(entry.purpose.displayName) · \(Self.metaFormatter().string(from: entry.createdAt))"
+        if let floor = entry.floor, !floor.isEmpty {
+            return "\(floor) · \(entry.purpose.displayName) · \(Self.metaFormatter().string(from: entry.createdAt))"
+        }
+        return "\(entry.purpose.displayName) · \(Self.metaFormatter().string(from: entry.createdAt))"
     }
 
     private var pills: ([String], Int) {

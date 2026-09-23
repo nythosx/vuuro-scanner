@@ -12,12 +12,17 @@ struct IdentityIntakeScreen: View {
     @State private var occupied = false
     @State private var consentObtained = false
     @State private var roomTypeGuessEnabled = RoomTypeGuessSettings.isEnabled
+    @State private var floor: String = ""
     @State private var isCheckingHealth = false
     @State private var healthCheckError: AppError?
     @State private var pendingStart: ((ScanIdentity) -> Void)?
     @State private var showReagreeSheet = false
 
     private let client = ScanServiceClient()
+
+    private var trimmedFloor: String {
+        floor.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     private var currentIdentity: ScanIdentity {
         ScanIdentity(
@@ -26,7 +31,8 @@ struct IdentityIntakeScreen: View {
             organisationId: trimmedOrganisationId,
             purpose: purpose,
             occupied: occupied,
-            consentObtained: occupied ? consentObtained : false
+            consentObtained: occupied ? consentObtained : false,
+            floor: trimmedFloor.isEmpty ? nil : trimmedFloor
         )
     }
 
@@ -110,6 +116,12 @@ struct IdentityIntakeScreen: View {
                 Text("Unit identity")
             } footer: {
                 Text("Enter the property, unit, and organisation this scan belongs to. Tap a suggestion below a field to reuse a value from an earlier scan.")
+            }
+
+            Section("Floor") {
+                TextField("e.g. Attic, 1st floor, Basement", text: $floor)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
             }
 
             Section("Purpose") {

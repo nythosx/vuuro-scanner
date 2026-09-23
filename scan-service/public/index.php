@@ -73,7 +73,7 @@ if ($adminStaticPath !== false && ($adminStaticPath === '/admin' || str_starts_w
         ];
         header('Content-Type: ' . ($mimeMap[$ext] ?? 'application/octet-stream'));
         if ($ext === 'html') {
-            header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none';");
+            header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none';");
         }
         readfile($adminFile);
         return;
@@ -576,6 +576,24 @@ if ($method === 'POST' && $path === '/scan-sessions') {
         return;
     }
 
+    $defaultFloor = '';
+    if (array_key_exists('floor', $body) && $body['floor'] !== null) {
+        if (!is_string($body['floor'])) {
+            respondError(422, 'field_must_be_string', "'floor' must be a plain string.", ['field' => 'floor']);
+            return;
+        }
+        $trimmed = trim($body['floor']);
+        if (mb_strlen($trimmed, 'UTF-8') > 60) {
+            respondError(422, 'field_too_long', "'floor' is too long — please keep it to 60 characters or fewer.", ['field' => 'floor', 'max_length' => 60]);
+            return;
+        }
+        if (preg_match('/[\x00-\x1f\x7f]/', $trimmed) === 1) {
+            respondError(422, 'invalid_floor', "'floor' must not contain control characters.");
+            return;
+        }
+        $defaultFloor = $trimmed;
+    }
+
     $session = $repo->create(
         $body['property_id'],
         $body['unit_id'],
@@ -583,7 +601,8 @@ if ($method === 'POST' && $path === '/scan-sessions') {
         $body['purpose'],
         $body['occupied'],
         $consentObtained,
-        $tokenTtlSeconds
+        $tokenTtlSeconds,
+        $defaultFloor
     );
 
     backupDatabaseIfDue($db);
@@ -608,6 +627,43 @@ if ($method === 'POST' && $path === '/scan-sessions') {
         ...$session,
         'occupied' => (bool) $session['occupied'],
         'consent_obtained' => (bool) $session['consent_obtained'],
+        'default_floor' => $session['default_floor'] ?? '',
+    ]);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/default-floor$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'set_default_floor');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':set_default_floor', 30, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    if (!array_key_exists('floor', $body)) {
+        respondError(422, 'missing_required_fields', "Please include a 'floor' field (empty string clears it).", ['fields' => ['floor']]);
+        return;
+    }
+    if ($body['floor'] !== null && !is_string($body['floor'])) {
+        respondError(422, 'field_must_be_string', "'floor' must be a plain string or null.", ['field' => 'floor']);
+        return;
+    }
+    $floor = is_string($body['floor']) ? trim($body['floor']) : '';
+    if (mb_strlen($floor, 'UTF-8') > 60) {
+        respondError(422, 'field_too_long', "'floor' is too long — please keep it to 60 characters or fewer.", ['field' => 'floor', 'max_length' => 60]);
+        return;
+    }
+    if (preg_match('/[\x00-\x1f\x7f]/', $floor) === 1) {
+        respondError(422, 'invalid_floor', "'floor' must not contain control characters.");
+        return;
+    }
+
+    $updated = $repo->setDefaultFloor($session['id'], $floor);
+    respond(200, [
+        'id' => $updated['id'],
+        'default_floor' => $updated['default_floor'] ?? '',
     ]);
     return;
 }
@@ -761,6 +817,36 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         }
     }
 
+    $floorForThisCapture = null;
+    if (array_key_exists('floor', $body) && $body['floor'] !== null) {
+        if (!is_string($body['floor'])) {
+            if ($holdsIdempotencyClaim) {
+                $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+            }
+            respondError(422, 'field_must_be_string', "'floor' must be a plain string.", ['field' => 'floor']);
+            return;
+        }
+        $trimmedFloor = trim($body['floor']);
+        if (mb_strlen($trimmedFloor, 'UTF-8') > 60) {
+            if ($holdsIdempotencyClaim) {
+                $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+            }
+            respondError(422, 'field_too_long', "'floor' is too long — please keep it to 60 characters or fewer.", ['field' => 'floor', 'max_length' => 60]);
+            return;
+        }
+        if (preg_match('/[\x00-\x1f\x7f]/', $trimmedFloor) === 1) {
+            if ($holdsIdempotencyClaim) {
+                $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+            }
+            respondError(422, 'invalid_floor', "'floor' must not contain control characters.");
+            return;
+        }
+        $floorForThisCapture = $trimmedFloor === '' ? null : $trimmedFloor;
+    } else {
+        $sessionDefault = trim((string) ($session['default_floor'] ?? ''));
+        $floorForThisCapture = $sessionDefault === '' ? null : $sessionDefault;
+    }
+
     $adapter = new RoomPlanSimulatorAdapter();
     try {
         $roomIndexOffset = $repo->roomCount($session['id']);
@@ -772,6 +858,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
             'purpose' => $session['purpose'],
             'capture_provider' => $body['capture_provider'] ?? 'roomplan',
             'capture_location' => $body['capture_location'] ?? null,
+            'floor' => $floorForThisCapture,
         ], $roomIndexOffset);
     } catch (\InvalidArgumentException $e) {
         if ($holdsIdempotencyClaim) {
@@ -841,6 +928,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms$#', $path, 
     $rooms = [];
     $captureProvider = 'roomplan';
     $capturedAt = gmdate('c');
+    $sessionDefault = trim((string) ($session['default_floor'] ?? ''));
     foreach ($body['captures'] as $index => $capture) {
         if (!is_array($capture) || empty($capture['raw_capture']) || !is_array($capture['raw_capture'])) {
             respondError(422, 'missing_raw_capture', "captures[$index] must include a 'raw_capture' field with the RoomPlan capture data for this room.");
@@ -849,6 +937,21 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms$#', $path, 
         if (isset($capture['capture_provider']) && !is_string($capture['capture_provider'])) {
             respondError(422, 'field_must_be_string', "captures[$index].capture_provider must be a plain string.");
             return;
+        }
+        $floorForCapture = null;
+        if (array_key_exists('floor', $capture) && $capture['floor'] !== null) {
+            if (!is_string($capture['floor'])) {
+                respondError(422, 'field_must_be_string', "captures[$index].floor must be a plain string.");
+                return;
+            }
+            $trimmedFloor = trim($capture['floor']);
+            if (mb_strlen($trimmedFloor, 'UTF-8') > 60) {
+                respondError(422, 'field_too_long', "captures[$index].floor is too long.", ['field' => "captures[$index].floor", 'max_length' => 60]);
+                return;
+            }
+            $floorForCapture = $trimmedFloor === '' ? null : $trimmedFloor;
+        } else {
+            $floorForCapture = $sessionDefault === '' ? null : $sessionDefault;
         }
         try {
             $adapted = $adapter->adapt($capture['raw_capture'], [
@@ -859,6 +962,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms$#', $path, 
                 'purpose' => $session['purpose'],
                 'capture_provider' => $capture['capture_provider'] ?? 'roomplan',
                 'capture_location' => $capture['capture_location'] ?? null,
+                'floor' => $floorForCapture,
             ], count($rooms));
         } catch (\InvalidArgumentException $e) {
             respondError(422, 'unprocessable_capture', "captures[$index] couldn't be processed: " . $e->getMessage());
@@ -1378,9 +1482,14 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
         return;
     }
+    $style = $_GET['style'] ?? 'default';
+    if (!in_array($style, ['default', 'funda'], true)) {
+        respondError(422, 'invalid_style', "'style' must be 'default' or 'funda' if given.");
+        return;
+    }
 
     try {
-        $png = (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label);
+        $png = (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $style);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;
@@ -1426,9 +1535,14 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
         return;
     }
+    $style = $_GET['style'] ?? 'default';
+    if (!in_array($style, ['default', 'funda'], true)) {
+        respondError(422, 'invalid_style', "'style' must be 'default' or 'funda' if given.");
+        return;
+    }
 
     try {
-        $svg = (new FloorPlanSvgRenderer())->render($floorPlan, $layout, $roomId, $unit, $label);
+        $svg = (new FloorPlanSvgRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $style);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;
@@ -1476,6 +1590,11 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
         return;
     }
+    $style = $_GET['style'] ?? 'default';
+    if (!in_array($style, ['default', 'funda'], true)) {
+        respondError(422, 'invalid_style', "'style' must be 'default' or 'funda' if given.");
+        return;
+    }
 
     $photoLoader = static function (string $url) use ($session): ?string {
         $filePath = ownedPhotoFilePath($session['id'], $url);
@@ -1483,7 +1602,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     };
 
     try {
-        $pdf = (new FloorPlanPdfRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $photoLoader);
+        $pdf = (new FloorPlanPdfRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $photoLoader, $style);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;

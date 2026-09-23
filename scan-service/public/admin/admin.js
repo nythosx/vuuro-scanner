@@ -233,7 +233,7 @@ function renderDetail(data, sessionId) {
   const totalArea = rooms.reduce((sum, r) => sum + (Number(r.floor_area_m2) || 0), 0);
 
   const roomRows = rooms.map((r) => {
-    const roomType = r.room_type ? (r.room_type.confirmed || r.room_type.guess || '') : '';
+    const roomType = roomTypeLabel(r.room_type ? (r.room_type.confirmed || r.room_type.guess || '') : '');
     const height = r.height_m !== null && r.height_m !== undefined ? Number(r.height_m).toFixed(2) : '-';
     const coverage = r.coverage ? r.coverage.score : '';
     return '<tr>' +
@@ -386,7 +386,7 @@ function exportJson(sessionId, data) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'scan-' + sessionId + '.json';
+  a.download = exportFileName(data, sessionId, 'scan', 'json');
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -499,10 +499,28 @@ async function loadAccessLog(sessionId) {
   }
 }
 
+function roomTypeLabel(value) {
+  const text = String(value || '').replace(/_/g, ' ').trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+}
+
+function fileSlug(value) {
+  const slug = String(value || '').replace(/[^A-Za-z0-9_-]+/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+  return slug || 'Untitled';
+}
+
+function exportFileName(fp, sessionId, suffix, kind) {
+  const parts = [fileSlug(fp && fp.property_id ? fp.property_id : sessionId)];
+  if (fp && fp.unit_id) parts.push(fileSlug(fp.unit_id));
+  const captured = fp && typeof fp.captured_at === 'string' ? fp.captured_at.slice(0, 10) : '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(captured)) parts.push(captured);
+  parts.push(suffix);
+  return parts.join('_') + '.' + kind;
+}
+
 async function downloadExport(sessionId, kind, fp) {
   const path = '/scan-sessions/' + encodeURIComponent(sessionId) + '/export/floorplan.' + kind;
-  const base = (fp && fp.property_id ? fp.property_id : sessionId);
-  const filename = 'floorplan-' + base + '.' + kind;
+  const filename = exportFileName(fp, sessionId, 'floorplan', kind);
   try {
     const blob = await apiBlob(path);
     const url = URL.createObjectURL(blob);
@@ -657,7 +675,7 @@ function renderImportDetail(data) {
   const totalArea = rooms.reduce((sum, r) => sum + (Number(r.floor_area_m2) || 0), 0);
 
   const roomRows = rooms.map((r) => {
-    const roomType = r.room_type ? (r.room_type.confirmed || r.room_type.guess || '') : '';
+    const roomType = roomTypeLabel(r.room_type ? (r.room_type.confirmed || r.room_type.guess || '') : '');
     const height = r.height_m !== null && r.height_m !== undefined ? Number(r.height_m).toFixed(2) : '-';
     const coverage = r.coverage ? r.coverage.score : '';
     return '<tr>' +

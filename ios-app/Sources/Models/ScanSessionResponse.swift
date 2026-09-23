@@ -13,6 +13,7 @@ struct ScanSessionResponse: Codable {
     let consentObtained: Bool
     let accessToken: String
     let expiresAt: String
+    let defaultFloor: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -26,6 +27,51 @@ struct ScanSessionResponse: Codable {
         case consentObtained = "consent_obtained"
         case accessToken = "access_token"
         case expiresAt = "expires_at"
+        case defaultFloor = "default_floor"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        propertyId = try c.decode(String.self, forKey: .propertyId)
+        unitId = try c.decode(String.self, forKey: .unitId)
+        organisationId = try c.decode(String.self, forKey: .organisationId)
+        purpose = try c.decode(String.self, forKey: .purpose)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        status = try c.decode(String.self, forKey: .status)
+        occupied = try c.decode(Bool.self, forKey: .occupied)
+        consentObtained = try c.decode(Bool.self, forKey: .consentObtained)
+        accessToken = try c.decode(String.self, forKey: .accessToken)
+        expiresAt = try c.decode(String.self, forKey: .expiresAt)
+        defaultFloor = try c.decodeIfPresent(String.self, forKey: .defaultFloor)
+    }
+
+    init(
+        id: String,
+        propertyId: String,
+        unitId: String,
+        organisationId: String,
+        purpose: String,
+        createdAt: String,
+        status: String,
+        occupied: Bool,
+        consentObtained: Bool,
+        accessToken: String,
+        expiresAt: String,
+        defaultFloor: String? = nil
+    ) {
+        self.id = id
+        self.propertyId = propertyId
+        self.unitId = unitId
+        self.organisationId = organisationId
+        self.purpose = purpose
+        self.createdAt = createdAt
+        self.status = status
+        self.occupied = occupied
+        self.consentObtained = consentObtained
+        self.accessToken = accessToken
+        self.expiresAt = expiresAt
+        self.defaultFloor = defaultFloor
     }
 }
 
@@ -88,6 +134,7 @@ struct FloorPlan: Codable {
         let objects: [CapturedObject]
         let structureOriginM: [Double]?
         let roomType: RoomType?
+        let floor: String?
 
         enum CodingKeys: String, CodingKey {
             case roomId = "room_id"
@@ -104,6 +151,7 @@ struct FloorPlan: Codable {
             case objects
             case structureOriginM = "structure_origin_m"
             case roomType = "room_type"
+            case floor
         }
 
         init(from decoder: Decoder) throws {
@@ -122,6 +170,7 @@ struct FloorPlan: Codable {
             objects = try c.decodeIfPresent([CapturedObject].self, forKey: .objects) ?? []
             structureOriginM = try c.decodeIfPresent([Double].self, forKey: .structureOriginM)
             roomType = try c.decodeIfPresent(RoomType.self, forKey: .roomType)
+            floor = try c.decodeIfPresent(String.self, forKey: .floor)
         }
     }
 

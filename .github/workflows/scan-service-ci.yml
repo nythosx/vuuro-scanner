@@ -67,6 +67,7 @@ jobs:
           php net/verify_security_fixes.php http://127.0.0.1:8089
           php net/verify_error_messages.php http://127.0.0.1:8089
           php net/verify_session_delete.php http://127.0.0.1:8089
+          php net/verify_floor_and_style.php http://127.0.0.1:8089
           php net/verify_enterprise_hardening.php http://127.0.0.1:8089
 
       # Deliberately its own server/DB on a different port — see this

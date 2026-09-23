@@ -27,6 +27,12 @@ struct ScanResultsReportView: View {
     @State private var showForgetConfirmation = false
     @State private var showServerDeleteConfirmation = false
 
+    @State private var pendingObjectChanges: [ObjectChangeKey: PendingObjectChange] = [:]
+    @State private var isSavingChanges = false
+    @State private var saveSuccessVisible = false
+    @State private var missingItemTarget: MissingItemTarget?
+    @State private var previewImage: PreviewImage?
+
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
 
     private var exportUnit: MeasurementUnit {
@@ -56,6 +62,10 @@ struct ScanResultsReportView: View {
                         floorPlanCard(floorPlan: floorPlan)
                         roomsSection(floorPlan: floorPlan)
                         unitAttachmentsSection(floorPlan: floorPlan)
+                    }
+
+                    if !pendingObjectChanges.isEmpty {
+                        saveChangesBar
                     }
 
                     accessLogRow
@@ -106,6 +116,26 @@ struct ScanResultsReportView: View {
                     }
                 }
             }
+        }
+        .fullScreenCover(item: $previewImage) { preview in
+            ImagePreviewView(image: preview.image) {
+                previewImage = nil
+            }
+        }
+        .sheet(item: $missingItemTarget) { target in
+            MissingItemSheet(
+                session: entry.asResumableSession(),
+                room: target.room,
+                onSaved: { updated in
+                    floorPlan = updated
+                    missingItemTarget = nil
+                    discardRenderedExports()
+                    Task { await loadImage() }
+                    VuuroToast.shared.show("Missing item added")
+                },
+                onCancel: { missingItemTarget = nil }
+            )
+            .presentationDetents([.medium, .large])
         }
         .alert("Forget this scan?", isPresented: $showForgetConfirmation) {
             Button("Forget", role: .destructive) {
@@ -262,6 +292,24 @@ struct ScanResultsReportView: View {
                 }
             }
             .frame(height: 220)
+            .overlay(alignment: .topTrailing) {
+                if floorPlanImage != nil {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(VuuroColor.textSecondary)
+                        .padding(8)
+                        .background(VuuroColor.bgCard.opacity(0.9), in: Circle())
+                        .padding(10)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let floorPlanImage {
+                    previewImage = PreviewImage(image: floorPlanImage)
+                }
+            }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel("Open floor plan full screen")
 
             HStack(spacing: 8) {
                 Button {
@@ -335,7 +383,18 @@ struct ScanResultsReportView: View {
                     isFused: floorPlan.rooms.count > 1,
                     photos: floorPlan.photos.filter { $0.roomId == room.roomId },
                     notes: floorPlan.notes.filter { $0.roomId == room.roomId },
-                    session: entry.asResumableSession()
+                    session: entry.asResumableSession(),
+                    pendingObjectChanges: pendingObjectChanges,
+                    onObjectChange: { key, change in
+                        if let change {
+                            pendingObjectChanges[key] = change
+                        } else {
+                            pendingObjectChanges.removeValue(forKey: key)
+                        }
+                    },
+                    onAddMissingItem: {
+                        missingItemTarget = MissingItemTarget(room: room)
+                    }
                 )
             }
         }
@@ -395,6 +454,101 @@ struct ScanResultsReportView: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
+    }
+
+    private struct PreviewImage: Identifiable {
+        let id = UUID()
+        let image: UIImage
+    }
+
+    private struct MissingItemTarget: Identifiable {
+        let room: FloorPlan.Room
+        var id: String { room.roomId }
+    }
+
+    private var saveChangesBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                pendingObjectChanges.removeAll()
+            } label: {
+                Text("Discard")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(VuuroColor.textPrimary)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .background(VuuroColor.bgInset, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(isSavingChanges)
+
+            Button {
+                Task { await saveObjectChanges() }
+            } label: {
+                if isSavingChanges {
+                    ProgressView().tint(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                } else {
+                    Text("Save changes")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+            }
+            .buttonStyle(.plain)
+            .background(VuuroColor.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .disabled(isSavingChanges)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(.regularMaterial)
+    }
+
+    @MainActor
+    private func discardRenderedExports() {
+        FloorPlanImageCache.shared.invalidate(sessionId: entry.sessionId)
+        ExportNaming.removeExports(sessionId: entry.sessionId)
+        floorPlanImage = nil
+        imageFailed = false
+        shareImageURL = nil
+        pdfURL = nil
+    }
+
+    @MainActor
+    private func saveObjectChanges() async {
+        guard !isSavingChanges, !pendingObjectChanges.isEmpty else { return }
+        isSavingChanges = true
+        defer { isSavingChanges = false }
+
+        let requests: [ObjectChangeRequest] = pendingObjectChanges.map { key, change in
+            ObjectChangeRequest(
+                roomId: key.roomId,
+                objectId: key.objectId,
+                customName: change.delete == true ? nil : change.customName,
+                customNameChanged: change.delete != true && change.customNameChanged,
+                excluded: change.delete == true ? nil : change.excluded,
+                delete: change.delete == true ? true : nil
+            )
+        }
+
+        do {
+            let updated = try await client.batchUpdateObjects(
+                sessionId: entry.sessionId,
+                accessToken: entry.accessToken,
+                changes: requests
+            )
+            floorPlan = updated
+            pendingObjectChanges.removeAll()
+            discardRenderedExports()
+            await loadImage()
+            withAnimation(.easeInOut(duration: 0.2)) { saveSuccessVisible = true }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            withAnimation(.easeInOut(duration: 0.2)) { saveSuccessVisible = false }
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .roomTypeUpdate, underlying: error)
+        }
     }
 
     private var actionButtons: some View {
@@ -484,8 +638,15 @@ struct ScanResultsReportView: View {
                 unit: exportUnit,
                 label: entry.nickname
             )
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("floorplan-\(entry.sessionId).png")
+            let url = try ExportNaming.url(
+                sessionId: entry.sessionId,
+                property: entry.propertyId,
+                unit: entry.unitId,
+                room: nil,
+                date: entry.createdAt,
+                suffix: "floorplan",
+                ext: "png"
+            )
             try data.write(to: url, options: .atomic)
             shareImageURL = url
             showImageShare = true
@@ -525,8 +686,15 @@ struct ScanResultsReportView: View {
                 unit: exportUnit,
                 label: entry.nickname
             )
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("floorplan-\(entry.sessionId).pdf")
+            let url = try ExportNaming.url(
+                sessionId: entry.sessionId,
+                property: entry.propertyId,
+                unit: entry.unitId,
+                room: nil,
+                date: entry.createdAt,
+                suffix: "floorplan",
+                ext: "pdf"
+            )
             try data.write(to: url, options: .atomic)
             pdfURL = url
             appError = nil

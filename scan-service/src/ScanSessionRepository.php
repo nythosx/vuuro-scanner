@@ -33,15 +33,16 @@ final class ScanSessionRepository
         string $purpose,
         bool $occupied,
         bool $consentObtained,
-        int $tokenTtlSeconds = self::DEFAULT_TOKEN_TTL_SECONDS
+        int $tokenTtlSeconds = self::DEFAULT_TOKEN_TTL_SECONDS,
+        string $defaultFloor = ''
     ): array {
         $id = self::uuid();
         $accessToken = self::uuid();
         $createdAt = gmdate('c');
         $expiresAt = gmdate('c', time() + $tokenTtlSeconds);
         $stmt = $this->db->prepare(
-            "INSERT INTO scan_sessions (id, property_id, unit_id, organisation_id, purpose, created_at, status, access_token, access_token_hash, occupied, consent_obtained, expires_at)
-             VALUES (:id, :property_id, :unit_id, :organisation_id, :purpose, :created_at, :status, '', :access_token_hash, :occupied, :consent_obtained, :expires_at)"
+            "INSERT INTO scan_sessions (id, property_id, unit_id, organisation_id, purpose, created_at, status, access_token, access_token_hash, occupied, consent_obtained, expires_at, default_floor)
+             VALUES (:id, :property_id, :unit_id, :organisation_id, :purpose, :created_at, :status, '', :access_token_hash, :occupied, :consent_obtained, :expires_at, :default_floor)"
         );
         $stmt->execute([
             'id' => $id,
@@ -55,9 +56,18 @@ final class ScanSessionRepository
             'occupied' => $occupied ? 1 : 0,
             'consent_obtained' => $consentObtained ? 1 : 0,
             'expires_at' => $expiresAt,
+            'default_floor' => $defaultFloor,
         ]);
 
         return self::withPlaintextToken($this->find($id), $accessToken);
+    }
+
+    public function setDefaultFloor(string $sessionId, string $floor): array
+    {
+        $stmt = $this->db->prepare('UPDATE scan_sessions SET default_floor = :floor WHERE id = :id');
+        $stmt->execute(['floor' => $floor, 'id' => $sessionId]);
+        $session = $this->find($sessionId);
+        return self::withPlaintextToken($session, '');
     }
 
     public function rotateToken(string $sessionId, int $tokenTtlSeconds = self::DEFAULT_TOKEN_TTL_SECONDS): array
@@ -128,7 +138,7 @@ final class ScanSessionRepository
 
         $where = $conditions === [] ? '' : 'WHERE ' . implode(' AND ', $conditions);
         $stmt = $this->db->prepare(
-            "SELECT id, property_id, unit_id, organisation_id, purpose, status, created_at, expires_at, occupied
+            "SELECT id, property_id, unit_id, organisation_id, purpose, status, created_at, expires_at, occupied, default_floor
              FROM scan_sessions $where ORDER BY created_at DESC LIMIT :limit"
         );
         foreach ($params as $key => $value) {

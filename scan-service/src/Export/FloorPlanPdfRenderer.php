@@ -18,8 +18,6 @@ final class FloorPlanPdfRenderer
     private const MAX_EMBEDDED_IMAGE_DIMENSION_PX = 1600;
 
     private const IMAGE_PAGE_MARGIN = 36;
-    private const IMAGE_MAX_DISPLAY_WIDTH = 540;
-    private const IMAGE_MAX_DISPLAY_HEIGHT = 640;
 
 
     private const STYLE_FONTS = [
@@ -52,7 +50,7 @@ final class FloorPlanPdfRenderer
         'captionRegular' => self::INK_MUTED,
     ];
 
-    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null, ?callable $photoLoader = null): string
+    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null, ?callable $photoLoader = null, string $style = 'default'): string
     {
         if ($roomId !== null) {
             $rooms = array_values(array_filter($floorPlan['rooms'], static fn (array $room) => $room['room_id'] === $roomId));
@@ -61,10 +59,10 @@ final class FloorPlanPdfRenderer
             }
             $floorPlan = [...$floorPlan, 'rooms' => $rooms];
         }
-        $lines = $this->buildTextLines($floorPlan, $layout, $unit, $label);
+        $lines = $this->buildTextLines($floorPlan, $layout, $unit, $label, $style);
         $textPages = $this->paginate($lines);
 
-        $imagePages = $this->buildImagePages($floorPlan, $layout, $roomId, $unit, $label, $photoLoader);
+        $imagePages = $this->buildImagePages($floorPlan, $layout, $roomId, $unit, $label, $photoLoader, $style);
 
         if (count($textPages) + count($imagePages) > self::MAX_PAGES) {
             throw new \InvalidArgumentException(sprintf(
@@ -130,12 +128,12 @@ final class FloorPlanPdfRenderer
     }
 
 
-    private function buildImagePages(array $floorPlan, string $layout, ?string $roomId, string $unit, ?string $label, ?callable $photoLoader): array
+    private function buildImagePages(array $floorPlan, string $layout, ?string $roomId, string $unit, ?string $label, ?callable $photoLoader, string $style = 'default'): array
     {
         $pages = [];
 
         try {
-            $floorPlanPng = (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label);
+            $floorPlanPng = (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $style);
             $normalized = $this->toEmbeddableJpeg($floorPlanPng);
             if ($normalized === null) {
                 error_log(sprintf(
@@ -180,11 +178,16 @@ final class FloorPlanPdfRenderer
         $captionHeight = count($caption) * self::LINE_HEIGHT;
         $captionGap = $caption !== [] ? 10 : 0;
 
+        $pageWidth = self::PAGE_WIDTH;
+        $pageHeight = self::PAGE_HEIGHT;
+        $maxDrawWidth = $pageWidth - 2 * self::IMAGE_PAGE_MARGIN;
+        $maxDrawHeight = $pageHeight - 2 * self::IMAGE_PAGE_MARGIN - $captionHeight - $captionGap;
+
         $aspect = $normalized['width'] / max($normalized['height'], 1);
-        $drawWidth = self::IMAGE_MAX_DISPLAY_WIDTH;
+        $drawWidth = $maxDrawWidth;
         $drawHeight = $drawWidth / $aspect;
-        if ($drawHeight > self::IMAGE_MAX_DISPLAY_HEIGHT) {
-            $drawHeight = self::IMAGE_MAX_DISPLAY_HEIGHT;
+        if ($drawHeight > $maxDrawHeight) {
+            $drawHeight = $maxDrawHeight;
             $drawWidth = $drawHeight * $aspect;
         }
 
@@ -193,8 +196,8 @@ final class FloorPlanPdfRenderer
             'caption' => $caption,
             'drawWidth' => $drawWidth,
             'drawHeight' => $drawHeight,
-            'pageWidth' => round($drawWidth) + 2 * self::IMAGE_PAGE_MARGIN,
-            'pageHeight' => round($drawHeight) + $captionHeight + $captionGap + 2 * self::IMAGE_PAGE_MARGIN,
+            'pageWidth' => $pageWidth,
+            'pageHeight' => $pageHeight,
         ];
     }
 
@@ -311,7 +314,7 @@ final class FloorPlanPdfRenderer
     }
 
 
-    private function buildTextLines(array $floorPlan, string $layout = 'auto', string $unit = UnitFormatter::METRIC, ?string $label = null): array
+    private function buildTextLines(array $floorPlan, string $layout = 'auto', string $unit = UnitFormatter::METRIC, ?string $label = null, string $style = 'default'): array
     {
         $lines = [];
         $add = static function (string $text, string $style = 'body', array $extra = []) use (&$lines): void {
@@ -348,7 +351,7 @@ final class FloorPlanPdfRenderer
             $totalArea += $room['floor_area_m2'];
             $roomType = $room['room_type'] ?? null;
             $roomTypeValue = $roomType !== null ? ($roomType['confirmed'] ?? $roomType['guess'] ?? null) : null;
-            $roomLabel = RoomType::displayLabel($room['label'], $roomTypeValue);
+            $roomLabel = RoomType::displayLabelForRoom($room);
             $bulletHex = FloorPlanPalette::roomAccentFor($roomTypeValue) ?? '#9a958a';
             $add(
                 sprintf(
@@ -403,8 +406,10 @@ final class FloorPlanPdfRenderer
                 static fn (array $note) => ($note['room_id'] ?? null) === $room['room_id']
             ));
             foreach ($roomNotes as $note) {
+                $tags = is_array($note['tags'] ?? null) ? $note['tags'] : [];
+                $prefix = in_array('missing_item', $tags, true) ? 'missing item: ' : 'note: ';
                 foreach ($this->wrapTextLines($note['text'], 85) as $i => $wrapped) {
-                    $add($i === 0 ? "             note: {$wrapped}" : "                   {$wrapped}", 'sub');
+                    $add($i === 0 ? "             {$prefix}{$wrapped}" : "                   {$wrapped}", 'sub');
                 }
             }
         }

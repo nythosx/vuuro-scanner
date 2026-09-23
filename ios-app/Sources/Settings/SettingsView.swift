@@ -185,6 +185,13 @@ struct SettingsView: View {
             guard values?.isRegularFile == true else { continue }
             total += Int64(values?.fileSize ?? 0)
         }
+        if let exports = fm.enumerator(at: ExportNaming.rootDirectory, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) {
+            for case let file as URL in exports {
+                let values = try? file.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                guard values?.isRegularFile == true else { continue }
+                total += Int64(values?.fileSize ?? 0)
+            }
+        }
         cacheSizeLabel = Self.formatBytes(total)
     }
 
@@ -204,6 +211,7 @@ struct SettingsView: View {
                 try? fm.removeItem(at: file)
             }
         }
+        try? fm.removeItem(at: ExportNaming.rootDirectory)
         computeCacheSize()
         VuuroToast.shared.show("Cache cleared")
     }

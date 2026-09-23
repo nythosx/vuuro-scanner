@@ -103,6 +103,11 @@
             "items": { "type": "number" },
             "description": "LIDAR-5/11: this room's [x, z] placement in a multi-room fused structure's shared frame, only when captured together with other rooms via StructureBuilder in one continuous visit. Null for every room captured the ordinary way (single-room, or LIDAR-4 resume-later) — never fabricated. outline_m itself stays room-local regardless; this is an additive offset, not a replacement (see docs/proposals/multi-room-fusion.md)."
           },
+          "floor": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "Which floor this specific room sits on (e.g. \"attic\", \"1st floor\", \"basement\"). Free-form, not an enum — different organisations name floors differently. Set at capture time from the session's default_floor, or overridden per capture call. Null when neither the capture nor the session provided one — never fabricated."
+          },
           "heading_deg": {
             "type": ["number", "null"],
             "minimum": 0,

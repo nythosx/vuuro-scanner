@@ -158,6 +158,23 @@ struct ScanServiceClient {
         try await post(path: "/scan-sessions/\(sessionId)/rotate-token", body: EmptyBody(), accessToken: accessToken)
     }
 
+    struct DefaultFloorResponse: Decodable {
+        let id: String
+        let defaultFloor: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case defaultFloor = "default_floor"
+        }
+    }
+
+    func setDefaultFloor(sessionId: String, accessToken: String, floor: String?) async throws -> DefaultFloorResponse {
+        struct Body: Encodable {
+            let floor: String
+        }
+        return try await post(path: "/scan-sessions/\(sessionId)/default-floor", body: Body(floor: floor ?? ""), accessToken: accessToken)
+    }
+
     func deleteSession(sessionId: String, accessToken: String) async throws {
         var request = URLRequest(url: baseURL.appendingPathComponent("/scan-sessions/\(sessionId)"))
         request.httpMethod = "DELETE"
@@ -170,16 +187,28 @@ struct ScanServiceClient {
         let rawCapture: RoomPlanCaptureExport
         let captureProvider: String
         let captureLocation: CaptureLocation?
+        let floor: String?
 
         enum CodingKeys: String, CodingKey {
             case rawCapture = "raw_capture"
             case captureProvider = "capture_provider"
             case captureLocation = "capture_location"
+            case floor
         }
     }
 
-    func encodeCaptureBody(capture: RoomPlanCaptureExport, provider: String = "roomplan", location: CaptureLocation? = nil) throws -> Data {
-        try JSONEncoder().encode(CaptureBody(rawCapture: capture, captureProvider: provider, captureLocation: location))
+    func encodeCaptureBody(
+        capture: RoomPlanCaptureExport,
+        provider: String = "roomplan",
+        location: CaptureLocation? = nil,
+        floor: String? = nil
+    ) throws -> Data {
+        try JSONEncoder().encode(CaptureBody(
+            rawCapture: capture,
+            captureProvider: provider,
+            captureLocation: location,
+            floor: floor
+        ))
     }
 
     func uploadCapture(sessionId: String, accessToken: String, idempotencyKey: String, bodyJSON: Data) async throws -> FloorPlan {
@@ -196,8 +225,22 @@ struct ScanServiceClient {
         let captures: [CaptureBody]
     }
 
-    func replaceRooms(sessionId: String, accessToken: String, exports: [RoomPlanCaptureExport], provider: String = "roomplan", location: CaptureLocation?) async throws -> FloorPlan {
-        let body = ReplaceRoomsBody(captures: exports.map { CaptureBody(rawCapture: $0, captureProvider: provider, captureLocation: location) })
+    func replaceRooms(
+        sessionId: String,
+        accessToken: String,
+        exports: [RoomPlanCaptureExport],
+        provider: String = "roomplan",
+        location: CaptureLocation?,
+        floor: String? = nil
+    ) async throws -> FloorPlan {
+        let body = ReplaceRoomsBody(captures: exports.map {
+            CaptureBody(
+                rawCapture: $0,
+                captureProvider: provider,
+                captureLocation: location,
+                floor: floor
+            )
+        })
         return try await post(path: "/scan-sessions/\(sessionId)/rooms", body: body, accessToken: accessToken, timeoutSeconds: 90)
     }
 
@@ -337,24 +380,47 @@ struct ScanServiceClient {
         return try await post(path: "/scan-sessions/\(sessionId)/photos", body: Body(url: url, caption: caption, roomId: roomId), accessToken: accessToken)
     }
 
-    func addNote(sessionId: String, accessToken: String, text: String, roomId: String? = nil) async throws -> FloorPlan {
+    func addNote(
+        sessionId: String,
+        accessToken: String,
+        text: String,
+        roomId: String? = nil,
+        tags: [InspectionTag] = []
+    ) async throws -> FloorPlan {
         struct Body: Encodable {
             let text: String
             let roomId: String?
+            let tags: [String]
 
             enum CodingKeys: String, CodingKey {
                 case text
                 case roomId = "room_id"
+                case tags
             }
         }
-        return try await post(path: "/scan-sessions/\(sessionId)/notes", body: Body(text: text, roomId: roomId), accessToken: accessToken)
+        return try await post(
+            path: "/scan-sessions/\(sessionId)/notes",
+            body: Body(text: text, roomId: roomId, tags: tags.map(\.rawValue)),
+            accessToken: accessToken
+        )
     }
 
-    func updateNote(sessionId: String, accessToken: String, noteId: String, text: String) async throws -> FloorPlan {
+    func updateNote(
+        sessionId: String,
+        accessToken: String,
+        noteId: String,
+        text: String,
+        tags: [InspectionTag]? = nil
+    ) async throws -> FloorPlan {
         struct Body: Encodable {
             let text: String
+            let tags: [String]?
         }
-        return try await post(path: "/scan-sessions/\(sessionId)/notes/\(noteId)", body: Body(text: text), accessToken: accessToken)
+        return try await post(
+            path: "/scan-sessions/\(sessionId)/notes/\(noteId)",
+            body: Body(text: text, tags: tags?.map(\.rawValue)),
+            accessToken: accessToken
+        )
     }
 
     func deleteNote(sessionId: String, accessToken: String, noteId: String) async throws -> FloorPlan {

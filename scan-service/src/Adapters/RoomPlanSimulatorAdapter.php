@@ -79,6 +79,7 @@ final class RoomPlanSimulatorAdapter
                 'volume_m3_indicative' => $volume,
                 'objects' => self::mapObjects($rawCapture, $minX, $minZ),
                 'structure_origin_m' => self::structureOriginM($rawCapture),
+                'floor' => self::normalizeFloor($identity['floor'] ?? null),
                 'heading_deg' => self::headingDeg($rawCapture),
                 'room_type' => self::mapRoomType($rawCapture),
                 'walk_path_m' => self::mapWalkPath($rawCapture, $minX, $minZ),
@@ -263,6 +264,24 @@ final class RoomPlanSimulatorAdapter
             ];
         }
         return $objects;
+    }
+
+    private static function normalizeFloor(mixed $floor): ?string
+    {
+        if (!is_string($floor)) {
+            return null;
+        }
+        $trimmed = trim($floor);
+        if ($trimmed === '') {
+            return null;
+        }
+        if (mb_strlen($trimmed, 'UTF-8') > 60) {
+            throw new \InvalidArgumentException("floor must be 60 characters or fewer, got " . mb_strlen($trimmed, 'UTF-8') . '.');
+        }
+        if (preg_match('/[\x00-\x1f\x7f]/', $trimmed) === 1) {
+            throw new \InvalidArgumentException('floor must not contain control characters.');
+        }
+        return $trimmed;
     }
 
     private static function normalizeCaptureLocation(?array $loc): ?array

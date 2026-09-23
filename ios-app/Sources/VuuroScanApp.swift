@@ -6,6 +6,7 @@ import UIKit
 
 @main
 struct VuuroScanApp: App {
+    @UIApplicationDelegateAdaptor(VuuroAppDelegate.self) private var appDelegate
     @AppStorage(AppLanguageSettings.storageKey) private var appLanguageRaw: String = AppLanguage.system.rawValue
 
     init() {
@@ -23,13 +24,24 @@ struct VuuroScanApp: App {
     }
 }
 
+private enum OnboardingKeys {
+    static let hasCompleted = "hasCompletedOnboarding"
+    static let version = "onboardingCompletedVersion"
+    static let currentVersion = 2
+}
+
 struct VuuroRootView: View {
-    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @AppStorage(OnboardingKeys.hasCompleted) private var hasCompletedOnboarding = false
+    @AppStorage(OnboardingKeys.version) private var onboardingVersion = 0
     @AppStorage("darkModeEnabled") private var darkMode = false
+
+    private var onboardingNeeded: Bool {
+        !hasCompletedOnboarding || onboardingVersion < OnboardingKeys.currentVersion
+    }
 
     var body: some View {
         Group {
-            if hasCompletedOnboarding {
+            if !onboardingNeeded {
                 NavigationStack {
                     ScanFlowView()
                         .background(VuuroColor.bgApp)
@@ -38,6 +50,7 @@ struct VuuroRootView: View {
                 OnboardingFlowView {
                     withAnimation(.easeInOut(duration: 0.25)) {
                         hasCompletedOnboarding = true
+                        onboardingVersion = OnboardingKeys.currentVersion
                     }
                 }
             }
@@ -293,6 +306,8 @@ private struct RoomCaptureFlowStep: View {
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
     @State private var didStart = false
     @State private var showCorrectionDialog = false
+    @State private var captureFloor: String = ""
+    @State private var showFloorPrompt = false
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
@@ -420,6 +435,7 @@ private struct RoomCaptureFlowStep: View {
                 .onAppear {
                     guard !didStart else { return }
                     didStart = true
+                    captureFloor = (existingSession?.defaultFloor ?? identity.floor ?? "")
                     coordinator.start()
                     Task { capturedLocation = await locationProvider.currentLocation() }
                     Task { capturedHeadingDeg = await headingProvider.currentHeadingDeg() }
@@ -454,6 +470,29 @@ private struct RoomCaptureFlowStep: View {
             }
             .padding(.horizontal, 20)
             .padding(.top, 16)
+
+            HStack {
+                Spacer()
+                Button {
+                    showFloorPrompt = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "building.2")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(captureFloor.isEmpty ? "Set floor" : captureFloor)
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .background(Color.black.opacity(0.4), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
 
             Spacer().frame(height: 24)
 
@@ -499,6 +538,40 @@ private struct RoomCaptureFlowStep: View {
             Button("Keep Scanning", role: .cancel) {}
         } message: {
             Text("Everything captured so far in this room will be lost.")
+        }
+        .alert("Which floor?", isPresented: $showFloorPrompt) {
+            TextField("e.g. Attic, 1st floor", text: $captureFloor)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+            Button("Save") {
+                Task { await persistCaptureFloor() }
+            }
+            Button("Clear", role: .destructive) {
+                captureFloor = ""
+                Task { await persistCaptureFloor() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Applies to this room and to the next rooms you scan in this session, until you change it.")
+        }
+        .portraitLocked()
+    }
+
+    @MainActor
+    private func persistCaptureFloor() async {
+        guard let session = existingSession else { return }
+        let trimmed = captureFloor.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            _ = try await client.setDefaultFloor(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                floor: trimmed.isEmpty ? nil : trimmed
+            )
+            captureFloor = trimmed
+            ScanHistoryStore.shared.updateFloor(sessionId: session.id, floor: trimmed.isEmpty ? nil : trimmed)
+        } catch is CancellationError {
+        } catch {
+            DiagnosticsLog.shared.record("Failed to update default floor: \(error.localizedDescription)", category: .error)
         }
     }
 
@@ -561,7 +634,12 @@ private struct RoomCaptureFlowStep: View {
         defer { isUploading = false }
 
         let idempotencyKey = UUID().uuidString
-        guard let bodyJSON = try? client.encodeCaptureBody(capture: export, location: capturedLocation) else {
+        let trimmedFloor = captureFloor.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let bodyJSON = try? client.encodeCaptureBody(
+            capture: export,
+            location: capturedLocation,
+            floor: trimmedFloor.isEmpty ? nil : trimmedFloor
+        ) else {
             onError(AppError(site: .captureFailed, underlying: PlainError(message: "Could not prepare this capture for upload.")), existingSession)
             return
         }
@@ -572,7 +650,7 @@ private struct RoomCaptureFlowStep: View {
         } else {
             PendingUploadStore.save(PendingUploadState(session: nil, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)]))
             do {
-                session = try await client.createSession(identity: identity)
+                session = try await client.createSession(identity: identity.withFloor(captureFloor))
             } catch {
                 onError(AppError(site: .sessionCreate, underlying: error), nil)
                 return
@@ -587,7 +665,8 @@ private struct RoomCaptureFlowStep: View {
                 createdAt: Date(),
                 expiresAt: session.expiresAt,
                 occupied: identity.occupied,
-                consentObtained: identity.consentObtained
+                consentObtained: identity.consentObtained,
+                floor: session.defaultFloor ?? identity.floor
             ))
         }
 

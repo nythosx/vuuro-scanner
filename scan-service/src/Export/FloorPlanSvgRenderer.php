@@ -61,13 +61,16 @@ final class FloorPlanSvgRenderer
 
     private function roomFill(array $room, int $fallbackIndex): string
     {
+        if ($this->style === 'funda') {
+            return '#ffffff';
+        }
         $fill = FloorPlanPalette::roomFillFor(self::roomTypeValue($room));
         return $fill ?? self::FALLBACK_FILLS[$fallbackIndex % count(self::FALLBACK_FILLS)];
     }
 
     private function displayLabel(array $room): string
     {
-        return RoomType::displayLabel($room['label'], self::roomTypeValue($room));
+        return RoomType::displayLabelForRoom($room);
     }
 
     private function esc(string $s): string
@@ -75,8 +78,11 @@ final class FloorPlanSvgRenderer
         return htmlspecialchars($s, ENT_QUOTES | ENT_XML1, 'UTF-8');
     }
 
-    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null): string
+    private string $style = 'default';
+
+    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null, string $style = 'default'): string
     {
+        $this->style = $style === 'funda' ? 'funda' : 'default';
         $rooms = $floorPlan['rooms'];
         $notes = $floorPlan['notes'] ?? [];
         if ($roomId !== null) {
@@ -239,6 +245,9 @@ SVG;
 
     private function roomTypeLegendSvg(array $rooms, int $x, int $y): string
     {
+        if ($this->style === 'funda') {
+            return '';
+        }
         $typesPresent = [];
         foreach ($rooms as $room) {
             $type = self::roomTypeValue($room);
@@ -499,6 +508,9 @@ SVG;
 
     private function walkPathSvg(array $room, array $pose, callable $toPx): string
     {
+        if ($this->style === 'funda') {
+            return '';
+        }
         $points = $room['walk_path_m'] ?? [];
         if (count($points) < 2) {
             return '';
@@ -661,6 +673,9 @@ SVG;
 
     private function objectsSvg(array $room, array $pose, callable $toPx, string &$labels): string
     {
+        if ($this->style === 'funda') {
+            return '';
+        }
         $out = '<g id="objects" stroke="' . self::OBJECT . '" fill="none" font-size="8">';
         foreach ($room['objects'] ?? [] as $object) {
             if (!empty($object['excluded'])) {

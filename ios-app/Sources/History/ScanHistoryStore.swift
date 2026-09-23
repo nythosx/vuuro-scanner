@@ -54,6 +54,15 @@ final class ScanHistoryStore {
         save(entries)
     }
 
+    func updateFloor(sessionId: String, floor: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        var entries = readRedacted()
+        guard let index = entries.firstIndex(where: { $0.sessionId == sessionId }) else { return }
+        entries[index].floor = floor
+        save(entries)
+    }
+
     func updateRoomSummary(sessionId: String, summary: String?) {
         lock.lock()
         defer { lock.unlock() }

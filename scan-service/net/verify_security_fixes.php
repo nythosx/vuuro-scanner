@@ -195,6 +195,16 @@ function net_cors_headers_for_origin(string $url, string $origin): string
     return (string) $raw;
 }
 
+$adminHeaders = net_cors_headers_for_origin("$baseUrl/admin/", 'http://127.0.0.1:8090');
+preg_match('/^Content-Security-Policy:\s*(.+)$/mi', $adminHeaders, $cspMatch);
+preg_match('/img-src([^;]*)/', $cspMatch[1] ?? '', $imgSrcMatch);
+check('the admin page sends a Content-Security-Policy', isset($cspMatch[1]), 'headers were: ' . trim($adminHeaders));
+check(
+    "the admin CSP allows blob: images (floor plan and photo previews are fetched with the admin key and shown as blob: URLs)",
+    str_contains($imgSrcMatch[1] ?? '', 'blob:'),
+    'img-src was: ' . trim($imgSrcMatch[1] ?? '(missing)')
+);
+
 $allowedOriginHeaders = net_cors_headers_for_origin("$baseUrl/health", 'http://127.0.0.1:8090');
 check(
     'the configured origin (http://127.0.0.1:8090 by default) gets Access-Control-Allow-Origin echoed back',

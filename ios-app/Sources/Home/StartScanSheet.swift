@@ -14,6 +14,7 @@ struct StartScanSheet: View {
     @State private var occupied = false
     @State private var consentObtained = false
     @State private var roomTypeGuessEnabled = RoomTypeGuessSettings.isEnabled
+    @State private var floor: String = ""
     @State private var isCheckingHealth = false
     @State private var healthCheckError: AppError?
     @State private var showReagreeSheet = false
@@ -33,6 +34,10 @@ struct StartScanSheet: View {
 
     private var canStart: Bool { identityFieldsFilled && (!occupied || consentObtained) }
 
+    private var trimmedFloor: String {
+        floor.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var currentIdentity: ScanIdentity {
         ScanIdentity(
             propertyId: trimmedPropertyId,
@@ -40,7 +45,8 @@ struct StartScanSheet: View {
             organisationId: trimmedOrganisationId,
             purpose: purpose,
             occupied: occupied,
-            consentObtained: occupied ? consentObtained : false
+            consentObtained: occupied ? consentObtained : false,
+            floor: trimmedFloor.isEmpty ? nil : trimmedFloor
         )
     }
 
@@ -121,6 +127,26 @@ struct StartScanSheet: View {
 
                     if !previouslyUsedOrganisationIds.isEmpty {
                         VuuroChipRow(items: previouslyUsedOrganisationIds) { organisationId = $0 }
+                    }
+
+                    VuuroSectionLabel(text: "Floor")
+
+                    VuuroInputGroup {
+                        VuuroInputRow(leadingIcon: "building.2", showsDivider: false) {
+                            TextField("e.g. Attic, 1st floor, Basement", text: $floor)
+                                .font(.system(size: 15))
+                                .tracking(-0.2)
+                                .foregroundStyle(VuuroColor.textPrimary)
+                                .multilineTextAlignment(.trailing)
+                                .textInputAutocapitalization(.words)
+                                .autocorrectionDisabled()
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+
+                    VuuroChipRow(items: ["Attic", "1st floor", "2nd floor", "Ground", "Basement"]) { picked in
+                        floor = picked
                     }
 
                     VuuroSectionLabel(text: "Purpose")

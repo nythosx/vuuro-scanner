@@ -178,12 +178,18 @@ final class FloorPlanImageRenderer
 
     private function roomTypeFillColor($image, array $room)
     {
+        if ($this->style === 'funda') {
+            return imagecolorallocate($image, 255, 255, 255);
+        }
         $hex = FloorPlanPalette::roomFillFor(self::roomTypeValue($room));
         return $hex !== null ? imagecolorallocate($image, ...FloorPlanPalette::hexToRgb($hex)) : null;
     }
 
-    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null): string
+    private string $style = 'default';
+
+    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null, string $style = 'default'): string
     {
+        $this->style = $style === 'funda' ? 'funda' : 'default';
         $rooms = $floorPlan['rooms'];
         $notes = $floorPlan['notes'] ?? [];
         if ($roomId !== null) {
@@ -570,6 +576,9 @@ final class FloorPlanImageRenderer
 
     private function drawRoomTypeLegend($image, array $rooms, int $y, int $textColor): void
     {
+        if ($this->style === 'funda') {
+            return;
+        }
         $typesPresent = [];
         foreach ($rooms as $room) {
             $type = self::roomTypeValue($room);
@@ -592,7 +601,7 @@ final class FloorPlanImageRenderer
 
     private function displayLabel(array $room): string
     {
-        return RoomType::displayLabel($room['label'], self::roomTypeValue($room));
+        return RoomType::displayLabelForRoom($room);
     }
 
     private function drawOpenings($image, array $room, array $pose, callable $toPx, int $doorColor, int $windowColor, int $otherOpeningColor, array $roomEdgeTiers): void
@@ -688,6 +697,9 @@ final class FloorPlanImageRenderer
 
     private function drawWalkPath($image, array $room, array $pose, callable $toPx, int $color): void
     {
+        if ($this->style === 'funda') {
+            return;
+        }
         $points = $room['walk_path_m'] ?? [];
         if (count($points) < 2) {
             return;
@@ -817,6 +829,9 @@ final class FloorPlanImageRenderer
 
     private function drawObjects($image, array $room, array $pose, callable $toPx, int $color, int $textColor, array &$labelDraws): void
     {
+        if ($this->style === 'funda') {
+            return;
+        }
         foreach ($room['objects'] ?? [] as $object) {
             if (!empty($object['excluded'])) {
                 continue;

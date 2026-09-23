@@ -243,6 +243,7 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
   php net/verify_security_fixes.php http://127.0.0.1:8089
   php net/verify_error_messages.php http://127.0.0.1:8089
   php net/verify_session_delete.php http://127.0.0.1:8089
+  php net/verify_floor_and_style.php http://127.0.0.1:8089
   php net/verify_enterprise_hardening.php http://127.0.0.1:8089
   ```
   `net/verify_post_body_read_rate_limit.php` is deliberately standalone — it floods a
