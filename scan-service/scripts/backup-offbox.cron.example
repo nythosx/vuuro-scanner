@@ -1,0 +1,4 @@
+SCAN_SERVICE_BACKUP_REMOTE=r2:vuuro-scan-backups
+SCAN_SERVICE_BACKUP_KEEP_DAILY=14
+SCAN_SERVICE_BACKUP_KEEP_WEEKLY=8
+0 3 * * * /opt/vuuro/scan-service/scripts/backup-offbox.sh >> /var/log/vuuro-backup-offbox.log 2>&1

@@ -57,6 +57,85 @@ one at a time — see "Known limits" for why the old built-in server was a probl
 It installs both `pdo_sqlite` and `gd` — PNG export needs `gd` and will 500 without
 it.
 
+## Local TLS test (self-signed, localhost only)
+
+```
+cd scan-service
+sh scripts/tls-local-up.sh
+curl -k https://localhost:8443/health
+```
+
+`docker-compose.tls-local.yml` adds a Caddy container with `tls internal` (Caddy's own
+local CA) on `https://localhost:8443`, in front of the same `scan-service` container.
+The script brings both up, waits for their health checks (the Caddy one hits `/health`
+over HTTPS), prints the SHA-256 fingerprint of Caddy's local root certificate, and
+fails unless `/health` returns 200 over HTTPS. Tear down with
+`docker compose -f docker-compose.yml -f docker-compose.tls-local.yml down`.
+
+This is for testing the HTTPS path only. The certificate is self-signed, so a phone
+will not trust it without installing that root certificate, and `tls internal` must
+never be used in `docker-compose.prod.yml`.
+
+### Real certificate on a free subdomain (DuckDNS) — not configured yet
+
+Once there is a host with a public IP, a free DuckDNS subdomain is enough for a real
+Let's Encrypt certificate:
+
+1. Sign in at duckdns.org, create a subdomain (e.g. `vuuro-scan.duckdns.org`), and set
+   its IP to the host's public IP.
+2. Keep the IP current if it can change: a cron job calling
+   `https://www.duckdns.org/update?domains=vuuro-scan&token=<your token>&ip=`. The token
+   is a secret; keep it out of git.
+3. Open ports 80 and 443 to the host (Let's Encrypt's HTTP challenge needs port 80).
+4. `SCAN_SERVICE_DOMAIN=vuuro-scan.duckdns.org docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`.
+   `Caddyfile` reads `SCAN_SERVICE_DOMAIN` (falling back to `localhost` if unset), and
+   Caddy issues and renews the certificate itself.
+5. Point the iOS app's `SCAN_SERVICE_BASE_URL` at `https://vuuro-scan.duckdns.org`.
+
+## Off-box backups (free tier)
+
+The app already writes local snapshots to `data/backups/*.sqlite` (`VACUUM INTO`), but
+those live on the same disk as the database. `scripts/backup-offbox.sh` copies the
+newest snapshot to object storage with [rclone](https://rclone.org):
+
+- `daily/<snapshot name>.sqlite` on every run, keeping the newest
+  `SCAN_SERVICE_BACKUP_KEEP_DAILY` (default 14);
+- `weekly/<ISO week>.sqlite`, overwritten within the same week, keeping the newest
+  `SCAN_SERVICE_BACKUP_KEEP_WEEKLY` (default 8).
+
+It refuses to upload an empty or non-SQLite file, verifies the upload landed, and exits
+non-zero with a clear log line if the remote is unreachable (exit codes: 2 bad config,
+3 no usable local backup, 4 remote failure). Nightly schedule:
+`scripts/backup-offbox.cron.example` (03:00).
+
+Both free options below give 10 GB, far more than this SQLite database needs. Use one.
+
+**Cloudflare R2** (10 GB free, no egress fees): create a bucket `vuuro-scan-backups`,
+then an R2 API token with Object Read & Write on that bucket only.
+
+```
+rclone config create r2 s3 provider=Cloudflare   access_key_id=<key id> secret_access_key=<secret>   endpoint=https://<account id>.r2.cloudflarestorage.com   acl=private no_check_bucket=true
+export SCAN_SERVICE_BACKUP_REMOTE=r2:vuuro-scan-backups
+```
+
+**Backblaze B2** (first 10 GB free): create a private bucket `vuuro-scan-backups` and an
+application key restricted to it.
+
+```
+rclone config create b2 b2 account=<key id> key=<application key>
+export SCAN_SERVICE_BACKUP_REMOTE=b2:vuuro-scan-backups
+```
+
+Then `sh scripts/backup-offbox.sh` once by hand before enabling the cron job.
+
+Local test, no cloud account needed (Docker only): `sh scripts/test-offbox-backup.sh`
+starts MinIO and an rclone container on a throwaway network, runs the script against
+it, checks upload, content, daily/weekly retention, and the failure paths, then removes
+everything.
+
+Snapshots taken before the access-token hashing migration still contain plaintext
+tokens. Delete old local snapshots rather than uploading them.
+
 ## Testing this locally from a real device (not just Simulator/curl)
 
 If you're pointing a real iOS device at this instance over Wi-Fi rather than testing
@@ -129,15 +208,12 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
   `docs/adr/0003-privacy-acl-session-tokens.md`'s "what this doesn't solve" section in
   full — no login, no org-level isolation. TLS itself is available (see below) but not
   on by default for local dev.
-- **TLS**: the app itself speaks plain HTTP only (same as any PHP `-S`/Docker setup);
-  `Caddyfile` + `docker-compose.yml` in this directory put Caddy in front for automatic
-  HTTPS the moment a real domain is pointed at the host — `SCAN_SERVICE_DOMAIN=scan.example.com
-  docker compose up`. No manual certificate work: Caddy issues and renews a Let's
-  Encrypt cert on its own as long as ports 80/443 are reachable from the internet for
-  that domain. Point the iOS app's `ScanServiceBaseURL` at the `https://` domain once
-  it's up. Not wired up for pure `127.0.0.1` local dev — Let's Encrypt can't issue a
-  cert for an address with no real DNS record, which is the one thing this can't remove
-  the need for.
+- **TLS**: the app itself speaks plain HTTP only; Caddy terminates TLS in front of it.
+  `docker-compose.prod.yml` + `Caddyfile` get a Let's Encrypt certificate automatically
+  once `SCAN_SERVICE_DOMAIN` is a real DNS name pointed at the host (see "Real
+  certificate on a free subdomain"). For local HTTPS testing without a domain, use the
+  self-signed overlay in "Local TLS test". Let's Encrypt cannot issue for a bare
+  `127.0.0.1`.
 - **Export bounds**: PNG canvas capped at 4000px per side
   (`FloorPlanImageRenderer::MAX_CANVAS_DIMENSION_PX`); PDF capped at 200 pages
   (`FloorPlanPdfRenderer::MAX_PAGES`). A capture large enough to exceed either is
