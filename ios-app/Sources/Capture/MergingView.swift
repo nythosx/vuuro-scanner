@@ -74,6 +74,7 @@ struct MergingView: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(VuuroColor.danger)
             }
+            .accessibilityIdentifier("merging.cancel")
             .buttonStyle(.plain)
             .padding(.top, 12)
         }

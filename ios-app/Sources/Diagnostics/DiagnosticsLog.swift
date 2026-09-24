@@ -27,7 +27,8 @@ final class DiagnosticsLog: ObservableObject {
         record(BuildInfo.summary, category: .info)
     }
 
-    nonisolated func record(_ message: String, category: DiagnosticsLogEntry.Category) {
+    nonisolated func record(_ rawMessage: String, category: DiagnosticsLogEntry.Category) {
+        let message = DiagnosticsRedactor.redact(rawMessage)
         #if DEBUG
         print("[VuuroScan][\(category.rawValue)] \(message)")
         #endif

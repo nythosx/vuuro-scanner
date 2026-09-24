@@ -93,6 +93,7 @@ private struct VuuroToastOverlay: View {
                     Button(undoLabel) {
                         toast.triggerUndo()
                     }
+                    .accessibilityIdentifier("toast.undo")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(VuuroColor.lime)
                 }

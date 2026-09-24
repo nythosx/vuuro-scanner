@@ -11,11 +11,8 @@ enum BuildInfo {
     }
 
     static var scanServiceBaseURL: String {
-        #if DEBUG
-        return DebugScanServiceURL.resolved?.absoluteString ?? "http://127.0.0.1:8089"
-        #else
-        return "http://127.0.0.1:8089"
-        #endif
+        let client = ScanServiceClient()
+        return client.isConfigured ? client.baseURL.absoluteString : "Scan Service not configured"
     }
 
     static var summary: String {

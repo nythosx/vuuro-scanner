@@ -70,6 +70,7 @@ struct VuuroChipRow: View {
                             .background(VuuroColor.bgCard, in: Capsule())
                             .overlay(Capsule().stroke(VuuroColor.borderMed, lineWidth: 1.5))
                     }
+                    .accessibilityIdentifier("chip.\(item)")
                     .buttonStyle(.plain)
                 }
             }

@@ -60,6 +60,7 @@ struct AccessLogView: View {
                 Button("Done") {
                     dismiss()
                 }
+                .accessibilityIdentifier("accessLog.done")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(VuuroColor.accent)
             }

@@ -13,6 +13,7 @@ struct UploadProgressView: View {
             ProgressView(elapsedSeconds >= stillWorkingAfterSeconds ? "\(message) (\(elapsedSeconds)s)" : message)
             if let onCancel {
                 Button("Cancel", role: .cancel, action: onCancel)
+                    .accessibilityIdentifier("uploadProgress.cancel")
                     .font(.caption)
                     .padding(.top, 2)
             }

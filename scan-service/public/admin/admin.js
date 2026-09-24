@@ -5,7 +5,10 @@ const STORAGE_KEY = 'vuuro.scan.admin.key';
 const state = {
   adminKey: '',
   currentSessionId: null,
+  returnTo: null,
 };
+
+const VIEWS = ['loading', 'login', 'search', 'detail', 'imports'];
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -19,11 +22,44 @@ function escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
+function networkError(err) {
+  const error = new Error('Could not reach the Scan Service. Check that it is running and try again.');
+  error.isNetwork = true;
+  error.cause = err;
+  return error;
+}
+
+function loadingHtml(text) {
+  return '<div class="state"><span class="spinner" aria-hidden="true"></span><p>' + escapeHtml(text) + '</p></div>';
+}
+
+function emptyHtml(text) {
+  return '<div class="state state-empty"><p>' + escapeHtml(text) + '</p></div>';
+}
+
+function renderError(container, message, retry) {
+  if (!container) return;
+  container.innerHTML = '<div class="state state-error" role="alert"><p>' + escapeHtml(message) + '</p>' +
+    (retry ? '<button type="button" class="small retry-btn">Try again</button>' : '') + '</div>';
+  if (retry) {
+    container.querySelector('.retry-btn').addEventListener('click', retry);
+  }
+}
+
+function wrapTable(html) {
+  return '<div class="table-wrap">' + html + '</div>';
+}
+
 async function api(path, options) {
   const opts = options || {};
   const headers = Object.assign({}, opts.headers || {});
   headers['X-Admin-Api-Key'] = state.adminKey;
-  const response = await fetch(path, Object.assign({}, opts, { headers }));
+  let response;
+  try {
+    response = await fetch(path, Object.assign({}, opts, { headers }));
+  } catch (err) {
+    throw networkError(err);
+  }
   if (response.status === 401) {
     handleAuthFailure();
     throw new Error('Not authorized - admin key rejected');
@@ -52,14 +88,20 @@ function handleAuthFailure() {
   showLogin('Your admin key is no longer accepted. Please sign in again.');
 }
 
+function showView(name) {
+  VIEWS.forEach((view) => {
+    $('#view-' + view).classList.toggle('hidden', view !== name);
+  });
+  const signedIn = name !== 'login' && name !== 'loading';
+  $('#topnav').classList.toggle('hidden', !signedIn);
+  $('#signOutBtn').classList.toggle('hidden', !signedIn);
+  if (signedIn) $('#keyStatus').textContent = 'Signed in';
+  window.scrollTo(0, 0);
+}
+
 function showLogin(errorMessage) {
-  $('#view-login').classList.remove('hidden');
-  $('#view-search').classList.add('hidden');
-  $('#view-detail').classList.add('hidden');
-  $('#view-imports').classList.add('hidden');
-  $('#topnav').classList.add('hidden');
+  showView('login');
   $('#keyStatus').textContent = 'Signed out';
-  $('#signOutBtn').classList.add('hidden');
   const errEl = $('#loginError');
   if (errorMessage) {
     errEl.textContent = errorMessage;
@@ -76,37 +118,58 @@ function setTopnav(active) {
   });
 }
 
-function showSearch() {
-  $('#view-login').classList.add('hidden');
-  $('#view-search').classList.remove('hidden');
-  $('#view-detail').classList.add('hidden');
-  $('#view-imports').classList.add('hidden');
-  $('#keyStatus').textContent = 'Signed in';
-  $('#signOutBtn').classList.remove('hidden');
-  $('#topnav').classList.remove('hidden');
+function setUrl(query, push) {
+  const url = '/admin' + (query ? '?' + query : '');
+  if (location.pathname + location.search === url) return;
+  if (push) history.pushState({}, '', url);
+  else history.replaceState({}, '', url);
+}
+
+function showSearch(options) {
+  const opts = options || {};
+  showView('search');
   setTopnav('search');
+  if (!opts.fromHistory) setUrl('', opts.push !== false);
 }
 
-function showDetail() {
-  $('#view-login').classList.add('hidden');
-  $('#view-search').classList.add('hidden');
-  $('#view-detail').classList.remove('hidden');
-  $('#view-imports').classList.add('hidden');
-  $('#keyStatus').textContent = 'Signed in';
-  $('#signOutBtn').classList.remove('hidden');
-  $('#topnav').classList.remove('hidden');
+function showDetail(returnTo) {
+  state.returnTo = returnTo;
+  showView('detail');
+  setTopnav(returnTo);
+  $('#backBtn').innerHTML = '&larr; ' + (returnTo === 'imports' ? 'Back to imports' : 'Back to search');
 }
 
-function showImports() {
-  $('#view-login').classList.add('hidden');
-  $('#view-search').classList.add('hidden');
-  $('#view-detail').classList.add('hidden');
-  $('#view-imports').classList.remove('hidden');
-  $('#keyStatus').textContent = 'Signed in';
-  $('#signOutBtn').classList.remove('hidden');
-  $('#topnav').classList.remove('hidden');
+function showImports(options) {
+  const opts = options || {};
+  showView('imports');
   setTopnav('imports');
+  if (!opts.fromHistory) setUrl('view=imports', opts.push !== false);
   loadImportsList();
+}
+
+function showLoading(message, retry) {
+  showView('loading');
+  const container = $('#loadingState');
+  if (retry) {
+    container.className = 'state state-error';
+    container.setAttribute('role', 'alert');
+    container.innerHTML = '<p>' + escapeHtml(message) + '</p><button type="button" class="small retry-btn">Try again</button>';
+    container.querySelector('.retry-btn').addEventListener('click', retry);
+  } else {
+    container.className = 'state';
+    container.removeAttribute('role');
+    container.innerHTML = '<span class="spinner" aria-hidden="true"></span><p>' + escapeHtml(message) + '</p>';
+  }
+}
+
+function routeFromUrl(fromHistory) {
+  const params = new URLSearchParams(location.search);
+  const sessionId = params.get('session');
+  const importId = params.get('import');
+  if (sessionId) openSession(sessionId, { fromHistory });
+  else if (importId) openImport(importId, { fromHistory });
+  else if (params.get('view') === 'imports') showImports({ fromHistory, push: false });
+  else showSearch({ fromHistory, push: false });
 }
 
 async function testKey() {
@@ -115,27 +178,27 @@ async function testKey() {
 
 async function login() {
   const input = $('#adminKeyInput');
+  const button = $('#loginBtn');
   const key = input.value.trim();
   if (!key) {
     showLogin('Please enter the admin key.');
+    input.focus();
     return;
   }
   state.adminKey = key;
+  button.disabled = true;
+  button.textContent = 'Signing in…';
   try {
     await testKey();
     sessionStorage.setItem(STORAGE_KEY, key);
     input.value = '';
-    if (state.pendingSession) {
-      const sid = state.pendingSession;
-      state.pendingSession = null;
-      history.replaceState({}, '', '/admin?session=' + encodeURIComponent(sid));
-      openSession(sid);
-    } else {
-      showSearch();
-    }
+    routeFromUrl(true);
   } catch (err) {
     state.adminKey = '';
-    showLogin('That admin key was not accepted.');
+    showLogin(err.isNetwork ? err.message : 'That admin key was not accepted.');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Sign in';
   }
 }
 
@@ -144,13 +207,16 @@ function signOut() {
   sessionStorage.removeItem(STORAGE_KEY);
   state.adminKey = '';
   state.currentSessionId = null;
+  $('#searchResults').innerHTML = '';
+  $('#detailContent').innerHTML = '';
+  setUrl('', false);
   showLogin();
 }
 
 function renderSearchResults(sessions) {
   const container = $('#searchResults');
   if (!sessions || sessions.length === 0) {
-    container.innerHTML = '<p class="muted">No matching sessions.</p>';
+    container.innerHTML = emptyHtml('No scans match these filters. Check the IDs for typos, or search with fewer fields.');
     return;
   }
   const rows = sessions.map((s) => {
@@ -166,10 +232,11 @@ function renderSearchResults(sessions) {
       '</tr>';
   }).join('');
   container.innerHTML =
-    '<table class="data-table"><thead><tr>' +
+    '<p class="result-count">' + sessions.length + ' scan' + (sessions.length === 1 ? '' : 's') + ' found</p>' +
+    wrapTable('<table class="data-table"><thead><tr>' +
     '<th>Property</th><th>Unit</th><th>Organisation</th><th>Purpose</th>' +
     '<th>Status</th><th>Created</th><th>Occupied</th><th></th>' +
-    '</tr></thead><tbody>' + rows + '</tbody></table>';
+    '</tr></thead><tbody>' + rows + '</tbody></table>');
   container.querySelectorAll('.open-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const id = btn.closest('tr').getAttribute('data-session-id');
@@ -179,37 +246,49 @@ function renderSearchResults(sessions) {
 }
 
 async function search(event) {
-  event.preventDefault();
-  const form = new FormData(event.target);
+  if (event) event.preventDefault();
+  const form = new FormData($('#searchForm'));
   const params = new URLSearchParams();
   for (const pair of form.entries()) {
     const value = String(pair[1]).trim();
     if (value) params.set(pair[0], value);
   }
+  const container = $('#searchResults');
   if (params.toString() === '') {
-    alert('Provide at least one filter.');
+    renderError(container, 'Fill in at least one of Property ID, Unit ID or Organisation ID.');
+    $('#searchForm input').focus();
     return;
   }
-  const container = $('#searchResults');
-  container.innerHTML = '<p class="muted">Searching…</p>';
+  const button = $('#searchBtn');
+  button.disabled = true;
+  container.innerHTML = loadingHtml('Searching…');
   try {
     const data = await apiJson('/scan-sessions?' + params.toString());
     renderSearchResults(data.sessions || []);
   } catch (err) {
-    container.innerHTML = '<p class="error">Search failed: ' + escapeHtml(err.message) + '</p>';
+    renderError(container, 'Search failed: ' + err.message, () => search());
+  } finally {
+    button.disabled = false;
   }
 }
 
-async function openSession(sessionId) {
+async function openSession(sessionId, options) {
+  const opts = options || {};
   state.currentSessionId = sessionId;
-  showDetail();
+  showDetail('search');
+  if (!opts.fromHistory) setUrl('session=' + encodeURIComponent(sessionId), true);
   const container = $('#detailContent');
-  container.innerHTML = '<p class="muted">Loading session…</p>';
+  container.innerHTML = loadingHtml('Loading scan…');
   try {
     const data = await apiJson('/scan-sessions/' + encodeURIComponent(sessionId));
+    if (state.currentSessionId !== sessionId) return;
     renderDetail(data, sessionId);
   } catch (err) {
-    container.innerHTML = '<p class="error">Failed to load session: ' + escapeHtml(err.message) + '</p>';
+    if (state.currentSessionId !== sessionId) return;
+    const message = err.message.startsWith('HTTP 404')
+      ? 'This scan no longer exists. It may have been deleted.'
+      : 'Failed to load this scan: ' + err.message;
+    renderError(container, message, () => openSession(sessionId, { fromHistory: true }));
   }
 }
 
@@ -287,19 +366,19 @@ function renderDetail(data, sessionId) {
     '<div id="publishResult" class="hidden"></div>' +
 
     '<h2>Rooms</h2>' +
-    '<table class="data-table"><thead><tr>' +
+    wrapTable('<table class="data-table"><thead><tr>' +
       '<th>Room</th><th>Type</th><th>Area (m²)</th><th>Perimeter (m)</th>' +
       '<th>Height (m)</th><th>Confidence</th><th>Coverage</th>' +
-    '</tr></thead><tbody>' + roomRows + '</tbody></table>' +
+    '</tr></thead><tbody>' + roomRows + '</tbody></table>') +
 
     '<h2>Photos (' + photos.length + ')</h2>' +
-    '<div id="photosGrid" class="photos-grid"></div>' +
+    (photos.length === 0 ? emptyHtml('No photos attached.') : '<div id="photosGrid" class="photos-grid"></div>') +
 
     '<h2>Notes (' + notes.length + ')</h2>' +
-    '<ul class="notes-list">' + (noteItems || '<li class="muted">None.</li>') + '</ul>' +
+    (noteItems ? '<ul class="notes-list">' + noteItems + '</ul>' : emptyHtml('No notes attached.')) +
 
     '<h2>Access log</h2>' +
-    '<div id="accessLog"><p class="muted">Loading…</p></div>';
+    '<div id="accessLog">' + loadingHtml('Loading access log…') + '</div>';
 
   loadFloorPlanImage(sessionId);
   photos.forEach((p) => loadPhotoThumb(p));
@@ -337,7 +416,7 @@ async function downloadVuuroscanFile(sessionId, fp) {
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch (err) {
-    alert('Download failed: ' + err.message);
+    showToast('Download failed: ' + err.message);
   }
 }
 
@@ -483,7 +562,7 @@ async function loadAccessLog(sessionId) {
     const data = await apiJson('/scan-sessions/' + encodeURIComponent(sessionId) + '/access-log');
     const entries = data.access_log || [];
     if (entries.length === 0) {
-      container.innerHTML = '<p class="muted">No access attempts recorded.</p>';
+      container.innerHTML = emptyHtml('No access attempts recorded.');
       return;
     }
     const rows = entries.map((e) =>
@@ -491,11 +570,14 @@ async function loadAccessLog(sessionId) {
       '<td>' + escapeHtml(e.action) + '</td>' +
       '<td>' + escapeHtml(e.outcome) + '</td></tr>'
     ).join('');
-    container.innerHTML = '<table class="data-table small"><thead><tr>' +
+    container.innerHTML = wrapTable('<table class="data-table small"><thead><tr>' +
       '<th>Time</th><th>Action</th><th>Outcome</th>' +
-      '</tr></thead><tbody>' + rows + '</tbody></table>';
+      '</tr></thead><tbody>' + rows + '</tbody></table>');
   } catch (err) {
-    container.innerHTML = '<p class="error">Failed to load access log: ' + escapeHtml(err.message) + '</p>';
+    renderError(container, 'Failed to load the access log: ' + err.message, () => {
+      container.innerHTML = loadingHtml('Loading access log…');
+      loadAccessLog(sessionId);
+    });
   }
 }
 
@@ -532,7 +614,7 @@ async function downloadExport(sessionId, kind, fp) {
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch (err) {
-    alert('Download failed: ' + err.message);
+    showToast('Download failed: ' + err.message);
   }
 }
 
@@ -608,12 +690,12 @@ async function handleImportFile(file) {
 async function loadImportsList() {
   const container = $('#importsList');
   if (!container) return;
-  container.innerHTML = '<p class="muted">Loading…</p>';
+  container.innerHTML = loadingHtml('Loading imported scans…');
   try {
     const data = await apiJson('/imported-scans');
     renderImportsList(data.imports || []);
   } catch (err) {
-    container.innerHTML = '<p class="error">Failed to load imports: ' + escapeHtml(err.message) + '</p>';
+    renderError(container, 'Failed to load imported scans: ' + err.message, loadImportsList);
   }
 }
 
@@ -621,7 +703,7 @@ function renderImportsList(imports) {
   const container = $('#importsList');
   if (!container) return;
   if (imports.length === 0) {
-    container.innerHTML = '<p class="muted">No imported scans yet. Upload a .vuuroscan file above to add one.</p>';
+    container.innerHTML = emptyHtml('No imported scans yet. Upload a .vuuroscan file above to add one.');
     return;
   }
   const rows = imports.map((i) => {
@@ -636,11 +718,11 @@ function renderImportsList(imports) {
       '<td><button class="open-import-btn primary small">Open</button></td>' +
       '</tr>';
   }).join('');
-  container.innerHTML =
+  container.innerHTML = wrapTable(
     '<table class="data-table"><thead><tr>' +
     '<th>Property</th><th>Unit</th><th>Organisation</th><th>Purpose</th>' +
     '<th>Signature</th><th>Imported</th><th></th>' +
-    '</tr></thead><tbody>' + rows + '</tbody></table>';
+    '</tr></thead><tbody>' + rows + '</tbody></table>');
   container.querySelectorAll('.open-import-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const id = btn.closest('tr').getAttribute('data-import-id');
@@ -649,16 +731,18 @@ function renderImportsList(imports) {
   });
 }
 
-async function openImport(importId) {
-  state.returnTo = 'imports';
-  showDetail();
+async function openImport(importId, options) {
+  const opts = options || {};
+  state.currentSessionId = null;
+  showDetail('imports');
+  if (!opts.fromHistory) setUrl('import=' + encodeURIComponent(importId), true);
   const container = $('#detailContent');
-  container.innerHTML = '<p class="muted">Loading imported scan…</p>';
+  container.innerHTML = loadingHtml('Loading imported scan…');
   try {
     const data = await apiJson('/imported-scans/' + encodeURIComponent(importId));
     renderImportDetail(data);
   } catch (err) {
-    container.innerHTML = '<p class="error">Failed to load import: ' + escapeHtml(err.message) + '</p>';
+    renderError(container, 'Failed to load the imported scan: ' + err.message, () => openImport(importId, { fromHistory: true }));
   }
 }
 
@@ -735,10 +819,10 @@ function renderImportDetail(data) {
     '<h2>Rooms</h2>' +
     (rooms.length === 0
       ? '<p class="muted">No rooms in this imported scan.</p>'
-      : '<table class="data-table"><thead><tr>' +
+      : wrapTable('<table class="data-table"><thead><tr>' +
         '<th>Room</th><th>Type</th><th>Area (m²)</th><th>Perimeter (m)</th>' +
         '<th>Height (m)</th><th>Confidence</th><th>Coverage</th>' +
-        '</tr></thead><tbody>' + roomRows + '</tbody></table>') +
+        '</tr></thead><tbody>' + roomRows + '</tbody></table>')) +
 
     '<h2>Photos (' + photos.length + ')</h2>' +
     (photos.length === 0
@@ -804,29 +888,36 @@ function init() {
     if (target === 'imports') showImports();
     else showSearch();
   });
+  window.addEventListener('popstate', () => {
+    if (!state.adminKey) return;
+    routeFromUrl(true);
+  });
 
-  const urlSession = new URLSearchParams(location.search).get('session');
-  state.pendingSession = urlSession || null;
+  const params = new URLSearchParams(location.search);
+  const deepLink = params.get('session') || params.get('import');
+  const signInPrompt = deepLink ? 'Sign in to open the shared scan.' : null;
 
   const stored = sessionStorage.getItem(STORAGE_KEY);
-  if (stored) {
+  if (!stored) {
+    showLogin(signInPrompt);
+    return;
+  }
+  const checkStoredKey = () => {
+    showLoading('Checking your session…');
     state.adminKey = stored;
     testKey().then(() => {
-      if (state.pendingSession) {
-        const sid = state.pendingSession;
-        state.pendingSession = null;
-        openSession(sid);
-      } else {
-        showSearch();
+      routeFromUrl(true);
+    }).catch((err) => {
+      if (err.isNetwork) {
+        showLoading(err.message, checkStoredKey);
+        return;
       }
-    }).catch(() => {
       state.adminKey = '';
       sessionStorage.removeItem(STORAGE_KEY);
-      showLogin(state.pendingSession ? 'Sign in to open the shared scan.' : null);
+      showLogin(signInPrompt);
     });
-  } else {
-    showLogin(state.pendingSession ? 'Sign in to open the shared scan.' : null);
-  }
+  };
+  checkStoredKey();
 }
 
 document.addEventListener('DOMContentLoaded', init);

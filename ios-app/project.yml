@@ -51,16 +51,45 @@ targets:
         SCAN_SERVICE_BASE_URL: http://127.0.0.1:8089
         CODE_SIGN_STYLE: Manual
         DEVELOPMENT_TEAM: ""
+    scheme:
+      testTargets:
+        - VuuroScanTests
+        - VuuroScanUITests
+      gatherCoverageData: true
     postbuildScripts:
-      - name: Embed Debug build info (commit SHA, build time)
+      - name: Embed build info (commit SHA, build time)
         basedOnDependencyAnalysis: false
         script: |
-          if [ "$CONFIGURATION" = "Debug" ]; then
-            GIT_SHA=$(git -C "$SRCROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-            BUILD_TIME=$(date -u +"%Y-%m-%d %H:%M UTC")
-            PLIST_PATH="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
-            if [ -f "$PLIST_PATH" ]; then
-              /usr/libexec/PlistBuddy -c "Add :GitCommitSHA string $GIT_SHA" "$PLIST_PATH" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :GitCommitSHA $GIT_SHA" "$PLIST_PATH"
-              /usr/libexec/PlistBuddy -c "Add :BuildTimestamp string $BUILD_TIME" "$PLIST_PATH" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :BuildTimestamp $BUILD_TIME" "$PLIST_PATH"
-            fi
+          GIT_SHA=$(git -C "$SRCROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+          BUILD_TIME=$(date -u +"%Y-%m-%d %H:%M UTC")
+          PLIST_PATH="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          if [ -f "$PLIST_PATH" ]; then
+            /usr/libexec/PlistBuddy -c "Add :GitCommitSHA string $GIT_SHA" "$PLIST_PATH" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :GitCommitSHA $GIT_SHA" "$PLIST_PATH"
+            /usr/libexec/PlistBuddy -c "Add :BuildTimestamp string $BUILD_TIME" "$PLIST_PATH" 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :BuildTimestamp $BUILD_TIME" "$PLIST_PATH"
           fi
+  VuuroScanTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/VuuroScanTests
+    dependencies:
+      - target: VuuroScan
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.vuuro.scan.tests
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+  VuuroScanUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Tests/VuuroScanUITests
+    dependencies:
+      - target: VuuroScan
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.vuuro.scan.uitests
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""

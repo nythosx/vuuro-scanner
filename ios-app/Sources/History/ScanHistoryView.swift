@@ -4,6 +4,7 @@ struct ScanHistoryView: View {
     var onResumeToAddRoom: ((ScanHistoryEntry) -> Void)?
     var onAttachToSession: ((ScanHistoryEntry, FloorPlan) -> Void)?
     var onStartScan: (() -> Void)?
+    var onAddRoomsToHome: ((ScanIdentity) -> Void)?
 
     @State private var entries: [ScanHistoryEntry] = []
     @State private var isLoadingEntries = true
@@ -18,6 +19,8 @@ struct ScanHistoryView: View {
     @State private var renameDraft = ""
 
     @State private var showImportView = false
+    @State private var viewMode: HistoryViewMode = .scans
+    @State private var selectedHome: HomeKey?
     @State private var isFetchingToAttach: Set<String> = []
     @State private var isPreparingQuickShare: Set<String> = []
     @State private var quickShareURL: URL?
@@ -75,17 +78,25 @@ struct ScanHistoryView: View {
                 title: "History",
                 leading: {
                     VuuroNavButton("Home", icon: "chevron.left") { dismiss() }
+                        .accessibilityIdentifier("history.home")
                 },
                 trailing: { VuuroNavSpacer() }
             )
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    VuuroHero(greeting: nil, title: "Your scans", subtitle: heroSubtitle)
-                    searchBar
-                    filterChipRow
-                    content
-                    actionsSection
+                    VuuroHero(greeting: nil, title: viewMode == .homes ? "Your homes" : "Your scans", subtitle: heroSubtitle)
+                    viewModePicker
+                    if viewMode == .scans {
+                        searchBar
+                        filterChipRow
+                        content
+                        actionsSection
+                    } else {
+                        HomesListView(entries: entries) { homeKey in
+                            selectedHome = homeKey
+                        }
+                    }
 
                     if let appError {
                         ErrorCodeView(error: appError)
@@ -119,6 +130,21 @@ struct ScanHistoryView: View {
                 )
             }
         }
+        .sheet(item: $selectedHome) { homeKey in
+            NavigationStack {
+                HomeDetailView(key: homeKey) { request in
+                    selectedHome = nil
+                    switch request {
+                    case .newVisit(let identity):
+                        cleanUpTempFiles()
+                        dismiss()
+                        onAddRoomsToHome?(identity)
+                    case .addToScan(let entry, let floor):
+                        Task { await resumeToAddRooms(entry, floor: floor) }
+                    }
+                }
+            }
+        }
 
 
 
@@ -149,7 +175,9 @@ struct ScanHistoryView: View {
                 }
                 pendingDeleteEntry = nil
             }
+            .accessibilityIdentifier("history.forgetConfirm")
             Button("Cancel", role: .cancel) { pendingDeleteEntry = nil }
+                .accessibilityIdentifier("history.forgetCancel")
         } message: {
             Text("This removes the local record on this device only. The session data itself isn't deleted.")
         }
@@ -160,12 +188,15 @@ struct ScanHistoryView: View {
                 }
                 pendingServerDeleteEntry = nil
             }
+            .accessibilityIdentifier("history.serverDeleteConfirm")
             Button("Cancel", role: .cancel) { pendingServerDeleteEntry = nil }
+                .accessibilityIdentifier("history.serverDeleteCancel")
         } message: {
             Text("This permanently deletes the session's rooms, photos, and notes. This cannot be undone.")
         }
         .alert("Rename scan", isPresented: renameBinding) {
             TextField("Optional label", text: $renameDraft)
+                .accessibilityIdentifier("history.renameField")
             Button("Save") {
                 if let entry = renameEntry {
                     let trimmed = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -175,9 +206,11 @@ struct ScanHistoryView: View {
                 }
                 renameEntry = nil
             }
+            .accessibilityIdentifier("history.renameSave")
             Button("Cancel", role: .cancel) {
                 renameEntry = nil
             }
+            .accessibilityIdentifier("history.renameCancel")
         }
     }
 
@@ -195,12 +228,24 @@ struct ScanHistoryView: View {
         )
     }
 
+    private var viewModePicker: some View {
+        Picker("View", selection: $viewMode) {
+            Text("Scans").tag(HistoryViewMode.scans)
+            Text("Homes").tag(HistoryViewMode.homes)
+        }
+        .accessibilityIdentifier("history.viewMode")
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 14)
+    }
+
     private var searchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(VuuroColor.textSecondary)
             TextField("Search by property, unit, or label", text: $searchText)
+                .accessibilityIdentifier("history.search")
                 .font(.system(size: 15))
                 .foregroundStyle(VuuroColor.textPrimary)
                 .textInputAutocapitalization(.never)
@@ -213,6 +258,7 @@ struct ScanHistoryView: View {
                         .font(.system(size: 15))
                         .foregroundStyle(VuuroColor.textTertiary)
                 }
+                .accessibilityIdentifier("history.searchClear")
                 .buttonStyle(.plain)
             }
         }
@@ -248,6 +294,7 @@ struct ScanHistoryView: View {
                                 }
                             }
                     }
+                    .accessibilityIdentifier("history.filter.\(filter.rawValue)")
                     .buttonStyle(.plain)
                 }
             }
@@ -334,6 +381,7 @@ struct ScanHistoryView: View {
 
             if entries.isEmpty, let onStartScan {
                 Button("Scan first room", action: onStartScan)
+                    .accessibilityIdentifier("history.scanFirstRoom")
                     .buttonStyle(.vuuroPrimarySmall)
                     .frame(maxWidth: 200)
                     .padding(.top, 8)
@@ -353,6 +401,7 @@ struct ScanHistoryView: View {
                 } label: {
                     Text("Add a shared scan")
                 }
+                .accessibilityIdentifier("history.addSharedScan")
                 .buttonStyle(.vuuroGhostSmall)
 
                 Button {
@@ -369,6 +418,7 @@ struct ScanHistoryView: View {
                         Text("Download all images")
                     }
                 }
+                .accessibilityIdentifier("history.downloadAllImages")
                 .buttonStyle(.vuuroGhostSmall)
                 .disabled(isBulkFetchingImages || entries.isEmpty)
 
@@ -380,6 +430,7 @@ struct ScanHistoryView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 11)
                     }
+                    .accessibilityIdentifier("history.saveAllImages")
                 }
 
                 Button {
@@ -396,6 +447,7 @@ struct ScanHistoryView: View {
                         Text("Download all PDFs")
                     }
                 }
+                .accessibilityIdentifier("history.downloadAllPDFs")
                 .buttonStyle(.vuuroGhostSmall)
                 .disabled(isBulkFetchingPDFs || entries.isEmpty)
 
@@ -407,6 +459,7 @@ struct ScanHistoryView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 11)
                     }
+                    .accessibilityIdentifier("history.saveAllPDFs")
                 }
             }
             .padding(.horizontal, 20)
@@ -490,6 +543,33 @@ struct ScanHistoryView: View {
     }
 
     @MainActor
+    private func resumeToAddRooms(_ entry: ScanHistoryEntry, floor: String) async {
+        guard let refreshed = await rotateTokenIfNeeded(entry) else { return }
+        var resumed = refreshed
+        let trimmed = floor.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newFloor: String? = trimmed.isEmpty ? nil : trimmed
+        if newFloor != refreshed.floor {
+            do {
+                _ = try await client.setDefaultFloor(
+                    sessionId: refreshed.sessionId,
+                    accessToken: refreshed.accessToken,
+                    floor: newFloor
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                appError = AppError(site: .historyFloorUpdate, underlying: error)
+                return
+            }
+            ScanHistoryStore.shared.updateFloor(sessionId: refreshed.sessionId, floor: newFloor)
+            resumed.floor = newFloor
+        }
+        cleanUpTempFiles()
+        dismiss()
+        onResumeToAddRoom?(resumed)
+    }
+
+    @MainActor
     private func rotateTokenIfNeeded(_ entry: ScanHistoryEntry) async -> ScanHistoryEntry? {
         guard !entry.accessToken.isEmpty else {
             appError = AppError(site: .historyTokenMissing, underlying: nil)
@@ -520,6 +600,7 @@ struct ScanHistoryView: View {
                 expiresAt: rotated.expiresAt,
                 nickname: entry.nickname,
                 cachedRoomSummary: entry.cachedRoomSummary,
+                cachedFloorAreaM2: entry.cachedFloorAreaM2,
                 occupied: entry.occupied,
                 consentObtained: entry.consentObtained,
                 floor: entry.floor
@@ -811,6 +892,12 @@ struct ScanHistoryView: View {
     }
 }
 
+enum HistoryViewMode: String, CaseIterable, Identifiable {
+    case scans
+    case homes
+    var id: String { rawValue }
+}
+
 enum HistoryFilter: String, CaseIterable, Identifiable {
     case all
     case listing
@@ -939,6 +1026,7 @@ private struct HistoryCard: View {
             .shadow(color: VuuroMetrics.cardShadowTightColor, radius: VuuroMetrics.cardShadowTightRadius, x: 0, y: 1)
             .shadow(color: VuuroMetrics.cardShadowColor, radius: VuuroMetrics.cardShadowRadius, x: 0, y: 4)
         }
+        .accessibilityIdentifier("history.card.\(entry.sessionId)")
         .buttonStyle(.plain)
         .padding(.horizontal, 20)
         .padding(.bottom, 10)
@@ -948,43 +1036,51 @@ private struct HistoryCard: View {
             } label: {
                 Label("Rename", systemImage: "pencil")
             }
+            .accessibilityIdentifier("history.card.rename")
             Button {
                 onAction(.scanAnotherRoom)
             } label: {
                 Label("Scan another room", systemImage: "plus.viewfinder")
             }
+            .accessibilityIdentifier("history.card.scanAnotherRoom")
             Button {
                 onAction(.attachPhoto)
             } label: {
                 Label("Add photo or note", systemImage: "camera")
             }
+            .accessibilityIdentifier("history.card.attachPhoto")
             Divider()
             Button {
                 onAction(.shareImage)
             } label: {
                 Label("Share image", systemImage: "square.and.arrow.up")
             }
+            .accessibilityIdentifier("history.card.shareImage")
             Button {
                 onAction(.sharePDF)
             } label: {
                 Label("Share PDF", systemImage: "doc")
             }
+            .accessibilityIdentifier("history.card.sharePDF")
             Button {
                 onAction(.shareCode)
             } label: {
                 Label("Share access", systemImage: "person.badge.plus")
             }
+            .accessibilityIdentifier("history.card.shareAccess")
             Divider()
             Button {
                 onAction(.forget)
             } label: {
                 Label("Forget (device only)", systemImage: "eye.slash")
             }
+            .accessibilityIdentifier("history.card.forget")
             Button(role: .destructive) {
                 onAction(.deleteFromServer)
             } label: {
                 Label("Delete from server", systemImage: "trash")
             }
+            .accessibilityIdentifier("history.card.deleteFromServer")
         }
     }
 }
@@ -1003,6 +1099,7 @@ private struct ImportScanView: View {
                 title: "Add shared scan",
                 leading: {
                     VuuroNavButton("Cancel", action: onCancel)
+                        .accessibilityIdentifier("importScan.cancel")
                 },
                 trailing: { VuuroNavSpacer() }
             )
@@ -1017,6 +1114,7 @@ private struct ImportScanView: View {
 
                     ZStack(alignment: .topLeading) {
                         TextEditor(text: $code)
+                            .accessibilityIdentifier("importScan.code")
                             .font(.system(size: 12, design: .monospaced))
                             .frame(minHeight: 140)
                             .padding(12)
@@ -1048,6 +1146,7 @@ private struct ImportScanView: View {
                     Button("Add this scan") {
                         importScan()
                     }
+                    .accessibilityIdentifier("importScan.add")
                     .buttonStyle(.vuuroPrimary)
                     .disabled(trimmedCode.isEmpty)
                     .padding(.horizontal, 20)

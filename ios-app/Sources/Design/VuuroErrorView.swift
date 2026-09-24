@@ -12,6 +12,7 @@ struct ErrorView: View {
                 leading: { VuuroNavSpacer() },
                 trailing: {
                     Button("Done", action: onRetry)
+                        .accessibilityIdentifier("error.done")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(VuuroColor.accent)
                 }
@@ -40,6 +41,7 @@ struct ErrorView: View {
                 errorCodeCard
 
                 Button("Try again", action: onRetry)
+                    .accessibilityIdentifier("error.tryAgain")
                     .buttonStyle(.vuuroPrimary)
                     .padding(.top, 8)
                     .frame(maxWidth: 320)
@@ -84,6 +86,7 @@ struct ErrorView: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(VuuroColor.accent)
             }
+            .accessibilityIdentifier("error.action")
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)

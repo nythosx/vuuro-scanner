@@ -290,19 +290,22 @@ struct ScanServiceClient {
         return data
     }
 
-    func fetchFloorPlanImage(sessionId: String, accessToken: String, unit: MeasurementUnit = .metric, label: String? = nil) async throws -> Data {
-        try await getData(path: "/scan-sessions/\(sessionId)/export/floorplan.png\(exportQuery(unit: unit, label: label))", accessToken: accessToken)
+    func fetchFloorPlanImage(sessionId: String, accessToken: String, unit: MeasurementUnit = .metric, label: String? = nil, style: ExportStyleSettings? = nil) async throws -> Data {
+        let resolved = style ?? ExportStyleSettings.load()
+        return try await getData(path: "/scan-sessions/\(sessionId)/export/floorplan.png\(exportQuery(unit: unit, label: label, style: resolved))", accessToken: accessToken)
     }
 
-    func fetchFloorPlanPDF(sessionId: String, accessToken: String, unit: MeasurementUnit = .metric, label: String? = nil) async throws -> Data {
-        try await getData(path: "/scan-sessions/\(sessionId)/export/floorplan.pdf\(exportQuery(unit: unit, label: label))", accessToken: accessToken)
+    func fetchFloorPlanPDF(sessionId: String, accessToken: String, unit: MeasurementUnit = .metric, label: String? = nil, style: ExportStyleSettings? = nil) async throws -> Data {
+        let resolved = style ?? ExportStyleSettings.load()
+        return try await getData(path: "/scan-sessions/\(sessionId)/export/floorplan.pdf\(exportQuery(unit: unit, label: label, style: resolved))", accessToken: accessToken)
     }
 
-    private func exportQuery(unit: MeasurementUnit, label: String?) -> String {
+    private func exportQuery(unit: MeasurementUnit, label: String?, style: ExportStyleSettings) -> String {
         var items = [URLQueryItem(name: "unit", value: unit.rawValue)]
         if let label, !label.isEmpty {
             items.append(URLQueryItem(name: "label", value: label))
         }
+        items.append(contentsOf: style.queryItems)
         var components = URLComponents()
         components.queryItems = items
         let query = (components.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B")

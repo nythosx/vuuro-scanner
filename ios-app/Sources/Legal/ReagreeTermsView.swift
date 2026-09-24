@@ -9,9 +9,11 @@ struct ReagreeTermsView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Decline", role: .cancel, action: onDecline)
+                        .accessibilityIdentifier("reagree.decline")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("I Agree", action: onAgree)
+                        .accessibilityIdentifier("reagree.agree")
                 }
             }
             .safeAreaInset(edge: .bottom) {

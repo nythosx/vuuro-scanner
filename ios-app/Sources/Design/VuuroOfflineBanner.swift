@@ -26,6 +26,7 @@ struct VuuroOfflineBanner: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             if let retryLabel, let onRetry {
                 Button(retryLabel, action: onRetry)
+                    .accessibilityIdentifier("offlineBanner.retry")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(VuuroColor.lime)
             }

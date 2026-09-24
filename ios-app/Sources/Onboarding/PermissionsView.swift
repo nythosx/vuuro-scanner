@@ -35,6 +35,7 @@ struct PermissionsView: View {
                 title: "Before you start",
                 leading: {
                     VuuroNavButton("Back", icon: "chevron.left", action: onBack)
+                        .accessibilityIdentifier("permissions.back")
                 },
                 trailing: { VuuroNavSpacer() }
             )
@@ -78,9 +79,11 @@ struct PermissionsView: View {
                             requester.requestLocationOnce()
                             onContinue()
                         }
+                        .accessibilityIdentifier("permissions.allow")
                         .buttonStyle(.vuuroPrimary)
 
                         Button("Not now", action: onContinue)
+                            .accessibilityIdentifier("permissions.notNow")
                             .buttonStyle(.vuuroGhostSmall)
                     }
                     .padding(.horizontal, 20)

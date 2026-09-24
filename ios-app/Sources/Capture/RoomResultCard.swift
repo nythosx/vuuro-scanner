@@ -135,16 +135,21 @@ struct RoomResultCard: View {
         .padding(.bottom, 12)
         .alert("Rename object", isPresented: renameBinding) {
             TextField("Name", text: $renameDraft)
+                .accessibilityIdentifier("roomCard.renameField")
             Button("Save") { commitRename() }
+                .accessibilityIdentifier("roomCard.renameSave")
             Button("Cancel", role: .cancel) { renameTarget = nil }
+                .accessibilityIdentifier("roomCard.renameCancel")
         } message: {
             Text("Give this object a name you'll recognize in the floor plan.")
         }
         .confirmationDialog("Object type", isPresented: categoryBinding, titleVisibility: .visible) {
             ForEach(ObjectCategoryCatalog.knownCategories, id: \.id) { entry in
                 Button(entry.name) { commitCategoryChange(entry.name) }
+                    .accessibilityIdentifier("roomCard.category.\(entry.name)")
             }
             Button("Cancel", role: .cancel) { categoryTarget = nil }
+                .accessibilityIdentifier("roomCard.categoryCancel")
         }
     }
 
@@ -297,6 +302,7 @@ struct RoomResultCard: View {
                 } label: {
                     icon
                 }
+                .accessibilityIdentifier("roomCard.object.\(key.objectId).category")
                 .buttonStyle(.plain)
             } else {
                 icon
@@ -326,6 +332,7 @@ struct RoomResultCard: View {
                         }
                     }
                 }
+                .accessibilityIdentifier("roomCard.object.\(key.objectId).rename")
                 .buttonStyle(.plain)
                 .disabled(!editingEnabled)
                 .opacity(excluded ? 0.5 : 1)
@@ -346,6 +353,7 @@ struct RoomResultCard: View {
                         onObjectChange?(key, updated)
                     }
                 ))
+                .accessibilityIdentifier("roomCard.object.\(key.objectId).include")
                 .labelsHidden()
                 .tint(VuuroColor.accentLime)
                 .scaleEffect(0.85)
@@ -361,6 +369,7 @@ struct RoomResultCard: View {
                         .frame(width: 30, height: 30)
                         .background(VuuroColor.danger.opacity(0.10), in: Circle())
                 }
+                .accessibilityIdentifier("roomCard.object.\(key.objectId).delete")
                 .buttonStyle(.plain)
             }
         }
@@ -412,6 +421,7 @@ struct RoomResultCard: View {
                 }
                 .foregroundStyle(VuuroColor.accent)
             }
+            .accessibilityIdentifier("roomCard.addMissingItem")
             .buttonStyle(.plain)
         }
     }

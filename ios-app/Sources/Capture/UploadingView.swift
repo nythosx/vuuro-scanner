@@ -44,6 +44,7 @@ struct UploadingView: View {
                     }
 
                     Button("Cancel upload", action: onPause)
+                        .accessibilityIdentifier("uploading.cancel")
                         .buttonStyle(.vuuroGhostSmall)
                         .padding(.horizontal, 20)
                         .padding(.top, 16)

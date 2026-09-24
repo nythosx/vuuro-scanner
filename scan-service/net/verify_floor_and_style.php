@@ -104,6 +104,23 @@ $defaultHasDetail = str_contains($defaultSvg, 'id="objects"') || str_contains($d
 check('the default SVG draws furniture or the walk path (so the funda check below is meaningful)', $defaultHasDetail);
 check('the funda SVG draws no furniture group', !str_contains($fundaSvg, 'id="objects"'));
 check('the funda SVG draws no walk path', !str_contains($fundaSvg, 'stroke-dasharray="6,5"'));
+[, , $fundaAllSvg] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?style=funda&furniture=all&walk_path=1", null, $token);
+check('funda with furniture=all draws the furniture group again', str_contains($fundaAllSvg, 'id="objects"'));
+[, , $bedOnlySvg] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?furniture=bed", null, $token);
+[, , $sinkOnlySvg] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?furniture=sink", null, $token);
+check('furniture=bed draws the bed, furniture=sink hides it', str_contains($bedOnlySvg, 'id="objects"') && !str_contains($sinkOnlySvg, 'id="objects"'));
+[$washerStatus] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?furniture=washerDryer,washer_dryer", null, $token);
+check('washerDryer and washer_dryer are both accepted', $washerStatus === 200, "got HTTP $washerStatus");
+[$badFurnitureStatus] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?furniture=bed,spaceship", null, $token);
+check('an unknown furniture category is rejected with 422', $badFurnitureStatus === 422, "got HTTP $badFurnitureStatus");
+foreach (['walk_path=yes', 'orientation=diagonal', 'room_fill=pink'] as $badQuery) {
+    [$badStatus] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?$badQuery", null, $token);
+    check("an invalid $badQuery is rejected with 422", $badStatus === 422, "got HTTP $badStatus");
+}
+[, , $titledSvg] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?style=funda&title=" . rawurlencode('Main St 5'), null, $token);
+check('an explicit title is printed on the funda sheet', str_contains($titledSvg, '>Main St 5</text>'));
+check('the default sheet gets no auto title', !str_contains($defaultSvg, 'prop-net-floor'));
+check('the auto title uses a real middle dot, not an escape sequence', !str_contains($fundaSvg, '\u{00B7}') && str_contains($fundaSvg, "prop-net-floor \u{00B7} unit-net-floor"));
 [$pngStatus, $pngType] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png?style=funda", null, $token);
 check('funda PNG returns 200 image/png', $pngStatus === 200 && str_contains($pngType, 'image/png'), "got HTTP $pngStatus $pngType");
 [$fundaPdfStatus, $fundaPdfType, $fundaPdf] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.pdf?style=funda", null, $token);

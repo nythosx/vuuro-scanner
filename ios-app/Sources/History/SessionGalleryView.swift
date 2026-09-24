@@ -65,6 +65,7 @@ struct SessionGalleryView: View {
                 Button("Done") {
                     dismiss()
                 }
+                .accessibilityIdentifier("gallery.done")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(VuuroColor.accent)
             }
@@ -74,6 +75,7 @@ struct SessionGalleryView: View {
                         dismiss()
                         onEdit(entry, floorPlan)
                     }
+                    .accessibilityIdentifier("gallery.edit")
                 }
             }
         }
@@ -142,6 +144,7 @@ struct SessionGalleryView: View {
                                 .foregroundStyle(.red)
                         }
                     }
+                    .accessibilityIdentifier("gallery.deleteNote.\(note.noteId)")
                     .buttonStyle(.plain)
                     .disabled(removingNoteIds.contains(note.noteId))
                 }
@@ -169,6 +172,7 @@ struct SessionGalleryView: View {
                                 .foregroundStyle(.red)
                         }
                     }
+                    .accessibilityIdentifier("gallery.deletePhoto.\(photo.photoId)")
                     .buttonStyle(.plain)
                     .disabled(removingPhotoIds.contains(photo.photoId))
                 }

@@ -9,7 +9,7 @@ use VuuroScan\RoomType;
 final class FloorPlanImageRenderer
 {
     private const PIXELS_PER_METER = 60;
-    private const TILE_PADDING = 24;
+    private const TILE_PADDING = 34;
     private const LABEL_HEIGHT = 80;
     private const TILE_GAP = 32;
     private const MARGIN = 24;
@@ -178,18 +178,25 @@ final class FloorPlanImageRenderer
 
     private function roomTypeFillColor($image, array $room)
     {
-        if ($this->style === 'funda') {
+        if ($this->planStyle->roomFill === 'white') {
             return imagecolorallocate($image, 255, 255, 255);
         }
         $hex = FloorPlanPalette::roomFillFor(self::roomTypeValue($room));
         return $hex !== null ? imagecolorallocate($image, ...FloorPlanPalette::hexToRgb($hex)) : null;
     }
 
-    private string $style = 'default';
+    private FloorPlanStyle $planStyle;
+    private ?string $resolvedTitle = null;
 
-    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null, string $style = 'default'): string
+    public function __construct()
     {
-        $this->style = $style === 'funda' ? 'funda' : 'default';
+        $this->planStyle = FloorPlanStyle::from('default');
+    }
+
+    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null, FloorPlanStyle|string|null $style = null): string
+    {
+        $this->planStyle = $style instanceof FloorPlanStyle ? $style : FloorPlanStyle::from($style ?? 'default');
+        $this->resolvedTitle = $this->planStyle->resolvedTitle($floorPlan);
         $rooms = $floorPlan['rooms'];
         $notes = $floorPlan['notes'] ?? [];
         if ($roomId !== null) {
@@ -216,7 +223,7 @@ final class FloorPlanImageRenderer
             return $this->renderFused($rooms, $unit, $label, $notes);
         }
 
-        $tiles = array_map([$this, 'tileGeometry'], $rooms);
+        $tiles = array_map(fn (array $room) => $this->tileGeometry($room, $this->planStyle->orientation), $rooms);
         $notesLines = $this->buildNotesLines($rooms, $notes);
 
         $tilesWidth = self::MARGIN * 2 + array_sum(array_column($tiles, 'width'))
@@ -233,7 +240,8 @@ final class FloorPlanImageRenderer
         }
         $canvasWidth = max($tilesWidth, $headerTextWidth);
         $canvasHeight = self::MARGIN * 2 + self::LABEL_HEIGHT + (int) max(array_column($tiles, 'height'))
-            + count($notesLines) * self::NOTE_LINE_HEIGHT;
+            + count($notesLines) * self::NOTE_LINE_HEIGHT
+            + 30;
 
         if ($canvasWidth > self::MAX_CANVAS_DIMENSION_PX || $canvasHeight > self::MAX_CANVAS_DIMENSION_PX) {
             throw new \InvalidArgumentException(sprintf(
@@ -250,7 +258,7 @@ final class FloorPlanImageRenderer
         $wallColor = imagecolorallocate($image, ...self::WALL_COLOR);
         $text = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK));
         $subtext = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK_MUTED));
-        $doorColor = imagecolorallocate($image, ...self::HEADER_ACCENT_COLOR);
+        $doorColor = imagecolorallocate($image, ...$this->planStyle->doorColor);
         $windowColor = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_ACCENT_CYAN));
         $otherOpeningColor = imagecolorallocate($image, 140, 140, 142);
         $walkPathColor = imagecolorallocate($image, 150, 60, 190);
@@ -276,8 +284,11 @@ final class FloorPlanImageRenderer
         }
 
         $tilesBottomY = self::MARGIN + self::LABEL_HEIGHT + (int) max(array_column($tiles, 'height'));
-        $this->drawNotes($image, $notesLines, $tilesBottomY + 10, $text);
+        if ($this->planStyle->showNotes) {
+            $this->drawNotes($image, $notesLines, $tilesBottomY + 10, $text);
+        }
         $this->drawRoomTypeLegend($image, $rooms, imagesy($image) - 28, $text);
+        $this->drawTitleBlock($image, $text);
         $this->drawFooter($image, $subtext);
 
         ob_start();
@@ -372,6 +383,18 @@ final class FloorPlanImageRenderer
         $this->drawText($image, self::FONT_SMALL, (int) ((imagesx($image) - $footerWidth) / 2), imagesy($image) - 14, self::FOOTER_TEXT, $color);
     }
 
+    private function drawTitleBlock($image, int $color): void
+    {
+        $title = $this->resolvedTitle;
+        if ($title === null || $title === '') {
+            return;
+        }
+        $safe = $this->asciiSafe($title);
+        $titleWidth = $this->textWidth(4, $safe);
+        $x = (int) ((imagesx($image) - $titleWidth) / 2);
+        $this->drawText($image, 4, $x, imagesy($image) - 44, $safe, $color);
+    }
+
     private function renderFused(array $rooms, string $unit = UnitFormatter::METRIC, ?string $label = null, array $notes = []): string
     {
         $minX = INF;
@@ -381,6 +404,8 @@ final class FloorPlanImageRenderer
         $fusion = RoomFusionSolver::solve($rooms);
         $overlapping = $fusion['overlapping'];
         $poses = $fusion['poses'];
+        $oriented = FusionOrientation::apply($rooms, $poses, $this->planStyle->orientation);
+        $poses = $oriented['poses'];
         foreach ($rooms as $i => $room) {
             $pose = $poses[$i];
             foreach ($room['outline_m'] as [$mx, $mz]) {
@@ -416,7 +441,8 @@ final class FloorPlanImageRenderer
         $canvasWidth = max($headerTextWidth, self::MARGIN * 2 + self::DIMENSION_GUTTER + (int) round(($maxX - $minX) * self::PIXELS_PER_METER));
         $canvasHeight = self::MARGIN * 2 + $topGutter + (int) round(($maxZ - $minZ) * self::PIXELS_PER_METER)
             + count($notesLines) * self::NOTE_LINE_HEIGHT
-            + count($summaryLines) * self::NOTE_LINE_HEIGHT;
+            + count($summaryLines) * self::NOTE_LINE_HEIGHT
+            + 30;
         if ($canvasWidth > self::MAX_CANVAS_DIMENSION_PX || $canvasHeight > self::MAX_CANVAS_DIMENSION_PX) {
             throw new \InvalidArgumentException(sprintf(
                 'Fused floor plan would be %dx%d px, exceeding the %d px sanity bound — refusing to allocate it.',
@@ -431,7 +457,7 @@ final class FloorPlanImageRenderer
         $text = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK));
         $subtext = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK_MUTED));
         $dimColor = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK_MUTED));
-        $doorColor = imagecolorallocate($image, ...self::HEADER_ACCENT_COLOR);
+        $doorColor = imagecolorallocate($image, ...$this->planStyle->doorColor);
         $windowColor = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_ACCENT_CYAN));
         $otherOpeningColor = imagecolorallocate($image, 140, 140, 142);
         $walkPathColor = imagecolorallocate($image, 150, 60, 190);
@@ -543,27 +569,33 @@ final class FloorPlanImageRenderer
         }
 
         $drawingBottomY = $originPxY + (int) round(($maxZ - $minZ) * self::PIXELS_PER_METER);
-        $this->drawNotes($image, $notesLines, $drawingBottomY + 10, $text);
-        $this->drawNotes($image, $summaryLines, $drawingBottomY + 10 + count($notesLines) * self::NOTE_LINE_HEIGHT, $text);
-
+        if ($this->planStyle->showNotes) {
+            $this->drawNotes($image, $notesLines, $drawingBottomY + 10, $text);
+        }
+        if ($this->planStyle->showMetrics) {
+            $this->drawNotes($image, $summaryLines, $drawingBottomY + 10 + count($notesLines) * self::NOTE_LINE_HEIGHT, $text);
+        }
         $legendY = imagesy($image) - 30;
         $legendX = self::MARGIN;
-        imagefilledellipse($image, $legendX + 4, $legendY, 8, 8, $doorColor);
-        $this->drawText($image, 1, $legendX + 12, $legendY - 6, 'door', $subtext);
-        $legendX += 12 + $this->textWidth(1, 'door') + 20;
-        imagefilledellipse($image, $legendX + 4, $legendY, 8, 8, $windowColor);
-        $this->drawText($image, 1, $legendX + 12, $legendY - 6, 'window', $subtext);
-        $legendX += 12 + $this->textWidth(1, 'window') + 20;
-        imagefilledellipse($image, $legendX + 4, $legendY, 8, 8, $otherOpeningColor);
-        $this->drawText($image, 1, $legendX + 12, $legendY - 6, 'other opening', $subtext);
-        $legendX += 12 + $this->textWidth(1, 'other opening') + 20;
-        imageline($image, $legendX, $legendY, $legendX + 16, $legendY, $walkPathColor);
-        $this->drawText($image, 1, $legendX + 20, $legendY - 6, 'walk path', $subtext);
-        $legendX += 20 + $this->textWidth(1, 'walk path') + 20;
-        imagerectangle($image, $legendX, $legendY - 4, $legendX + 8, $legendY + 4, $objectColor);
-        $this->drawText($image, 1, $legendX + 12, $legendY - 6, 'detected object', $subtext);
+        if (!$this->planStyle->isFunda) {
+            imagefilledellipse($image, $legendX + 4, $legendY, 8, 8, $doorColor);
+            $this->drawText($image, 1, $legendX + 12, $legendY - 6, 'door', $subtext);
+            $legendX += 12 + $this->textWidth(1, 'door') + 20;
+            imagefilledellipse($image, $legendX + 4, $legendY, 8, 8, $windowColor);
+            $this->drawText($image, 1, $legendX + 12, $legendY - 6, 'window', $subtext);
+            $legendX += 12 + $this->textWidth(1, 'window') + 20;
+            imagefilledellipse($image, $legendX + 4, $legendY, 8, 8, $otherOpeningColor);
+            $this->drawText($image, 1, $legendX + 12, $legendY - 6, 'other opening', $subtext);
+            $legendX += 12 + $this->textWidth(1, 'other opening') + 20;
+            imageline($image, $legendX, $legendY, $legendX + 16, $legendY, $walkPathColor);
+            $this->drawText($image, 1, $legendX + 20, $legendY - 6, 'walk path', $subtext);
+            $legendX += 20 + $this->textWidth(1, 'walk path') + 20;
+            imagerectangle($image, $legendX, $legendY - 4, $legendX + 8, $legendY + 4, $objectColor);
+            $this->drawText($image, 1, $legendX + 12, $legendY - 6, 'detected object', $subtext);
+        }
 
         $this->drawRoomTypeLegend($image, $rooms, $legendY - 14, $subtext);
+        $this->drawTitleBlock($image, $text);
         $this->drawFooter($image, $subtext);
 
         ob_start();
@@ -576,7 +608,10 @@ final class FloorPlanImageRenderer
 
     private function drawRoomTypeLegend($image, array $rooms, int $y, int $textColor): void
     {
-        if ($this->style === 'funda') {
+        if (!$this->planStyle->showRoomTypeLegend) {
+            return;
+        }
+        if (count($rooms) < 2) {
             return;
         }
         $typesPresent = [];
@@ -697,7 +732,7 @@ final class FloorPlanImageRenderer
 
     private function drawWalkPath($image, array $room, array $pose, callable $toPx, int $color): void
     {
-        if ($this->style === 'funda') {
+        if (!$this->planStyle->showWalkPath) {
             return;
         }
         $points = $room['walk_path_m'] ?? [];
@@ -829,11 +864,14 @@ final class FloorPlanImageRenderer
 
     private function drawObjects($image, array $room, array $pose, callable $toPx, int $color, int $textColor, array &$labelDraws): void
     {
-        if ($this->style === 'funda') {
+        if ($this->planStyle->furnitureCategories === []) {
             return;
         }
         foreach ($room['objects'] ?? [] as $object) {
             if (!empty($object['excluded'])) {
+                continue;
+            }
+            if (!$this->planStyle->shouldDrawFurniture((string) ($object['category'] ?? ''))) {
                 continue;
             }
             [$mx, $mz] = $object['position_m'];
@@ -1019,26 +1057,165 @@ final class FloorPlanImageRenderer
         }
     }
 
-    private function tileGeometry(array $room): array
+    private function tileGeometry(array $room, string $orientation = 'as_captured'): array
     {
-        $width = (int) round($room['bounding_dimensions_m']['width_m'] * self::PIXELS_PER_METER) + self::TILE_PADDING * 2;
-        $height = (int) round($room['bounding_dimensions_m']['length_m'] * self::PIXELS_PER_METER) + self::TILE_PADDING * 2 + self::LABEL_HEIGHT;
-        return ['width' => max($width, 120), 'height' => max($height, 120)];
+        if ($orientation === 'longest_horizontal' && count($room['outline_m']) >= 2) {
+            $rotation = TileOrientation::angleFor($room['outline_m']);
+            $cosR = cos($rotation);
+            $sinR = sin($rotation);
+            $xs = [];
+            $zs = [];
+            foreach ($room['outline_m'] as [$mx, $mz]) {
+                $xs[] = $mx * $cosR - $mz * $sinR;
+                $zs[] = $mx * $sinR + $mz * $cosR;
+            }
+            $width = max($xs) - min($xs);
+            $height = max($zs) - min($zs);
+        } else {
+            $width = $room['bounding_dimensions_m']['width_m'];
+            $height = $room['bounding_dimensions_m']['length_m'];
+        }
+        $w = (int) round($width * self::PIXELS_PER_METER) + self::TILE_PADDING * 2;
+        $h = (int) round($height * self::PIXELS_PER_METER) + self::TILE_PADDING * 2 + self::LABEL_HEIGHT;
+        return ['width' => max($w, 120), 'height' => max($h, 120)];
+    }
+
+    private function drawTileDimensionChains($image, array $room, array $tile, int $originX, int $originY, float $rotation, string $unit, int $color): void
+    {
+        $cosR = cos($rotation);
+        $sinR = sin($rotation);
+        $rotated = [];
+        foreach ($room['outline_m'] as [$mx, $mz]) {
+            $rotated[] = [$mx * $cosR - $mz * $sinR, $mx * $sinR + $mz * $cosR];
+        }
+        $xs = array_column($rotated, 0);
+        $zs = array_column($rotated, 1);
+        if ($xs === [] || $zs === []) return;
+        $minLocalX = min($xs);
+        $minLocalZ = min($zs);
+        $xBreak = $this->dedupValues($xs);
+        $zBreak = $this->dedupValues($zs);
+        if (count($xBreak) < 2 || count($zBreak) < 2) return;
+
+        $toPx = fn (float $rx, float $rz): array => [
+            $originX + self::TILE_PADDING + (int) round(($rx - $minLocalX) * self::PIXELS_PER_METER),
+            $originY + self::TILE_PADDING + (int) round(($rz - $minLocalZ) * self::PIXELS_PER_METER),
+        ];
+        $chainOffset = 14;
+        $topY = $originY + self::TILE_PADDING - $chainOffset;
+        $bottomY = $originY + $tile['height'] - self::LABEL_HEIGHT - self::TILE_PADDING + $chainOffset;
+        $leftX = $originX + self::TILE_PADDING - $chainOffset;
+        $rightX = $originX + $tile['width'] - self::TILE_PADDING + $chainOffset;
+
+        $prev = null;
+        foreach ($xBreak as $xv) {
+            [$px] = $toPx($xv, $zBreak[0]);
+            if ($prev !== null) {
+                imageline($image, $prev[0], $topY, $px, $topY, $color);
+                imageline($image, $prev[0], $topY - 4, $prev[0], $topY + 4, $color);
+                $label = UnitFormatter::length($xv - $prev[1], $unit);
+                $w = $this->textWidth(1, $label);
+                $this->drawText($image, 1, intval(($prev[0] + $px) / 2) - intval($w / 2), $topY - 14, $label, $color);
+            }
+            $prev = [$px, $xv];
+        }
+        if ($prev !== null) {
+            imageline($image, $prev[0], $topY - 4, $prev[0], $topY + 4, $color);
+        }
+
+        $prev = null;
+        foreach ($xBreak as $xv) {
+            [$px] = $toPx($xv, $zBreak[0]);
+            if ($prev !== null) {
+                imageline($image, $prev[0], $bottomY, $px, $bottomY, $color);
+                imageline($image, $prev[0], $bottomY - 4, $prev[0], $bottomY + 4, $color);
+                $label = UnitFormatter::length($xv - $prev[1], $unit);
+                $w = $this->textWidth(1, $label);
+                $this->drawText($image, 1, intval(($prev[0] + $px) / 2) - intval($w / 2), $bottomY + 4, $label, $color);
+            }
+            $prev = [$px, $xv];
+        }
+        if ($prev !== null) {
+            imageline($image, $prev[0], $bottomY - 4, $prev[0], $bottomY + 4, $color);
+        }
+
+        $prev = null;
+        foreach ($zBreak as $zv) {
+            [, $py] = $toPx($xBreak[0], $zv);
+            if ($prev !== null) {
+                imageline($image, $leftX, $prev[0], $leftX, $py, $color);
+                imageline($image, $leftX - 4, $prev[0], $leftX + 4, $prev[0], $color);
+                $label = UnitFormatter::length($zv - $prev[1], $unit);
+                $this->drawTextUp($image, 1, $leftX - 13, intval(($prev[0] + $py) / 2) + 12, $label, $color);
+            }
+            $prev = [$py, $zv];
+        }
+        if ($prev !== null) {
+            imageline($image, $leftX - 4, $prev[0], $leftX + 4, $prev[0], $color);
+        }
+
+        $prev = null;
+        foreach ($zBreak as $zv) {
+            [, $py] = $toPx($xBreak[0], $zv);
+            if ($prev !== null) {
+                imageline($image, $rightX, $prev[0], $rightX, $py, $color);
+                imageline($image, $rightX - 4, $prev[0], $rightX + 4, $prev[0], $color);
+                $label = UnitFormatter::length($zv - $prev[1], $unit);
+                $this->drawTextUp($image, 1, $rightX + 3, intval(($prev[0] + $py) / 2) + 12, $label, $color);
+            }
+            $prev = [$py, $zv];
+        }
+        if ($prev !== null) {
+            imageline($image, $rightX - 4, $prev[0], $rightX + 4, $prev[0], $color);
+        }
+    }
+
+    private function dedupValues(array $vals): array
+    {
+        sort($vals);
+        $out = [];
+        foreach ($vals as $v) {
+            if ($out === [] || abs($v - end($out)) > 0.05) {
+                $out[] = $v;
+            }
+        }
+        return $out;
     }
 
     private function drawRoomTile($image, array $room, int $originX, int $originY, int $fill, int $wallColor, int $text, int $subtext, int $doorColor, int $windowColor, int $otherOpeningColor, int $walkPathColor, int $objectColor, string $unit = UnitFormatter::METRIC): void
     {
+        $rotation = 0.0;
+        if ($this->planStyle->orientation === 'longest_horizontal' && count($room['outline_m']) >= 2) {
+            $rotation = TileOrientation::angleFor($room['outline_m']);
+        }
+        $cosR = cos($rotation);
+        $sinR = sin($rotation);
+        $xs = [];
+        $zs = [];
+        foreach ($room['outline_m'] as [$mx, $mz]) {
+            $xs[] = $mx * $cosR - $mz * $sinR;
+            $zs[] = $mx * $sinR + $mz * $cosR;
+        }
+        $minLocalX = $xs === [] ? 0.0 : min($xs);
+        $minLocalZ = $zs === [] ? 0.0 : min($zs);
+
         $points = [];
         foreach ($room['outline_m'] as [$mx, $mz]) {
-            $points[] = $originX + self::TILE_PADDING + (int) round($mx * self::PIXELS_PER_METER);
-            $points[] = $originY + self::TILE_PADDING + (int) round($mz * self::PIXELS_PER_METER);
+            $rx = $mx * $cosR - $mz * $sinR - $minLocalX;
+            $rz = $mx * $sinR + $mz * $cosR - $minLocalZ;
+            $points[] = $originX + self::TILE_PADDING + (int) round($rx * self::PIXELS_PER_METER);
+            $points[] = $originY + self::TILE_PADDING + (int) round($rz * self::PIXELS_PER_METER);
         }
 
         imagefilledpolygon($image, $points, $fill);
-        $tileToPx = fn (float $mx, float $mz): array => [
-            $originX + self::TILE_PADDING + (int) round($mx * self::PIXELS_PER_METER),
-            $originY + self::TILE_PADDING + (int) round($mz * self::PIXELS_PER_METER),
-        ];
+        $tileToPx = function (float $mx, float $mz) use ($cosR, $sinR, $minLocalX, $minLocalZ, $originX, $originY): array {
+            $rx = $mx * $cosR - $mz * $sinR - $minLocalX;
+            $rz = $mx * $sinR + $mz * $cosR - $minLocalZ;
+            return [
+                $originX + self::TILE_PADDING + (int) round($rx * self::PIXELS_PER_METER),
+                $originY + self::TILE_PADDING + (int) round($rz * self::PIXELS_PER_METER),
+            ];
+        };
         $identityPose = ['originX' => 0.0, 'originZ' => 0.0, 'rotationRad' => 0.0];
         $labelDraws = [];
         $this->drawObjects($image, $room, $identityPose, $tileToPx, $objectColor, $text, $labelDraws);
@@ -1046,14 +1223,23 @@ final class FloorPlanImageRenderer
         $this->drawRoomWalls($image, $room['outline_m'], $identityPose, $tileToPx, [], $wallColor);
         $this->drawWalkPath($image, $room, $identityPose, $tileToPx, $walkPathColor);
         $this->drawOpenings($image, $room, $identityPose, $tileToPx, $doorColor, $windowColor, $otherOpeningColor, []);
-        $this->drawWallLengths($image, $room['outline_m'], $identityPose, $tileToPx, $subtext, $unit, []);
+        if ($this->planStyle->isFunda) {
+            $tile = $this->tileGeometry($room, $this->planStyle->orientation);
+            $this->drawTileDimensionChains($image, $room, $tile, $originX, $originY, $rotation, $unit, $text);
+        } else {
+            $this->drawWallLengths($image, $room['outline_m'], $identityPose, $tileToPx, $subtext, $unit, []);
+        }
         foreach ($labelDraws as $draw) {
             $draw();
         }
 
-        $labelY = $originY + self::TILE_PADDING + (int) round($room['bounding_dimensions_m']['length_m'] * self::PIXELS_PER_METER)
+        $drawnHeightM = $zs === [] ? $room['bounding_dimensions_m']['length_m'] : max($zs) - min($zs);
+        $labelY = $originY + self::TILE_PADDING + (int) round($drawnHeightM * self::PIXELS_PER_METER)
             + (int) round(self::WALL_LABEL_INSET_M * self::PIXELS_PER_METER) + 14;
         $this->drawText($image, 4, $originX + self::TILE_PADDING, $labelY, $this->displayLabel($room), $text);
+        if (!$this->planStyle->showMetrics) {
+            return;
+        }
         $metrics = sprintf('%s - %s perimeter - %s confidence', UnitFormatter::area($room['floor_area_m2'], $unit), UnitFormatter::length($room['perimeter_m'], $unit), $room['confidence']);
         $this->drawText($image, 2, $originX + self::TILE_PADDING, $labelY + 18, $metrics, $subtext);
         $lineY = $labelY + 32;

@@ -41,3 +41,5 @@ ios-app.html
 mockup.html
 vuuro.com.html
 vuuro.com
+ios-app/build-tests/
+ios-app/TestResults-*.xcresult

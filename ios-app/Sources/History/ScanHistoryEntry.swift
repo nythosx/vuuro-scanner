@@ -12,6 +12,7 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
     let expiresAt: String?
     var nickname: String? = nil
     var cachedRoomSummary: String? = nil
+    var cachedFloorAreaM2: Double? = nil
     var occupied: Bool = false
     var consentObtained: Bool = false
     var floor: String? = nil
@@ -19,10 +20,10 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
     var id: String { sessionId }
 
     enum CodingKeys: String, CodingKey {
-        case sessionId, accessToken, propertyId, unitId, organisationId, purpose, createdAt, expiresAt, nickname, cachedRoomSummary, occupied, consentObtained, floor
+        case sessionId, accessToken, propertyId, unitId, organisationId, purpose, createdAt, expiresAt, nickname, cachedRoomSummary, cachedFloorAreaM2, occupied, consentObtained, floor
     }
 
-    init(sessionId: String, accessToken: String, propertyId: String, unitId: String, organisationId: String, purpose: ScanPurpose, createdAt: Date, expiresAt: String?, nickname: String? = nil, cachedRoomSummary: String? = nil, occupied: Bool = false, consentObtained: Bool = false, floor: String? = nil) {
+    init(sessionId: String, accessToken: String, propertyId: String, unitId: String, organisationId: String, purpose: ScanPurpose, createdAt: Date, expiresAt: String?, nickname: String? = nil, cachedRoomSummary: String? = nil, cachedFloorAreaM2: Double? = nil, occupied: Bool = false, consentObtained: Bool = false, floor: String? = nil) {
         self.sessionId = sessionId
         self.accessToken = accessToken
         self.propertyId = propertyId
@@ -33,6 +34,7 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
         self.expiresAt = expiresAt
         self.nickname = nickname
         self.cachedRoomSummary = cachedRoomSummary
+        self.cachedFloorAreaM2 = cachedFloorAreaM2
         self.occupied = occupied
         self.consentObtained = consentObtained
         self.floor = floor
@@ -50,6 +52,7 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
         expiresAt = try container.decodeIfPresent(String.self, forKey: .expiresAt)
         nickname = try container.decodeIfPresent(String.self, forKey: .nickname)
         cachedRoomSummary = try container.decodeIfPresent(String.self, forKey: .cachedRoomSummary)
+        cachedFloorAreaM2 = try container.decodeIfPresent(Double.self, forKey: .cachedFloorAreaM2)
         occupied = try container.decodeIfPresent(Bool.self, forKey: .occupied) ?? false
         consentObtained = try container.decodeIfPresent(Bool.self, forKey: .consentObtained) ?? false
         floor = try container.decodeIfPresent(String.self, forKey: .floor)

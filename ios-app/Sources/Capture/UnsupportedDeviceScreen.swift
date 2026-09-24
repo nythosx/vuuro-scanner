@@ -19,6 +19,7 @@ struct UnsupportedDeviceScreen: View {
 
             if let onGoBack {
                 Button("Go back", action: onGoBack)
+                    .accessibilityIdentifier("unsupportedDevice.goBack")
                     .buttonStyle(.vuuroGhostSmall)
                     .padding(.top, 20)
                     .frame(maxWidth: 200)

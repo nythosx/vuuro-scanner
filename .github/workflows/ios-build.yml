@@ -84,6 +84,80 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=""
 
+  simulator-tests:
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: iPhone 16 Pro
+            slug: iphone-16-pro
+          - device: iPhone SE (3rd generation)
+            slug: iphone-se-3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP for the Scan Service
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: pdo_sqlite, gd
+
+      - name: Start the Scan Service
+        working-directory: scan-service
+        env:
+          SCAN_SERVICE_DB_PATH: ${{ runner.temp }}/scan_service.sqlite
+          SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX: "1000"
+          SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_MAX: "4000"
+        run: |
+          nohup php -d post_max_size=30M -d upload_max_filesize=26M -d display_errors=0 \
+            -S 127.0.0.1:8089 public/index.php > "$RUNNER_TEMP/scan-service.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8089/health > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/scan-service.log"
+          exit 1
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios-app
+        run: xcodegen generate
+
+      - name: Run unit and UI tests on ${{ matrix.device }}
+        working-directory: ios-app
+        env:
+          TEST_RUNNER_SCAN_SERVICE_BASE_URL: http://127.0.0.1:8089
+        run: |
+          xcodebuild test \
+            -project VuuroScan.xcodeproj \
+            -scheme VuuroScan \
+            -destination "platform=iOS Simulator,name=${{ matrix.device }},OS=latest" \
+            -derivedDataPath build-tests \
+            -resultBundlePath "TestResults-${{ matrix.slug }}.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.slug }}
+          path: ios-app/TestResults-${{ matrix.slug }}.xcresult
+          if-no-files-found: ignore
+
+      - name: Upload Scan Service log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-service-log-${{ matrix.slug }}
+          path: ${{ runner.temp }}/scan-service.log
+          if-no-files-found: ignore
+
   signed-archive:
     # Only runs once an Apple Developer Team ID and a distribution
     # certificate/provisioning profile exist as repo secrets — none do yet.

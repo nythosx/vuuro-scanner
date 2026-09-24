@@ -32,6 +32,7 @@ struct TermsAndPrivacyView: View {
                     Text(document.title).tag(document)
                 }
             }
+            .accessibilityIdentifier("terms.document")
             .pickerStyle(.segmented)
             .padding()
 
@@ -65,6 +66,7 @@ struct TermsAndPrivacyView: View {
                 Button("Done") {
                     dismiss()
                 }
+                .accessibilityIdentifier("terms.done")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(VuuroColor.accent)
             }

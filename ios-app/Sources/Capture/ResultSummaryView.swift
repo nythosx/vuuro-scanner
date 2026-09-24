@@ -22,6 +22,8 @@ struct ResultSummaryView: View {
     @State private var saveSuccessVisible = false
     @State private var missingItemTarget: MissingItemTarget?
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
+    @State private var exportStyle: ExportStyleSettings = ExportStyleSettings.load()
+    @State private var savedExportStyle: ExportStyleSettings = ExportStyleSettings.load()
 
     private var exportUnit: MeasurementUnit {
         MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
@@ -34,7 +36,7 @@ struct ResultSummaryView: View {
     }
 
     private var hasPendingChanges: Bool {
-        !pendingObjectChanges.isEmpty
+        !pendingObjectChanges.isEmpty || exportStyle != savedExportStyle
     }
 
     init(session: ScanSessionResponse, floorPlan: FloorPlan, onDone: @escaping () -> Void) {
@@ -51,6 +53,7 @@ struct ResultSummaryView: View {
                 leading: { VuuroNavSpacer() },
                 trailing: {
                     Button("Done", action: onDone)
+                        .accessibilityIdentifier("result.done")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(VuuroColor.accent)
                 }
@@ -60,6 +63,7 @@ struct ResultSummaryView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     summaryHero
                     floorPlanCard
+                    ExportStyleSection(style: $exportStyle)
                     ForEach(currentFloorPlan.rooms, id: \.roomId) { room in
                         RoomResultCard(
                             room: room,
@@ -141,6 +145,7 @@ struct ResultSummaryView: View {
                         Button("Close") {
                             showPDFPreview = false
                         }
+                        .accessibilityIdentifier("result.pdfErrorClose")
                         .buttonStyle(.vuuroPrimary)
                         .frame(maxWidth: 200)
                     }
@@ -167,7 +172,9 @@ struct ResultSummaryView: View {
                 ScanHistoryStore.shared.remove(sessionId: session.id)
                 onDone()
             }
+            .accessibilityIdentifier("result.forgetConfirm")
             Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("result.forgetCancel")
         } message: {
             Text("This removes the local record on this device. Server data isn't affected.")
         }
@@ -187,6 +194,7 @@ struct ResultSummaryView: View {
         HStack(spacing: 10) {
             Button {
                 pendingObjectChanges.removeAll()
+                exportStyle = savedExportStyle
             } label: {
                 Text("Discard")
                     .font(.system(size: 15, weight: .semibold))
@@ -195,6 +203,7 @@ struct ResultSummaryView: View {
                     .padding(.vertical, 14)
                     .background(VuuroColor.bgInset, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
+            .accessibilityIdentifier("result.discardChanges")
             .buttonStyle(.plain)
             .disabled(isSavingChanges)
 
@@ -213,6 +222,7 @@ struct ResultSummaryView: View {
                         .padding(.vertical, 14)
                 }
             }
+            .accessibilityIdentifier("result.saveChanges")
             .buttonStyle(.plain)
             .background(VuuroColor.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .disabled(isSavingChanges)
@@ -289,6 +299,7 @@ struct ResultSummaryView: View {
                 guard floorPlanImage != nil else { return }
                 Task { await fetchAndPreviewImage() }
             }
+            .accessibilityIdentifier("result.floorPlanPreview")
 
             HStack(spacing: 8) {
                 Button {
@@ -297,6 +308,7 @@ struct ResultSummaryView: View {
                     Text("View image")
                         .frame(maxWidth: .infinity)
                 }
+                .accessibilityIdentifier("result.viewImage")
                 .buttonStyle(.vuuroOutlineSmall)
 
                 Button {
@@ -310,6 +322,7 @@ struct ResultSummaryView: View {
                             .frame(maxWidth: .infinity)
                     }
                 }
+                .accessibilityIdentifier("result.viewPDF")
                 .buttonStyle(.vuuroOutlineSmall)
                 .disabled(isFetchingPDF)
             }
@@ -390,6 +403,7 @@ struct ResultSummaryView: View {
             .shadow(color: VuuroMetrics.cardShadowTightColor, radius: VuuroMetrics.cardShadowTightRadius, x: 0, y: 1)
             .shadow(color: VuuroMetrics.cardShadowColor, radius: VuuroMetrics.cardShadowRadius, x: 0, y: 4)
         }
+        .accessibilityIdentifier("result.accessLog")
         .buttonStyle(.plain)
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
@@ -400,11 +414,13 @@ struct ResultSummaryView: View {
             Button("Save & return home") {
                 onDone()
             }
+            .accessibilityIdentifier("result.saveAndReturnHome")
             .buttonStyle(.vuuroPrimary)
 
             Button("Delete this scan", role: .destructive) {
                 showForgetConfirmation = true
             }
+            .accessibilityIdentifier("result.deleteScan")
             .buttonStyle(.vuuroGhostSmall)
         }
         .padding(.horizontal, 20)
@@ -439,9 +455,24 @@ struct ResultSummaryView: View {
 
     @MainActor
     private func saveChanges() async {
-        guard !isSavingChanges, !pendingObjectChanges.isEmpty else { return }
+        guard !isSavingChanges, hasPendingChanges else { return }
         isSavingChanges = true
         defer { isSavingChanges = false }
+
+        let styleChanged = exportStyle != savedExportStyle
+        if styleChanged {
+            exportStyle.save()
+            savedExportStyle = exportStyle
+            FloorPlanImageCache.shared.clearAll()
+            ExportNaming.removeAllExports()
+        }
+
+        guard !pendingObjectChanges.isEmpty else {
+            discardRenderedExports()
+            await loadImage()
+            await showSaveSuccess()
+            return
+        }
 
         let requests: [ObjectChangeRequest] = pendingObjectChanges.map { key, change in
             ObjectChangeRequest(
@@ -464,16 +495,25 @@ struct ResultSummaryView: View {
             pendingObjectChanges.removeAll()
             discardRenderedExports()
             await loadImage()
-            withAnimation(.easeInOut(duration: 0.2)) {
-                saveSuccessVisible = true
-            }
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            withAnimation(.easeInOut(duration: 0.2)) {
-                saveSuccessVisible = false
-            }
+            await showSaveSuccess()
         } catch is CancellationError {
         } catch {
             appError = AppError(site: .roomTypeUpdate, underlying: error)
+            if styleChanged {
+                discardRenderedExports()
+                await loadImage()
+            }
+        }
+    }
+
+    @MainActor
+    private func showSaveSuccess() async {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            saveSuccessVisible = true
+        }
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        withAnimation(.easeInOut(duration: 0.2)) {
+            saveSuccessVisible = false
         }
     }
 

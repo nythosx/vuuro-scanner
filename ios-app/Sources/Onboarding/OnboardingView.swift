@@ -114,6 +114,7 @@ struct OnboardingView: View {
                 .shadow(color: .black.opacity(0.6), radius: 4, x: 0, y: 1)
             Spacer()
             Button("Skip", action: onSkip)
+                .accessibilityIdentifier("onboarding.skip")
                 .font(.system(size: 14, weight: .semibold))
                 .tracking(-0.2)
                 .foregroundStyle(.white)
@@ -178,6 +179,7 @@ struct OnboardingView: View {
                     .background(VuuroColor.accent, in: Capsule())
                     .shadow(color: VuuroColor.accent.opacity(0.28), radius: 20, x: 0, y: 6)
             }
+            .accessibilityIdentifier("onboarding.next")
             .buttonStyle(.plain)
         }
         .frame(width: contentWidth, alignment: .leading)

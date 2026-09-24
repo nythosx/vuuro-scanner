@@ -68,9 +68,11 @@ struct PendingUploadRecoveryView: View {
                         Button("Retry upload") {
                             showRetryConfirmation = true
                         }
+                        .accessibilityIdentifier("pendingUpload.retry")
                         .buttonStyle(.vuuroPrimary)
 
                         Button("Skip for now", action: onSkipped)
+                            .accessibilityIdentifier("pendingUpload.skip")
                             .buttonStyle(.vuuroGhostSmall)
 
                         Button("Discard pending") {
@@ -81,6 +83,7 @@ struct PendingUploadRecoveryView: View {
                             PendingUploadStore.clear()
                             onDiscarded()
                         }
+                        .accessibilityIdentifier("pendingUpload.discard")
                         .buttonStyle(.vuuroDestructiveSmall)
                     }
                     .padding(.top, 24)
@@ -94,7 +97,9 @@ struct PendingUploadRecoveryView: View {
                 retryTask?.cancel()
                 retryTask = Task { await retry() }
             }
+            .accessibilityIdentifier("pendingUpload.retryConfirm")
             Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("pendingUpload.retryCancel")
         } message: {
             Text(retryConfirmationMessage)
         }

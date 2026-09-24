@@ -37,6 +37,7 @@ struct AppError {
         case historySessionFetch = "HISTORY_SESSION_FETCH"
         case historyServerDelete = "HISTORY_SERVER_DELETE"
         case historyTokenMissing = "HISTORY_TOKEN_MISSING"
+        case historyFloorUpdate = "HISTORY_FLOOR_UPDATE"
         case uploadCancelled = "UPLOAD_CANCELLED"
 
         var defaultMessage: String {

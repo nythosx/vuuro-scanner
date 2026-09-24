@@ -101,14 +101,17 @@ struct IdentityIntakeScreen: View {
         Form {
             Section {
                 TextField("e.g. prop-oosterpark-14", text: $propertyId)
+                    .accessibilityIdentifier("identity.propertyId")
                 if !previouslyUsedPropertyIds.isEmpty {
                     suggestionChips(previouslyUsedPropertyIds) { propertyId = $0 }
                 }
                 TextField("e.g. unit-2b", text: $unitId)
+                    .accessibilityIdentifier("identity.unitId")
                 if !previouslyUsedUnitIds.isEmpty {
                     suggestionChips(previouslyUsedUnitIds) { unitId = $0 }
                 }
                 TextField("e.g. org-athome-vastgoed", text: $organisationId)
+                    .accessibilityIdentifier("identity.organisationId")
                 if !previouslyUsedOrganisationIds.isEmpty {
                     suggestionChips(previouslyUsedOrganisationIds) { organisationId = $0 }
                 }
@@ -120,6 +123,7 @@ struct IdentityIntakeScreen: View {
 
             Section("Floor") {
                 TextField("e.g. Attic, 1st floor, Basement", text: $floor)
+                    .accessibilityIdentifier("identity.floor")
                     .textInputAutocapitalization(.words)
                     .autocorrectionDisabled()
             }
@@ -130,10 +134,12 @@ struct IdentityIntakeScreen: View {
                         Text(purpose.displayName).tag(purpose)
                     }
                 }
+                .accessibilityIdentifier("identity.purpose")
             }
 
             Section("Occupancy") {
                 Toggle("This unit is currently occupied", isOn: $occupied)
+                    .accessibilityIdentifier("identity.occupied")
                     .onChange(of: occupied) { _, newValue in
                         if !newValue {
                             consentObtained = false
@@ -142,6 +148,7 @@ struct IdentityIntakeScreen: View {
 
                 if occupied {
                     Toggle("Tenant consent obtained for this scan", isOn: $consentObtained)
+                        .accessibilityIdentifier("identity.consent")
                     if !consentObtained {
                         Text("Consent is required before scanning an occupied unit.")
                             .font(.caption)
@@ -152,6 +159,7 @@ struct IdentityIntakeScreen: View {
 
             Section {
                 Toggle("Guess room type while scanning", isOn: $roomTypeGuessEnabled)
+                    .accessibilityIdentifier("identity.roomTypeGuess")
                     .tint(VuuroColor.accentLime)
                     .onChange(of: roomTypeGuessEnabled) { _, newValue in
                         RoomTypeGuessSettings.isEnabled = newValue
@@ -171,6 +179,7 @@ struct IdentityIntakeScreen: View {
                         Text("Scan one room")
                     }
                 }
+                .accessibilityIdentifier("identity.scanOneRoom")
                 .buttonStyle(.vuuroPrimary)
                 .disabled(!canStart || isCheckingHealth)
                 Text("For a single room by itself.")
@@ -183,6 +192,7 @@ struct IdentityIntakeScreen: View {
                     } label: {
                         Text("Scan a whole unit")
                     }
+                    .accessibilityIdentifier("identity.scanWholeUnit")
                     .buttonStyle(.vuuroSecondary)
                     .disabled(!canStart || isCheckingHealth)
                     Text("Walk through and capture every room in one visit; they're combined into one floor plan.")
@@ -212,6 +222,7 @@ struct IdentityIntakeScreen: View {
                     NavigationLink("Read Terms of Service & Privacy Policy") {
                         TermsAndPrivacyView()
                     }
+                    .accessibilityIdentifier("identity.terms")
                     .font(.caption.weight(.semibold))
                 }
             }
@@ -245,6 +256,7 @@ struct IdentityIntakeScreen: View {
                     Button(value) {
                         onPick(value)
                     }
+                    .accessibilityIdentifier("identity.suggestion.\(value)")
                     .font(.caption)
                     .buttonStyle(.bordered)
                 }

@@ -39,6 +39,7 @@ struct VuuroSheet<Content: View, Footer: View>: View {
                         .frame(width: 32, height: 32)
                         .background(VuuroColor.overlayPill.opacity(0.12), in: Circle())
                 }
+                .accessibilityIdentifier("sheet.close")
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 20)

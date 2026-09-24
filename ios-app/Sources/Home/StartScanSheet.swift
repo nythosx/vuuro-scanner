@@ -71,6 +71,7 @@ struct StartScanSheet: View {
                         .frame(width: 32, height: 32)
                         .background(VuuroColor.overlayPill.opacity(0.12), in: Circle())
                 }
+                .accessibilityIdentifier("startScan.cancel")
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 20)
@@ -82,6 +83,7 @@ struct StartScanSheet: View {
                     VuuroInputGroup {
                         VuuroInputRow(leadingIcon: "house", showsDivider: false) {
                             TextField("Property ID", text: $propertyId)
+                                .accessibilityIdentifier("startScan.propertyId")
                                 .font(.system(size: 15))
                                 .tracking(-0.2)
                                 .foregroundStyle(VuuroColor.textPrimary)
@@ -98,6 +100,7 @@ struct StartScanSheet: View {
                     VuuroInputGroup {
                         VuuroInputRow(leadingIcon: "building.2", showsDivider: false) {
                             TextField("Unit ID", text: $unitId)
+                                .accessibilityIdentifier("startScan.unitId")
                                 .font(.system(size: 15))
                                 .tracking(-0.2)
                                 .foregroundStyle(VuuroColor.textPrimary)
@@ -115,6 +118,7 @@ struct StartScanSheet: View {
                     VuuroInputGroup {
                         VuuroInputRow(leadingIcon: "briefcase", showsDivider: false) {
                             TextField("Organisation ID", text: $organisationId)
+                                .accessibilityIdentifier("startScan.organisationId")
                                 .font(.system(size: 15))
                                 .tracking(-0.2)
                                 .foregroundStyle(VuuroColor.textPrimary)
@@ -134,6 +138,7 @@ struct StartScanSheet: View {
                     VuuroInputGroup {
                         VuuroInputRow(leadingIcon: "building.2", showsDivider: false) {
                             TextField("e.g. Attic, 1st floor, Basement", text: $floor)
+                                .accessibilityIdentifier("startScan.floor")
                                 .font(.system(size: 15))
                                 .tracking(-0.2)
                                 .foregroundStyle(VuuroColor.textPrimary)
@@ -158,6 +163,7 @@ struct StartScanSheet: View {
                                     Text(p.displayName).tag(p)
                                 }
                             }
+                            .accessibilityIdentifier("startScan.purpose")
                             .labelsHidden()
                             .pickerStyle(.menu)
                             .tint(VuuroColor.textPrimary)
@@ -174,6 +180,7 @@ struct StartScanSheet: View {
                             showsDivider: occupied
                         ) {
                             Toggle("", isOn: $occupied)
+                                .accessibilityIdentifier("startScan.occupied")
                                 .labelsHidden()
                                 .tint(VuuroColor.lime)
                                 .onChange(of: occupied) { _, newValue in
@@ -187,6 +194,7 @@ struct StartScanSheet: View {
                                 showsDivider: false
                             ) {
                                 Toggle("", isOn: $consentObtained)
+                                    .accessibilityIdentifier("startScan.consent")
                                     .labelsHidden()
                                     .tint(VuuroColor.lime)
                             }
@@ -203,6 +211,7 @@ struct StartScanSheet: View {
                             showsDivider: false
                         ) {
                             Toggle("", isOn: $roomTypeGuessEnabled)
+                                .accessibilityIdentifier("startScan.roomTypeGuess")
                                 .labelsHidden()
                                 .tint(VuuroColor.lime)
                                 .onChange(of: roomTypeGuessEnabled) { _, newValue in
@@ -242,6 +251,7 @@ struct StartScanSheet: View {
                         Text(type == .multi ? "Start unit scan" : "Start room scan")
                     }
                 }
+                .accessibilityIdentifier("startScan.start")
                 .buttonStyle(.vuuroPrimary)
                 .disabled(!canStart || isCheckingHealth)
             }

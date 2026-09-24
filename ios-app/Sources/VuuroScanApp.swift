@@ -270,6 +270,10 @@ struct ScanFlowView: View {
                         floorPlan: floorPlan,
                         identity: entry.asResumableIdentity()
                     )
+                },
+                onAddRoomsToHome: { identity in
+                    showHistory = false
+                    stage = .multiRoomCapturing(identity: identity, session: nil, attempt: UUID())
                 }
             )
         }
@@ -407,6 +411,7 @@ private struct RoomCaptureFlowStep: View {
                         Button("Scan (fake data)") {
                             uploadTask = Task { await submit(FakeCaptureGenerator.random()) }
                         }
+                        .accessibilityIdentifier("capture.fakeScan")
                         .buttonStyle(.vuuroPrimary)
                         .padding(.top, 12)
                         .frame(maxWidth: 340)
@@ -461,12 +466,14 @@ private struct RoomCaptureFlowStep: View {
                 ) {
                     showDiscardConfirmation = true
                 }
+                .accessibilityIdentifier("capture.cancel")
                 Spacer(minLength: 0)
                 VuuroCaptureTogglePill(isOn: roomTypeGuessOn) {
                     roomTypeGuessOn.toggle()
                     RoomTypeGuessSettings.isEnabled = roomTypeGuessOn
                     VuuroToast.shared.show(roomTypeGuessOn ? "Room-type guessing on" : "Room-type guessing off")
                 }
+                .accessibilityIdentifier("capture.roomTypeGuessToggle")
             }
             .padding(.horizontal, 20)
             .padding(.top, 16)
@@ -489,6 +496,7 @@ private struct RoomCaptureFlowStep: View {
                     .background(.ultraThinMaterial, in: Capsule())
                     .background(Color.black.opacity(0.4), in: Capsule())
                 }
+                .accessibilityIdentifier("capture.floor")
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 20)
@@ -527,6 +535,7 @@ private struct RoomCaptureFlowStep: View {
                 didRequestStop = true
                 coordinator.stop()
             }
+            .accessibilityIdentifier("capture.finishRoom")
             .padding(.horizontal, 20)
             .padding(.bottom, 24)
         }
@@ -535,22 +544,28 @@ private struct RoomCaptureFlowStep: View {
                 coordinator.stop()
                 onGoBack()
             }
+            .accessibilityIdentifier("capture.discardConfirm")
             Button("Keep Scanning", role: .cancel) {}
+                .accessibilityIdentifier("capture.keepScanning")
         } message: {
             Text("Everything captured so far in this room will be lost.")
         }
         .alert("Which floor?", isPresented: $showFloorPrompt) {
             TextField("e.g. Attic, 1st floor", text: $captureFloor)
+                .accessibilityIdentifier("capture.floorField")
                 .textInputAutocapitalization(.words)
                 .autocorrectionDisabled()
             Button("Save") {
                 Task { await persistCaptureFloor() }
             }
+            .accessibilityIdentifier("capture.floorSave")
             Button("Clear", role: .destructive) {
                 captureFloor = ""
                 Task { await persistCaptureFloor() }
             }
+            .accessibilityIdentifier("capture.floorClear")
             Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("capture.floorCancel")
         } message: {
             Text("Applies to this room and to the next rooms you scan in this session, until you change it.")
         }
@@ -582,6 +597,7 @@ private struct RoomCaptureFlowStep: View {
             onConfirm: { coordinator.confirmRoomTypeGuess() },
             onReject: { showCorrectionDialog = true }
         )
+        .accessibilityIdentifier("capture.roomTypeGuessPill")
         .confirmationDialog(
             "What kind of room is this?",
             isPresented: $showCorrectionDialog,
@@ -591,13 +607,16 @@ private struct RoomCaptureFlowStep: View {
                 Button(RoomTypeClassifier.displayName(for: type)) {
                     coordinator.rejectRoomTypeGuess(correctedTo: type)
                 }
+                .accessibilityIdentifier("capture.roomType.\(type)")
             }
             Button("Other") {
                 coordinator.rejectRoomTypeGuess(correctedTo: "other")
             }
+            .accessibilityIdentifier("capture.roomType.other")
             Button("Not sure", role: .cancel) {
                 coordinator.rejectRoomTypeGuess(correctedTo: nil)
             }
+            .accessibilityIdentifier("capture.roomType.notSure")
         }
     }
 
@@ -674,7 +693,11 @@ private struct RoomCaptureFlowStep: View {
         do {
             let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
             PendingUploadStore.clear()
-            ScanHistoryStore.shared.updateRoomSummary(sessionId: session.id, summary: RoomSummary.text(for: floorPlan.rooms))
+            ScanHistoryStore.shared.updateRoomSummary(
+                sessionId: session.id,
+                summary: RoomSummary.text(for: floorPlan.rooms),
+                floorAreaM2: floorPlan.rooms.reduce(0.0) { $0 + $1.floorAreaM2 }
+            )
             justCaptured = (session, floorPlan)
         } catch {
             uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)
@@ -688,7 +711,11 @@ private struct RoomCaptureFlowStep: View {
         do {
             let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
             PendingUploadStore.clear()
-            ScanHistoryStore.shared.updateRoomSummary(sessionId: session.id, summary: RoomSummary.text(for: floorPlan.rooms))
+            ScanHistoryStore.shared.updateRoomSummary(
+                sessionId: session.id,
+                summary: RoomSummary.text(for: floorPlan.rooms),
+                floorAreaM2: floorPlan.rooms.reduce(0.0) { $0 + $1.floorAreaM2 }
+            )
             justCaptured = (session, floorPlan)
         } catch {
             uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)

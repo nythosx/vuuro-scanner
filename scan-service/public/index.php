@@ -6,6 +6,7 @@ require __DIR__ . '/../src/autoload.php';
 
 use VuuroScan\Adapters\RoomPlanSimulatorAdapter;
 use VuuroScan\Export\FloorPlanImageRenderer;
+use VuuroScan\Export\FloorPlanStyle;
 use VuuroScan\Export\FloorPlanPdfRenderer;
 use VuuroScan\Export\FloorPlanSvgRenderer;
 use VuuroScan\ScanSessionRepository;
@@ -416,6 +417,46 @@ function adminAuthorized(): bool
     }
     $presentedKey = $_SERVER['HTTP_X_ADMIN_API_KEY'] ?? '';
     return is_string($presentedKey) && $presentedKey !== '' && hash_equals($configuredKey, $presentedKey);
+}
+
+function parseFloorPlanStyleFromQuery(): FloorPlanStyle
+{
+    $style = $_GET['style'] ?? 'default';
+    if (!in_array($style, ['default', 'funda'], true)) {
+        respondError(422, 'invalid_style', "'style' must be 'default' or 'funda' if given.");
+        exit;
+    }
+    $walkPathParam = $_GET['walk_path'] ?? null;
+    if ($walkPathParam !== null && !in_array((string) $walkPathParam, ['0', '1'], true)) {
+        respondError(422, 'invalid_walk_path', "'walk_path' must be '0' or '1' if given.");
+        exit;
+    }
+    $furnitureParam = $_GET['furniture'] ?? null;
+    if ($furnitureParam !== null && !in_array($furnitureParam, ['all', 'none', 'fixtures'], true)) {
+        $cats = array_values(array_filter(array_map('trim', explode(',', $furnitureParam))));
+        foreach ($cats as $cat) {
+            if (!\VuuroScan\Export\FurnitureCatalog::isKnown($cat)) {
+                respondError(422, 'invalid_furniture', "'furniture' must be 'all', 'none', 'fixtures', or a comma-separated list of known categories.", ['unknown' => $cat, 'allowed' => \VuuroScan\Export\FurnitureCatalog::ALL]);
+                exit;
+            }
+        }
+    }
+    $orientationParam = $_GET['orientation'] ?? null;
+    if ($orientationParam !== null && !in_array($orientationParam, FloorPlanStyle::ORIENTATIONS, true)) {
+        respondError(422, 'invalid_orientation', "'orientation' must be one of: as_captured, longest_horizontal.");
+        exit;
+    }
+    $roomFillParam = $_GET['room_fill'] ?? null;
+    if ($roomFillParam !== null && !in_array($roomFillParam, FloorPlanStyle::ROOM_FILLS, true)) {
+        respondError(422, 'invalid_room_fill', "'room_fill' must be one of: default, white.");
+        exit;
+    }
+    $titleParam = isset($_GET['title']) ? trim((string) $_GET['title']) : null;
+    if ($titleParam !== null && mb_strlen($titleParam, 'UTF-8') > 120) {
+        respondError(422, 'field_too_long', "'title' is too long — please keep it to 120 characters or fewer.", ['field' => 'title', 'max_length' => 120]);
+        exit;
+    }
+    return FloorPlanStyle::from($style, $walkPathParam, $furnitureParam, $orientationParam, $roomFillParam, $titleParam);
 }
 
 
@@ -1482,14 +1523,10 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
         return;
     }
-    $style = $_GET['style'] ?? 'default';
-    if (!in_array($style, ['default', 'funda'], true)) {
-        respondError(422, 'invalid_style', "'style' must be 'default' or 'funda' if given.");
-        return;
-    }
+    $planStyle = parseFloorPlanStyleFromQuery();
 
     try {
-        $png = (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $style);
+        $png = (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $planStyle);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;
@@ -1535,14 +1572,10 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
         return;
     }
-    $style = $_GET['style'] ?? 'default';
-    if (!in_array($style, ['default', 'funda'], true)) {
-        respondError(422, 'invalid_style', "'style' must be 'default' or 'funda' if given.");
-        return;
-    }
+    $planStyle = parseFloorPlanStyleFromQuery();
 
     try {
-        $svg = (new FloorPlanSvgRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $style);
+        $svg = (new FloorPlanSvgRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $planStyle);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;
@@ -1590,11 +1623,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
         return;
     }
-    $style = $_GET['style'] ?? 'default';
-    if (!in_array($style, ['default', 'funda'], true)) {
-        respondError(422, 'invalid_style', "'style' must be 'default' or 'funda' if given.");
-        return;
-    }
+    $planStyle = parseFloorPlanStyleFromQuery();
 
     $photoLoader = static function (string $url) use ($session): ?string {
         $filePath = ownedPhotoFilePath($session['id'], $url);
@@ -1602,7 +1631,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     };
 
     try {
-        $pdf = (new FloorPlanPdfRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $photoLoader, $style);
+        $pdf = (new FloorPlanPdfRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $photoLoader, $planStyle);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;

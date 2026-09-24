@@ -37,6 +37,7 @@ struct MissingItemSheet: View {
                             Text(k.displayName).tag(k)
                         }
                     }
+                    .accessibilityIdentifier("missingItem.type")
                     .pickerStyle(.menu)
                 }
 
@@ -46,6 +47,7 @@ struct MissingItemSheet: View {
                         text: $note,
                         axis: .vertical
                     )
+                    .accessibilityIdentifier("missingItem.note")
                     .lineLimit(3...6)
                 }
 
@@ -67,6 +69,7 @@ struct MissingItemSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { onCancel() }
+                        .accessibilityIdentifier("missingItem.cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if isSaving {
@@ -75,6 +78,7 @@ struct MissingItemSheet: View {
                         Button("Save") {
                             Task { await save() }
                         }
+                        .accessibilityIdentifier("missingItem.save")
                         .disabled(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }

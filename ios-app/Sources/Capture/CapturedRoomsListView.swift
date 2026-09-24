@@ -26,10 +26,12 @@ struct CapturedRoomsListView: View {
                             Button { retryTargetId = room.identifier } label: {
                                 Image(systemName: "arrow.counterclockwise")
                             }
+                            .accessibilityIdentifier("capturedRooms.retry.\(room.identifier)")
                             .buttonStyle(VuuroIconButtonStyle(tint: VuuroColor.textPrimary, background: VuuroColor.surfaceMuted))
                             Button { pendingDeleteId = room.identifier } label: {
                                 Image(systemName: "trash")
                             }
+                            .accessibilityIdentifier("capturedRooms.delete.\(room.identifier)")
                             .buttonStyle(VuuroIconButtonStyle(tint: VuuroColor.danger, background: VuuroColor.danger.opacity(0.14)))
                         }
                     }
@@ -41,6 +43,7 @@ struct CapturedRoomsListView: View {
                     } label: {
                         Label("Scan Another Room", systemImage: "plus.circle")
                     }
+                    .accessibilityIdentifier("capturedRooms.scanAnother")
                     .buttonStyle(.vuuroSecondary)
                 }
             }
@@ -48,6 +51,7 @@ struct CapturedRoomsListView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
+                        .accessibilityIdentifier("capturedRooms.done")
                 }
             }
             .alert(
@@ -64,7 +68,9 @@ struct CapturedRoomsListView: View {
                     }
                     pendingDeleteId = nil
                 }
+                .accessibilityIdentifier("capturedRooms.deleteConfirm")
                 Button("Cancel", role: .cancel) { pendingDeleteId = nil }
+                    .accessibilityIdentifier("capturedRooms.deleteCancel")
             } message: {
                 Text("This room will be removed from the unit and won't be included in the final upload.")
             }
@@ -142,6 +148,7 @@ private struct RetryReasonSheet: View {
                             .padding(.leading, 5)
                     }
                     TextEditor(text: $reason)
+                        .accessibilityIdentifier("retryReason.text")
                         .frame(minHeight: 120)
                 }
                 .padding(8)
@@ -157,12 +164,14 @@ private struct RetryReasonSheet: View {
                         onCancel()
                         dismiss()
                     }
+                    .accessibilityIdentifier("retryReason.cancel")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Retry") {
                         let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
                         onConfirm(trimmed.isEmpty ? nil : trimmed)
                     }
+                    .accessibilityIdentifier("retryReason.retry")
                 }
             }
         }

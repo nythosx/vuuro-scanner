@@ -4,6 +4,7 @@ struct DiagnosticsLogView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var log = DiagnosticsLog.shared
     @State private var exportURL: URL?
+    @State private var exportFailed = false
 
     var body: some View {
         List {
@@ -27,6 +28,7 @@ struct DiagnosticsLogView: View {
                 Button("Done") {
                     dismiss()
                 }
+                .accessibilityIdentifier("diagnostics.done")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(VuuroColor.accent)
             }
@@ -35,8 +37,9 @@ struct DiagnosticsLogView: View {
                     ShareLink(item: exportURL) {
                         Label("Export", systemImage: "square.and.arrow.up")
                     }
+                    .accessibilityIdentifier("diagnostics.share")
                 } else {
-                    Label("Export", systemImage: "square.and.arrow.up")
+                    Label(exportFailed ? "Export failed" : "Export", systemImage: "square.and.arrow.up")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -48,16 +51,16 @@ struct DiagnosticsLogView: View {
 
     @MainActor
     private func refreshExport() {
-        guard !log.entries.isEmpty else {
-            cleanUpExport()
-            return
+        cleanUpExport()
+        do {
+            exportURL = try DiagnosticsReport.writeFile(
+                entries: log.entries,
+                historyEntries: ScanHistoryStore.shared.all()
+            )
+            exportFailed = false
+        } catch {
+            exportFailed = true
         }
-        let formatted = log.entries.map { entry in
-            "[\(entry.timestamp.formatted(date: .abbreviated, time: .standard))] \(entry.category.rawValue): \(entry.message)"
-        }.joined(separator: "\n")
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("vuuro-scan-activity-log.txt")
-        try? formatted.write(to: url, atomically: true, encoding: .utf8)
-        exportURL = url
     }
 
     private func cleanUpExport() {

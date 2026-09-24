@@ -20,8 +20,10 @@ struct AnotherRoomPromptView: View {
 
             VStack(spacing: 10) {
                 Button("Scan another room") { onChoice(true) }
+                    .accessibilityIdentifier("anotherRoom.scanAnother")
                     .buttonStyle(.vuuroPrimary)
                 Button("Finish unit") { onChoice(false) }
+                    .accessibilityIdentifier("anotherRoom.finishUnit")
                     .buttonStyle(.vuuroSecondary)
             }
             .padding(.top, 12)
@@ -56,8 +58,10 @@ struct PartialCaptureFailureView: View {
 
             VStack(spacing: 10) {
                 Button("Upload what was captured", action: onUsePartial)
+                    .accessibilityIdentifier("partialCapture.upload")
                     .buttonStyle(.vuuroPrimary)
                 Button("Discard and try again", action: onDiscard)
+                    .accessibilityIdentifier("partialCapture.discard")
                     .buttonStyle(.vuuroDestructive)
             }
             .padding(.top, 12)
@@ -83,6 +87,7 @@ struct DegenerateCaptureView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 300)
             Button("Rescan this room", action: onRescan)
+                .accessibilityIdentifier("degenerateCapture.rescan")
                 .buttonStyle(.vuuroPrimary)
                 .padding(.top, 12)
                 .frame(maxWidth: 340)
@@ -115,7 +120,9 @@ struct UploadRejectedView: View {
                     .frame(maxWidth: 320)
                 VStack(spacing: 10) {
                     Button("Retry upload", action: onRetryUpload).buttonStyle(.vuuroPrimary)
+                        .accessibilityIdentifier("uploadRejected.retry")
                     Button("Rescan this room", action: onRescan).buttonStyle(.vuuroDestructive)
+                        .accessibilityIdentifier("uploadRejected.rescan")
                 }
                 .padding(.top, 12)
                 .frame(maxWidth: 340)
@@ -127,6 +134,7 @@ struct UploadRejectedView: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 320)
                 Button("Rescan this room", action: onRescan)
+                    .accessibilityIdentifier("uploadRejected.rescan")
                     .buttonStyle(.vuuroPrimary)
                     .padding(.top, 12)
                     .frame(maxWidth: 340)
@@ -151,6 +159,7 @@ struct UploadProgressOverlay: View {
                 .foregroundStyle(VuuroColor.textPrimary)
             if let onCancel {
                 Button("Cancel", action: onCancel)
+                    .accessibilityIdentifier("uploadProgress.cancel")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(VuuroColor.danger)
             }

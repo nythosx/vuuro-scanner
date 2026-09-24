@@ -11,6 +11,8 @@ struct SettingsView: View {
     @State private var roomTypeGuess = RoomTypeGuessSettings.isEnabled
     @State private var cacheSizeLabel: String = "—"
     @State private var darkModeLocal: Bool = false
+    @State private var diagnosticsURL: URL?
+    @State private var diagnosticsFailed = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,6 +20,7 @@ struct SettingsView: View {
                 title: "Settings",
                 leading: {
                     VuuroNavButton("Home", icon: "chevron.left", action: onBack)
+                        .accessibilityIdentifier("settings.home")
                 },
                 trailing: { VuuroNavSpacer() }
             )
@@ -30,6 +33,7 @@ struct SettingsView: View {
                     VuuroInputGroup {
                         VuuroInputRow(leadingIcon: "moon", label: "Dark mode", showsDivider: false) {
                             Toggle("", isOn: $darkModeLocal)
+                                .accessibilityIdentifier("settings.darkMode")
                                 .labelsHidden()
                                 .tint(VuuroColor.lime)
                                 .onChange(of: darkModeLocal) { _, newValue in
@@ -47,6 +51,7 @@ struct SettingsView: View {
                             showsDivider: true
                         ) {
                             Toggle("", isOn: $roomTypeGuess)
+                                .accessibilityIdentifier("settings.roomTypeGuess")
                                 .labelsHidden()
                                 .tint(VuuroColor.lime)
                                 .onChange(of: roomTypeGuess) { _, newValue in
@@ -59,6 +64,7 @@ struct SettingsView: View {
                             showsDivider: false
                         ) {
                             Toggle("", isOn: $autoUpload)
+                                .accessibilityIdentifier("settings.autoUpload")
                                 .labelsHidden()
                                 .tint(VuuroColor.lime)
                         }
@@ -73,6 +79,7 @@ struct SettingsView: View {
                                     Text(unit.displayName).tag(unit.rawValue)
                                 }
                             }
+                            .accessibilityIdentifier("settings.measurementUnit")
                             .labelsHidden()
                             .pickerStyle(.menu)
                             .tint(VuuroColor.textPrimary)
@@ -93,7 +100,10 @@ struct SettingsView: View {
                                     .foregroundStyle(VuuroColor.textSecondary)
                             }
                         }
+                        .accessibilityIdentifier("settings.diagnostics")
                         .buttonStyle(.plain)
+
+                        diagnosticsExportRow
 
                         Button(action: clearCache) {
                             VuuroInputRow(
@@ -106,12 +116,14 @@ struct SettingsView: View {
                                     .foregroundStyle(VuuroColor.textSecondary)
                             }
                         }
+                        .accessibilityIdentifier("settings.clearCache")
                         .buttonStyle(.plain)
                     }
                     .padding(.horizontal, 20)
 
                     VStack(spacing: 10) {
                         Button("Terms & Privacy Policy", action: onOpenTerms)
+                            .accessibilityIdentifier("settings.terms")
                             .buttonStyle(.vuuroGhostSmall)
                     }
                     .padding(.horizontal, 20)
@@ -126,6 +138,7 @@ struct SettingsView: View {
         .onAppear {
             darkModeLocal = darkMode
             computeCacheSize()
+            prepareDiagnosticsExport()
         }
         .onChange(of: darkMode) { _, newValue in
             if darkModeLocal != newValue {
@@ -165,6 +178,49 @@ struct SettingsView: View {
         let sha = BuildInfo.commitSHA
         if sha.isEmpty || sha == "unknown" { return "dev" }
         return String(sha.prefix(7))
+    }
+
+    @ViewBuilder
+    private var diagnosticsExportRow: some View {
+        if let diagnosticsURL {
+            ShareLink(item: diagnosticsURL) {
+                VuuroInputRow(
+                    leadingIcon: "square.and.arrow.up",
+                    label: "Export diagnostics",
+                    showsDivider: true
+                ) {
+                    Text("Share")
+                        .font(.system(size: 13))
+                        .foregroundStyle(VuuroColor.textSecondary)
+                }
+            }
+            .accessibilityIdentifier("settings.exportDiagnostics")
+            .buttonStyle(.plain)
+        } else {
+            VuuroInputRow(
+                leadingIcon: "square.and.arrow.up",
+                label: "Export diagnostics",
+                showsDivider: true
+            ) {
+                Text(diagnosticsFailed ? "Unavailable" : "Preparing")
+                    .font(.system(size: 13))
+                    .foregroundStyle(VuuroColor.textSecondary)
+            }
+        }
+    }
+
+    @MainActor
+    private func prepareDiagnosticsExport() {
+        do {
+            diagnosticsURL = try DiagnosticsReport.writeFile(
+                entries: DiagnosticsLog.shared.entries,
+                historyEntries: ScanHistoryStore.shared.all()
+            )
+            diagnosticsFailed = false
+        } catch {
+            diagnosticsURL = nil
+            diagnosticsFailed = true
+        }
     }
 
     private func computeCacheSize() {
@@ -213,6 +269,7 @@ struct SettingsView: View {
         }
         try? fm.removeItem(at: ExportNaming.rootDirectory)
         computeCacheSize()
+        prepareDiagnosticsExport()
         VuuroToast.shared.show("Cache cleared")
     }
 }

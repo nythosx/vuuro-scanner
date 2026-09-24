@@ -111,6 +111,7 @@ struct ScanResultsReportView: View {
                         Button("Close") {
                             showPDFPreview = false
                         }
+                        .accessibilityIdentifier("report.pdfErrorClose")
                         .buttonStyle(.vuuroPrimary)
                         .frame(maxWidth: 200)
                     }
@@ -143,7 +144,9 @@ struct ScanResultsReportView: View {
                 onDelete?()
                 dismiss()
             }
+            .accessibilityIdentifier("report.forgetConfirm")
             Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("report.forgetCancel")
         } message: {
             Text("This removes the local record on this device only. Server data isn't affected.")
         }
@@ -151,7 +154,9 @@ struct ScanResultsReportView: View {
             Button("Delete", role: .destructive) {
                 Task { await deleteFromServer() }
             }
+            .accessibilityIdentifier("report.serverDeleteConfirm")
             Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("report.serverDeleteCancel")
         } message: {
             Text("This permanently deletes the session's rooms, photos, and notes. This cannot be undone.")
         }
@@ -162,6 +167,7 @@ struct ScanResultsReportView: View {
             title: navTitle,
             leading: {
                 VuuroNavButton("Close") { dismiss() }
+                    .accessibilityIdentifier("report.close")
             },
             trailing: {
                 Menu {
@@ -170,11 +176,13 @@ struct ScanResultsReportView: View {
                     } label: {
                         Label("Share image", systemImage: "photo")
                     }
+                    .accessibilityIdentifier("report.shareImage")
                     Button {
                         Task { await sharePDF() }
                     } label: {
                         Label("Share PDF", systemImage: "doc")
                     }
+                    .accessibilityIdentifier("report.sharePDF")
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 15, weight: .semibold))
@@ -182,6 +190,7 @@ struct ScanResultsReportView: View {
                         .frame(width: 30, height: 30, alignment: .trailing)
                         .contentShape(Rectangle())
                 }
+                .accessibilityIdentifier("report.shareMenu")
             }
         )
     }
@@ -308,6 +317,7 @@ struct ScanResultsReportView: View {
                     previewImage = PreviewImage(image: floorPlanImage)
                 }
             }
+            .accessibilityIdentifier("report.floorPlanPreview")
             .accessibilityAddTraits(.isButton)
             .accessibilityLabel("Open floor plan full screen")
 
@@ -318,6 +328,7 @@ struct ScanResultsReportView: View {
                     Text("Save image")
                         .frame(maxWidth: .infinity)
                 }
+                .accessibilityIdentifier("report.saveImage")
                 .buttonStyle(.vuuroOutlineSmall)
 
                 Button {
@@ -331,6 +342,7 @@ struct ScanResultsReportView: View {
                             .frame(maxWidth: .infinity)
                     }
                 }
+                .accessibilityIdentifier("report.viewPDF")
                 .buttonStyle(.vuuroOutlineSmall)
                 .disabled(isFetchingPDF)
             }
@@ -356,6 +368,7 @@ struct ScanResultsReportView: View {
             Button("Retry") {
                 Task { await loadImage() }
             }
+            .accessibilityIdentifier("report.retry")
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(VuuroColor.accent)
         }
@@ -451,6 +464,7 @@ struct ScanResultsReportView: View {
             .shadow(color: VuuroMetrics.cardShadowTightColor, radius: VuuroMetrics.cardShadowTightRadius, x: 0, y: 1)
             .shadow(color: VuuroMetrics.cardShadowColor, radius: VuuroMetrics.cardShadowRadius, x: 0, y: 4)
         }
+        .accessibilityIdentifier("report.accessLog")
         .buttonStyle(.plain)
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
@@ -478,6 +492,7 @@ struct ScanResultsReportView: View {
                     .padding(.vertical, 14)
                     .background(VuuroColor.bgInset, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
+            .accessibilityIdentifier("report.discardChanges")
             .buttonStyle(.plain)
             .disabled(isSavingChanges)
 
@@ -496,6 +511,7 @@ struct ScanResultsReportView: View {
                         .padding(.vertical, 14)
                 }
             }
+            .accessibilityIdentifier("report.saveChanges")
             .buttonStyle(.plain)
             .background(VuuroColor.accent, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .disabled(isSavingChanges)
@@ -556,11 +572,13 @@ struct ScanResultsReportView: View {
             Button("Forget this scan", role: .destructive) {
                 showForgetConfirmation = true
             }
+            .accessibilityIdentifier("report.forget")
             .buttonStyle(.vuuroGhostSmall)
 
             Button("Delete from server", role: .destructive) {
                 showServerDeleteConfirmation = true
             }
+            .accessibilityIdentifier("report.deleteFromServer")
             .buttonStyle(.vuuroDestructiveSmall)
         }
         .padding(.horizontal, 20)

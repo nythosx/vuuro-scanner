@@ -50,8 +50,9 @@ final class FloorPlanPdfRenderer
         'captionRegular' => self::INK_MUTED,
     ];
 
-    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null, ?callable $photoLoader = null, string $style = 'default'): string
+    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null, ?callable $photoLoader = null, FloorPlanStyle|string|null $style = null): string
     {
+        $planStyle = $style instanceof FloorPlanStyle ? $style : FloorPlanStyle::from($style ?? 'default');
         if ($roomId !== null) {
             $rooms = array_values(array_filter($floorPlan['rooms'], static fn (array $room) => $room['room_id'] === $roomId));
             if ($rooms === []) {
@@ -59,10 +60,10 @@ final class FloorPlanPdfRenderer
             }
             $floorPlan = [...$floorPlan, 'rooms' => $rooms];
         }
-        $lines = $this->buildTextLines($floorPlan, $layout, $unit, $label, $style);
+        $lines = $this->buildTextLines($floorPlan, $layout, $unit, $label, $planStyle);
         $textPages = $this->paginate($lines);
 
-        $imagePages = $this->buildImagePages($floorPlan, $layout, $roomId, $unit, $label, $photoLoader, $style);
+        $imagePages = $this->buildImagePages($floorPlan, $layout, $roomId, $unit, $label, $photoLoader, $planStyle);
 
         if (count($textPages) + count($imagePages) > self::MAX_PAGES) {
             throw new \InvalidArgumentException(sprintf(
@@ -128,7 +129,7 @@ final class FloorPlanPdfRenderer
     }
 
 
-    private function buildImagePages(array $floorPlan, string $layout, ?string $roomId, string $unit, ?string $label, ?callable $photoLoader, string $style = 'default'): array
+    private function buildImagePages(array $floorPlan, string $layout, ?string $roomId, string $unit, ?string $label, ?callable $photoLoader, FloorPlanStyle|string|null $style = null): array
     {
         $pages = [];
 
@@ -314,8 +315,9 @@ final class FloorPlanPdfRenderer
     }
 
 
-    private function buildTextLines(array $floorPlan, string $layout = 'auto', string $unit = UnitFormatter::METRIC, ?string $label = null, string $style = 'default'): array
+    private function buildTextLines(array $floorPlan, string $layout = 'auto', string $unit = UnitFormatter::METRIC, ?string $label = null, ?FloorPlanStyle $planStyle = null): array
     {
+        $planStyle ??= FloorPlanStyle::from('default');
         $lines = [];
         $add = static function (string $text, string $style = 'body', array $extra = []) use (&$lines): void {
             $lines[] = [...['text' => $text, 'style' => $style], ...$extra];
@@ -364,6 +366,7 @@ final class FloorPlanPdfRenderer
                 'room',
                 ['bullet' => FloorPlanPalette::hexToRgb($bulletHex)]
             );
+            if ($planStyle->showMetrics) {
             $heightM = $room['height_m'] ?? null;
             $volumeM3 = $room['volume_m3_indicative'] ?? null;
             if ($heightM !== null && $volumeM3 !== null) {
@@ -400,27 +403,31 @@ final class FloorPlanPdfRenderer
                     array_values($objectCounts)
                 ));
                 $add("             detected objects: {$objectSummary}", 'sub');
+                }
             }
-            $roomNotes = array_values(array_filter(
-                $floorPlan['notes'],
-                static fn (array $note) => ($note['room_id'] ?? null) === $room['room_id']
-            ));
-            foreach ($roomNotes as $note) {
-                $tags = is_array($note['tags'] ?? null) ? $note['tags'] : [];
-                $prefix = in_array('missing_item', $tags, true) ? 'missing item: ' : 'note: ';
-                foreach ($this->wrapTextLines($note['text'], 85) as $i => $wrapped) {
-                    $add($i === 0 ? "             {$prefix}{$wrapped}" : "                   {$wrapped}", 'sub');
+            if ($planStyle->showNotes) {
+                $roomNotes = array_values(array_filter(
+                    $floorPlan['notes'],
+                    static fn (array $note) => ($note['room_id'] ?? null) === $room['room_id']
+                ));
+                foreach ($roomNotes as $note) {
+                    $tags = is_array($note['tags'] ?? null) ? $note['tags'] : [];
+                    $prefix = in_array('missing_item', $tags, true) ? 'missing item: ' : 'note: ';
+                    foreach ($this->wrapTextLines($note['text'], 85) as $i => $wrapped) {
+                        $add($i === 0 ? "             {$prefix}{$wrapped}" : "                   {$wrapped}", 'sub');
+                    }
                 }
             }
         }
         $add('');
         $add(sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalArea, $unit), count($floorPlan['rooms'])), 'small');
 
-        $unitNotes = array_values(array_filter(
-            $floorPlan['notes'],
-            static fn (array $note) => ($note['room_id'] ?? null) === null
-        ));
-        if ($unitNotes !== []) {
+        if ($planStyle->showNotes) {
+            $unitNotes = array_values(array_filter(
+                $floorPlan['notes'],
+                static fn (array $note) => ($note['room_id'] ?? null) === null
+            ));
+            if ($unitNotes !== []) {
             $add('');
             $add('Whole-unit notes', 'section');
             foreach ($unitNotes as $note) {
@@ -433,6 +440,7 @@ final class FloorPlanPdfRenderer
         if ($floorPlan['photos'] !== [] || $floorPlan['notes'] !== []) {
             $add('');
             $add(sprintf('Photos attached: %d   Notes attached: %d', count($floorPlan['photos']), count($floorPlan['notes'])), 'small');
+            }
         }
 
         return $lines;

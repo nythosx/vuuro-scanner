@@ -35,7 +35,7 @@ struct AttachmentsScreen: View {
         VStack(spacing: 0) {
             VuuroNavBar(
                 title: "Notes & photos",
-                leading: { VuuroNavButton("Home", icon: "chevron.left", action: onBack) },
+                leading: { VuuroNavButton("Home", icon: "chevron.left", action: onBack).accessibilityIdentifier("attachments.home") },
                 trailing: { VuuroNavSpacer() }
             )
 
@@ -151,10 +151,12 @@ struct AttachmentsScreen: View {
                     Text("Finish & upload")
                 }
             }
+            .accessibilityIdentifier("attachments.finishAndUpload")
             .buttonStyle(.vuuroPrimary)
             .disabled(isSaving)
 
             Button("Scan another room", action: onAddRoom)
+                .accessibilityIdentifier("attachments.scanAnotherRoom")
                 .buttonStyle(.vuuroGhostSmall)
                 .disabled(isSaving)
         }
@@ -240,10 +242,13 @@ private struct AttachmentRoomCard: View {
             Button("Take Photo") {
                 showCameraPicker = true
             }
+            .accessibilityIdentifier("attachments.takePhoto")
             Button("Choose from Library") {
                 showPhotoPicker = true
             }
+            .accessibilityIdentifier("attachments.chooseFromLibrary")
             Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("attachments.photoSourceCancel")
         }
         .fullScreenCover(isPresented: $showCameraPicker) {
             CameraPickerView(
@@ -280,6 +285,7 @@ private struct AttachmentRoomCard: View {
 
     private var labelField: some View {
         TextField("Room type", text: $labelDraft)
+            .accessibilityIdentifier("attachments.roomLabel")
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(VuuroColor.textSecondary)
             .textInputAutocapitalization(.words)
@@ -292,6 +298,7 @@ private struct AttachmentRoomCard: View {
     private var noteEditor: some View {
         ZStack(alignment: .topLeading) {
             TextEditor(text: $noteDraft)
+                .accessibilityIdentifier("attachments.note")
                 .font(.system(size: 14))
                 .frame(minHeight: 68)
                 .padding(8)
@@ -344,6 +351,7 @@ private struct AttachmentRoomCard: View {
                     }
                     .frame(width: 64, height: 64)
                 }
+                .accessibilityIdentifier("attachments.addPhoto")
                 .disabled(isUploadingPhoto)
             }
             .padding(.vertical, 2)
@@ -632,6 +640,7 @@ struct AttachedPhotoThumbnail: View {
             .frame(width: 64, height: 64)
             .clipped()
         }
+        .accessibilityIdentifier("attachments.photoThumbnail")
         .buttonStyle(.plain)
         .task(id: url) {
             if let cached = PhotoImageCache.shared.image(for: url) {
@@ -690,6 +699,7 @@ private struct AttachmentPhotoViewer: View {
                     .frame(width: 36, height: 36)
                     .background(Color.white.opacity(0.12), in: Circle())
             }
+            .accessibilityIdentifier("photoViewer.close")
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
@@ -737,6 +747,7 @@ private struct AttachmentPhotoViewer: View {
                             .padding(.vertical, 11)
                             .background(Color.white.opacity(0.12), in: Capsule())
                     }
+                    .accessibilityIdentifier("photoViewer.save")
                 }
 
                 Button {
@@ -756,6 +767,7 @@ private struct AttachmentPhotoViewer: View {
                             .background(Color.white.opacity(0.12), in: Capsule())
                     }
                 }
+                .accessibilityIdentifier("photoViewer.delete")
                 .buttonStyle(.plain)
                 .disabled(isDeleting)
             }

@@ -44,6 +44,10 @@ enum ExportNaming {
         try? FileManager.default.removeItem(at: directory(sessionId: sessionId))
     }
 
+    static func removeAllExports() {
+        try? FileManager.default.removeItem(at: rootDirectory)
+    }
+
     static func url(
         sessionId: String,
         property: String,

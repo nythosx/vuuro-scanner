@@ -23,6 +23,7 @@ struct HomeView: View {
                 leading: { VuuroNavSpacer() },
                 trailing: {
                     VuuroNavButton("Settings", action: onOpenSettings)
+                        .accessibilityIdentifier("home.settings")
                 }
             )
 
@@ -43,6 +44,7 @@ struct HomeView: View {
                             subtitle: "A quick capture. One room, one plan.",
                             action: onStartSingle
                         )
+                        .accessibilityIdentifier("home.scanSingleRoom")
                         VuuroScanCTA(
                             style: .secondary,
                             badgeIcon: "square.grid.2x2",
@@ -51,6 +53,7 @@ struct HomeView: View {
                             subtitle: "Walk through every room. Everything merges into one floor plan.",
                             action: onStartMulti
                         )
+                        .accessibilityIdentifier("home.scanWholeUnit")
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 12)
@@ -65,6 +68,7 @@ struct HomeView: View {
                             badgeStyle: .neutral,
                             onTap: onOpenHistory
                         )
+                        .accessibilityIdentifier("home.recentScan")
                     } else {
                         Text("No scans yet on this device.")
                             .font(.system(size: 13))
@@ -80,6 +84,7 @@ struct HomeView: View {
                             .multilineTextAlignment(.center)
                             .lineSpacing(4)
                     }
+                    .accessibilityIdentifier("home.terms")
                     .buttonStyle(.plain)
                     .frame(maxWidth: .infinity)
                     .padding(20)

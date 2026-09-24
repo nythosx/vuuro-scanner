@@ -14,7 +14,7 @@ final class FloorPlanSvgRenderer
     private const WINDOW_WIDTH_M = 1.0;
     private const OPENING_WIDTH_M = 0.7;
 
-    private const TILE_PADDING = 24;
+    private const TILE_PADDING = 34;
     private const LABEL_HEIGHT = 60;
     private const TILE_GAP = 32;
     private const MARGIN = 24;
@@ -61,11 +61,26 @@ final class FloorPlanSvgRenderer
 
     private function roomFill(array $room, int $fallbackIndex): string
     {
-        if ($this->style === 'funda') {
+        if ($this->planStyle->roomFill === 'white') {
             return '#ffffff';
         }
         $fill = FloorPlanPalette::roomFillFor(self::roomTypeValue($room));
         return $fill ?? self::FALLBACK_FILLS[$fallbackIndex % count(self::FALLBACK_FILLS)];
+    }
+
+    private function doorColorHex(): string
+    {
+        return sprintf('#%02x%02x%02x', $this->planStyle->doorColor[0], $this->planStyle->doorColor[1], $this->planStyle->doorColor[2]);
+    }
+
+    private function titleBlockSvg(int $width, int $y): string
+    {
+        $title = $this->resolvedTitle;
+        if ($title === null || $title === '') {
+            return '';
+        }
+        return '<text x="' . (int) ($width / 2) . '" y="' . $y . '" font-family="' . self::FONT . '" font-size="15" font-weight="600" fill="#111111" text-anchor="middle">'
+            . $this->esc($title) . '</text>';
     }
 
     private function displayLabel(array $room): string
@@ -78,11 +93,18 @@ final class FloorPlanSvgRenderer
         return htmlspecialchars($s, ENT_QUOTES | ENT_XML1, 'UTF-8');
     }
 
-    private string $style = 'default';
+    private FloorPlanStyle $planStyle;
+    private ?string $resolvedTitle = null;
 
-    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null, string $style = 'default'): string
+    public function __construct()
     {
-        $this->style = $style === 'funda' ? 'funda' : 'default';
+        $this->planStyle = FloorPlanStyle::from('default');
+    }
+
+    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null, FloorPlanStyle|string|null $style = null): string
+    {
+        $this->planStyle = $style instanceof FloorPlanStyle ? $style : FloorPlanStyle::from($style ?? 'default');
+        $this->resolvedTitle = $this->planStyle->resolvedTitle($floorPlan);
         $rooms = $floorPlan['rooms'];
         $notes = $floorPlan['notes'] ?? [];
         if ($roomId !== null) {
@@ -245,7 +267,10 @@ SVG;
 
     private function roomTypeLegendSvg(array $rooms, int $x, int $y): string
     {
-        if ($this->style === 'funda') {
+        if (!$this->planStyle->showRoomTypeLegend) {
+            return '';
+        }
+        if (count($rooms) < 2) {
             return '';
         }
         $typesPresent = [];
@@ -477,7 +502,7 @@ SVG;
                 $radiusPx = $widthM * self::PX_PER_M;
                 $cross = ($tipX - $hingeX) * ($swingZ - $hingeZ) - ($tipZ - $hingeZ) * ($swingX - $hingeX);
                 $sweep = $cross > 0 ? 1 : 0;
-                $out .= '<g fill="none" stroke="' . self::DOOR_COLOR . '" stroke-width="1.2">'
+                $out .= '<g fill="none" stroke="' . $this->doorColorHex() . '" stroke-width="1.2">'
                     . '<line x1="' . $this->num($hingePx) . '" y1="' . $this->num($hingePy) . '" x2="' . $this->num($swingPx) . '" y2="' . $this->num($swingPy) . '"/>'
                     . '<path d="M ' . $this->num($tipPx) . ' ' . $this->num($tipPy) . ' A ' . $this->num($radiusPx) . ' ' . $this->num($radiusPx) . ' 0 0 ' . $sweep . ' ' . $this->num($swingPx) . ' ' . $this->num($swingPy) . '"/>'
                     . '</g>';
@@ -508,7 +533,7 @@ SVG;
 
     private function walkPathSvg(array $room, array $pose, callable $toPx): string
     {
-        if ($this->style === 'funda') {
+        if (!$this->planStyle->showWalkPath) {
             return '';
         }
         $points = $room['walk_path_m'] ?? [];
@@ -673,14 +698,19 @@ SVG;
 
     private function objectsSvg(array $room, array $pose, callable $toPx, string &$labels): string
     {
-        if ($this->style === 'funda') {
+        if ($this->planStyle->furnitureCategories === []) {
             return '';
         }
         $out = '<g id="objects" stroke="' . self::OBJECT . '" fill="none" font-size="8">';
+        $drawn = 0;
         foreach ($room['objects'] ?? [] as $object) {
             if (!empty($object['excluded'])) {
                 continue;
             }
+            if (!$this->planStyle->shouldDrawFurniture((string) ($object['category'] ?? ''))) {
+                continue;
+            }
+            $drawn++;
             [$mx, $mz] = $object['position_m'];
             $dims = $object['dimensions_m'] ?? [0.5, 0.0, 0.5];
             $halfWidth = ((float) ($dims[0] ?? 0.5)) / 2;
@@ -700,20 +730,39 @@ SVG;
             [$labelX, $labelY] = $toPx($wx, $wz);
             $labels .= '<text x="' . $this->num($labelX - $halfWidth * self::PX_PER_M) . '" y="' . $this->num($labelY - $halfDepth * self::PX_PER_M - 3) . '" fill="' . self::SUBTEXT . '" stroke="none">' . $this->esc($labelText) . '</text>';
         }
+        if ($drawn === 0) {
+            return '';
+        }
         $out .= '</g>';
         return $out;
     }
 
-    private function tileGeometry(array $room): array
+    private function tileGeometry(array $room, string $orientation = 'as_captured'): array
     {
-        $width = (int) round($room['bounding_dimensions_m']['width_m'] * self::PX_PER_M) + self::TILE_PADDING * 2;
-        $height = (int) round($room['bounding_dimensions_m']['length_m'] * self::PX_PER_M) + self::TILE_PADDING * 2 + self::LABEL_HEIGHT;
-        return ['width' => max($width, 160), 'height' => max($height, 160)];
+        if ($orientation === 'longest_horizontal' && count($room['outline_m']) >= 2) {
+            $rotation = TileOrientation::angleFor($room['outline_m']);
+            $cosR = cos($rotation);
+            $sinR = sin($rotation);
+            $xs = [];
+            $zs = [];
+            foreach ($room['outline_m'] as [$mx, $mz]) {
+                $xs[] = $mx * $cosR - $mz * $sinR;
+                $zs[] = $mx * $sinR + $mz * $cosR;
+            }
+            $width = max($xs) - min($xs);
+            $height = max($zs) - min($zs);
+        } else {
+            $width = $room['bounding_dimensions_m']['width_m'];
+            $height = $room['bounding_dimensions_m']['length_m'];
+        }
+        $w = (int) round($width * self::PX_PER_M) + self::TILE_PADDING * 2;
+        $h = (int) round($height * self::PX_PER_M) + self::TILE_PADDING * 2 + self::LABEL_HEIGHT;
+        return ['width' => max($w, 160), 'height' => max($h, 160)];
     }
 
     private function renderTiles(array $rooms, string $unit, ?string $label, array $notes): string
     {
-        $tiles = array_map([$this, 'tileGeometry'], $rooms);
+        $tiles = array_map(fn (array $room) => $this->tileGeometry($room, $this->planStyle->orientation), $rooms);
         $notesLines = $this->buildNotesLines($rooms, $notes);
 
         $tilesWidth = self::MARGIN * 2 + array_sum(array_column($tiles, 'width')) + self::TILE_GAP * (count($tiles) - 1);
@@ -729,7 +778,7 @@ SVG;
 
         $headerHeight = self::HEADER_HEIGHT + (count($subLines) - 1) * 15;
         $y = $headerHeight;
-        $canvasHeight = $y + $tilesHeight + 20 + count($notesLines) * self::NOTE_LINE_HEIGHT + 40;
+        $canvasHeight = $y + $tilesHeight + 20 + count($notesLines) * self::NOTE_LINE_HEIGHT + 66;
 
         if ($canvasWidth > self::MAX_CANVAS_DIMENSION_PX || $canvasHeight > self::MAX_CANVAS_DIMENSION_PX) {
             throw new \InvalidArgumentException(sprintf(
@@ -750,18 +799,131 @@ SVG;
         }
 
         $notesY = $y + $tilesHeight + 24;
-        $body .= $this->notesSvg($notesLines, self::MARGIN, $notesY);
+        if ($this->planStyle->showNotes) {
+            $body .= $this->notesSvg($notesLines, self::MARGIN, $notesY);
+        }
+        $body .= $this->titleBlockSvg($canvasWidth, $canvasHeight - 40);
         $body .= $this->footerSvg($canvasWidth, $canvasHeight - 14);
 
         return $this->wrapSvg($canvasWidth, $canvasHeight, $body);
     }
 
+    private function dedupValues(array $vals): array
+    {
+        sort($vals);
+        $out = [];
+        foreach ($vals as $v) {
+            if ($out === [] || abs($v - end($out)) > 0.05) {
+                $out[] = $v;
+            }
+        }
+        return $out;
+    }
+
+    private function tileDimensionChainsSvg(array $room, array $tile, float $rotation, string $unit): string
+    {
+        $cosR = cos($rotation);
+        $sinR = sin($rotation);
+        $rotated = [];
+        foreach ($room['outline_m'] as [$mx, $mz]) {
+            $rotated[] = [$mx * $cosR - $mz * $sinR, $mx * $sinR + $mz * $cosR];
+        }
+        $xs = array_column($rotated, 0);
+        $zs = array_column($rotated, 1);
+        if ($xs === [] || $zs === []) return '';
+        $minLocalX = min($xs);
+        $minLocalZ = min($zs);
+        $xBreak = $this->dedupValues($xs);
+        $zBreak = $this->dedupValues($zs);
+        if (count($xBreak) < 2 || count($zBreak) < 2) return '';
+
+        $toPx = fn (float $rx, float $rz): array => [
+            self::TILE_PADDING + (int) round(($rx - $minLocalX) * self::PX_PER_M),
+            self::TILE_PADDING + (int) round(($rz - $minLocalZ) * self::PX_PER_M),
+        ];
+        $chainOffset = 14;
+        $topY = self::TILE_PADDING - $chainOffset;
+        $bottomY = $tile['height'] - self::LABEL_HEIGHT - self::TILE_PADDING + $chainOffset;
+        $leftX = self::TILE_PADDING - $chainOffset;
+        $rightX = $tile['width'] - self::TILE_PADDING + $chainOffset;
+
+        $out = '<g stroke="#1a1a1a" stroke-width="0.9" fill="none">';
+        $labels = '';
+
+        $prev = null;
+        foreach ($xBreak as $xv) {
+            [$px] = $toPx($xv, $zBreak[0]);
+            if ($prev !== null) {
+                $out .= '<line x1="' . $prev[0] . '" y1="' . $topY . '" x2="' . $px . '" y2="' . $topY . '" marker-start="url(#ar-s)" marker-end="url(#ar-e)"/>';
+                $labels .= '<text x="' . intval(($prev[0] + $px) / 2) . '" y="' . ($topY - 4) . '" font-size="9" fill="#1a1a1a" text-anchor="middle">' . $this->esc(UnitFormatter::length($xv - $prev[1], $unit)) . '</text>';
+            }
+            $out .= '<line x1="' . $px . '" y1="' . ($topY - 5) . '" x2="' . $px . '" y2="' . ($topY + 5) . '"/>';
+            $prev = [$px, $xv];
+        }
+
+        $prev = null;
+        foreach ($xBreak as $xv) {
+            [$px] = $toPx($xv, $zBreak[0]);
+            if ($prev !== null) {
+                $out .= '<line x1="' . $prev[0] . '" y1="' . $bottomY . '" x2="' . $px . '" y2="' . $bottomY . '" marker-start="url(#ar-s)" marker-end="url(#ar-e)"/>';
+                $labels .= '<text x="' . intval(($prev[0] + $px) / 2) . '" y="' . ($bottomY + 11) . '" font-size="9" fill="#1a1a1a" text-anchor="middle">' . $this->esc(UnitFormatter::length($xv - $prev[1], $unit)) . '</text>';
+            }
+            $out .= '<line x1="' . $px . '" y1="' . ($bottomY - 5) . '" x2="' . $px . '" y2="' . ($bottomY + 5) . '"/>';
+            $prev = [$px, $xv];
+        }
+
+        $prev = null;
+        foreach ($zBreak as $zv) {
+            [, $py] = $toPx($xBreak[0], $zv);
+            if ($prev !== null) {
+                $out .= '<line x1="' . $leftX . '" y1="' . $prev[0] . '" x2="' . $leftX . '" y2="' . $py . '" marker-start="url(#ar-s)" marker-end="url(#ar-e)"/>';
+                $midY = intval(($prev[0] + $py) / 2);
+                $labels .= '<text x="' . ($leftX - 2) . '" y="' . $midY . '" font-size="9" fill="#1a1a1a" text-anchor="middle" transform="rotate(-90 ' . ($leftX - 2) . ' ' . $midY . ')">' . $this->esc(UnitFormatter::length($zv - $prev[1], $unit)) . '</text>';
+            }
+            $out .= '<line x1="' . ($leftX - 5) . '" y1="' . $py . '" x2="' . ($leftX + 5) . '" y2="' . $py . '"/>';
+            $prev = [$py, $zv];
+        }
+
+        $prev = null;
+        foreach ($zBreak as $zv) {
+            [, $py] = $toPx($xBreak[0], $zv);
+            if ($prev !== null) {
+                $out .= '<line x1="' . $rightX . '" y1="' . $prev[0] . '" x2="' . $rightX . '" y2="' . $py . '" marker-start="url(#ar-s)" marker-end="url(#ar-e)"/>';
+                $midY = intval(($prev[0] + $py) / 2);
+                $labels .= '<text x="' . ($rightX + 2) . '" y="' . $midY . '" font-size="9" fill="#1a1a1a" text-anchor="middle" transform="rotate(-90 ' . ($rightX + 2) . ' ' . $midY . ')">' . $this->esc(UnitFormatter::length($zv - $prev[1], $unit)) . '</text>';
+            }
+            $out .= '<line x1="' . ($rightX - 5) . '" y1="' . $py . '" x2="' . ($rightX + 5) . '" y2="' . $py . '"/>';
+            $prev = [$py, $zv];
+        }
+
+        $out .= '</g>';
+        return $out . $labels;
+    }
+
     private function roomTileSvg(array $room, array $tile, string $unit, int $fallbackIndex): string
     {
-        $toPx = fn (float $mx, float $mz): array => [
-            self::TILE_PADDING + $mx * self::PX_PER_M,
-            self::TILE_PADDING + $mz * self::PX_PER_M,
-        ];
+        $rotation = 0.0;
+        if ($this->planStyle->orientation === 'longest_horizontal' && count($room['outline_m']) >= 2) {
+            $rotation = TileOrientation::angleFor($room['outline_m']);
+        }
+        $cosR = cos($rotation);
+        $sinR = sin($rotation);
+        $xs = [];
+        $zs = [];
+        foreach ($room['outline_m'] as [$mx, $mz]) {
+            $xs[] = $mx * $cosR - $mz * $sinR;
+            $zs[] = $mx * $sinR + $mz * $cosR;
+        }
+        $minLocalX = $xs === [] ? 0.0 : min($xs);
+        $minLocalZ = $zs === [] ? 0.0 : min($zs);
+        $toPx = function (float $mx, float $mz) use ($cosR, $sinR, $minLocalX, $minLocalZ): array {
+            $rx = $mx * $cosR - $mz * $sinR - $minLocalX;
+            $rz = $mx * $sinR + $mz * $cosR - $minLocalZ;
+            return [
+                self::TILE_PADDING + $rx * self::PX_PER_M,
+                self::TILE_PADDING + $rz * self::PX_PER_M,
+            ];
+        };
         $fill = $this->roomFill($room, $fallbackIndex);
         $identityPose = ['originX' => 0.0, 'originZ' => 0.0, 'rotationRad' => 0.0];
 
@@ -774,14 +936,21 @@ SVG;
         $out .= $this->openingsSvg($room, $identityPose, $toPx, []);
         $headingDeg = self::roomHeadingDeg($room);
         if ($headingDeg !== null) {
-            $out .= $this->compassArrowSvg($headingDeg, $tile['width'] - 26, 26);
+            $out .= $this->compassArrowSvg($headingDeg - rad2deg($rotation), $tile['width'] - 26, 26);
         }
 
-        $out .= $this->wallLengthLabelsSvg($room['outline_m'], $identityPose, $toPx, $unit, []);
+        if ($this->planStyle->isFunda) {
+            $out .= $this->tileDimensionChainsSvg($room, $tile, $rotation, $unit);
+        } else {
+            $out .= $this->wallLengthLabelsSvg($room['outline_m'], $identityPose, $toPx, $unit, []);
+        }
         $out .= $labels;
 
         $labelY = $tile['height'] - self::LABEL_HEIGHT + 20;
         $out .= '<text x="0" y="' . $labelY . '" font-size="13" font-weight="600" fill="' . self::TEXT . '">' . $this->esc($this->displayLabel($room)) . '</text>';
+        if (!$this->planStyle->showMetrics) {
+            return $out;
+        }
         $metrics = sprintf('%s — %s perimeter — %s confidence', UnitFormatter::area($room['floor_area_m2'], $unit), UnitFormatter::length($room['perimeter_m'], $unit), $room['confidence']);
         $out .= '<text x="0" y="' . ($labelY + 16) . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc($metrics) . '</text>';
         $lineY = $labelY + 32;
@@ -804,6 +973,8 @@ SVG;
         $fusion = RoomFusionSolver::solve($rooms);
         $overlapping = $fusion['overlapping'];
         $poses = $fusion['poses'];
+        $oriented = FusionOrientation::apply($rooms, $poses, $this->planStyle->orientation);
+        $poses = $oriented['poses'];
         foreach ($rooms as $i => $room) {
             $pose = $poses[$i];
             foreach ($room['outline_m'] as [$mx, $mz]) {
@@ -913,9 +1084,10 @@ SVG;
         $body .= $labels;
 
         $fusedHeadingDeg = null;
-        foreach ($rooms as $room) {
+        foreach ($rooms as $i => $room) {
             $fusedHeadingDeg = self::roomHeadingDeg($room);
             if ($fusedHeadingDeg !== null) {
+                $fusedHeadingDeg -= rad2deg($poses[$i]['rotationRad']);
                 break;
             }
         }
@@ -925,19 +1097,26 @@ SVG;
 
         $drawingBottomY = $originPxY + $drawingHeight;
         $notesY = $drawingBottomY + 20;
-        $body .= $this->notesSvg($notesLines, self::MARGIN, $notesY);
+        if ($this->planStyle->showNotes) {
+            $body .= $this->notesSvg($notesLines, self::MARGIN, $notesY);
+        }
 
         $summaryY = $notesY + count($notesLines) * self::NOTE_LINE_HEIGHT;
-        $body .= $this->notesSvg($summaryLines, self::MARGIN, $summaryY);
+        if ($this->planStyle->showMetrics) {
+            $body .= $this->notesSvg($summaryLines, self::MARGIN, $summaryY);
+        }
 
         $legendY = $canvasHeight - 30;
-        $body .= '<g font-size="9" fill="' . self::TEXT . '">'
-            . '<circle cx="' . (self::MARGIN + 4) . '" cy="' . $legendY . '" r="4" fill="' . self::DOOR_COLOR . '"/><text x="' . (self::MARGIN + 12) . '" y="' . ($legendY + 3) . '">door</text>'
-            . '<rect x="' . (self::MARGIN + 60) . '" y="' . ($legendY - 4) . '" width="10" height="6" fill="' . self::OPENING_FILL . '" stroke="' . self::WINDOW_COLOR . '"/><text x="' . (self::MARGIN + 74) . '" y="' . ($legendY + 3) . '">window</text>'
-            . '<line x1="' . (self::MARGIN + 130) . '" y1="' . $legendY . '" x2="' . (self::MARGIN + 146) . '" y2="' . $legendY . '" stroke="' . self::WALK_PATH . '" stroke-width="1.5" stroke-dasharray="6,5"/><text x="' . (self::MARGIN + 150) . '" y="' . ($legendY + 3) . '">walk path</text>'
-            . '<rect x="' . (self::MARGIN + 220) . '" y="' . ($legendY - 5) . '" width="8" height="8" fill="none" stroke="' . self::OBJECT . '"/><text x="' . (self::MARGIN + 232) . '" y="' . ($legendY + 3) . '">detected object</text>'
-            . '</g>';
-        $body .= $this->roomTypeLegendSvg($rooms, self::MARGIN, $legendY - 16);
+        if (!$this->planStyle->isFunda) {
+            $body .= '<g font-size="9" fill="' . self::TEXT . '">'
+                . '<circle cx="' . (self::MARGIN + 4) . '" cy="' . $legendY . '" r="4" fill="' . $this->doorColorHex() . '"/><text x="' . (self::MARGIN + 12) . '" y="' . ($legendY + 3) . '">door</text>'
+                . '<rect x="' . (self::MARGIN + 60) . '" y="' . ($legendY - 4) . '" width="10" height="6" fill="' . self::OPENING_FILL . '" stroke="' . self::WINDOW_COLOR . '"/><text x="' . (self::MARGIN + 74) . '" y="' . ($legendY + 3) . '">window</text>'
+                . '<line x1="' . (self::MARGIN + 130) . '" y1="' . $legendY . '" x2="' . (self::MARGIN + 146) . '" y2="' . $legendY . '" stroke="' . self::WALK_PATH . '" stroke-width="1.5" stroke-dasharray="6,5"/><text x="' . (self::MARGIN + 150) . '" y="' . ($legendY + 3) . '">walk path</text>'
+                . '<rect x="' . (self::MARGIN + 220) . '" y="' . ($legendY - 5) . '" width="8" height="8" fill="none" stroke="' . self::OBJECT . '"/><text x="' . (self::MARGIN + 232) . '" y="' . ($legendY + 3) . '">detected object</text>'
+                . '</g>';
+            $body .= $this->roomTypeLegendSvg($rooms, self::MARGIN, $legendY - 16);
+        }
+        $body .= $this->titleBlockSvg($canvasWidth, $canvasHeight - 42);
         $body .= $this->footerSvg($canvasWidth, $canvasHeight - 12);
 
         return $this->wrapSvg($canvasWidth, $canvasHeight, $body);

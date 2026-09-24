@@ -29,6 +29,7 @@ struct RoomTypeGuessOverlay: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                 }
+                .accessibilityIdentifier("roomTypeGuess.confirm")
                 .accessibilityLabel("Confirm room type")
                 .accessibilityHint("Marks this room as \(RoomTypeClassifier.displayName(for: guess.type))")
                 Button {
@@ -37,6 +38,7 @@ struct RoomTypeGuessOverlay: View {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.red)
                 }
+                .accessibilityIdentifier("roomTypeGuess.correct")
                 .accessibilityLabel("Correct room type")
                 .accessibilityHint("Opens a list to pick the right room type")
             }
@@ -57,15 +59,18 @@ struct RoomTypeGuessOverlay: View {
                         onReject(type)
                         isVisible = false
                     }
+                    .accessibilityIdentifier("roomTypeGuess.type.\(type)")
                 }
                 Button("Other") {
                     onReject("other")
                     isVisible = false
                 }
+                .accessibilityIdentifier("roomTypeGuess.type.other")
                 Button("Not sure", role: .cancel) {
                     onReject(nil)
                     isVisible = false
                 }
+                .accessibilityIdentifier("roomTypeGuess.type.notSure")
             }
         }
     }

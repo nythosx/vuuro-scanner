@@ -68,6 +68,7 @@ struct MultiRoomCaptureFlowView: View {
                             }
                         }
                     }
+                    .accessibilityIdentifier("multiCapture.fakeScan")
                     .buttonStyle(.vuuroPrimary)
                     .padding(.top, 12)
                     .frame(maxWidth: 340)
@@ -146,7 +147,9 @@ struct MultiRoomCaptureFlowView: View {
         }
         .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
             Button("Discard", role: .destructive) { onGoBack() }
+                .accessibilityIdentifier("multiCapture.discardConfirm")
             Button("Keep scanning", role: .cancel) {}
+                .accessibilityIdentifier("multiCapture.keepScanning")
         } message: {
             Text("\(coordinator.capturedRooms.count) room(s) captured so far will be lost.")
         }
@@ -156,7 +159,9 @@ struct MultiRoomCaptureFlowView: View {
                 didRequestStopRoom = true
                 coordinator.stopCurrentRoom()
             }
+            .accessibilityIdentifier("multiCapture.finishConfirm")
             Button("Keep scanning", role: .cancel) {}
+                .accessibilityIdentifier("multiCapture.finishKeepScanning")
         } message: {
             Text("\(coordinator.capturedRooms.count) room(s) captured so far will be merged and uploaded.")
         }
@@ -165,16 +170,20 @@ struct MultiRoomCaptureFlowView: View {
         }
         .alert("Which floor?", isPresented: $showMultiFloorPrompt) {
             TextField("e.g. Attic, 1st floor", text: $capturedFloor)
+                .accessibilityIdentifier("multiCapture.floorField")
                 .textInputAutocapitalization(.words)
                 .autocorrectionDisabled()
             Button("Save") {
                 Task { await persistMultiFloor() }
             }
+            .accessibilityIdentifier("multiCapture.floorSave")
             Button("Clear", role: .destructive) {
                 capturedFloor = ""
                 Task { await persistMultiFloor() }
             }
+            .accessibilityIdentifier("multiCapture.floorClear")
             Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("multiCapture.floorCancel")
         } message: {
             Text("Applies to the next room you scan, and to the rest of this session, until you change it.")
         }
@@ -218,12 +227,14 @@ struct MultiRoomCaptureFlowView: View {
                 ) {
                     showDiscardConfirmation = true
                 }
+                .accessibilityIdentifier("multiCapture.cancel")
                 Spacer(minLength: 0)
                 VuuroCaptureTogglePill(isOn: roomTypeGuessOn) {
                     roomTypeGuessOn.toggle()
                     RoomTypeGuessSettings.isEnabled = roomTypeGuessOn
                     VuuroToast.shared.show(roomTypeGuessOn ? "Room-type guessing on" : "Room-type guessing off")
                 }
+                .accessibilityIdentifier("multiCapture.roomTypeGuessToggle")
             }
             .padding(.horizontal, 20)
             .padding(.top, 16)
@@ -271,6 +282,7 @@ struct MultiRoomCaptureFlowView: View {
                     didRequestStopRoom = true
                     coordinator.stopCurrentRoom()
                 }
+                .accessibilityIdentifier("multiCapture.saveAndNext")
 
                 HStack(spacing: 8) {
                     Button {
@@ -289,6 +301,7 @@ struct MultiRoomCaptureFlowView: View {
                         .background(.ultraThinMaterial, in: Capsule())
                         .background(Color.black.opacity(0.4), in: Capsule())
                     }
+                    .accessibilityIdentifier("multiCapture.floor")
                     .buttonStyle(.plain)
                     Spacer()
                 }
@@ -299,10 +312,12 @@ struct MultiRoomCaptureFlowView: View {
                     VuuroRoomsButton(count: coordinator.capturedRooms.count) {
                         showCapturedRoomsList = true
                     }
+                    .accessibilityIdentifier("multiCapture.rooms")
 
                     VuuroFinishSecondaryButton(label: "Finish") {
                         showFinishConfirmation = true
                     }
+                    .accessibilityIdentifier("multiCapture.finish")
                 }
             }
             .padding(.horizontal, 20)
@@ -317,6 +332,7 @@ struct MultiRoomCaptureFlowView: View {
             onConfirm: { coordinator.confirmRoomTypeGuess() },
             onReject: { showCorrectionDialog = true }
         )
+        .accessibilityIdentifier("multiCapture.roomTypeGuessPill")
         .confirmationDialog(
             "What kind of room is this?",
             isPresented: $showCorrectionDialog,
@@ -326,13 +342,16 @@ struct MultiRoomCaptureFlowView: View {
                 Button(RoomTypeClassifier.displayName(for: type)) {
                     coordinator.rejectRoomTypeGuess(correctedTo: type)
                 }
+                .accessibilityIdentifier("multiCapture.roomType.\(type)")
             }
             Button("Other") {
                 coordinator.rejectRoomTypeGuess(correctedTo: "other")
             }
+            .accessibilityIdentifier("multiCapture.roomType.other")
             Button("Not sure", role: .cancel) {
                 coordinator.rejectRoomTypeGuess(correctedTo: nil)
             }
+            .accessibilityIdentifier("multiCapture.roomType.notSure")
         }
     }
 
@@ -631,7 +650,8 @@ struct MultiRoomCaptureFlowView: View {
         PendingUploadStore.clear()
         ScanHistoryStore.shared.updateRoomSummary(
             sessionId: session.id,
-            summary: RoomSummary.text(for: floorPlan.rooms)
+            summary: RoomSummary.text(for: floorPlan.rooms),
+            floorAreaM2: floorPlan.rooms.reduce(0.0) { $0 + $1.floorAreaM2 }
         )
         return (session, floorPlan)
     }
@@ -677,8 +697,10 @@ struct PartialRoomChoiceView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Button("Keep this room", action: onKeep)
+                .accessibilityIdentifier("partialRoom.keep")
                 .buttonStyle(.borderedProminent)
             Button("Discard and rescan", role: .destructive, action: onDiscard)
+                .accessibilityIdentifier("partialRoom.discard")
         }
         .padding()
     }
