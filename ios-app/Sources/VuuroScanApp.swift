@@ -10,6 +10,12 @@ struct VuuroScanApp: App {
     @AppStorage(AppLanguageSettings.storageKey) private var appLanguageRaw: String = AppLanguage.system.rawValue
 
     init() {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-uiTestResetOnboarding") {
+            UserDefaults.standard.removeObject(forKey: OnboardingKeys.hasCompleted)
+            UserDefaults.standard.removeObject(forKey: OnboardingKeys.version)
+        }
+        #endif
         DispatchQueue.global(qos: .utility).async {
             KeychainTokenStore.resetIfReinstalled()
         }

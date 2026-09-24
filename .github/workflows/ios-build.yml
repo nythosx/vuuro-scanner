@@ -91,8 +91,10 @@ jobs:
       matrix:
         include:
           - device: iPhone 16 Pro
+            fallback: '^iPhone \d+ Pro$'
             slug: iphone-16-pro
           - device: iPhone SE (3rd generation)
+            fallback: '^iPhone SE'
             slug: iphone-se-3
     steps:
       - uses: actions/checkout@v4
@@ -129,7 +131,55 @@ jobs:
         working-directory: ios-app
         run: xcodegen generate
 
-      - name: Run unit and UI tests on ${{ matrix.device }}
+      - name: Pick a simulator for ${{ matrix.device }}
+        id: simulator
+        env:
+          WANTED: ${{ matrix.device }}
+          FALLBACK: ${{ matrix.fallback }}
+        run: |
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/devices.json"
+          python3 - "$RUNNER_TEMP/devices.json" <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, re, sys
+          wanted = os.environ["WANTED"]
+          fallback = re.compile(os.environ["FALLBACK"])
+          data = json.load(open(sys.argv[1]))
+          candidates = []
+          for runtime, devices in data["devices"].items():
+              if "iOS" not in runtime:
+                  continue
+              version = tuple(int(p) for p in re.findall(r"\d+", runtime.split("iOS")[-1]))
+              for device in devices:
+                  candidates.append((version, device["name"], device["udid"]))
+          for version, name, udid in sorted(candidates, reverse=True):
+              print(f"available: {name} iOS {'.'.join(map(str, version))}", file=sys.stderr)
+          exact = [c for c in candidates if c[1] == wanted]
+          similar = [c for c in candidates if fallback.search(c[1])]
+          pool = exact or similar
+          if not pool:
+              import subprocess
+              def simctl_json(kind):
+                  return json.loads(subprocess.check_output(["xcrun", "simctl", "list", kind, "-j"]))[kind]
+              runtimes = [r for r in simctl_json("runtimes") if r.get("isAvailable") and r.get("platform", "iOS") == "iOS" and "iOS" in r["name"]]
+              if not runtimes:
+                  sys.exit("No iOS simulator runtime is installed on this runner")
+              runtime = max(runtimes, key=lambda r: tuple(int(p) for p in re.findall(r"\d+", r["version"])))
+              supported = {d["name"]: d["identifier"] for d in runtime.get("supportedDeviceTypes", [])}
+              if not supported:
+                  supported = {d["name"]: d["identifier"] for d in simctl_json("devicetypes")}
+              names = [n for n in supported if n == wanted] or sorted((n for n in supported if fallback.search(n)), reverse=True)
+              if not names:
+                  sys.exit(f"No simulator or device type matches {wanted!r} or {fallback.pattern!r}")
+              udid = subprocess.check_output(["xcrun", "simctl", "create", names[0], supported[names[0]], runtime["identifier"]], text=True).strip()
+              version = tuple(int(p) for p in re.findall(r"\d+", runtime["version"]))
+              pool = [(version, names[0], udid)]
+              print(f"created: {names[0]} on {runtime['name']}", file=sys.stderr)
+          version, name, udid = max(pool, key=lambda c: (c[0], c[1]))
+          print(f"picked: {name} iOS {'.'.join(map(str, version))}", file=sys.stderr)
+          print(f"udid={udid}")
+          print(f"name={name}")
+          PY
+
+      - name: Run unit and UI tests on ${{ steps.simulator.outputs.name }}
         working-directory: ios-app
         env:
           TEST_RUNNER_SCAN_SERVICE_BASE_URL: http://127.0.0.1:8089
@@ -137,7 +187,7 @@ jobs:
           xcodebuild test \
             -project VuuroScan.xcodeproj \
             -scheme VuuroScan \
-            -destination "platform=iOS Simulator,name=${{ matrix.device }},OS=latest" \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}" \
             -derivedDataPath build-tests \
             -resultBundlePath "TestResults-${{ matrix.slug }}.xcresult" \
             CODE_SIGNING_ALLOWED=NO

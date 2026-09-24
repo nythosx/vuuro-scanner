@@ -12,10 +12,11 @@ final class VuuroScanUITests: XCTestCase {
         let environment = ProcessInfo.processInfo.environment
         app.launchEnvironment["SCAN_SERVICE_BASE_URL"] = environment["SCAN_SERVICE_BASE_URL"] ?? "http://127.0.0.1:8089"
         app.launchEnvironment["FAKE_LIDAR_MODE"] = "1"
-        app.launchArguments += [
-            "-hasCompletedOnboarding", onboardingDone ? "YES" : "NO",
-            "-onboardingCompletedVersion", onboardingDone ? "2" : "0",
-        ]
+        if onboardingDone {
+            app.launchArguments += ["-hasCompletedOnboarding", "YES", "-onboardingCompletedVersion", "2"]
+        } else {
+            app.launchArguments += ["-uiTestResetOnboarding"]
+        }
         addUIInterruptionMonitor(withDescription: "System permission") { alert in
             for label in ["Allow While Using App", "Allow Once", "OK", "Allow", "Don’t Allow"] where alert.buttons[label].exists {
                 alert.buttons[label].tap()
@@ -39,6 +40,7 @@ final class VuuroScanUITests: XCTestCase {
     private func type(_ app: XCUIApplication, _ identifier: String, _ text: String) {
         let field = element(app, identifier)
         XCTAssertTrue(field.waitForExistence(timeout: timeout), "\(identifier) never appeared")
+        field.tap()
         field.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
         if let current = field.value as? String, !current.isEmpty, current != field.placeholderValue {
             field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
