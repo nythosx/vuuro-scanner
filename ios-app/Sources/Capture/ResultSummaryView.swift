@@ -178,6 +178,7 @@ struct ResultSummaryView: View {
         } message: {
             Text("This removes the local record on this device. Server data isn't affected.")
         }
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
     }
 
     private struct PreviewImage: Identifiable {

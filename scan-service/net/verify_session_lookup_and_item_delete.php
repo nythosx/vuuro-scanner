@@ -54,6 +54,14 @@ foreach ($listBody['sessions'] ?? [] as $row) {
 }
 check('lookup response never includes access_token', !$hasToken, 'a session row leaked its access_token');
 
+$upper = strtoupper("org-net-tier4-$suffix");
+[$caseStatus, $caseBody] = net_http_json_ex('GET', "$baseUrl/scan-sessions?organisation_id=" . rawurlencode($upper), null, null, ['X-Admin-Api-Key' => $adminApiKey]);
+check('lookup ignores letter case', $caseStatus === 200 && in_array($sessionId, array_column($caseBody['sessions'] ?? [], 'id'), true), "got HTTP $caseStatus");
+[$partialStatus, $partialBody] = net_http_json_ex('GET', "$baseUrl/scan-sessions?property_id=" . rawurlencode("tier4-$suffix"), null, null, ['X-Admin-Api-Key' => $adminApiKey]);
+check('lookup matches part of an ID', $partialStatus === 200 && in_array($sessionId, array_column($partialBody['sessions'] ?? [], 'id'), true), "got HTTP $partialStatus");
+[$wildStatus, $wildBody] = net_http_json_ex('GET', "$baseUrl/scan-sessions?property_id=" . rawurlencode("%"), null, null, ['X-Admin-Api-Key' => $adminApiKey]);
+check('a % in the filter is matched literally, not as a wildcard', $wildStatus === 200 && ($wildBody['sessions'] ?? null) === [], 'a bare % returned sessions');
+
 echo "\n== A single attached photo or note can be deleted without touching the rest ==\n";
 
 net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $fixture], $accessToken);
@@ -146,6 +154,23 @@ $noObjectFixture['objects'] = [];
 net_http_json('POST', "$baseUrl/scan-sessions/{$noObjectSession['id']}/capture", ['raw_capture' => $noObjectFixture], $noObjectSession['access_token']);
 [, , $pngNoObject] = net_http_raw('GET', "$baseUrl/scan-sessions/{$noObjectSession['id']}/export/floorplan.png", null, $noObjectSession['access_token']);
 check('a session with a detected object renders different PNG bytes than one without', $pngBytes !== $pngNoObject);
+
+echo "\n== Retention sweep can be triggered on demand with the admin key ==\n";
+
+[$retentionNoKey, ] = net_http_json_ex('POST', "$baseUrl/admin/run-retention", null, null, []);
+check('run-retention with no admin key is rejected (HTTP 401)', $retentionNoKey === 401, "got HTTP $retentionNoKey");
+[$retentionStatus, $retentionBody] = net_http_json_ex('POST', "$baseUrl/admin/run-retention", null, null, ['X-Admin-Api-Key' => $adminApiKey]);
+check('run-retention with the real admin key succeeds (HTTP 200)', $retentionStatus === 200, "got HTTP $retentionStatus");
+check('run-retention reports how many sessions it purged', is_int($retentionBody['purged'] ?? null), 'purged missing or not an integer');
+$freshSession = net_http_json('POST', "$baseUrl/scan-sessions", [
+    'property_id' => "prop-net-retention-$suffix", 'unit_id' => 'unit-1', 'organisation_id' => 'org-1',
+    'purpose' => 'listing', 'occupied' => false,
+])[1];
+net_http_json_ex('POST', "$baseUrl/admin/run-retention", null, null, ['X-Admin-Api-Key' => $adminApiKey]);
+[$freshStatus, ] = net_http_json('GET', "$baseUrl/scan-sessions/{$freshSession['id']}", null, $freshSession['access_token']);
+check('run-retention does not purge a fresh session', $freshStatus === 200, "got HTTP $freshStatus");
+[$adminPageStatus, ] = net_http_raw('GET', "$baseUrl/admin/", null, null);
+check('the admin panel page is still served on GET', $adminPageStatus === 200, "got HTTP $adminPageStatus");
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {

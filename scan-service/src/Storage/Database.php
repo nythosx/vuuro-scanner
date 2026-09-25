@@ -41,18 +41,30 @@ final class Database
         try {
             $pdo->exec("ALTER TABLE scan_sessions ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''");
         } catch (\PDOException $e) {
+            if (!str_contains($e->getMessage(), 'duplicate column name')) {
+                throw $e;
+            }
         }
         try {
             $pdo->exec("ALTER TABLE idempotency_keys ADD COLUMN request_fingerprint TEXT NOT NULL DEFAULT ''");
         } catch (\PDOException $e) {
+            if (!str_contains($e->getMessage(), 'duplicate column name')) {
+                throw $e;
+            }
         }
         try {
             $pdo->exec("ALTER TABLE scan_sessions ADD COLUMN access_token_hash TEXT NOT NULL DEFAULT ''");
         } catch (\PDOException $e) {
+            if (!str_contains($e->getMessage(), 'duplicate column name')) {
+                throw $e;
+            }
         }
         try {
             $pdo->exec("ALTER TABLE scan_sessions ADD COLUMN default_floor TEXT NOT NULL DEFAULT ''");
         } catch (\PDOException $e) {
+            if (!str_contains($e->getMessage(), 'duplicate column name')) {
+                throw $e;
+            }
         }
         self::hashPlaintextTokens($pdo);
 
@@ -61,7 +73,11 @@ final class Database
 
     private static function hashPlaintextTokens(PDO $pdo): void
     {
+        if ((int) $pdo->query('PRAGMA user_version')->fetchColumn() >= 1) {
+            return;
+        }
         if ($pdo->query("SELECT 1 FROM scan_sessions WHERE access_token <> '' LIMIT 1")->fetchColumn() === false) {
+            $pdo->exec('PRAGMA user_version = 1');
             return;
         }
         $pdo->exec('BEGIN IMMEDIATE');
@@ -71,6 +87,7 @@ final class Database
             foreach ($rows as $row) {
                 $update->execute(['hash' => hash('sha256', $row['access_token']), 'id' => $row['id']]);
             }
+            $pdo->exec('PRAGMA user_version = 1');
             $pdo->exec('COMMIT');
         } catch (\Throwable $e) {
             $pdo->exec('ROLLBACK');

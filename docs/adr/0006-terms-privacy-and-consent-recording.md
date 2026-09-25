@@ -93,3 +93,17 @@ whether local-only agreement recording is sufficient or whether it needs to move
 server-side, and get the legal text professionally translated if launching in the Dutch
 market specifically. None of that blocks using this build for further internal
 development or a non-commercial pilot in the meantime.
+
+## Addendum (2026-09-25): the plaintext-UserDefaults security limit cited above has been closed
+
+The "Context" section above cites, as one of the reasons the Privacy Policy's
+Security section uses deliberately general language, that
+`ios-app/Sources/History/ScanHistoryStore.swift` stores each session's access
+token in plaintext `UserDefaults`, not the Keychain. That limit has since been
+closed (tokens now live in the iOS Keychain; the plaintext field is blanked in
+the persisted blob). The general-language policy wording is still the right
+choice and should not be tightened on the basis of this one fix: server-side
+access tokens are still stored as sha256 hashes only, there is no encryption at
+rest beyond that, and the whole system still runs over plain HTTP locally. The
+specific assumption that motivated the choice has changed; the choice itself
+remains appropriate.

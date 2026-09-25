@@ -704,6 +704,10 @@ private struct RoomCaptureFlowStep: View {
                 summary: RoomSummary.text(for: floorPlan.rooms),
                 floorAreaM2: floorPlan.rooms.reduce(0.0) { $0 + $1.floorAreaM2 }
             )
+            ScanHistoryStore.shared.updateRoomsByFloor(
+                sessionId: session.id,
+                roomsByFloor: CachedFloorSummary.buckets(from: floorPlan.rooms)
+            )
             justCaptured = (session, floorPlan)
         } catch {
             uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)
@@ -721,6 +725,10 @@ private struct RoomCaptureFlowStep: View {
                 sessionId: session.id,
                 summary: RoomSummary.text(for: floorPlan.rooms),
                 floorAreaM2: floorPlan.rooms.reduce(0.0) { $0 + $1.floorAreaM2 }
+            )
+            ScanHistoryStore.shared.updateRoomsByFloor(
+                sessionId: session.id,
+                roomsByFloor: CachedFloorSummary.buckets(from: floorPlan.rooms)
             )
             justCaptured = (session, floorPlan)
         } catch {

@@ -2,7 +2,7 @@
 import RoomPlan
 import simd
 
-struct RoomPlanCaptureExport: Encodable {
+struct RoomPlanCaptureExport: Codable {
     let story: Int
     let floors: [SurfaceExport]
     let walls: [SurfaceExport]
@@ -24,7 +24,7 @@ struct RoomPlanCaptureExport: Encodable {
         case headingDeg = "heading_deg"
     }
 
-    struct SurfaceExport: Encodable {
+    struct SurfaceExport: Codable {
         let identifier: String
         let category: String
         let confidence: String
@@ -34,7 +34,7 @@ struct RoomPlanCaptureExport: Encodable {
         var position: [Double]? = nil
     }
 
-    struct RoomTypeExport: Encodable {
+    struct RoomTypeExport: Codable {
         let guess: String
         let guessSource: String
         var confirmed: String? = nil

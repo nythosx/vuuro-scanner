@@ -109,6 +109,118 @@ final class VuuroScanUITests: XCTestCase {
         XCTAssertFalse(element(app, "result.saveChanges").waitForExistence(timeout: 3))
     }
 
+    func testAttachmentsAddNoteAndFinish() {
+        let app = makeApp()
+        app.launch()
+        startScan(app, entry: "home.scanSingleRoom", property: "prop-ui-attach", unit: "unit-1")
+        tap(app, "capture.fakeScan")
+        tap(app, "anotherRoom.finishUnit")
+
+        let noteEditor = element(app, "attachments.note")
+        XCTAssertTrue(noteEditor.waitForExistence(timeout: timeout), "attachments.note never appeared")
+        noteEditor.tap()
+        noteEditor.typeText("UI test note")
+
+        tap(app, "attachments.finishAndUpload")
+        XCTAssertTrue(element(app, "result.done").waitForExistence(timeout: timeout), "result screen never appeared")
+    }
+
+    func testMissingItemFromResult() {
+        let app = makeApp()
+        app.launch()
+        startScan(app, entry: "home.scanSingleRoom", property: "prop-ui-missing", unit: "unit-1")
+        tap(app, "capture.fakeScan")
+        tap(app, "anotherRoom.finishUnit")
+        finishToResult(app)
+
+        let addMissing = element(app, "roomCard.addMissingItem")
+        XCTAssertTrue(addMissing.waitForExistence(timeout: timeout), "roomCard.addMissingItem never appeared")
+        addMissing.tap()
+
+        let noteField = element(app, "missingItem.note")
+        XCTAssertTrue(noteField.waitForExistence(timeout: timeout), "missingItem.note never appeared")
+        noteField.tap()
+        noteField.typeText("Roof window missed")
+
+        tap(app, "missingItem.save")
+        XCTAssertTrue(element(app, "result.done").waitForExistence(timeout: timeout), "did not return to result after saving missing item")
+    }
+
+    func testSavedReportOpensFromHistory() {
+        let app = makeApp()
+        app.launch()
+        startScan(app, entry: "home.scanSingleRoom", property: "prop-ui-report", unit: "unit-1")
+        tap(app, "capture.fakeScan")
+        tap(app, "anotherRoom.finishUnit")
+        finishToResult(app)
+        tap(app, "result.saveAndReturnHome")
+        tap(app, "home.recentScan")
+
+        let card = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "history.card.")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: timeout), "history card never appeared")
+        card.tap()
+
+        XCTAssertTrue(element(app, "report.close").waitForExistence(timeout: timeout), "report did not open")
+    }
+
+    func testSavedReportObjectEditStartsSaveBar() {
+        let app = makeApp()
+        app.launch()
+        startScan(app, entry: "home.scanSingleRoom", property: "prop-ui-edit", unit: "unit-1")
+        tap(app, "capture.fakeScan")
+        tap(app, "anotherRoom.finishUnit")
+        finishToResult(app)
+        tap(app, "result.saveAndReturnHome")
+        tap(app, "home.recentScan")
+
+        let card = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "history.card.")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: timeout), "history card never appeared")
+        card.tap()
+
+        XCTAssertTrue(element(app, "report.close").waitForExistence(timeout: timeout), "report did not open")
+
+        let toggle = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier ENDSWITH %@", ".include"))
+            .firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: timeout), "no object include toggle appeared on the saved report")
+        toggle.tap()
+
+        XCTAssertTrue(element(app, "report.saveChanges").waitForExistence(timeout: timeout), "saveChanges bar did not appear after toggling an object")
+        tap(app, "report.saveChanges")
+
+        XCTAssertTrue(element(app, "report.close").waitForExistence(timeout: timeout), "did not return to report after saving")
+    }
+
+    func testHomesAddRoomsStartsCapture() {
+        let app = makeApp()
+        app.launch()
+        startScan(app, entry: "home.scanSingleRoom", property: "prop-ui-addrooms", unit: "unit-1")
+        tap(app, "capture.fakeScan")
+        tap(app, "anotherRoom.finishUnit")
+        finishToResult(app)
+        tap(app, "result.saveAndReturnHome")
+        tap(app, "home.recentScan")
+
+        let viewMode = element(app, "history.viewMode")
+        XCTAssertTrue(viewMode.waitForExistence(timeout: timeout), "history.viewMode never appeared")
+        viewMode.buttons["Homes"].tap()
+
+        let homeCard = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "homes.card.")).firstMatch
+        XCTAssertTrue(homeCard.waitForExistence(timeout: timeout), "homes card never appeared")
+        homeCard.tap()
+
+        let addRooms = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "homeDetail.addRooms.")).firstMatch
+        XCTAssertTrue(addRooms.waitForExistence(timeout: timeout), "add-rooms button never appeared")
+        addRooms.tap()
+
+        let addToLatest = element(app, "homeDetail.addToLatestScan")
+        let startNew = element(app, "homeDetail.startNewVisit")
+        XCTAssertTrue(
+            addToLatest.waitForExistence(timeout: timeout) || startNew.waitForExistence(timeout: timeout),
+            "neither add-rooms option appeared"
+        )
+    }
+
     func testHistoryShowsTheHomeAfterAScan() {
         let app = makeApp()
         app.launch()
@@ -122,5 +234,23 @@ final class VuuroScanUITests: XCTestCase {
         XCTAssertTrue(viewMode.waitForExistence(timeout: timeout))
         viewMode.buttons["Homes"].tap()
         XCTAssertTrue(app.staticTexts["prop-ui-homes \u{00B7} unit-1"].waitForExistence(timeout: timeout))
+    }
+
+    func testSavedReportOffersContinueThisScan() {
+        let app = makeApp()
+        app.launch()
+        startScan(app, entry: "home.scanSingleRoom", property: "prop-ui-continue", unit: "unit-1")
+        tap(app, "capture.fakeScan")
+        tap(app, "anotherRoom.finishUnit")
+        finishToResult(app)
+        tap(app, "result.saveAndReturnHome")
+        tap(app, "home.recentScan")
+
+        let card = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "history.card.")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: timeout), "history card never appeared")
+        card.tap()
+
+        tap(app, "report.continueScan")
+        XCTAssertTrue(element(app, "report.continueNewFloor").waitForExistence(timeout: timeout), "continue choices never appeared")
     }
 }

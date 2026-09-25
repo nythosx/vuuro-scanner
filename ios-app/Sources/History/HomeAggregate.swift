@@ -30,11 +30,11 @@ struct FloorGroup: Identifiable {
     let displayName: String?
     let rank: Int
     var sessions: [ScanHistoryEntry]
+    var roomCount: Int
+    var totalAreaM2: Double
 
     var id: String { key ?? "__unknown__" }
 
-    var roomCount: Int { sessions.reduce(0) { $0 + $1.parsedRoomCount } }
-    var totalAreaM2: Double { sessions.reduce(0) { $0 + ($1.cachedFloorAreaM2 ?? 0) } }
     var latestDate: Date { sessions.map(\.createdAt).max() ?? .distantPast }
 }
 
@@ -46,11 +46,15 @@ struct HomeAggregate: Identifiable {
 
     var totalRooms: Int { floors.reduce(0) { $0 + $1.roomCount } }
     var totalAreaM2: Double { floors.reduce(0) { $0 + $1.totalAreaM2 } }
-    var totalSessions: Int { floors.reduce(0) { $0 + $1.sessions.count } }
+    var totalSessions: Int { Set(floors.flatMap { $0.sessions.map(\.sessionId) }).count }
     var latestDate: Date { floors.map(\.latestDate).max() ?? .distantPast }
 
     var mostRecentEntry: ScanHistoryEntry? {
-        floors.flatMap(\.sessions).max { $0.createdAt < $1.createdAt }
+        var seen = Set<String>()
+        return floors
+            .flatMap(\.sessions)
+            .filter { seen.insert($0.sessionId).inserted }
+            .max { $0.createdAt < $1.createdAt }
     }
 }
 
@@ -70,22 +74,67 @@ enum HomeAggregator {
             .sorted { $0.latestDate > $1.latestDate }
     }
 
+    private struct FloorBucket {
+        let normalizedKey: String?
+        let displayName: String
+        let roomCount: Int
+        let areaM2: Double
+    }
+
+    private static func floorBuckets(for entry: ScanHistoryEntry) -> [FloorBucket] {
+        if let perFloor = entry.cachedRoomsByFloor, !perFloor.isEmpty {
+            let sessionFloor = (entry.floor ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return perFloor.map { name, summary in
+                let named = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                let trimmed = named.isEmpty ? sessionFloor : named
+                return FloorBucket(
+                    normalizedKey: trimmed.isEmpty ? nil : trimmed.lowercased(),
+                    displayName: trimmed,
+                    roomCount: summary.roomCount,
+                    areaM2: summary.areaM2
+                )
+            }
+        }
+        let trimmed = (entry.floor ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return [FloorBucket(
+            normalizedKey: trimmed.isEmpty ? nil : trimmed.lowercased(),
+            displayName: trimmed,
+            roomCount: entry.parsedRoomCount,
+            areaM2: entry.cachedFloorAreaM2 ?? 0
+        )]
+    }
+
     private static func groupByFloor(_ entries: [ScanHistoryEntry]) -> [FloorGroup] {
-        var byNormalized: [String: (display: String, sessions: [ScanHistoryEntry])] = [:]
-        var unknowns: [ScanHistoryEntry] = []
+        var byNormalized: [String: (display: String, sessions: [ScanHistoryEntry], roomCount: Int, areaM2: Double)] = [:]
+        var unknownSessions: [ScanHistoryEntry] = []
+        var unknownRoomCount = 0
+        var unknownAreaM2 = 0.0
 
         for entry in entries {
-            let trimmed = (entry.floor ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty {
-                unknowns.append(entry)
-                continue
-            }
-            let normalized = trimmed.lowercased()
-            if var existing = byNormalized[normalized] {
-                existing.sessions.append(entry)
-                byNormalized[normalized] = existing
-            } else {
-                byNormalized[normalized] = (display: trimmed, sessions: [entry])
+            for bucket in floorBuckets(for: entry) {
+                guard let key = bucket.normalizedKey else {
+                    if !unknownSessions.contains(where: { $0.sessionId == entry.sessionId }) {
+                        unknownSessions.append(entry)
+                    }
+                    unknownRoomCount += bucket.roomCount
+                    unknownAreaM2 += bucket.areaM2
+                    continue
+                }
+                if var existing = byNormalized[key] {
+                    if !existing.sessions.contains(where: { $0.sessionId == entry.sessionId }) {
+                        existing.sessions.append(entry)
+                    }
+                    existing.roomCount += bucket.roomCount
+                    existing.areaM2 += bucket.areaM2
+                    byNormalized[key] = existing
+                } else {
+                    byNormalized[key] = (
+                        display: bucket.displayName,
+                        sessions: [entry],
+                        roomCount: bucket.roomCount,
+                        areaM2: bucket.areaM2
+                    )
+                }
             }
         }
 
@@ -94,15 +143,19 @@ enum HomeAggregator {
                 key: key,
                 displayName: value.display,
                 rank: floorRank(key),
-                sessions: value.sessions.sorted { $0.createdAt > $1.createdAt }
+                sessions: value.sessions.sorted { $0.createdAt > $1.createdAt },
+                roomCount: value.roomCount,
+                totalAreaM2: value.areaM2
             )
         }
-        if !unknowns.isEmpty {
+        if !unknownSessions.isEmpty {
             groups.append(FloorGroup(
                 key: nil,
                 displayName: nil,
                 rank: -1000,
-                sessions: unknowns.sorted { $0.createdAt > $1.createdAt }
+                sessions: unknownSessions.sorted { $0.createdAt > $1.createdAt },
+                roomCount: unknownRoomCount,
+                totalAreaM2: unknownAreaM2
             ))
         }
         return groups.sorted { $0.rank > $1.rank }

@@ -31,7 +31,7 @@ struct MissingItemSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("What was missed?") {
+                Section("What is it?") {
                     Picker("Type", selection: $kind) {
                         ForEach(MissingKind.allCases) { k in
                             Text(k.displayName).tag(k)
@@ -43,7 +43,7 @@ struct MissingItemSheet: View {
 
                 Section("Notes") {
                     TextField(
-                        "Describe what the scan missed",
+                        "Damage, an inspection note, or what the scan missed",
                         text: $note,
                         axis: .vertical
                     )
@@ -64,7 +64,7 @@ struct MissingItemSheet: View {
                     }
                 }
             }
-            .navigationTitle("Add missing item")
+            .navigationTitle("Add note or missing item")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

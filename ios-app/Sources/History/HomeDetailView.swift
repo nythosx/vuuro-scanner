@@ -53,7 +53,15 @@ struct HomeDetailView: View {
         .onAppear { reload() }
         .sheet(item: $selectedSession) { entry in
             NavigationStack {
-                ScanResultsReportView(entry: entry) { reload() }
+                ScanResultsReportView(
+                    entry: entry,
+                    onDelete: { reload() },
+                    onContinueScan: { floor in
+                        selectedSession = nil
+                        onAddRooms(.addToScan(entry, floor: floor))
+                        dismiss()
+                    }
+                )
             }
         }
         .confirmationDialog(
@@ -269,8 +277,14 @@ struct HomeDetailView: View {
         )
     }
 
+    @MainActor
     private func reload() {
-        entries = ScanHistoryStore.shared.all()
+        Task {
+            let loaded = await Task.detached(priority: .userInitiated) {
+                ScanHistoryStore.shared.all()
+            }.value
+            entries = loaded
+        }
     }
 
     private static let dateFormatter: DateFormatter = {

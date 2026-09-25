@@ -154,7 +154,7 @@ struct UploadProgressOverlay: View {
         VStack(spacing: 8) {
             ProgressView()
                 .tint(VuuroColor.accent)
-            Text(elapsedSeconds >= stillWorkingAfterSeconds ? "\(message) (\(elapsedSeconds)s)" : message)
+            Text(elapsedSeconds >= stillWorkingAfterSeconds ? "\(message) still trying… (\(elapsedSeconds)s)" : message)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(VuuroColor.textPrimary)
             if let onCancel {

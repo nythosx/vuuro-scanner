@@ -1,6 +1,25 @@
 
 import Foundation
 
+struct CachedFloorSummary: Codable, Equatable {
+    var roomCount: Int
+    var areaM2: Double
+}
+
+extension CachedFloorSummary {
+    static func buckets(from rooms: [FloorPlan.Room]) -> [String: CachedFloorSummary] {
+        var result: [String: CachedFloorSummary] = [:]
+        for room in rooms {
+            let key = (room.floor ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            var existing = result[key] ?? CachedFloorSummary(roomCount: 0, areaM2: 0)
+            existing.roomCount += 1
+            existing.areaM2 += room.floorAreaM2
+            result[key] = existing
+        }
+        return result
+    }
+}
+
 struct ScanHistoryEntry: Codable, Identifiable, Equatable {
     let sessionId: String
     var accessToken: String
@@ -13,6 +32,7 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
     var nickname: String? = nil
     var cachedRoomSummary: String? = nil
     var cachedFloorAreaM2: Double? = nil
+    var cachedRoomsByFloor: [String: CachedFloorSummary]? = nil
     var occupied: Bool = false
     var consentObtained: Bool = false
     var floor: String? = nil
@@ -20,10 +40,10 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
     var id: String { sessionId }
 
     enum CodingKeys: String, CodingKey {
-        case sessionId, accessToken, propertyId, unitId, organisationId, purpose, createdAt, expiresAt, nickname, cachedRoomSummary, cachedFloorAreaM2, occupied, consentObtained, floor
+        case sessionId, accessToken, propertyId, unitId, organisationId, purpose, createdAt, expiresAt, nickname, cachedRoomSummary, cachedFloorAreaM2, cachedRoomsByFloor, occupied, consentObtained, floor
     }
 
-    init(sessionId: String, accessToken: String, propertyId: String, unitId: String, organisationId: String, purpose: ScanPurpose, createdAt: Date, expiresAt: String?, nickname: String? = nil, cachedRoomSummary: String? = nil, cachedFloorAreaM2: Double? = nil, occupied: Bool = false, consentObtained: Bool = false, floor: String? = nil) {
+    init(sessionId: String, accessToken: String, propertyId: String, unitId: String, organisationId: String, purpose: ScanPurpose, createdAt: Date, expiresAt: String?, nickname: String? = nil, cachedRoomSummary: String? = nil, cachedFloorAreaM2: Double? = nil, cachedRoomsByFloor: [String: CachedFloorSummary]? = nil, occupied: Bool = false, consentObtained: Bool = false, floor: String? = nil) {
         self.sessionId = sessionId
         self.accessToken = accessToken
         self.propertyId = propertyId
@@ -35,6 +55,7 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
         self.nickname = nickname
         self.cachedRoomSummary = cachedRoomSummary
         self.cachedFloorAreaM2 = cachedFloorAreaM2
+        self.cachedRoomsByFloor = cachedRoomsByFloor
         self.occupied = occupied
         self.consentObtained = consentObtained
         self.floor = floor
@@ -53,6 +74,7 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
         nickname = try container.decodeIfPresent(String.self, forKey: .nickname)
         cachedRoomSummary = try container.decodeIfPresent(String.self, forKey: .cachedRoomSummary)
         cachedFloorAreaM2 = try container.decodeIfPresent(Double.self, forKey: .cachedFloorAreaM2)
+        cachedRoomsByFloor = try container.decodeIfPresent([String: CachedFloorSummary].self, forKey: .cachedRoomsByFloor)
         occupied = try container.decodeIfPresent(Bool.self, forKey: .occupied) ?? false
         consentObtained = try container.decodeIfPresent(Bool.self, forKey: .consentObtained) ?? false
         floor = try container.decodeIfPresent(String.self, forKey: .floor)

@@ -236,6 +236,8 @@ struct VuuroRoomsButton: View {
             .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(VuuroCapturePressStyle())
+        .accessibilityLabel("\(count) room\(count == 1 ? "" : "s") captured")
+        .accessibilityHint("Review or edit the captured rooms")
     }
 }
 

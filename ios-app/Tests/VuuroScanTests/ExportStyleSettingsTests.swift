@@ -48,4 +48,45 @@ final class ExportStyleSettingsTests: XCTestCase {
         changed.save()
         XCTAssertEqual(ExportStyleSettings.load(), changed)
     }
+
+    func testWalkPathToggleMapsToQueryValue() {
+        var on = settings()
+        on.showWalkPath = true
+        var off = settings()
+        off.showWalkPath = false
+        XCTAssertEqual(query(on)["walk_path"], "1")
+        XCTAssertEqual(query(off)["walk_path"], "0")
+    }
+
+    func testListingPlanIgnoresAllOtherToggles() {
+        var s = settings(planType: .listingPlan, showFurniture: true)
+        s.showWalkPath = true
+        s.roomFill = "white"
+        s.orientation = "longest_horizontal"
+        XCTAssertEqual(query(s), ["style": "funda"])
+    }
+
+    func testRoundTripPreservesEmptyFurnitureCategories() {
+        let original = ExportStyleSettings.load()
+        defer { original.save() }
+        let changed = settings(categories: [])
+        changed.save()
+        XCTAssertEqual(ExportStyleSettings.load().furnitureCategories, [])
+    }
+
+    func testRoundTripPreservesCustomSubset() {
+        let original = ExportStyleSettings.load()
+        defer { original.save() }
+        let changed = settings(categories: ["bed", "sofa"])
+        changed.save()
+        XCTAssertEqual(ExportStyleSettings.load().furnitureCategories, ["bed", "sofa"])
+    }
+
+    func testListingPlanRoundTripsAcrossReloads() {
+        let original = ExportStyleSettings.load()
+        defer { original.save() }
+        let changed = settings(planType: .listingPlan)
+        changed.save()
+        XCTAssertEqual(ExportStyleSettings.load().planType, .listingPlan)
+    }
 }

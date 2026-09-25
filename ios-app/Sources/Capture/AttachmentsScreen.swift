@@ -296,29 +296,36 @@ private struct AttachmentRoomCard: View {
     }
 
     private var noteEditor: some View {
-        ZStack(alignment: .topLeading) {
-            TextEditor(text: $noteDraft)
-                .accessibilityIdentifier("attachments.note")
-                .font(.system(size: 14))
-                .frame(minHeight: 68)
-                .padding(8)
-                .scrollContentBackground(.hidden)
-            if noteDraft.isEmpty {
-                Text("Add notes…")
-                    .font(.system(size: 14))
-                    .foregroundStyle(VuuroColor.textTertiary)
-                    .padding(.top, 16)
-                    .padding(.leading, 13)
-                    .allowsHitTesting(false)
+        VStack(alignment: .leading, spacing: 6) {
+            if notes.count > 1 {
+                Text("\(notes.count) notes attached — editing the first. Open the result screen to see all.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(VuuroColor.warningText)
             }
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $noteDraft)
+                    .accessibilityIdentifier("attachments.note")
+                    .font(.system(size: 14))
+                    .frame(minHeight: 68)
+                    .padding(8)
+                    .scrollContentBackground(.hidden)
+                if noteDraft.isEmpty {
+                    Text("Add notes…")
+                        .font(.system(size: 14))
+                        .foregroundStyle(VuuroColor.textTertiary)
+                        .padding(.top, 16)
+                        .padding(.leading, 13)
+                        .allowsHitTesting(false)
+                }
+            }
+            .background(VuuroColor.bgCard)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(VuuroColor.borderMed, lineWidth: 1.5)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .onChange(of: noteDraft) { _, _ in scheduleNoteSave() }
         }
-        .background(VuuroColor.bgCard)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(VuuroColor.borderMed, lineWidth: 1.5)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .onChange(of: noteDraft) { _, _ in scheduleNoteSave() }
     }
 
     private var photoStrip: some View {
@@ -700,6 +707,7 @@ private struct AttachmentPhotoViewer: View {
                     .background(Color.white.opacity(0.12), in: Circle())
             }
             .accessibilityIdentifier("photoViewer.close")
+            .accessibilityLabel("Close photo")
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
@@ -768,6 +776,7 @@ private struct AttachmentPhotoViewer: View {
                     }
                 }
                 .accessibilityIdentifier("photoViewer.delete")
+                .accessibilityLabel("Delete photo")
                 .buttonStyle(.plain)
                 .disabled(isDeleting)
             }

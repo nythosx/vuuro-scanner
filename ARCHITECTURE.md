@@ -141,10 +141,6 @@ This document serves as a critical, living template designed to equip agents wit
 │   └── README.md               # Local-only (gitignored) — verification
 │                                # status, checklist for whoever opens this
 │                                # in Xcode first
-├── web-viewer/                 # Static HTML/JS dev console driving the real
-│   │                          # Scan Service HTTP API end to end (no direct
-│   │                          # PHP-class or SQLite access) — local-only
-│   └── index.html
 ├── contracts/
 │   └── floorplan.schema.json   # The vendor-neutral FloorPlan contract every
 │                                # capture adapter converts into; the one
@@ -193,7 +189,6 @@ This document serves as a critical, living template designed to equip agents wit
    v
 [FloorPlan contract, per contracts/floorplan.schema.json]
    |
-   +--> consumed by [web-viewer/index.html] (dev console, same public API)
    +--> consumed by the Vuuro rental app later, as an API client (not built here)
 
 [net/verify_*.php] — talks to the live HTTP API only, re-derives expected
@@ -202,16 +197,15 @@ This document serves as a critical, living template designed to equip agents wit
   in-process unit tests) and from the manual appetize.io simulator loop above.
 ```
 
-The Scan Service is the only thing every other component agrees with: `ios-app` produces `raw_capture` JSON and consumes the resulting `FloorPlan`; `web-viewer` drives the same public HTTP API a real client would, with zero special access; the independent net proves the API's behavior from the outside, sharing no code with the adapter/repository/renderer it's checking.
+The Scan Service is the only thing every other component agrees with: `ios-app` produces `raw_capture` JSON and consumes the resulting `FloorPlan`; the independent net proves the API's behavior from the outside, sharing no code with the adapter/repository/renderer it's checking.
 
 ## 3. Core Components
 
 ### 3.1. Frontend
 
-Two client surfaces, neither a web frontend to the Scan Service in the SPA sense:
+One client surface, not a web frontend to the Scan Service in the SPA sense:
 
 - **`ios-app/`** — the real product client (SwiftUI). Guided RoomPlan capture, identity/consent intake, multi-room "unit story" flow, results/export. CI-compiled and appetize.io-simulator-verified; never run on a real device or real LiDAR hardware yet (no Mac/Xcode access on the dev machine).
-- **`web-viewer/`** — a static HTML/JS internal dev console (no build step, no framework) that exercises the same public HTTP API a real client would, using fixture-driven "simulated captures" instead of a real RoomPlan session (no browser API for that). Not a product surface.
 
 ### 3.2. Backend Services
 
@@ -223,7 +217,7 @@ Description: The single backend in this repo. Plain PHP, no framework — `publi
 
 Technologies: PHP 8.1+ (`declare(strict_types=1)` throughout), PDO/SQLite, no framework, no Composer dependency (hand-rolled `autoload.php`).
 
-Deployment: `php -d post_max_size=30M -d upload_max_filesize=26M -d display_errors=0 -S 127.0.0.1:8089 public/index.php` locally, or the repo's `Dockerfile` for a host-independent run (the brief's "no silent production leap" constraint: "local plus CI... prove slices" — not tied to this one Windows machine).
+Deployment: `php -d post_max_size=30M -d upload_max_filesize=26M -d display_errors=0 -S 127.0.0.1:8089 public/index.php` locally (dev only — `php -S` is single-threaded), or the repo's `Dockerfile` (FrankenPHP + Caddy, a real concurrent server, per `scan-service/Dockerfile`) for a host-independent run (the brief's "no silent production leap" constraint: "local plus CI... prove slices" — not tied to this one Windows machine).
 
 #### 3.2.2. Capture Adapter (`src/Adapters/RoomPlanSimulatorAdapter.php`)
 
@@ -269,7 +263,7 @@ Purpose: Sessions (identity, purpose, occupied/consent, access token + expiry), 
 
 Name: FloorPlan contract
 
-Type: JSON Schema file, not a runtime data store, but the thing every component above (adapter output, iOS Models/, web-viewer rendering, the independent net's assertions) is validated against or mirrors by hand.
+Type: JSON Schema file, not a runtime data store, but the thing every component above (adapter output, iOS Models/, the independent net's assertions) is validated against or mirrors by hand.
 
 Purpose: The one vendor-neutral shape every capture provider converts into and every consumer reads from — designed API-first, before any real consumer exists.
 
@@ -288,7 +282,7 @@ Cloud Provider: None. Everything here targets local/CI proof only — no App Sto
 
 Key Services Used: Docker (`scan-service/Dockerfile`, host-independent Scan Service run path). GitHub Actions (`.github/workflows/ios-build.yml`) for the iOS side — a macOS runner generates an Xcode project via XcodeGen and builds `ios-app/` for the Simulator (`compile-check`), then a downstream job produces an ad-hoc-signed IPA.
 
-CI/CD Pipeline: `.github/workflows/ios-build.yml` is the only CI in this repo today. The Scan Service's own "merge gate" (`scan-service/net/verify_*.php` + `scan-service/tests/*_test.php`) is currently run manually per `scan-service/README.md`, not wired into a CI pipeline yet.
+CI/CD Pipeline: `.github/workflows/ios-build.yml` is the iOS-side CI (compile-check, device-compile-check, and simulator tests on a GitHub-hosted macOS runner). `.github/workflows/scan-service-ci.yml` and `.gitlab-ci.yml` are the Scan Service merge gates, both running `scan-service/tests/*_test.php` and the independent `net/verify_*.php` chain — GitLab (self-hosted Windows-shell runner) is where merges actually happen, GitHub Actions mirrors it.
 
 Monitoring & Logging: None beyond the Scan Service's own `access_log` table (authorization attempts, granted/denied) and PHP's own error log. No external logging/monitoring service.
 
@@ -298,7 +292,7 @@ Authentication: Per-session `X-Scan-Access-Token` (random UUID, returned once at
 
 Authorization: Possession of the correct session token, checked with `hash_equals()` everywhere a token is compared. Token expiry + a 7-day `rotate-token` grace window are enforced (`ScanSessionRepository::ROTATE_GRACE_PERIOD_SECONDS`, confirmed with Mark 2026-08-14).
 
-Data Encryption: None in this build — plain HTTP locally, no TLS termination in this repo. A real deployment would need TLS in front of this; not something this repo's ADR claims to have solved. On the iOS side, `ios-app/Sources/History/ScanHistoryStore.swift` stores each remembered session's access token in plaintext UserDefaults, not the Keychain — a known limit flagged in that file's own header, acceptable for this local-pilot window but worth fixing before any real deployment.
+Data Encryption: None in this build — plain HTTP locally, no TLS termination in this repo. A real deployment would need TLS in front of this; not something this repo's ADR claims to have solved. On the iOS side, `ios-app/Sources/History/ScanHistoryStore.swift` stores each remembered session's access token in the iOS Keychain (via `KeychainTokenStore`), with the plaintext `accessToken` field blanked in the local UserDefaults history blob. The plaintext-in-UserDefaults limit this document previously flagged has since been closed.
 
 Key Security Tools/Practices:
 
@@ -326,7 +320,7 @@ Code Quality Tools: None automated yet (no linter/formatter config found in this
 - **Laser-pairing spike** — deliberately deferred with a written rationale and integration sketch; revisit only if a named pilot or Mark asks for ground-truth measurement validation (`docs/adr/0004`).
 - **Real fused multi-room floor plan layout** — blocked on the capture flow moving to one continuous multi-room RoomPlan session per unit rather than one session per room; `outline_m` staying room-local today is the honest data to have either way (`docs/adr/0002`).
 - **Real Vuuro account auth** — the per-session token model is designed to compose underneath a future account system once Vuuro API coupling is decided, not to be replaced wholesale (`docs/adr/0003`).
-- **Scan Service CI** — the net/unit-test merge gate is currently run manually; wiring it into a CI pipeline (mirroring `.github/workflows/ios-build.yml`'s existence for the iOS side) is not yet done.
+- **Scan Service CI** — closed. Both `.github/workflows/scan-service-ci.yml` and `.gitlab-ci.yml` run the full net/unit gate; GitLab is the canonical merge gate. `verify_enterprise_hardening.php` must run last (its rate-limit flood would otherwise starve the other scripts), and `verify_post_body_read_rate_limit.php` is deliberately standalone on a separate port for the same reason.
 
 ## 10. Project Identification
 
@@ -340,7 +334,7 @@ Date of Last Update: 2026-08-27.
 
 ## 11. Glossary / Acronyms
 
-FloorPlan contract: The vendor-neutral JSON shape (`contracts/floorplan.schema.json`) every capture adapter converts into and every consumer (iOS app, web-viewer, future Vuuro rental app) reads from.
+FloorPlan contract: The vendor-neutral JSON shape (`contracts/floorplan.schema.json`) every capture adapter converts into and every consumer (iOS app, future Vuuro rental app) reads from.
 
 Independent net: `scan-service/net/verify_*.php` — HTTP-only scripts that re-derive expected results with their own separately-written logic and never import the code they're checking. The merge gate, per the brief's hard constraint: "You own the net under the work... A real independent check that runs without me, built from different assumptions than the code it guards, and whose verdict you cannot merge past."
 

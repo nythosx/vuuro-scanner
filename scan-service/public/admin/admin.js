@@ -551,7 +551,9 @@ function loadPhotoThumb(photo) {
       img.alt = 'Failed to load';
     });
   } else {
-    img.src = photo.url;
+    wrapper.classList.add('photo-failed');
+    img.alt = 'External photo \u2014 not rendered';
+    img.style.display = 'none';
   }
 }
 

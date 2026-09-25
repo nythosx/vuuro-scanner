@@ -28,6 +28,8 @@ struct MultiRoomCaptureFlowView: View {
     @State private var didStart = false
     @State private var showCorrectionDialog = false
     @State private var capturedFloor: String = ""
+    @State private var resumeOffer: WalkthroughState?
+    @State private var showResumePrompt = false
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
@@ -128,9 +130,17 @@ struct MultiRoomCaptureFlowView: View {
                     guard !didStart else { return }
                     didStart = true
                     capturedFloor = (existingSession?.defaultFloor ?? identity.floor ?? "")
-                    coordinator.start()
                     Task { capturedLocation = await locationProvider.currentLocation() }
                     Task { capturedHeadingDeg = await headingProvider.currentHeadingDeg() }
+                    if let stored = WalkthroughStore.load(),
+                       stored.identity == identity,
+                       stored.session?.id == existingSession?.id,
+                       !stored.rooms.isEmpty {
+                        resumeOffer = stored
+                        showResumePrompt = true
+                    } else {
+                        coordinator.start()
+                    }
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     if newPhase == .background, coordinator.state == .scanning {
@@ -145,9 +155,29 @@ struct MultiRoomCaptureFlowView: View {
         .onChange(of: coordinator.state) { _, state in
             handle(state)
         }
+        .onChange(of: coordinator.capturedRooms.count) { _, _ in
+            persistWalkthroughProgress()
+        }
+        .alert("Resume your walkthrough?", isPresented: $showResumePrompt, presenting: resumeOffer) { offer in
+            Button("Upload \(offer.rooms.count) saved room\(offer.rooms.count == 1 ? "" : "s")") {
+                resumeFromStoredState(offer)
+            }
+            .accessibilityIdentifier("multiCapture.resumeStored")
+            Button("Discard and start new scan", role: .destructive) {
+                WalkthroughStore.clear()
+                resumeOffer = nil
+                coordinator.start()
+            }
+            .accessibilityIdentifier("multiCapture.startFresh")
+        } message: { offer in
+            Text("\(offer.rooms.count) room\(offer.rooms.count == 1 ? " was" : "s were") saved from a walkthrough that was interrupted. Upload them as they are, or discard them to start a new scan.")
+        }
         .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
-            Button("Discard", role: .destructive) { onGoBack() }
-                .accessibilityIdentifier("multiCapture.discardConfirm")
+            Button("Discard", role: .destructive) {
+                WalkthroughStore.clear()
+                onGoBack()
+            }
+            .accessibilityIdentifier("multiCapture.discardConfirm")
             Button("Keep scanning", role: .cancel) {}
                 .accessibilityIdentifier("multiCapture.keepScanning")
         } message: {
@@ -205,10 +235,74 @@ struct MultiRoomCaptureFlowView: View {
         } catch is CancellationError {
         } catch {
             DiagnosticsLog.shared.record("Failed to update default floor (multi-room): \(error.localizedDescription)", category: .error)
+            capturedFloor = existingSession?.defaultFloor ?? identity.floor ?? ""
+            VuuroToast.shared.show("Couldn't save the floor change")
         }
     }
 
 
+
+    @MainActor
+    private func persistWalkthroughProgress() {
+        guard !isFinishingUnit else { return }
+        guard !coordinator.capturedRooms.isEmpty else {
+            WalkthroughStore.clear()
+            return
+        }
+        var storedRooms: [WalkthroughState.StoredRoom] = []
+        for (index, room) in coordinator.capturedRooms.enumerated() {
+            let confirmation = coordinator.roomTypeConfirmations.indices.contains(index) ? coordinator.roomTypeConfirmations[index] : nil
+            let walkPath = coordinator.roomWalkPaths.indices.contains(index) ? coordinator.roomWalkPaths[index] : nil
+            let export = CapturedRoomExporter.export(
+                room,
+                roomTypeConfirmation: confirmation,
+                walkPath: walkPath,
+                headingDeg: capturedHeadingDeg
+            )
+            guard let data = try? JSONEncoder().encode(export) else { continue }
+            storedRooms.append(WalkthroughState.StoredRoom(
+                exportJSON: data,
+                floor: capturedFloor.isEmpty ? nil : capturedFloor,
+                label: "Room \(index + 1)"
+            ))
+        }
+        guard !storedRooms.isEmpty else { return }
+        let state = WalkthroughState(
+            identity: identity,
+            session: existingSession ?? preUploadedSession?.session,
+            rooms: storedRooms,
+            startedAt: Date()
+        )
+        WalkthroughStore.save(state)
+    }
+
+    @MainActor
+    private func resumeFromStoredState(_ state: WalkthroughState) {
+        resumeOffer = nil
+        let exports = state.rooms.compactMap { try? JSONDecoder().decode(RoomPlanCaptureExport.self, from: $0.exportJSON) }
+        guard !exports.isEmpty else {
+            DiagnosticsLog.shared.record("Saved walkthrough could not be read — starting a new scan", category: .error)
+            WalkthroughStore.clear()
+            VuuroToast.shared.show("Couldn't read the saved rooms")
+            coordinator.start()
+            return
+        }
+        if let storedFloor = state.rooms.first?.floor {
+            capturedFloor = storedFloor
+        }
+        uploadTask = Task {
+            let labels = roomLabels(for: exports)
+            uploadProgress.begin(roomLabels: labels)
+            for index in labels.indices {
+                uploadProgress.markUploading(index: index)
+            }
+            guard let result = await submitExports(exports) else { return }
+            for index in labels.indices {
+                uploadProgress.markDone(index: index, areaM2: exports[index].floorAreaM2)
+            }
+            onFinished(result.session, result.floorPlan)
+        }
+    }
 
     private var roomHintText: String {
         let number = coordinator.capturedRooms.count + 1
@@ -529,6 +623,7 @@ struct MultiRoomCaptureFlowView: View {
                 uploadProgress.markDone(index: index, areaM2: exports[index].floorAreaM2)
             }
             try? await Task.sleep(nanoseconds: 250_000_000)
+            WalkthroughStore.clear()
             self.preUploadedSession = nil
             onFinished(preUploadedSession.session, floorPlan)
         } catch is CancellationError {
@@ -595,6 +690,7 @@ struct MultiRoomCaptureFlowView: View {
 
         var pending = PendingUploadState(session: existingSession, identity: identity, captures: captures)
         PendingUploadStore.save(pending)
+        WalkthroughStore.clear()
 
         let session: ScanSessionResponse
         if let existingSession {
@@ -653,6 +749,11 @@ struct MultiRoomCaptureFlowView: View {
             summary: RoomSummary.text(for: floorPlan.rooms),
             floorAreaM2: floorPlan.rooms.reduce(0.0) { $0 + $1.floorAreaM2 }
         )
+        ScanHistoryStore.shared.updateRoomsByFloor(
+            sessionId: session.id,
+            roomsByFloor: CachedFloorSummary.buckets(from: floorPlan.rooms)
+        )
+        WalkthroughStore.clear()
         return (session, floorPlan)
     }
 

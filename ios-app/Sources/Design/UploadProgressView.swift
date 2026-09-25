@@ -10,7 +10,7 @@ struct UploadProgressView: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            ProgressView(elapsedSeconds >= stillWorkingAfterSeconds ? "\(message) (\(elapsedSeconds)s)" : message)
+            ProgressView(elapsedSeconds >= stillWorkingAfterSeconds ? "\(message) still trying… (\(elapsedSeconds)s)" : message)
             if let onCancel {
                 Button("Cancel", role: .cancel, action: onCancel)
                     .accessibilityIdentifier("uploadProgress.cancel")

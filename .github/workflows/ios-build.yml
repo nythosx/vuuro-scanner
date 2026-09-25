@@ -25,7 +25,7 @@ jobs:
     # run" — it does not require the decisions below.
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
@@ -51,7 +51,7 @@ jobs:
       # good for a manual UI smoke test, but has no camera/LiDAR access, so
       # RoomPlan capture itself still can't be exercised there.
       - name: Upload .app build for manual smoke-testing
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: VuuroScan-simulator-app
           path: ios-app/build/Build/Products/Debug-iphonesimulator/VuuroScan.app
@@ -60,7 +60,7 @@ jobs:
   device-compile-check:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
@@ -97,7 +97,7 @@ jobs:
             fallback: '^iPhone SE'
             slug: iphone-se-3
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up PHP for the Scan Service
         uses: shivammathur/setup-php@v2
@@ -194,7 +194,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: test-results-${{ matrix.slug }}
           path: ios-app/TestResults-${{ matrix.slug }}.xcresult
@@ -202,7 +202,7 @@ jobs:
 
       - name: Upload Scan Service log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: scan-service-log-${{ matrix.slug }}
           path: ${{ runner.temp }}/scan-service.log
@@ -219,7 +219,7 @@ jobs:
     if: ${{ vars.IOS_SIGNING_CONFIGURED == 'true' }}
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
@@ -278,7 +278,7 @@ jobs:
             -exportOptionsPlist ExportOptions.plist
 
       - name: Upload IPA artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: VuuroScan-adhoc
           path: ios-app/build/export/VuuroScan.ipa

@@ -5,6 +5,7 @@ import UIKit
 struct ScanResultsReportView: View {
     let entry: ScanHistoryEntry
     var onDelete: (() -> Void)? = nil
+    var onContinueScan: ((String) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
 
@@ -32,6 +33,9 @@ struct ScanResultsReportView: View {
     @State private var saveSuccessVisible = false
     @State private var missingItemTarget: MissingItemTarget?
     @State private var previewImage: PreviewImage?
+    @State private var showContinueChoices = false
+    @State private var showContinueNewFloor = false
+    @State private var continueNewFloorName = ""
 
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
 
@@ -68,6 +72,10 @@ struct ScanResultsReportView: View {
                         saveChangesBar
                     }
 
+                    if onContinueScan != nil, floorPlan != nil {
+                        continueScanButton
+                    }
+
                     accessLogRow
                     actionButtons
 
@@ -85,6 +93,42 @@ struct ScanResultsReportView: View {
         .background(VuuroColor.bgApp)
         .toolbar(.hidden, for: .navigationBar)
         .task { await load() }
+        .confirmationDialog("Continue this scan", isPresented: $showContinueChoices, titleVisibility: .visible) {
+            ForEach(continueFloorOptions, id: \.self) { floor in
+                Button(floor.isEmpty ? "Add rooms" : "Add rooms on \(floor)") {
+                    onContinueScan?(floor)
+                }
+                .accessibilityIdentifier("report.continueFloor.\(floor)")
+            }
+            Button("Add a new floor…") {
+                continueNewFloorName = ""
+                Task {
+                    try? await Task.sleep(nanoseconds: 350_000_000)
+                    showContinueNewFloor = true
+                }
+            }
+            .accessibilityIdentifier("report.continueNewFloor")
+            Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("report.continueCancel")
+        } message: {
+            Text("New rooms are added to this same report.")
+        }
+        .alert("Which floor?", isPresented: $showContinueNewFloor) {
+            TextField("e.g. Attic, 1st floor", text: $continueNewFloorName)
+                .accessibilityIdentifier("report.continueNewFloorField")
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+            Button("Continue") {
+                let trimmed = continueNewFloorName.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+                onContinueScan?(trimmed)
+            }
+            .accessibilityIdentifier("report.continueNewFloorContinue")
+            Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("report.continueNewFloorCancel")
+        } message: {
+            Text("Name the floor you're about to scan.")
+        }
         .sheet(isPresented: $showImageShare) {
             if let shareImageURL {
                 ActivityShareSheet(items: [shareImageURL])
@@ -129,6 +173,7 @@ struct ScanResultsReportView: View {
                 room: target.room,
                 onSaved: { updated in
                     floorPlan = updated
+                    cacheRoomBreakdown(updated)
                     missingItemTarget = nil
                     discardRenderedExports()
                     Task { await loadImage() }
@@ -555,6 +600,7 @@ struct ScanResultsReportView: View {
                 changes: requests
             )
             floorPlan = updated
+            cacheRoomBreakdown(updated)
             pendingObjectChanges.removeAll()
             discardRenderedExports()
             await loadImage()
@@ -565,6 +611,36 @@ struct ScanResultsReportView: View {
         } catch {
             appError = AppError(site: .roomTypeUpdate, underlying: error)
         }
+    }
+
+    private var continueFloorOptions: [String] {
+        var seen = Set<String>()
+        var floors: [String] = []
+        let candidates = [entry.floor ?? ""] + (floorPlan?.rooms.map { $0.floor ?? "" } ?? [])
+        for candidate in candidates {
+            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            if seen.insert(trimmed.lowercased()).inserted {
+                floors.append(trimmed)
+            }
+        }
+        if floors.count > 1 {
+            floors.removeAll { $0.isEmpty }
+        }
+        return floors.sorted { HomeAggregator.floorRank($0) > HomeAggregator.floorRank($1) }
+    }
+
+    private var continueScanButton: some View {
+        Button {
+            showContinueChoices = true
+        } label: {
+            Label("Continue this scan", systemImage: "plus.viewfinder")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.vuuroPrimary)
+        .accessibilityIdentifier("report.continueScan")
+        .accessibilityHint("Scan more rooms or another floor into this report")
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
     }
 
     private var actionButtons: some View {
@@ -585,6 +661,18 @@ struct ScanResultsReportView: View {
         .padding(.top, 4)
     }
 
+    private func cacheRoomBreakdown(_ plan: FloorPlan) {
+        ScanHistoryStore.shared.updateRoomSummary(
+            sessionId: entry.sessionId,
+            summary: RoomSummary.text(for: plan.rooms),
+            floorAreaM2: plan.rooms.reduce(0.0) { $0 + $1.floorAreaM2 }
+        )
+        ScanHistoryStore.shared.updateRoomsByFloor(
+            sessionId: entry.sessionId,
+            roomsByFloor: CachedFloorSummary.buckets(from: plan.rooms)
+        )
+    }
+
     @MainActor
     private func load() async {
         isLoading = true
@@ -592,10 +680,12 @@ struct ScanResultsReportView: View {
 
         let sessionFetch = Task { @MainActor in
             do {
-                floorPlan = try await client.fetchSession(
+                let fetched = try await client.fetchSession(
                     sessionId: entry.sessionId,
                     accessToken: entry.accessToken
                 )
+                floorPlan = fetched
+                cacheRoomBreakdown(fetched)
                 appError = nil
             } catch is CancellationError {
                 DiagnosticsLog.shared.record("Session fetch cancelled for \(entry.sessionId)", category: .info)

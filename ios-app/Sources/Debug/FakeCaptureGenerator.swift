@@ -29,6 +29,16 @@ enum FakeCaptureGenerator {
             )
         }
 
+        let objects = (0..<Int.random(in: 1...2)).map { _ in
+            RoomPlanCaptureExport.SurfaceExport(
+                identifier: UUID().uuidString,
+                category: ["chair", "table", "storage"].randomElement()!,
+                confidence: "high",
+                dimensions: [0.5, 0.5, 0.5],
+                position: [Double.random(in: 0.5...1.5), 0.25, Double.random(in: 0.5...1.5)]
+            )
+        }
+
         return RoomPlanCaptureExport(
             story: 0,
             floors: [floor],
@@ -36,7 +46,7 @@ enum FakeCaptureGenerator {
             doors: [],
             windows: [],
             openings: [],
-            objects: []
+            objects: objects
         )
     }
 

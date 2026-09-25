@@ -72,6 +72,7 @@ struct ImagePreviewView: View {
                     .background(Color.white.opacity(0.12), in: Circle())
             }
             .accessibilityIdentifier("imagePreview.close")
+            .accessibilityLabel("Close image preview")
             .padding(.leading, 20)
             .padding(.top, 16)
         }

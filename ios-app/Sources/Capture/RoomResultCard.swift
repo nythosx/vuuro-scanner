@@ -370,6 +370,7 @@ struct RoomResultCard: View {
                         .background(VuuroColor.danger.opacity(0.10), in: Circle())
                 }
                 .accessibilityIdentifier("roomCard.object.\(key.objectId).delete")
+                .accessibilityLabel("Remove \(displayName)")
                 .buttonStyle(.plain)
             }
         }
@@ -416,7 +417,7 @@ struct RoomResultCard: View {
                 HStack(spacing: 8) {
                     Image(systemName: "plus.circle")
                         .font(.system(size: 14, weight: .semibold))
-                    Text("Add missing item")
+                    Text("Add note or missing item")
                         .font(.system(size: 13, weight: .semibold))
                 }
                 .foregroundStyle(VuuroColor.accent)

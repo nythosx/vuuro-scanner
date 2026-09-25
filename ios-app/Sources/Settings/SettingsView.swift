@@ -145,6 +145,7 @@ struct SettingsView: View {
                 darkModeLocal = newValue
             }
         }
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
     }
 
     private var identity: some View {
@@ -168,6 +169,12 @@ struct SettingsView: View {
             Text("v1.0 · \(shortCommitSHA)")
                 .font(.system(size: 13))
                 .foregroundStyle(VuuroColor.textSecondary)
+            Text("Scan Service: \(BuildInfo.scanServiceBaseURL)")
+                .font(.system(size: 12))
+                .foregroundStyle(VuuroColor.textTertiary)
+                .multilineTextAlignment(.center)
+                .textSelection(.enabled)
+                .accessibilityIdentifier("settings.scanServiceURL")
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 20)

@@ -100,6 +100,7 @@ struct HomeView: View {
             }.value
             recentScan = all.first
         }
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
     }
 
     private func displayName(for entry: ScanHistoryEntry) -> String {

@@ -75,6 +75,16 @@ final class ScanHistoryStore {
         save(entries)
     }
 
+    func updateRoomsByFloor(sessionId: String, roomsByFloor: [String: CachedFloorSummary]?) {
+        lock.lock()
+        defer { lock.unlock() }
+        var entries = readRedacted()
+        guard let index = entries.firstIndex(where: { $0.sessionId == sessionId }) else { return }
+        guard entries[index].cachedRoomsByFloor != roomsByFloor else { return }
+        entries[index].cachedRoomsByFloor = roomsByFloor
+        save(entries)
+    }
+
     private func readRedacted() -> [ScanHistoryEntry] {
         guard let data = defaults.data(forKey: key) else { return [] }
         guard let entries = try? JSONDecoder().decode([ScanHistoryEntry].self, from: data) else {

@@ -126,7 +126,11 @@ struct ScanHistoryView: View {
             NavigationStack {
                 ScanResultsReportView(
                     entry: entry,
-                    onDelete: { reloadEntries() }
+                    onDelete: { reloadEntries() },
+                    onContinueScan: { floor in
+                        selectedEntryForReport = nil
+                        Task { await resumeToAddRooms(entry, floor: floor) }
+                    }
                 )
             }
         }
@@ -212,6 +216,7 @@ struct ScanHistoryView: View {
             }
             .accessibilityIdentifier("history.renameCancel")
         }
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
     }
 
     private var forgetBinding: Binding<Bool> {
@@ -506,7 +511,7 @@ struct ScanHistoryView: View {
         shareCodeSource = ShareCodeItemSource(
             code: code,
             subject: "Vuuro Scan access — \(entry.propertyId) / \(entry.unitId)",
-            messageBody: "Paste this code into Vuuro Scan, under History → \"Add a scan someone shared with you\", to get full access to this scan (view, export, delete). Only share it with someone you trust."
+            messageBody: "Paste this code into Vuuro Scan, under History → \"Add a scan someone shared with you\", to get full access to this scan: view, export, add rooms or floors to continue the walk, and delete. Only share it with someone you trust."
         )
         showQuickShare = true
     }
@@ -601,6 +606,7 @@ struct ScanHistoryView: View {
                 nickname: entry.nickname,
                 cachedRoomSummary: entry.cachedRoomSummary,
                 cachedFloorAreaM2: entry.cachedFloorAreaM2,
+                cachedRoomsByFloor: entry.cachedRoomsByFloor,
                 occupied: entry.occupied,
                 consentObtained: entry.consentObtained,
                 floor: entry.floor
@@ -1065,7 +1071,7 @@ private struct HistoryCard: View {
             Button {
                 onAction(.shareCode)
             } label: {
-                Label("Share access", systemImage: "person.badge.plus")
+                Label("Share access (view and continue)", systemImage: "person.badge.plus")
             }
             .accessibilityIdentifier("history.card.shareAccess")
             Divider()
@@ -1109,7 +1115,7 @@ private struct ImportScanView: View {
                     VuuroHero(
                         greeting: nil,
                         title: "Paste a share code",
-                        subtitle: "Ask the other person for the code from their History."
+                        subtitle: "Ask the other person for the code from their History. Once added, you can view and export the scan, and continue it by adding rooms or floors."
                     )
 
                     ZStack(alignment: .topLeading) {

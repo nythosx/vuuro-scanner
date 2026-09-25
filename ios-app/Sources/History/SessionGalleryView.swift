@@ -145,6 +145,7 @@ struct SessionGalleryView: View {
                         }
                     }
                     .accessibilityIdentifier("gallery.deleteNote.\(note.noteId)")
+                    .accessibilityLabel("Remove this note")
                     .buttonStyle(.plain)
                     .disabled(removingNoteIds.contains(note.noteId))
                 }
@@ -173,6 +174,7 @@ struct SessionGalleryView: View {
                         }
                     }
                     .accessibilityIdentifier("gallery.deletePhoto.\(photo.photoId)")
+                    .accessibilityLabel("Remove this photo")
                     .buttonStyle(.plain)
                     .disabled(removingPhotoIds.contains(photo.photoId))
                 }

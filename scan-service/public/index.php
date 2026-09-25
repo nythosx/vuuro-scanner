@@ -54,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 $adminStaticPath = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-if ($adminStaticPath !== false && ($adminStaticPath === '/admin' || str_starts_with($adminStaticPath, '/admin/'))) {
+if (in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true) && $adminStaticPath !== false && ($adminStaticPath === '/admin' || str_starts_with($adminStaticPath, '/admin/'))) {
     $relative = $adminStaticPath === '/admin' ? 'index.html' : ltrim(substr($adminStaticPath, strlen('/admin/')), '/');
     if ($relative === '') {
         $relative = 'index.html';
@@ -359,8 +359,27 @@ function respond(int $status, array $body): void
 
 function requestScheme(): string
 {
+    $remote = $_SERVER['REMOTE_ADDR'] ?? '';
+    if (is_string($remote) && $remote !== '' && isTrustedProxy($remote)) {
+        $forwarded = $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '';
+        if (is_string($forwarded) && $forwarded !== '') {
+            $first = strtolower(trim(explode(',', $forwarded)[0]));
+            if ($first === 'https' || $first === 'http') {
+                return $first;
+            }
+        }
+    }
     $https = $_SERVER['HTTPS'] ?? '';
     return (is_string($https) && $https !== '' && $https !== 'off') ? 'https' : 'http';
+}
+
+function publicBaseUrl(): string
+{
+    $configured = getenv('SCAN_SERVICE_PUBLIC_BASE_URL');
+    if (is_string($configured) && $configured !== '') {
+        return rtrim($configured, '/');
+    }
+    return requestScheme() . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost');
 }
 
 function respondError(int $status, string $errorCode, string $message, array $extra = []): void
@@ -1179,8 +1198,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#',
     }
 
     $repo->logAccess($sessionId, 'upload_photo', 'stored');
-    $scheme = requestScheme();
-    $url = "{$scheme}://{$_SERVER['HTTP_HOST']}/scan-sessions/{$sessionId}/photo-uploads/{$filename}";
+    $url = publicBaseUrl() . "/scan-sessions/{$sessionId}/photo-uploads/{$filename}";
     respond(201, ['url' => $url, 'photo_upload_id' => $photoUploadId]);
     return;
 }
@@ -1722,8 +1740,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/publish-to-platfo
         return;
     }
 
-    $scheme = requestScheme();
-    $selfBase = "{$scheme}://{$_SERVER['HTTP_HOST']}";
+    $selfBase = publicBaseUrl();
 
     $payload = [
         'event' => 'scan.published',
@@ -1911,8 +1928,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/vuuroscan$#
         $pdfOmitted = true;
     }
 
-    $scheme = requestScheme();
-    $selfBase = "{$scheme}://{$_SERVER['HTTP_HOST']}";
+    $selfBase = publicBaseUrl();
 
     $payload = [
         'format' => 'vuuroscan/1',
@@ -2095,6 +2111,40 @@ if ($method === 'GET' && preg_match('#^/imported-scans/([^/]+)$#', $path, $m)) {
     }
 
     respond(200, $import);
+    return;
+}
+
+if ($method === 'POST' && $path === '/admin/run-retention') {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:run_retention', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':admin_run_retention', 10, 300)) {
+        return;
+    }
+
+    $purged = 0;
+    foreach ($repo->findExpiredBeyondGracePeriod(100) as $expiredId) {
+        $repo->deleteSession($expiredId);
+        deleteSessionPhotoDir($expiredId);
+        $purged++;
+    }
+    foreach (['listing', 'check_in', 'check_out', 'renovation', 'other'] as $purposeToCheck) {
+        $retentionDaysRaw = getenv('SCAN_SERVICE_RETENTION_DAYS_' . strtoupper($purposeToCheck));
+        if ($retentionDaysRaw === false || !ctype_digit(trim((string) $retentionDaysRaw)) || (int) $retentionDaysRaw < 1) {
+            continue;
+        }
+        foreach ($repo->findEarlyPurgeCandidates($purposeToCheck, (int) $retentionDaysRaw, 100) as $expiredId) {
+            $repo->deleteSession($expiredId);
+            deleteSessionPhotoDir($expiredId);
+            $purged++;
+        }
+    }
+
+    respond(200, ['purged' => $purged]);
     return;
 }
 

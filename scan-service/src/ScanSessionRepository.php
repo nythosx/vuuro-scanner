@@ -119,21 +119,26 @@ final class ScanSessionRepository
         return $row ?: null;
     }
 
+    private static function containsPattern(string $value): string
+    {
+        return '%' . addcslashes(trim($value), '\%_') . '%';
+    }
+
     public function findByFilters(?string $propertyId, ?string $unitId, ?string $organisationId, int $limit = 100): array
     {
         $conditions = [];
         $params = [];
         if ($propertyId !== null) {
-            $conditions[] = 'property_id = :property_id';
-            $params['property_id'] = $propertyId;
+            $conditions[] = "property_id LIKE :property_id ESCAPE '\'";
+            $params['property_id'] = self::containsPattern($propertyId);
         }
         if ($unitId !== null) {
-            $conditions[] = 'unit_id = :unit_id';
-            $params['unit_id'] = $unitId;
+            $conditions[] = "unit_id LIKE :unit_id ESCAPE '\'";
+            $params['unit_id'] = self::containsPattern($unitId);
         }
         if ($organisationId !== null) {
-            $conditions[] = 'organisation_id = :organisation_id';
-            $params['organisation_id'] = $organisationId;
+            $conditions[] = "organisation_id LIKE :organisation_id ESCAPE '\'";
+            $params['organisation_id'] = self::containsPattern($organisationId);
         }
 
         $where = $conditions === [] ? '' : 'WHERE ' . implode(' AND ', $conditions);
@@ -757,16 +762,16 @@ final class ScanSessionRepository
         $conditions = [];
         $params = [];
         if ($propertyId !== null) {
-            $conditions[] = 'property_id = :property_id';
-            $params['property_id'] = $propertyId;
+            $conditions[] = "property_id LIKE :property_id ESCAPE '\'";
+            $params['property_id'] = self::containsPattern($propertyId);
         }
         if ($unitId !== null) {
-            $conditions[] = 'unit_id = :unit_id';
-            $params['unit_id'] = $unitId;
+            $conditions[] = "unit_id LIKE :unit_id ESCAPE '\'";
+            $params['unit_id'] = self::containsPattern($unitId);
         }
         if ($organisationId !== null) {
-            $conditions[] = 'organisation_id = :organisation_id';
-            $params['organisation_id'] = $organisationId;
+            $conditions[] = "organisation_id LIKE :organisation_id ESCAPE '\'";
+            $params['organisation_id'] = self::containsPattern($organisationId);
         }
 
         $where = $conditions === [] ? '' : 'WHERE ' . implode(' AND ', $conditions);
