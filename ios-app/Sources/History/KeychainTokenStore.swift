@@ -4,8 +4,9 @@ import Security
 enum KeychainTokenStore {
     private static let service = "com.vuuro.scan.accesstoken"
 
-    static func save(token: String, forSessionId sessionId: String) {
-        guard let data = token.data(using: .utf8) else { return }
+    @discardableResult
+    static func save(token: String, forSessionId sessionId: String) -> Bool {
+        guard let data = token.data(using: .utf8) else { return false }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -24,10 +25,14 @@ enum KeychainTokenStore {
             let updateStatus = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
             if updateStatus != errSecSuccess {
                 DiagnosticsLog.shared.record("Keychain update failed for session \(sessionId): OSStatus \(updateStatus)", category: .error)
+                return false
             }
+            return true
         } else if addStatus != errSecSuccess {
             DiagnosticsLog.shared.record("Keychain save failed for session \(sessionId): OSStatus \(addStatus)", category: .error)
+            return false
         }
+        return true
     }
 
     static func loadToken(forSessionId sessionId: String) -> String? {

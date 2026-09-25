@@ -29,9 +29,12 @@ final class ScanHistoryStore {
     func add(_ entry: ScanHistoryEntry) {
         lock.lock()
         defer { lock.unlock() }
-        KeychainTokenStore.save(token: entry.accessToken, forSessionId: entry.sessionId)
         var redacted = entry
-        redacted.accessToken = ""
+        if entry.accessToken.isEmpty || KeychainTokenStore.save(token: entry.accessToken, forSessionId: entry.sessionId) {
+            redacted.accessToken = ""
+        } else {
+            DiagnosticsLog.shared.record("Keeping the access token for session \(entry.sessionId) in local history because the Keychain refused it", category: .error)
+        }
         var entries = readRedacted()
         entries.removeAll { $0.sessionId == entry.sessionId }
         entries.append(redacted)
