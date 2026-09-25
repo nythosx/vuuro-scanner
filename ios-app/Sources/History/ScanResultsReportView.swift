@@ -64,16 +64,15 @@ struct ScanResultsReportView: View {
                         loadingState
                     } else if let floorPlan {
                         floorPlanCard(floorPlan: floorPlan)
+                        if onContinueScan != nil {
+                            continueScanButton
+                        }
                         roomsSection(floorPlan: floorPlan)
                         unitAttachmentsSection(floorPlan: floorPlan)
                     }
 
                     if !pendingObjectChanges.isEmpty {
                         saveChangesBar
-                    }
-
-                    if onContinueScan != nil, floorPlan != nil {
-                        continueScanButton
                     }
 
                     accessLogRow

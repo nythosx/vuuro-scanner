@@ -31,9 +31,18 @@ final class VuuroScanUITests: XCTestCase {
         app.descendants(matching: .any)[identifier].firstMatch
     }
 
+    private func scrollIntoView(_ app: XCUIApplication, _ target: XCUIElement) {
+        var attempts = 0
+        while !target.isHittable && attempts < 8 {
+            app.swipeUp()
+            attempts += 1
+        }
+    }
+
     private func tap(_ app: XCUIApplication, _ identifier: String) {
         let target = element(app, identifier)
         XCTAssertTrue(target.waitForExistence(timeout: timeout), "\(identifier) never appeared")
+        scrollIntoView(app, target)
         target.tap()
     }
 
@@ -103,6 +112,7 @@ final class VuuroScanUITests: XCTestCase {
         XCTAssertFalse(element(app, "result.saveChanges").exists)
         let planType = element(app, "exportStyle.planType")
         XCTAssertTrue(planType.waitForExistence(timeout: timeout))
+        scrollIntoView(app, planType)
         planType.buttons["Listing plan"].tap()
         XCTAssertTrue(element(app, "result.saveChanges").waitForExistence(timeout: timeout))
         tap(app, "result.discardChanges")
@@ -118,6 +128,7 @@ final class VuuroScanUITests: XCTestCase {
 
         let noteEditor = element(app, "attachments.note")
         XCTAssertTrue(noteEditor.waitForExistence(timeout: timeout), "attachments.note never appeared")
+        scrollIntoView(app, noteEditor)
         noteEditor.tap()
         noteEditor.typeText("UI test note")
 
@@ -135,6 +146,7 @@ final class VuuroScanUITests: XCTestCase {
 
         let addMissing = element(app, "roomCard.addMissingItem")
         XCTAssertTrue(addMissing.waitForExistence(timeout: timeout), "roomCard.addMissingItem never appeared")
+        scrollIntoView(app, addMissing)
         addMissing.tap()
 
         let noteField = element(app, "missingItem.note")
@@ -183,6 +195,7 @@ final class VuuroScanUITests: XCTestCase {
             .matching(NSPredicate(format: "identifier ENDSWITH %@", ".include"))
             .firstMatch
         XCTAssertTrue(toggle.waitForExistence(timeout: timeout), "no object include toggle appeared on the saved report")
+        scrollIntoView(app, toggle)
         toggle.tap()
 
         XCTAssertTrue(element(app, "report.saveChanges").waitForExistence(timeout: timeout), "saveChanges bar did not appear after toggling an object")
