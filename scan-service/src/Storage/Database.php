@@ -73,11 +73,8 @@ final class Database
 
     private static function hashPlaintextTokens(PDO $pdo): void
     {
-        if ((int) $pdo->query('PRAGMA user_version')->fetchColumn() >= 1) {
-            return;
-        }
+        $pdo->exec("CREATE INDEX IF NOT EXISTS idx_scan_sessions_legacy_token ON scan_sessions(id) WHERE access_token <> ''");
         if ($pdo->query("SELECT 1 FROM scan_sessions WHERE access_token <> '' LIMIT 1")->fetchColumn() === false) {
-            $pdo->exec('PRAGMA user_version = 1');
             return;
         }
         $pdo->exec('BEGIN IMMEDIATE');
@@ -87,7 +84,6 @@ final class Database
             foreach ($rows as $row) {
                 $update->execute(['hash' => hash('sha256', $row['access_token']), 'id' => $row['id']]);
             }
-            $pdo->exec('PRAGMA user_version = 1');
             $pdo->exec('COMMIT');
         } catch (\Throwable $e) {
             $pdo->exec('ROLLBACK');
