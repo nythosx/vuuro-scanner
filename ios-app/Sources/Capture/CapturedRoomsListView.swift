@@ -64,7 +64,7 @@ struct CapturedRoomsListView: View {
                 Button("Delete", role: .destructive) {
                     if let id = pendingDeleteId, let index = coordinator.capturedRooms.firstIndex(where: { $0.identifier == id }) {
                         coordinator.removeCapturedRoom(at: index)
-                        VuuroToast.shared.show(String(localized: "Room deleted"))
+                        VuuroToast.shared.show(vuuroLocalized("Room deleted"))
                     }
                     pendingDeleteId = nil
                 }
@@ -89,7 +89,7 @@ struct CapturedRoomsListView: View {
                             coordinator.removeCapturedRoom(at: index)
                         }
                         retryTargetId = nil
-                        VuuroToast.shared.show(String(localized: "Room removed — rescan it now"))
+                        VuuroToast.shared.show(vuuroLocalized("Room removed — rescan it now"))
                         DispatchQueue.main.async {
                             dismiss()
                         }

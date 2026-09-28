@@ -416,6 +416,13 @@ final class FloorPlanPdfRenderer
                     foreach ($this->wrapTextLines($note['text'], 85) as $i => $wrapped) {
                         $add($i === 0 ? "             {$prefix}{$wrapped}" : "                   {$wrapped}", 'sub');
                     }
+                    if ($tags !== []) {
+                        $labels = array_map(
+                            static fn (string $tagValue) => \VuuroScan\InspectionTag::labelFor($tagValue),
+                            $tags
+                        );
+                        $add('             tags: ' . implode(', ', $labels), 'sub');
+                    }
                 }
             }
         }
@@ -433,6 +440,14 @@ final class FloorPlanPdfRenderer
             foreach ($unitNotes as $note) {
                 foreach ($this->wrapTextLines($note['text'], 90) as $i => $wrapped) {
                     $add($i === 0 ? "- {$wrapped}" : "  {$wrapped}", 'sub');
+                }
+                $tags = is_array($note['tags'] ?? null) ? $note['tags'] : [];
+                if ($tags !== []) {
+                    $labels = array_map(
+                        static fn (string $tagValue) => \VuuroScan\InspectionTag::labelFor($tagValue),
+                        $tags
+                    );
+                    $add('  tags: ' . implode(', ', $labels), 'sub');
                 }
             }
         }

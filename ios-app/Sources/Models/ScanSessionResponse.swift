@@ -110,12 +110,14 @@ struct FloorPlan: Codable {
         let text: String
         let roomId: String?
         let createdAt: String
+        let tags: [String]?
 
         enum CodingKeys: String, CodingKey {
             case noteId = "note_id"
             case text
             case roomId = "room_id"
             case createdAt = "created_at"
+            case tags
         }
     }
 

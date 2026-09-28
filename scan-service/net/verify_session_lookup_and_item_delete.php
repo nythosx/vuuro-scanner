@@ -46,6 +46,13 @@ check('lookup with no filter at all is rejected (HTTP 422)', $noFilterStatus ===
 check('lookup by property_id with the real admin key succeeds (HTTP 200)', $listStatus === 200, "got HTTP $listStatus");
 $foundIds = array_column($listBody['sessions'] ?? [], 'id');
 check('lookup finds the session just created', in_array($sessionId, $foundIds, true), 'session id not in result set');
+
+[$recentStatus, $recentBody] = net_http_json_ex('GET', "$baseUrl/admin/recent-identities", null, null, ['X-Admin-Api-Key' => $adminApiKey]);
+check('recent-identities is routed to the API, not the admin static files (HTTP 200)', $recentStatus === 200, "got HTTP $recentStatus");
+check('recent-identities lists the property just created', in_array("prop-net-tier4-$suffix", $recentBody['property_ids'] ?? [], true));
+
+[$recentNoKeyStatus, ] = net_http_json_ex('GET', "$baseUrl/admin/recent-identities", null, null, []);
+check('recent-identities without an admin key is rejected (HTTP 401)', $recentNoKeyStatus === 401, "got HTTP $recentNoKeyStatus");
 $hasToken = false;
 foreach ($listBody['sessions'] ?? [] as $row) {
     if (array_key_exists('access_token', $row)) {

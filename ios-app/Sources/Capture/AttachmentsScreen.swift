@@ -80,7 +80,9 @@ struct AttachmentsScreen: View {
     @ViewBuilder
     private var roomsSection: some View {
         if current.rooms.isEmpty {
-            Text("No rooms captured for this scan.")
+            Text(current.rooms.isEmpty && current.photos.isEmpty && current.notes.isEmpty
+                 ? "Notes-only session. Add notes and photos below."
+                 : "No rooms captured for this scan.")
                 .font(.system(size: 13))
                 .foregroundStyle(VuuroColor.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -113,18 +115,28 @@ struct AttachmentsScreen: View {
         let unitPhotos = current.photos.filter { $0.roomId == nil }
         let unitNotes = current.notes.filter { $0.roomId == nil }
 
-        if !unitPhotos.isEmpty || !unitNotes.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Whole unit")
+        if !unitPhotos.isEmpty || !unitNotes.isEmpty || current.rooms.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(current.rooms.isEmpty ? "Whole session (no rooms)" : "Whole unit")
                     .font(.system(size: 11, weight: .bold))
                     .tracking(0.6)
                     .textCase(.uppercase)
                     .foregroundStyle(VuuroColor.textSecondary)
 
-                RoomAttachmentsList(
+                if unitNotes.count > 1 {
+                    RoomAttachmentsList(
+                        session: session,
+                        photos: [],
+                        notes: Array(unitNotes.dropFirst())
+                    )
+                }
+
+                SessionAttachmentEditor(
                     session: session,
+                    notes: unitNotes,
                     photos: unitPhotos,
-                    notes: unitNotes
+                    onUpdate: { updated in current = updated },
+                    onError: { appError = $0 }
                 )
             }
             .padding(16)
@@ -155,10 +167,12 @@ struct AttachmentsScreen: View {
             .buttonStyle(.vuuroPrimary)
             .disabled(isSaving)
 
-            Button("Scan another room", action: onAddRoom)
-                .accessibilityIdentifier("attachments.scanAnotherRoom")
-                .buttonStyle(.vuuroGhostSmall)
-                .disabled(isSaving)
+            if DeviceCapability.canCaptureRooms {
+                Button("Scan another room", action: onAddRoom)
+                    .accessibilityIdentifier("attachments.scanAnotherRoom")
+                    .buttonStyle(.vuuroGhostSmall)
+                    .disabled(isSaving)
+            }
         }
         .padding(.horizontal, 20)
         .padding(.top, 16)
@@ -184,12 +198,15 @@ private struct AttachmentRoomCard: View {
     @State private var noteDraft: String = ""
     @State private var committedNote: String = ""
     @State private var savedNoteId: String?
+    @State private var selectedTags: Set<InspectionTag> = []
+    @State private var committedTags: Set<InspectionTag> = []
     @State private var isSavingNote = false
     @State private var isUploadingPhoto = false
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var labelSaveTask: Task<Void, Never>?
     @State private var noteSaveTask: Task<Void, Never>?
     @State private var showCameraPicker = false
+    @State private var showCameraDeniedAlert = false
     @State private var showPhotoSourceDialog = false
     @State private var showPhotoPicker = false
     @Environment(\.scenePhase) private var scenePhase
@@ -231,7 +248,7 @@ private struct AttachmentRoomCard: View {
         .shadow(color: VuuroMetrics.cardShadowColor, radius: VuuroMetrics.cardShadowRadius, x: 0, y: 4)
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
-        .onAppear { seedNote() }
+        .onAppear { seedFromDraftOrServer() }
         .onDisappear { flushPendingSaves() }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase != .active {
@@ -239,10 +256,16 @@ private struct AttachmentRoomCard: View {
             }
         }
         .confirmationDialog("Add a photo", isPresented: $showPhotoSourceDialog, titleVisibility: .visible) {
-            Button("Take Photo") {
-                showCameraPicker = true
+            if CameraAccess.canTakePhoto {
+                Button("Take Photo") {
+                    if CameraAccess.isDenied {
+                        showCameraDeniedAlert = true
+                    } else {
+                        showCameraPicker = true
+                    }
+                }
+                .accessibilityIdentifier("attachments.takePhoto")
             }
-            .accessibilityIdentifier("attachments.takePhoto")
             Button("Choose from Library") {
                 showPhotoPicker = true
             }
@@ -263,6 +286,7 @@ private struct AttachmentRoomCard: View {
             )
         }
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoPickerItems, maxSelectionCount: 1, matching: .images)
+        .cameraDeniedAlert(isPresented: $showCameraDeniedAlert, onChooseFromLibrary: { showPhotoPicker = true })
         .onChange(of: photoPickerItems) { _, items in
             guard let item = items.first else { return }
             Task { await uploadPhoto(item) }
@@ -325,6 +349,8 @@ private struct AttachmentRoomCard: View {
             )
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .onChange(of: noteDraft) { _, _ in scheduleNoteSave() }
+            InspectionTagPicker(selected: $selectedTags)
+                .onChange(of: selectedTags) { _, _ in scheduleNoteSave() }
         }
     }
 
@@ -365,12 +391,42 @@ private struct AttachmentRoomCard: View {
         }
     }
 
-    private func seedNote() {
-        guard let first = notes.first else { return }
-        if noteDraft.isEmpty {
+    private func seedFromDraftOrServer() {
+        let serverTags = Set((notes.first?.tags ?? []).compactMap { InspectionTag(rawValue: $0) })
+        let draft = DraftStore.drafts(for: session.id).rooms[room.roomId]
+        if let draft {
+            labelDraft = draft.label
+            committedLabel = room.label
+            noteDraft = draft.note
+            committedNote = notes.first?.text ?? ""
+            savedNoteId = draft.savedNoteId ?? notes.first?.noteId
+            committedTags = serverTags
+            selectedTags = Set(draft.noteTags.compactMap { InspectionTag(rawValue: $0) })
+            return
+        }
+        if let first = notes.first, noteDraft.isEmpty {
             noteDraft = first.text
             committedNote = first.text
             savedNoteId = first.noteId
+            committedTags = serverTags
+            selectedTags = serverTags
+        }
+    }
+
+    private func persistDraft() {
+        var drafts = DraftStore.drafts(for: session.id)
+        drafts.rooms[room.roomId] = RoomDraft(
+            label: labelDraft,
+            note: noteDraft,
+            noteTags: Array(selectedTags).map { $0.rawValue },
+            savedNoteId: savedNoteId
+        )
+        DraftStore.save(drafts, sessionId: session.id)
+    }
+
+    private func clearDraftIfFullySynced() {
+        if labelDraft == committedLabel && noteDraft == committedNote && selectedTags == committedTags {
+            DraftStore.clearRoom(sessionId: session.id, roomId: room.roomId)
         }
     }
 
@@ -379,6 +435,7 @@ private struct AttachmentRoomCard: View {
         labelSaveTask?.cancel()
         let target = labelDraft
         labelSaveTask = Task { @MainActor in
+            persistDraft()
             try? await Task.sleep(nanoseconds: 800_000_000)
             guard !Task.isCancelled else { return }
             await saveLabel(target)
@@ -408,6 +465,7 @@ private struct AttachmentRoomCard: View {
             )
             committedLabel = trimmed
             onUpdate(updated)
+            clearDraftIfFullySynced()
         } catch is CancellationError {
             DiagnosticsLog.shared.record("Label save task was cancelled.", category: .info)
         } catch {
@@ -417,11 +475,12 @@ private struct AttachmentRoomCard: View {
     }
 
     private func scheduleNoteSave() {
-        guard noteDraft != committedNote else { return }
+        guard noteDraft != committedNote || selectedTags != committedTags else { return }
         noteSaveTask?.cancel()
         let target = noteDraft
         let existing = savedNoteId
         noteSaveTask = Task { @MainActor in
+            persistDraft()
             try? await Task.sleep(nanoseconds: 900_000_000)
             guard !Task.isCancelled else { return }
             await saveNote(target, existingId: existing)
@@ -435,10 +494,11 @@ private struct AttachmentRoomCard: View {
         let noteTarget = noteDraft
         let existingNote = savedNoteId
         Task { @MainActor in
+            persistDraft()
             if labelTarget != committedLabel {
                 await saveLabel(labelTarget)
             }
-            if noteTarget != committedNote {
+            if noteTarget != committedNote || selectedTags != committedTags {
                 await saveNote(noteTarget, existingId: existingNote)
             }
         }
@@ -453,26 +513,31 @@ private struct AttachmentRoomCard: View {
         defer { isSavingNote = false }
         do {
             let updated: FloorPlan
+            let tagList = Array(selectedTags)
             if let existingId {
                 updated = try await client.updateNote(
                     sessionId: session.id,
                     accessToken: session.accessToken,
                     noteId: existingId,
-                    text: trimmed
+                    text: trimmed,
+                    tags: tagList
                 )
             } else {
                 updated = try await client.addNote(
                     sessionId: session.id,
                     accessToken: session.accessToken,
                     text: trimmed,
-                    roomId: room.roomId
+                    roomId: room.roomId,
+                    tags: tagList
                 )
             }
             savedNoteId = updated.notes
                 .first(where: { $0.roomId == room.roomId })?
                 .noteId ?? existingId
             committedNote = text
+            committedTags = Set(tagList)
             onUpdate(updated)
+            clearDraftIfFullySynced()
         } catch is CancellationError {
             DiagnosticsLog.shared.record("Note save task was cancelled.", category: .info)
         } catch {
@@ -508,7 +573,7 @@ private struct AttachmentRoomCard: View {
                 roomId: room.roomId
             )
             onUpdate(updated)
-            VuuroToast.shared.show(String(localized: "Photo added"))
+            VuuroToast.shared.show(vuuroLocalized("Photo added"))
         } catch is CancellationError {
         } catch {
             onError(AppError(site: .photoUpload, underlying: error))
@@ -539,7 +604,7 @@ private struct AttachmentRoomCard: View {
                 roomId: room.roomId
             )
             onUpdate(updated)
-            VuuroToast.shared.show(String(localized: "Photo added"))
+            VuuroToast.shared.show(vuuroLocalized("Photo added"))
         } catch is CancellationError {
         } catch {
             onError(AppError(site: .photoUpload, underlying: error))
@@ -595,12 +660,15 @@ struct RoomAttachmentsList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(notes, id: \.noteId) { note in
-                (
-                    Text("Note: ").font(.system(size: 12, weight: .semibold))
-                    + Text(note.text).font(.system(size: 12))
-                )
-                .foregroundStyle(VuuroColor.textPrimary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    (
+                        Text("Note: ").font(.system(size: 12, weight: .semibold))
+                        + Text(note.text).font(.system(size: 12))
+                    )
+                    .foregroundStyle(VuuroColor.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    InspectionTagChips(tags: note.tags ?? [])
+                }
             }
             if !photos.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -815,7 +883,7 @@ private struct AttachmentPhotoViewer: View {
                 photoId: photo.photoId
             )
             PhotoImageCache.shared.remove(for: photo.url)
-            VuuroToast.shared.show(String(localized: "Photo removed"))
+            VuuroToast.shared.show(vuuroLocalized("Photo removed"))
             onDelete(updated)
         } catch {
             deleteError = AppError(site: .photoDelete, underlying: error)
@@ -851,5 +919,357 @@ final class PhotoImageCache {
 
     func clear() {
         entries.removeAllObjects()
+    }
+}
+
+private struct SessionAttachmentEditor: View {
+    let session: ScanSessionResponse
+    let notes: [FloorPlan.Note]
+    var photos: [FloorPlan.Photo] = []
+    let onUpdate: (FloorPlan) -> Void
+    let onError: (AppError) -> Void
+
+    @State private var noteDraft: String = ""
+    @State private var committedNote: String = ""
+    @State private var savedNoteId: String? = nil
+    @State private var selectedTags: Set<InspectionTag> = []
+    @State private var committedTags: Set<InspectionTag> = []
+    @State private var isSavingNote = false
+    @State private var noteSaveTask: Task<Void, Never>? = nil
+    @State private var didSeed = false
+
+    @State private var photoPickerItems: [PhotosPickerItem] = []
+    @State private var showCameraPicker = false
+    @State private var showCameraDeniedAlert = false
+    @State private var showPhotoSourceDialog = false
+    @State private var showPhotoPicker = false
+    @State private var isUploadingPhoto = false
+    @State private var removingPhotoIds: Set<String> = []
+
+    private let client = ScanServiceClient()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Session notes")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(VuuroColor.textSecondary)
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $noteDraft)
+                    .accessibilityIdentifier("attachments.sessionNote")
+                    .font(.system(size: 14))
+                    .frame(minHeight: 68)
+                    .padding(8)
+                    .scrollContentBackground(.hidden)
+                if noteDraft.isEmpty {
+                    Text("Add notes for this session…")
+                        .font(.system(size: 14))
+                        .foregroundStyle(VuuroColor.textTertiary)
+                        .padding(.top, 16)
+                        .padding(.leading, 13)
+                        .allowsHitTesting(false)
+                }
+            }
+            .background(VuuroColor.bgCard)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(VuuroColor.borderMed, lineWidth: 1.5)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .onChange(of: noteDraft) { _, _ in scheduleSave() }
+            InspectionTagPicker(selected: $selectedTags)
+                .onChange(of: selectedTags) { _, _ in scheduleSave() }
+            if isSavingNote {
+                HStack(spacing: 6) {
+                    ProgressView().tint(VuuroColor.accent)
+                    Text("Saving note…")
+                        .font(.system(size: 11))
+                        .foregroundStyle(VuuroColor.textSecondary)
+                }
+            }
+
+            Divider().background(VuuroColor.borderSoft)
+
+            Text("Session photos")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(VuuroColor.textSecondary)
+            photoStrip
+        }
+        .onAppear { seedIfNeeded() }
+        .onDisappear {
+            noteSaveTask?.cancel()
+            flushSave()
+        }
+        .confirmationDialog("Add a photo", isPresented: $showPhotoSourceDialog, titleVisibility: .visible) {
+            if CameraAccess.canTakePhoto {
+                Button("Take Photo") {
+                    if CameraAccess.isDenied {
+                        showCameraDeniedAlert = true
+                    } else {
+                        showCameraPicker = true
+                    }
+                }
+                .accessibilityIdentifier("sessionAttachments.takePhoto")
+            }
+            Button("Choose from Library") { showPhotoPicker = true }
+                .accessibilityIdentifier("sessionAttachments.chooseFromLibrary")
+            Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("sessionAttachments.photoSourceCancel")
+        }
+        .fullScreenCover(isPresented: $showCameraPicker) {
+            CameraPickerView(
+                onImageCaptured: { image in
+                    if let data = image.jpegData(compressionQuality: 0.8) {
+                        Task { await uploadPhotoData(data) }
+                    }
+                },
+                onDismiss: { showCameraPicker = false }
+            )
+        }
+        .photosPicker(isPresented: $showPhotoPicker, selection: $photoPickerItems, maxSelectionCount: 1, matching: .images)
+        .cameraDeniedAlert(isPresented: $showCameraDeniedAlert, onChooseFromLibrary: { showPhotoPicker = true })
+        .onChange(of: photoPickerItems) { _, items in
+            guard let item = items.first else { return }
+            Task { await uploadPhoto(item) }
+        }
+    }
+
+    private var photoStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(photos, id: \.photoId) { photo in
+                    ZStack(alignment: .topTrailing) {
+                        AttachedPhotoThumbnail(session: session, url: photo.url) {}
+                        Button {
+                            Task { await removePhoto(photo.photoId) }
+                        } label: {
+                            if removingPhotoIds.contains(photo.photoId) {
+                                ProgressView().tint(.white).padding(4)
+                            } else {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(5)
+                                    .background(Color.black.opacity(0.7), in: Circle())
+                            }
+                        }
+                        .accessibilityIdentifier("sessionAttachments.removePhoto.\(photo.photoId)")
+                        .buttonStyle(.plain)
+                        .disabled(removingPhotoIds.contains(photo.photoId))
+                    }
+                }
+
+                Button {
+                    showPhotoSourceDialog = true
+                } label: {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(VuuroColor.bgInset)
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(VuuroColor.borderMed, style: StrokeStyle(lineWidth: 2, dash: [4]))
+                        if isUploadingPhoto {
+                            ProgressView().tint(VuuroColor.accent)
+                        } else {
+                            Image(systemName: "plus")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(VuuroColor.textTertiary)
+                        }
+                    }
+                    .frame(width: 64, height: 64)
+                }
+                .accessibilityIdentifier("sessionAttachments.addPhoto")
+                .disabled(isUploadingPhoto)
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func seedIfNeeded() {
+        guard !didSeed else { return }
+        didSeed = true
+        let serverTags = Set((notes.first?.tags ?? []).compactMap { InspectionTag(rawValue: $0) })
+        if let draft = DraftStore.drafts(for: session.id).sessionNote {
+            noteDraft = draft.note
+            committedNote = notes.first?.text ?? ""
+            savedNoteId = draft.savedNoteId ?? notes.first?.noteId
+            committedTags = serverTags
+            selectedTags = Set(draft.noteTags.compactMap { InspectionTag(rawValue: $0) })
+            return
+        }
+        guard let first = notes.first else { return }
+        noteDraft = first.text
+        committedNote = first.text
+        savedNoteId = first.noteId
+        committedTags = serverTags
+        selectedTags = serverTags
+    }
+
+    private func persistDraft() {
+        var drafts = DraftStore.drafts(for: session.id)
+        drafts.sessionNote = SessionNoteDraft(
+            note: noteDraft,
+            noteTags: Array(selectedTags).map { $0.rawValue },
+            savedNoteId: savedNoteId
+        )
+        DraftStore.save(drafts, sessionId: session.id)
+    }
+
+    private func clearDraftIfFullySynced() {
+        if noteDraft == committedNote && selectedTags == committedTags {
+            DraftStore.clearSessionNote(sessionId: session.id)
+        }
+    }
+
+    private func scheduleSave() {
+        guard noteDraft != committedNote || selectedTags != committedTags else { return }
+        noteSaveTask?.cancel()
+        noteSaveTask = Task { @MainActor in
+            persistDraft()
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard !Task.isCancelled else { return }
+            await save()
+        }
+    }
+
+    private func flushSave() {
+        noteSaveTask?.cancel()
+        persistDraft()
+        Task { @MainActor in await save() }
+    }
+
+    @MainActor
+    private func save() async {
+        let trimmed = noteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty && savedNoteId == nil { return }
+        guard !isSavingNote else { return }
+        if trimmed == committedNote && selectedTags == committedTags { return }
+        isSavingNote = true
+        defer { isSavingNote = false }
+        let tagList = Array(selectedTags)
+        do {
+            let updated: FloorPlan
+            if let existingId = savedNoteId {
+                if trimmed.isEmpty {
+                    updated = try await client.deleteNote(
+                        sessionId: session.id,
+                        accessToken: session.accessToken,
+                        noteId: existingId
+                    )
+                    savedNoteId = nil
+                    committedNote = ""
+                    committedTags = []
+                } else {
+                    updated = try await client.updateNote(
+                        sessionId: session.id,
+                        accessToken: session.accessToken,
+                        noteId: existingId,
+                        text: trimmed,
+                        tags: tagList
+                    )
+                    committedNote = trimmed
+                    committedTags = Set(tagList)
+                }
+            } else {
+                updated = try await client.addNote(
+                    sessionId: session.id,
+                    accessToken: session.accessToken,
+                    text: trimmed,
+                    roomId: nil,
+                    tags: tagList
+                )
+                savedNoteId = updated.notes.first(where: { $0.roomId == nil })?.noteId
+                committedNote = trimmed
+                committedTags = Set(tagList)
+            }
+            onUpdate(updated)
+            clearDraftIfFullySynced()
+        } catch is CancellationError {
+        } catch {
+            onError(AppError(site: .noteAdd, underlying: error))
+        }
+    }
+
+    @MainActor
+    private func uploadPhoto(_ item: PhotosPickerItem) async {
+        defer { photoPickerItems = [] }
+        guard !isUploadingPhoto else { return }
+        isUploadingPhoto = true
+        defer { isUploadingPhoto = false }
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self) else {
+                throw PlainError(message: "Couldn't read the selected photo.")
+            }
+            if data.count > 25 * 1024 * 1024 {
+                throw PlainError(message: AppError.Site.photoTooLarge.defaultMessage)
+            }
+            let upload = try await client.uploadPhoto(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                imageData: data,
+                filename: "session.jpg",
+                mimeType: "image/jpeg"
+            )
+            let updated = try await client.addPhoto(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                url: upload.url,
+                caption: "",
+                roomId: nil
+            )
+            onUpdate(updated)
+            VuuroToast.shared.show(vuuroLocalized("Photo added"))
+        } catch is CancellationError {
+        } catch {
+            onError(AppError(site: .photoUpload, underlying: error))
+        }
+    }
+
+    @MainActor
+    private func uploadPhotoData(_ data: Data) async {
+        guard !isUploadingPhoto else { return }
+        isUploadingPhoto = true
+        defer { isUploadingPhoto = false }
+        do {
+            if data.count > 25 * 1024 * 1024 {
+                throw PlainError(message: AppError.Site.photoTooLarge.defaultMessage)
+            }
+            let upload = try await client.uploadPhoto(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                imageData: data,
+                filename: "session.jpg",
+                mimeType: "image/jpeg"
+            )
+            let updated = try await client.addPhoto(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                url: upload.url,
+                caption: "",
+                roomId: nil
+            )
+            onUpdate(updated)
+            VuuroToast.shared.show(vuuroLocalized("Photo added"))
+        } catch is CancellationError {
+        } catch {
+            onError(AppError(site: .photoUpload, underlying: error))
+        }
+    }
+
+    @MainActor
+    private func removePhoto(_ photoId: String) async {
+        guard !removingPhotoIds.contains(photoId) else { return }
+        removingPhotoIds.insert(photoId)
+        defer { removingPhotoIds.remove(photoId) }
+        do {
+            let updated = try await client.deletePhoto(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                photoId: photoId
+            )
+            onUpdate(updated)
+            VuuroToast.shared.show(vuuroLocalized("Photo removed"))
+        } catch is CancellationError {
+        } catch {
+            onError(AppError(site: .photoDelete, underlying: error))
+        }
     }
 }

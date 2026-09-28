@@ -6,8 +6,10 @@ struct HomeView: View {
     let onOpenSettings: () -> Void
     let onOpenHistory: () -> Void
     let onOpenTerms: () -> Void
+    let onResumePendingUpload: () -> Void
 
     @State private var recentScan: ScanHistoryEntry?
+    @State private var hasPendingUpload = false
 
     private static func metaDateFormatter() -> DateFormatter {
         let formatter = DateFormatter()
@@ -41,7 +43,7 @@ struct HomeView: View {
                             badgeIcon: "square",
                             badgeText: "Single room",
                             title: "Scan one room",
-                            subtitle: "A quick capture. One room, one plan.",
+                            subtitle: "One room, one plan. For a quick capture by itself.",
                             action: onStartSingle
                         )
                         .accessibilityIdentifier("home.scanSingleRoom")
@@ -50,13 +52,46 @@ struct HomeView: View {
                             badgeIcon: "square.grid.2x2",
                             badgeText: "Whole unit",
                             title: "Scan a whole unit",
-                            subtitle: "Walk through every room. Everything merges into one floor plan.",
+                            subtitle: "Walk every room. Everything merges into one plan for the unit.",
                             action: onStartMulti
                         )
                         .accessibilityIdentifier("home.scanWholeUnit")
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 12)
+
+                    if hasPendingUpload {
+                        Button(action: onResumePendingUpload) {
+                            HStack(spacing: 10) {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(VuuroColor.accent)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Unfinished upload")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(VuuroColor.textPrimary)
+                                    Text("Tap to resume where you left off")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(VuuroColor.textSecondary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(VuuroColor.textTertiary)
+                            }
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(VuuroColor.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(VuuroColor.accent.opacity(0.30), lineWidth: 1)
+                            )
+                        }
+                        .accessibilityIdentifier("home.pendingUploadBanner")
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 12)
+                    }
 
                     VuuroSectionLabel(text: "Recent activity")
 
@@ -95,12 +130,13 @@ struct HomeView: View {
         }
         .background(VuuroColor.bgApp)
         .task {
-            let all = await Task.detached(priority: .userInitiated) {
-                ScanHistoryStore.shared.all()
+            let (all, pending) = await Task.detached(priority: .userInitiated) {
+                (ScanHistoryStore.shared.all(), PendingUploadStore.load())
             }.value
             recentScan = all.first
+            hasPendingUpload = pending != nil && pending?.skippedAt != nil
         }
-        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        .dynamicTypeSize(...DynamicTypeSize.accessibility3)
     }
 
     private func displayName(for entry: ScanHistoryEntry) -> String {

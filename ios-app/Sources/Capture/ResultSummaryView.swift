@@ -18,6 +18,7 @@ struct ResultSummaryView: View {
     @State private var showPDFPreview = false
     @State private var isFetchingPDF = false
     @State private var showForgetConfirmation = false
+    @State private var showUnsavedChangesAlert = false
     @State private var appError: AppError?
     @State private var saveSuccessVisible = false
     @State private var missingItemTarget: MissingItemTarget?
@@ -52,18 +53,27 @@ struct ResultSummaryView: View {
                 title: "Scan result",
                 leading: { VuuroNavSpacer() },
                 trailing: {
-                    Button("Done", action: onDone)
-                        .accessibilityIdentifier("result.done")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(VuuroColor.accent)
+                    Button("Done") {
+                        if hasPendingChanges {
+                            showUnsavedChangesAlert = true
+                        } else {
+                            onDone()
+                        }
+                    }
+                    .accessibilityIdentifier("result.done")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(VuuroColor.accent)
+                    .disabled(isSavingChanges)
                 }
             )
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     summaryHero
-                    floorPlanCard
-                    ExportStyleSection(style: $exportStyle)
+                    if !currentFloorPlan.rooms.isEmpty {
+                        floorPlanCard
+                        ExportStyleSection(style: $exportStyle)
+                    }
                     ForEach(currentFloorPlan.rooms, id: \.roomId) { room in
                         RoomResultCard(
                             room: room,
@@ -161,7 +171,7 @@ struct ResultSummaryView: View {
                     missingItemTarget = nil
                     discardRenderedExports()
                     Task { await loadImage() }
-                    VuuroToast.shared.show("Missing item added")
+                    VuuroToast.shared.show(vuuroLocalized("Missing item added"))
                 },
                 onCancel: { missingItemTarget = nil }
             )
@@ -178,7 +188,29 @@ struct ResultSummaryView: View {
         } message: {
             Text("This removes the local record on this device. Server data isn't affected.")
         }
-        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        .alert("Unsaved changes", isPresented: $showUnsavedChangesAlert) {
+            Button("Save and leave") {
+                Task {
+                    appError = nil
+                    await saveChanges()
+                    if appError == nil {
+                        onDone()
+                    }
+                }
+            }
+            .accessibilityIdentifier("result.unsavedSaveAndLeave")
+            Button("Discard and leave", role: .destructive) {
+                pendingObjectChanges.removeAll()
+                exportStyle = savedExportStyle
+                onDone()
+            }
+            .accessibilityIdentifier("result.unsavedDiscardAndLeave")
+            Button("Stay", role: .cancel) {}
+                .accessibilityIdentifier("result.unsavedStay")
+        } message: {
+            Text("You have unsaved edits on this scan.")
+        }
+        .dynamicTypeSize(...DynamicTypeSize.accessibility3)
     }
 
     private struct PreviewImage: Identifiable {
@@ -244,7 +276,7 @@ struct ResultSummaryView: View {
             }
             .frame(width: 64, height: 64)
 
-            Text(currentFloorPlan.rooms.count == 1 ? "Room captured" : "Unit captured")
+            Text(summaryTitle)
                 .font(.system(size: 28, weight: .bold))
                 .tracking(-0.6)
                 .foregroundStyle(VuuroColor.textPrimary)
@@ -258,8 +290,19 @@ struct ResultSummaryView: View {
         .padding(.bottom, 20)
     }
 
+    private var summaryTitle: String {
+        let count = currentFloorPlan.rooms.count
+        if count == 0 { return vuuroLocalized("Notes-only session") }
+        return vuuroLocalized(count == 1 ? "Room captured" : "Unit captured")
+    }
+
     private var summarySubtitle: String {
         let count = currentFloorPlan.rooms.count
+        if count == 0 {
+            let notes = currentFloorPlan.notes.count
+            let photos = currentFloorPlan.photos.count
+            return "\(notes) note\(notes == 1 ? "" : "s") \u{00B7} \(photos) photo\(photos == 1 ? "" : "s")"
+        }
         let roomsText = "\(count) room\(count == 1 ? "" : "s")"
         let areaText = String(format: "%.1f m\u{00B2} total", totalAreaM2)
         return "\(roomsText) \u{00B7} \(areaText)"
@@ -413,10 +456,19 @@ struct ResultSummaryView: View {
     private var actionButtons: some View {
         VStack(spacing: 10) {
             Button("Save & return home") {
-                onDone()
+                Task {
+                    appError = nil
+                    if hasPendingChanges {
+                        await saveChanges()
+                    }
+                    if appError == nil {
+                        onDone()
+                    }
+                }
             }
             .accessibilityIdentifier("result.saveAndReturnHome")
             .buttonStyle(.vuuroPrimary)
+            .disabled(isSavingChanges)
 
             Button("Delete this scan", role: .destructive) {
                 showForgetConfirmation = true
@@ -430,7 +482,7 @@ struct ResultSummaryView: View {
 
     @MainActor
     private func loadImage() async {
-        guard floorPlanImage == nil, !isLoadingImage else { return }
+        guard !currentFloorPlan.rooms.isEmpty, floorPlanImage == nil, !isLoadingImage else { return }
         isLoadingImage = true
         defer { isLoadingImage = false }
 

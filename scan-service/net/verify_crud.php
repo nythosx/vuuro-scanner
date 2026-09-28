@@ -190,6 +190,87 @@ check('UPDATE note with no tags field leaves existing tags untouched', $untouche
 check('UPDATE note with an unknown tag value is rejected (HTTP 422)', $updateNoteBadTagStatus === 422, "got HTTP $updateNoteBadTagStatus");
 echo "\n";
 
+echo "\n== Rotate token (share-revoke path) ==\n";
+
+[, $revokeSeed] = net_http_json('POST', "$baseUrl/scan-sessions", [
+    'property_id' => "prop-revoke-$suffix", 'unit_id' => "unit-revoke-$suffix", 'organisation_id' => "org-revoke-$suffix",
+    'purpose' => 'listing', 'occupied' => false,
+]);
+$revokeId = $revokeSeed['id'];
+$oldRevokeToken = $revokeSeed['access_token'];
+
+[$rotateStatus, $rotated] = net_http_json('POST', "$baseUrl/scan-sessions/$revokeId/rotate-token", null, $oldRevokeToken);
+check('rotate-token succeeds for share-revoke (HTTP 200)', $rotateStatus === 200, "got HTTP $rotateStatus");
+check('rotate-token returns a different token', ($rotated['access_token'] ?? '') !== $oldRevokeToken);
+
+[$oldTokenStatus, ] = net_http_json('GET', "$baseUrl/scan-sessions/$revokeId", null, $oldRevokeToken);
+check('the old (previously shared) token no longer works after rotate', $oldTokenStatus === 401, "got HTTP $oldTokenStatus");
+
+echo "\n== Notes-only session ==\n";
+
+[, $noteOnlySession] = net_http_json('POST', "$baseUrl/scan-sessions", [
+    'property_id' => "prop-no-$suffix", 'unit_id' => "unit-no-$suffix", 'organisation_id' => "org-no-$suffix",
+    'purpose' => 'listing', 'occupied' => false,
+]);
+$noteOnlyId = $noteOnlySession['id'];
+$noteOnlyToken = $noteOnlySession['access_token'];
+
+[$markStatus, $emptyPlan] = net_http_json('POST', "$baseUrl/scan-sessions/$noteOnlyId/note-only", null, $noteOnlyToken);
+check('POST note-only returns HTTP 200', $markStatus === 200, "got HTTP $markStatus");
+check('note-only floor plan has zero rooms', count($emptyPlan['rooms'] ?? []) === 0, 'got ' . count($emptyPlan['rooms'] ?? []));
+check('capture_provider is note_only', ($emptyPlan['capture_provider'] ?? null) === 'note_only');
+
+[$noteAttachStatus, $afterNote] = net_http_json('POST', "$baseUrl/scan-sessions/$noteOnlyId/notes", ['text' => 'notes-only note', 'tags' => ['damage']], $noteOnlyToken);
+check('a note can be attached after mark note-only (HTTP 201)', $noteAttachStatus === 201, "got HTTP $noteAttachStatus");
+$noteHasRoomIdKey = array_key_exists('room_id', $afterNote['notes'][0] ?? []);
+$noteRoomIdValue = $noteHasRoomIdKey ? $afterNote['notes'][0]['room_id'] : 'KEY_MISSING';
+check('the attached note is stored against the session, not a room', $noteHasRoomIdKey && $noteRoomIdValue === null, 'key_present=' . ($noteHasRoomIdKey ? 'yes' : 'no') . ' value=' . json_encode($noteRoomIdValue));
+
+[$noteOnlyPdfStatus, , $noteOnlyPdf] = net_http_raw('GET', "$baseUrl/scan-sessions/$noteOnlyId/export/floorplan.pdf", null, $noteOnlyToken);
+check('a notes-only session still exports a PDF (HTTP 200)', $noteOnlyPdfStatus === 200, "got HTTP $noteOnlyPdfStatus");
+check('the PDF lists the whole-session note tags', str_contains((string) $noteOnlyPdf, 'tags: Damage'), 'tag line not found in PDF');
+
+[$noteOnlyPngStatus, $noteOnlyPngBody] = net_http_json('GET', "$baseUrl/scan-sessions/$noteOnlyId/export/floorplan.png", null, $noteOnlyToken);
+check('PNG export of a notes-only session explains there is no floor plan (HTTP 422, no_floor_plan_geometry)', $noteOnlyPngStatus === 422 && ($noteOnlyPngBody['error'] ?? null) === 'no_floor_plan_geometry', "got HTTP $noteOnlyPngStatus " . json_encode($noteOnlyPngBody['error'] ?? null));
+
+echo "\n== Tenant self-service deletion request ==\n";
+
+[, $delReqSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
+    'property_id' => "prop-del-$suffix", 'unit_id' => "unit-del-$suffix", 'organisation_id' => "org-del-$suffix",
+    'purpose' => 'check_out', 'occupied' => false,
+]);
+$delReqId = $delReqSession['id'];
+$delReqToken = $delReqSession['access_token'];
+
+[$delReqStatus, $delReqBody] = net_http_json('POST', "$baseUrl/scan-sessions/$delReqId/request-deletion", null, $delReqToken);
+check('POST request-deletion returns HTTP 200', $delReqStatus === 200, "got HTTP $delReqStatus");
+check('response says requested: true', ($delReqBody['requested'] ?? null) === true);
+check('response reports a 7-day grace period', ($delReqBody['grace_period_days'] ?? null) === 7);
+check('deletion_requested_at is stamped', is_string($delReqBody['deletion_requested_at'] ?? null) && $delReqBody['deletion_requested_at'] !== '');
+
+[$noAuthDelReq, ] = net_http_json('POST', "$baseUrl/scan-sessions/$delReqId/request-deletion");
+check('request-deletion without a token is rejected (HTTP 401)', $noAuthDelReq === 401, "got HTTP $noAuthDelReq");
+
+[$stillThereStatus, ] = net_http_json('GET', "$baseUrl/scan-sessions/$delReqId", null, $delReqToken);
+check('the session still reads back during the grace period (HTTP 200)', $stillThereStatus === 200, "got HTTP $stillThereStatus");
+
+[$delStatusCode, $delStatus] = net_http_json('GET', "$baseUrl/scan-sessions/$delReqId/deletion-request", null, $delReqToken);
+check('deletion-request status reads back as requested (HTTP 200)', $delStatusCode === 200 && ($delStatus['requested'] ?? null) === true, "got HTTP $delStatusCode");
+$expectedPurgeAfter = gmdate('c', strtotime($delReqBody['deletion_requested_at'] ?? 'now') + 7 * 86400);
+check('purge_after is the request time plus the 7-day grace period', ($delStatus['purge_after'] ?? null) === $expectedPurgeAfter, 'got ' . json_encode($delStatus['purge_after'] ?? null));
+
+[$noAuthStatusCode, ] = net_http_json('GET', "$baseUrl/scan-sessions/$delReqId/deletion-request");
+check('deletion-request status without a token is rejected (HTTP 401)', $noAuthStatusCode === 401, "got HTTP $noAuthStatusCode");
+
+[$cancelCode, $cancelBody] = net_http_json('POST', "$baseUrl/scan-sessions/$delReqId/cancel-deletion", null, $delReqToken);
+check('cancel-deletion succeeds and clears the request (HTTP 200)', $cancelCode === 200 && ($cancelBody['requested'] ?? null) === false && ($cancelBody['deletion_requested_at'] ?? null) === '', "got HTTP $cancelCode " . json_encode($cancelBody));
+
+[, $afterCancel] = net_http_json('GET', "$baseUrl/scan-sessions/$delReqId/deletion-request", null, $delReqToken);
+check('after cancel, the status reads back as not requested', ($afterCancel['requested'] ?? null) === false);
+
+[$reRequestCode, $reRequestBody] = net_http_json('POST', "$baseUrl/scan-sessions/$delReqId/request-deletion", null, $delReqToken);
+check('a cancelled request can be made again', $reRequestCode === 200 && ($reRequestBody['requested'] ?? null) === true, "got HTTP $reRequestCode");
+
 echo count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

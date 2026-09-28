@@ -244,6 +244,39 @@ struct ScanServiceClient {
         return try await post(path: "/scan-sessions/\(sessionId)/rooms", body: body, accessToken: accessToken, timeoutSeconds: 90)
     }
 
+    struct RequestDeletionResponse: Decodable {
+        let requested: Bool
+        let deletionRequestedAt: String
+        let purgeAfter: String?
+        let gracePeriodDays: Int
+
+        enum CodingKeys: String, CodingKey {
+            case requested
+            case deletionRequestedAt = "deletion_requested_at"
+            case purgeAfter = "purge_after"
+            case gracePeriodDays = "grace_period_days"
+        }
+    }
+
+    func fetchDeletionStatus(sessionId: String, accessToken: String) async throws -> RequestDeletionResponse {
+        try await get(path: "/scan-sessions/\(sessionId)/deletion-request", accessToken: accessToken)
+    }
+
+    func cancelSessionDeletion(sessionId: String, accessToken: String) async throws -> RequestDeletionResponse {
+        struct Body: Encodable {}
+        return try await post(path: "/scan-sessions/\(sessionId)/cancel-deletion", body: Body(), accessToken: accessToken)
+    }
+
+    func markNoteOnly(sessionId: String, accessToken: String) async throws -> FloorPlan {
+        struct Body: Encodable {}
+        return try await post(path: "/scan-sessions/\(sessionId)/note-only", body: Body(), accessToken: accessToken)
+    }
+
+    func requestSessionDeletion(sessionId: String, accessToken: String) async throws -> RequestDeletionResponse {
+        struct Body: Encodable {}
+        return try await post(path: "/scan-sessions/\(sessionId)/request-deletion", body: Body(), accessToken: accessToken)
+    }
+
     func fetchSession(sessionId: String, accessToken: String) async throws -> FloorPlan {
         let response: SessionOrFloorPlanResponse = try await get(path: "/scan-sessions/\(sessionId)", accessToken: accessToken)
         guard let floorPlan = response.floorPlan else {

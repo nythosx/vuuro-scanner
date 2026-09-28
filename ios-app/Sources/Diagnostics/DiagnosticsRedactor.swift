@@ -9,6 +9,7 @@ enum DiagnosticsRedactor {
     private static let bearer = try! NSRegularExpression(pattern: #"(?i)(Bearer\s+)([^\s"']+)"#)
     private static let shareCode = try! NSRegularExpression(pattern: #"VUURO-SCAN-1:[A-Za-z0-9+/=_-]+"#)
     private static let opaque = try! NSRegularExpression(pattern: #"[A-Za-z0-9_+=-]{32,}"#)
+    private static let standardBase64 = try! NSRegularExpression(pattern: #"[A-Za-z0-9+/]{40,}={0,2}"#)
     private static let uuid = try! NSRegularExpression(
         pattern: #"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"#
     )
@@ -21,6 +22,7 @@ enum DiagnosticsRedactor {
         result = replace(keyedSecret, in: result, template: "$1\(placeholder)")
         result = replace(bearer, in: result, template: "$1\(placeholder)")
         result = replace(shareCode, in: result, template: "VUURO-SCAN-1:\(placeholder)")
+        result = replace(standardBase64, in: result, template: placeholder)
         return redactOpaqueTokens(result)
     }
 

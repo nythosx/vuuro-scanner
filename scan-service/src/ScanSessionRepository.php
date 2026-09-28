@@ -177,6 +177,65 @@ final class ScanSessionRepository
         return array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'id');
     }
 
+    public function requestDeletion(string $sessionId): array
+    {
+        $now = gmdate('c');
+        $stmt = $this->db->prepare(
+            "UPDATE scan_sessions SET deletion_requested_at = :now WHERE id = :id AND deletion_requested_at = ''"
+        );
+        $stmt->execute(['now' => $now, 'id' => $sessionId]);
+        return $this->find($sessionId);
+    }
+
+    public function cancelDeletion(string $sessionId): array
+    {
+        $stmt = $this->db->prepare("UPDATE scan_sessions SET deletion_requested_at = '' WHERE id = :id");
+        $stmt->execute(['id' => $sessionId]);
+        return $this->find($sessionId);
+    }
+
+    public function findTenantDeletionCandidates(int $graceDays = 7, int $limit = 20): array
+    {
+        $cutoff = gmdate('c', time() - $graceDays * 86400);
+        $stmt = $this->db->prepare(
+            "SELECT id FROM scan_sessions WHERE deletion_requested_at != '' AND deletion_requested_at < :cutoff LIMIT :limit"
+        );
+        $stmt->bindValue(':cutoff', $cutoff, PDO::PARAM_STR);
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        return array_column($stmt->fetchAll(PDO::FETCH_ASSOC), 'id');
+    }
+
+    public function createNoteOnlyFloorPlan(string $sessionId): array
+    {
+        return $this->withWriteLock(function () use ($sessionId) {
+            $session = $this->find($sessionId);
+            if ($session === null) {
+                throw new \RuntimeException("No such session $sessionId.");
+            }
+            $existing = $this->findFloorPlan($sessionId);
+            if ($existing !== null) {
+                return $existing;
+            }
+            $floorPlan = [
+                'scan_session_id' => $sessionId,
+                'property_id' => $session['property_id'],
+                'unit_id' => $session['unit_id'],
+                'organisation_id' => $session['organisation_id'],
+                'capture_provider' => 'note_only',
+                'captured_at' => gmdate('c'),
+                'measurement_basis' => 'no_geometry_note_only',
+                'purpose' => $session['purpose'],
+                'rooms' => [],
+                'photos' => [],
+                'notes' => [],
+                'capture_location' => null,
+            ];
+            $this->saveFloorPlan($sessionId, $floorPlan);
+            return $floorPlan;
+        });
+    }
+
     public function findEarlyPurgeCandidates(string $purpose, int $retentionDays, int $limit = 20): array
     {
         $cutoff = gmdate('c', time() - $retentionDays * 86400);
@@ -754,6 +813,34 @@ final class ScanSessionRepository
             'purpose' => $record['purpose'],
             'signature_status' => $record['signature_status'],
             'signature_algorithm' => $record['signature_algorithm'],
+        ];
+    }
+
+    public function findRecentIdentities(int $limit = 100): array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT property_id, unit_id, organisation_id FROM scan_sessions ORDER BY created_at DESC LIMIT :limit'
+        );
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $properties = [];
+        $units = [];
+        $orgs = [];
+        foreach ($rows as $row) {
+            $prop = (string) ($row['property_id'] ?? '');
+            $unit = (string) ($row['unit_id'] ?? '');
+            $org = (string) ($row['organisation_id'] ?? '');
+            if ($prop !== '' && !in_array($prop, $properties, true)) $properties[] = $prop;
+            if ($unit !== '' && !in_array($unit, $units, true)) $units[] = $unit;
+            if ($org !== '' && !in_array($org, $orgs, true)) $orgs[] = $org;
+        }
+
+        return [
+            'property_ids' => array_slice($properties, 0, 20),
+            'unit_ids' => array_slice($units, 0, 20),
+            'organisation_ids' => array_slice($orgs, 0, 20),
         ];
     }
 

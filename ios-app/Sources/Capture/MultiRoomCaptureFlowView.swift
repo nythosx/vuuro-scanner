@@ -26,6 +26,7 @@ struct MultiRoomCaptureFlowView: View {
     @State private var preUploadedSession: (session: ScanSessionResponse, floorPlan: FloorPlan)?
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
     @State private var didStart = false
+    @State private var cameraDenied = CameraAccess.isDenied
     @State private var showCorrectionDialog = false
     @State private var capturedFloor: String = ""
     @State private var resumeOffer: WalkthroughState?
@@ -48,6 +49,8 @@ struct MultiRoomCaptureFlowView: View {
         Group {
             if !DeviceCapability.isRoomPlanSupported && !debugFakeCaptureActive {
                 UnsupportedDeviceScreen(onGoBack: onGoBack)
+            } else if DeviceCapability.isRoomPlanSupported && cameraDenied {
+                CameraAccessDeniedScreen(onGoBack: onGoBack, onAccessRestored: { cameraDenied = false })
             } else if !DeviceCapability.isRoomPlanSupported && !isUploading {
                 #if DEBUG
                 VuuroCenterView {
@@ -141,6 +144,18 @@ struct MultiRoomCaptureFlowView: View {
                     } else {
                         coordinator.start()
                     }
+                }
+                .onChange(of: coordinator.cameraFeedMissing) { _, missing in
+                    guard missing else { return }
+                    onError(AppError(site: .captureFailed, underlying: PlainError(message: vuuroLocalized("The camera didn't start. Close any other app using the camera, then tap Try again. Rooms you already finished are kept."))), existingSession)
+                }
+                .task(id: didRequestStopRoom) {
+                    guard didRequestStopRoom else { return }
+                    try? await Task.sleep(nanoseconds: 45_000_000_000)
+                    guard !Task.isCancelled, didRequestStopRoom, coordinator.state == .scanning else { return }
+                    DiagnosticsLog.shared.record("Save & next / Finish got no result from RoomPlan within 45s — surfacing an error instead of spinning", category: .error)
+                    didRequestStopRoom = false
+                    onError(AppError(site: .captureFailed, underlying: PlainError(message: vuuroLocalized("Finishing this room took too long. Rooms you already finished are kept — tap Try again to pick up from there."))), existingSession)
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     if newPhase == .background, coordinator.state == .scanning {
@@ -236,7 +251,7 @@ struct MultiRoomCaptureFlowView: View {
         } catch {
             DiagnosticsLog.shared.record("Failed to update default floor (multi-room): \(error.localizedDescription)", category: .error)
             capturedFloor = existingSession?.defaultFloor ?? identity.floor ?? ""
-            VuuroToast.shared.show("Couldn't save the floor change")
+            VuuroToast.shared.show(vuuroLocalized("Couldn't save the floor change"))
         }
     }
 
@@ -283,7 +298,7 @@ struct MultiRoomCaptureFlowView: View {
         guard !exports.isEmpty else {
             DiagnosticsLog.shared.record("Saved walkthrough could not be read — starting a new scan", category: .error)
             WalkthroughStore.clear()
-            VuuroToast.shared.show("Couldn't read the saved rooms")
+            VuuroToast.shared.show(vuuroLocalized("Couldn't read the saved rooms"))
             coordinator.start()
             return
         }
@@ -326,7 +341,7 @@ struct MultiRoomCaptureFlowView: View {
                 VuuroCaptureTogglePill(isOn: roomTypeGuessOn) {
                     roomTypeGuessOn.toggle()
                     RoomTypeGuessSettings.isEnabled = roomTypeGuessOn
-                    VuuroToast.shared.show(roomTypeGuessOn ? "Room-type guessing on" : "Room-type guessing off")
+                    VuuroToast.shared.show(vuuroLocalized(roomTypeGuessOn ? "Room-type guessing on" : "Room-type guessing off"))
                 }
                 .accessibilityIdentifier("multiCapture.roomTypeGuessToggle")
             }

@@ -27,6 +27,9 @@ struct ScanResultsReportView: View {
 
     @State private var showForgetConfirmation = false
     @State private var showServerDeleteConfirmation = false
+    @State private var showDeletionRequestConfirmation = false
+    @State private var isRequestingDeletion = false
+    @State private var deletionStatus: ScanServiceClient.RequestDeletionResponse?
 
     @State private var pendingObjectChanges: [ObjectChangeKey: PendingObjectChange] = [:]
     @State private var isSavingChanges = false
@@ -36,6 +39,7 @@ struct ScanResultsReportView: View {
     @State private var showContinueChoices = false
     @State private var showContinueNewFloor = false
     @State private var continueNewFloorName = ""
+    @State private var showUnsavedChangesAlert = false
 
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
 
@@ -63,8 +67,10 @@ struct ScanResultsReportView: View {
                     if isLoading {
                         loadingState
                     } else if let floorPlan {
-                        floorPlanCard(floorPlan: floorPlan)
-                        if onContinueScan != nil {
+                        if !floorPlan.rooms.isEmpty {
+                            floorPlanCard(floorPlan: floorPlan)
+                        }
+                        if onContinueScan != nil && DeviceCapability.canCaptureRooms {
                             continueScanButton
                         }
                         roomsSection(floorPlan: floorPlan)
@@ -176,7 +182,7 @@ struct ScanResultsReportView: View {
                     missingItemTarget = nil
                     discardRenderedExports()
                     Task { await loadImage() }
-                    VuuroToast.shared.show("Missing item added")
+                    VuuroToast.shared.show(vuuroLocalized("Missing item added"))
                 },
                 onCancel: { missingItemTarget = nil }
             )
@@ -204,13 +210,50 @@ struct ScanResultsReportView: View {
         } message: {
             Text("This permanently deletes the session's rooms, photos, and notes. This cannot be undone.")
         }
+        .alert("Request deletion?", isPresented: $showDeletionRequestConfirmation) {
+            Button("Request deletion", role: .destructive) {
+                Task { await requestDeletion() }
+            }
+            .accessibilityIdentifier("report.requestDeletionConfirm")
+            Button("Cancel", role: .cancel) {}
+                .accessibilityIdentifier("report.requestDeletionCancel")
+        } message: {
+            Text("This flags the scan for deletion. It will be removed after a 7-day grace period. Useful for tenants asking for their data to be deleted without immediate admin action.")
+        }
+        .alert("Unsaved changes", isPresented: $showUnsavedChangesAlert) {
+            Button("Save and close") {
+                Task {
+                    appError = nil
+                    await saveObjectChanges()
+                    if appError == nil {
+                        dismiss()
+                    }
+                }
+            }
+            .accessibilityIdentifier("report.unsavedSaveAndClose")
+            Button("Discard and close", role: .destructive) {
+                pendingObjectChanges.removeAll()
+                dismiss()
+            }
+            .accessibilityIdentifier("report.unsavedDiscardAndClose")
+            Button("Stay", role: .cancel) {}
+                .accessibilityIdentifier("report.unsavedStay")
+        } message: {
+            Text("You have unsaved edits on this scan.")
+        }
     }
 
     private var navBar: some View {
         VuuroNavBar(
             title: navTitle,
             leading: {
-                VuuroNavButton("Close") { dismiss() }
+                VuuroNavButton("Close") {
+                    if pendingObjectChanges.isEmpty {
+                        dismiss()
+                    } else {
+                        showUnsavedChangesAlert = true
+                    }
+                }
                     .accessibilityIdentifier("report.close")
             },
             trailing: {
@@ -644,6 +687,44 @@ struct ScanResultsReportView: View {
 
     private var actionButtons: some View {
         VStack(spacing: 10) {
+            if let deletionStatus, deletionStatus.requested {
+                Text(deletionRequestedText(deletionStatus))
+                    .font(.system(size: 12))
+                    .foregroundStyle(VuuroColor.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("report.deletionRequestedNotice")
+                Button {
+                    Task { await cancelDeletionRequest() }
+                } label: {
+                    if isRequestingDeletion {
+                        ProgressView().tint(VuuroColor.textPrimary)
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        Label("Cancel deletion request", systemImage: "arrow.uturn.backward.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .accessibilityIdentifier("report.cancelDeletionRequest")
+                .buttonStyle(.vuuroGhostSmall)
+                .disabled(isRequestingDeletion)
+            } else {
+                Button {
+                    showDeletionRequestConfirmation = true
+                } label: {
+                    if isRequestingDeletion {
+                        ProgressView().tint(VuuroColor.textPrimary)
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        Label("Request deletion (tenant)", systemImage: "person.crop.circle.badge.xmark")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .accessibilityIdentifier("report.requestDeletion")
+                .buttonStyle(.vuuroGhostSmall)
+                .disabled(isRequestingDeletion)
+            }
+
             Button("Forget this scan", role: .destructive) {
                 showForgetConfirmation = true
             }
@@ -695,13 +776,61 @@ struct ScanResultsReportView: View {
         let imageFetch = Task { @MainActor in
             await loadImage()
         }
+        let deletionFetch = Task { @MainActor in
+            await loadDeletionStatus()
+        }
         await sessionFetch.value
         await imageFetch.value
+        await deletionFetch.value
+    }
+
+    @MainActor
+    private func loadDeletionStatus() async {
+        guard !entry.accessToken.isEmpty else { return }
+        do {
+            deletionStatus = try await client.fetchDeletionStatus(
+                sessionId: entry.sessionId,
+                accessToken: entry.accessToken
+            )
+        } catch is CancellationError {
+        } catch {
+            DiagnosticsLog.shared.record(
+                "Deletion status fetch failed for \(entry.sessionId): \(error.localizedDescription)",
+                category: .error
+            )
+        }
+    }
+
+    private func deletionRequestedText(_ status: ScanServiceClient.RequestDeletionResponse) -> String {
+        guard let purgeAfter = status.purgeAfter,
+              let date = ISO8601DateFormatter().date(from: purgeAfter) else {
+            return String(format: vuuroLocalized("Deletion requested. This scan is removed from the server after a %d-day grace period."), status.gracePeriodDays)
+        }
+        let formatted = date.formatted(date: .abbreviated, time: .shortened)
+        return String(format: vuuroLocalized("Deletion requested. This scan is removed from the server after %@."), formatted)
+    }
+
+    @MainActor
+    private func cancelDeletionRequest() async {
+        guard !isRequestingDeletion else { return }
+        isRequestingDeletion = true
+        defer { isRequestingDeletion = false }
+        do {
+            deletionStatus = try await client.cancelSessionDeletion(
+                sessionId: entry.sessionId,
+                accessToken: entry.accessToken
+            )
+            VuuroToast.shared.show(vuuroLocalized("Deletion request cancelled"))
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .historyServerDelete, underlying: error)
+        }
     }
 
     @MainActor
     private func loadImage() async {
         if floorPlanImage != nil { return }
+        if let floorPlan, floorPlan.rooms.isEmpty { return }
 
         imageFailed = false
         let alreadyCached = FloorPlanImageCache.shared.cachedData(
@@ -808,6 +937,24 @@ struct ScanResultsReportView: View {
         } catch is CancellationError {
         } catch {
             appError = AppError(site: .resultPDFLoad, underlying: error)
+        }
+    }
+
+    @MainActor
+    private func requestDeletion() async {
+        guard !isRequestingDeletion else { return }
+        isRequestingDeletion = true
+        defer { isRequestingDeletion = false }
+        do {
+            let result = try await client.requestSessionDeletion(
+                sessionId: entry.sessionId,
+                accessToken: entry.accessToken
+            )
+            deletionStatus = result
+            VuuroToast.shared.show(String(format: vuuroLocalized("Deletion requested — removed after %d days"), result.gracePeriodDays))
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .historyServerDelete, underlying: error)
         }
     }
 

@@ -175,6 +175,21 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
 | DELETE | `/scan-sessions/{id}` | Delete the session and everything attached to it (floor plan, photos, notes, access log). |
 | GET | `/scan-sessions?property_id=&unit_id=&organisation_id=` | Look up sessions by any combination of those three filters — the only way to recover "what scans exist for this property" without already holding a session's id/token. Gated behind an `X-Admin-Api-Key` header matching `SCAN_SERVICE_ADMIN_API_KEY`; disabled entirely (always `401`) if that env var isn't set. Never returns `access_token`. |
 
+
+## Retention defaults by purpose
+
+Early purge is opt-in per purpose. Set the matching `SCAN_SERVICE_RETENTION_DAYS_<PURPOSE>` env var to a positive integer to enable it; leave it empty to disable early purge for that purpose. Values used as defaults in `.env.example`:
+
+| Purpose | Days | Rationale |
+| --- | --- | --- |
+| `listing` | 90 | Listing lifecycle, short tail after delisting |
+| `check_in` | 365 | Move-in evidence, kept through tenancy |
+| `check_out` | 30 | Move-out evidence, short dispute window |
+| `renovation` | 365 | Project reference, kept for the year |
+| `other` | 180 | Conservative middle ground |
+
+Purge runs opportunistically on every tenth session creation and on demand via `POST /admin/run-retention` (admin key required).
+
 ## Known limits
 
 - **Single-instance runtime**: the app itself is still a single PHP process handling

@@ -247,7 +247,7 @@ struct IdentityIntakeScreen: View {
                 )
             }
         }
-        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        .dynamicTypeSize(...DynamicTypeSize.accessibility3)
     }
 
     private func suggestionChips(_ values: [String], onPick: @escaping (String) -> Void) -> some View {

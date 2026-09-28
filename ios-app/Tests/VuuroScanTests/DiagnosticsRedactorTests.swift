@@ -84,6 +84,17 @@ final class DiagnosticsRedactorTests: XCTestCase {
         XCTAssertFalse(redacted.contains(blob))
     }
 
+    func testStandardBase64BlobWithSlashesIsRedacted() {
+        var bytes = Data((0..<63).map { _ in UInt8.random(in: 0...255) })
+        bytes.append(contentsOf: [0xFF, 0xFF, 0xFF])
+        let blob = bytes.base64EncodedString()
+        XCTAssertTrue(blob.contains("/"))
+        let redacted = DiagnosticsRedactor.redact("payload \(blob) end")
+        XCTAssertFalse(redacted.contains(blob))
+        XCTAssertTrue(redacted.hasPrefix("payload "))
+        XCTAssertTrue(redacted.hasSuffix(" end"))
+    }
+
     func testBareUUIDTokenWithoutPrefixSurvivesRedaction() {
         let bareToken = "3f2b8c1e-9a4d-4e6b-8c2f-1d5e7a9b0c3d"
         let text = "Authorization attempt with \(bareToken)"

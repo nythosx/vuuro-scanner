@@ -74,7 +74,7 @@ struct HomeDetailView: View {
             presenting: addTarget
         ) { target in
             if let latest = home?.mostRecentEntry {
-                Button("Add to latest scan (one report)") {
+                Button("Continue this home (add rooms to the latest scan)") {
                     onAddRooms(.addToScan(latest, floor: target.floor))
                     dismiss()
                 }

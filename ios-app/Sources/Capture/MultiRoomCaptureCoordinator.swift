@@ -85,14 +85,60 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     let arSession = ARSession()
     private var captureSession: RoomCaptureSession?
     private let liveUpdateThrottle = RoomLiveUpdateThrottle()
+    private let viewDelegate = RoomCaptureScreenViewDelegate()
+    private var pendingRun = false
+    private var isRunning = false
+    private var cameraWatchdog: Task<Void, Never>?
+    @Published private(set) var cameraFeedMissing = false
 
-    func attach(to session: RoomCaptureSession) {
-        captureSession = session
-        session.delegate = self
+    lazy var captureView: RoomCaptureView = {
+        let view = RoomCaptureView(frame: .zero, arSession: arSession)
+        view.delegate = viewDelegate
+        view.captureSession.delegate = self
+        captureSession = view.captureSession
+        return view
+    }()
+
+    func captureViewWindowDidChange() {
+        runIfReady()
+    }
+
+    func tearDownIfDetached() {
+        guard captureView.window == nil else { return }
+        cameraWatchdog?.cancel()
+        pendingRun = false
+        stopWalkPathTracking()
+        if isRunning {
+            isRunning = false
+            captureSession?.stop(pauseARSession: false)
+        }
+        arSession.pause()
+        DiagnosticsLog.shared.record("Multi-room capture view left the screen — capture session stopped and AR session paused", category: .state)
+    }
+
+    private func runIfReady() {
+        guard pendingRun, captureView.window != nil, let captureSession else { return }
+        pendingRun = false
+        isRunning = true
+        DiagnosticsLog.shared.record("Multi-room capture session running (view is on screen)", category: .state)
+        captureSession.run(configuration: RoomCaptureSession.Configuration())
+        startCameraWatchdog()
+    }
+
+    private func startCameraWatchdog() {
+        cameraWatchdog?.cancel()
+        cameraWatchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled, let self, self.isRunning, self.state == .scanning else { return }
+            if self.arSession.currentFrame == nil {
+                DiagnosticsLog.shared.record("No camera frame 8s after the multi-room capture session started — surfacing an error", category: .error)
+                self.cameraFeedMissing = true
+            }
+        }
     }
 
     func start() {
-        guard let captureSession else { return }
+        _ = captureView
         state = .scanning
         liveRoomTypeGuess = nil
         roomTypeConfirmation = nil
@@ -102,10 +148,14 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         liveStats = .empty
         liveUpdateThrottle.resetRoomTypeAnswered()
         startWalkPathTracking()
-        captureSession.run(configuration: RoomCaptureSession.Configuration())
+        pendingRun = true
+        runIfReady()
     }
 
     func stopCurrentRoom() {
+        cameraWatchdog?.cancel()
+        pendingRun = false
+        isRunning = false
         stopWalkPathTracking()
         captureSession?.stop(pauseARSession: false)
     }
@@ -247,6 +297,9 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     }
 
     func finishUnit() {
+        cameraWatchdog?.cancel()
+        pendingRun = false
+        isRunning = false
         stopWalkPathTracking()
         captureSession?.stop(pauseARSession: false)
         arSession.pause()
@@ -325,6 +378,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
 extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
     nonisolated func captureSession(_ session: RoomCaptureSession, didEndWith data: CapturedRoomData, error: Error?) {
         Task { @MainActor in
+            self.isRunning = false
             do {
                 let room = try await RoomBuilder(options: [.beautifyObjects]).capturedRoom(from: data)
                 if let error {

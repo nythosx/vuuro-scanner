@@ -168,3 +168,22 @@ Take screenshots or a screencast of each step above, labeled explicitly, e.g.
 `"REAL RoomPlan — iPhone 15 Pro, iOS 17.5"`, plus the branch and commit you built from
 (`git rev-parse --short HEAD` from the repo root) — so it's unambiguous this isn't
 `FakeLidarMode`/simulator output.
+
+## Project status
+
+See [`STATUS.md`](../STATUS.md) at the repo root for a single-page overview of what's built, what's tested but not device-verified, and what's deliberately out of scope.
+
+## Brand font
+
+The app currently bundles **Open Sans** (`Resources/Fonts/OpenSans-Variable.ttf`,
+OFL-licensed) as a close visual match to vuuro.com's body typeface.
+It is not a pixel-perfect match to the site's actual font.
+
+Getting a pixel-perfect match requires the site's real font file and an
+OFL (or equivalent) license that permits redistribution inside an iOS
+app. That file has not been located. If it turns out to be proprietary,
+we stay on Open Sans and accept the small visual difference rather than
+bundle an unlicensed font.
+
+Action: whoever owns vuuro.com's brand assets should either provide the
+font file with its license, or confirm Open Sans is acceptable.

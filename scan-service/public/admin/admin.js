@@ -12,6 +12,57 @@ const VIEWS = ['loading', 'login', 'search', 'detail', 'imports'];
 
 const $ = (sel) => document.querySelector(sel);
 
+const API_TIMEOUT_MS = 60000;
+const activeBlobUrls = new Set();
+
+function trackBlobUrl(url) {
+  activeBlobUrls.add(url);
+  return url;
+}
+
+function revokeBlobUrl(url) {
+  if (url && activeBlobUrls.has(url)) {
+    URL.revokeObjectURL(url);
+    activeBlobUrls.delete(url);
+  }
+}
+
+function revokeAllBlobUrls() {
+  activeBlobUrls.forEach((url) => URL.revokeObjectURL(url));
+  activeBlobUrls.clear();
+}
+
+function formatTimestamp(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return String(value);
+  return d.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function friendlyApiError(err) {
+  const raw = err && err.message ? String(err.message) : 'Request failed.';
+  const m = raw.match(/^HTTP (\d+):\s*([\s\S]*)$/);
+  if (!m) return raw;
+  const status = m[1];
+  const body = m[2];
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && typeof parsed.message === 'string' && parsed.message.length > 0) {
+      return parsed.message;
+    }
+    if (parsed && typeof parsed.error === 'string' && parsed.error.length > 0) {
+      return parsed.error.replace(/_/g, ' ');
+    }
+  } catch (e) {}
+  return 'HTTP ' + status + ' - ' + (body || 'no details');
+}
+
 function escapeHtml(s) {
   if (s === null || s === undefined) return '';
   return String(s)
@@ -54,17 +105,36 @@ async function api(path, options) {
   const opts = options || {};
   const headers = Object.assign({}, opts.headers || {});
   headers['X-Admin-Api-Key'] = state.adminKey;
+
+  const controller = new AbortController();
+  const timeoutMs = opts.timeoutMs || API_TIMEOUT_MS;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
   let response;
   try {
-    response = await fetch(path, Object.assign({}, opts, { headers }));
+    response = await fetch(path, Object.assign({}, opts, {
+      headers,
+      signal: controller.signal,
+    }));
   } catch (err) {
+    clearTimeout(timeoutId);
+    if (err && err.name === 'AbortError') {
+      const timeoutError = new Error(
+        'Request timed out after ' + Math.round(timeoutMs / 1000) +
+        ' seconds. The Scan Service may be busy or unreachable.'
+      );
+      timeoutError.isTimeout = true;
+      throw timeoutError;
+    }
     throw networkError(err);
   }
+  clearTimeout(timeoutId);
+
   if (response.status === 401) {
     handleAuthFailure();
     throw new Error('Not authorized - admin key rejected');
   }
-  if (!response.ok) {
+  if (!response.ok && !opts.allowNonOk) {
     const text = await response.text().catch(() => '');
     throw new Error('HTTP ' + response.status + ': ' + (text || response.statusText));
   }
@@ -85,6 +155,7 @@ function handleAuthFailure() {
   sessionStorage.removeItem(STORAGE_KEY);
   state.adminKey = '';
   state.currentSessionId = null;
+  recentIdentitiesLoaded = false;
   showLogin('Your admin key is no longer accepted. Please sign in again.');
 }
 
@@ -130,6 +201,32 @@ function showSearch(options) {
   showView('search');
   setTopnav('search');
   if (!opts.fromHistory) setUrl('', opts.push !== false);
+}
+
+let recentIdentitiesLoaded = false;
+
+async function loadRecentIdentities() {
+  if (recentIdentitiesLoaded) return;
+  recentIdentitiesLoaded = true;
+  try {
+    const data = await apiJson('/admin/recent-identities');
+    fillDatalist('recentPropertyIds', data.property_ids || []);
+    fillDatalist('recentUnitIds', data.unit_ids || []);
+    fillDatalist('recentOrganisationIds', data.organisation_ids || []);
+  } catch (err) {
+    recentIdentitiesLoaded = false;
+  }
+}
+
+function fillDatalist(id, values) {
+  const list = document.getElementById(id);
+  if (!list) return;
+  list.innerHTML = '';
+  values.forEach((value) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    list.appendChild(opt);
+  });
 }
 
 function showDetail(returnTo) {
@@ -192,6 +289,7 @@ async function login() {
     await testKey();
     sessionStorage.setItem(STORAGE_KEY, key);
     input.value = '';
+    loadRecentIdentities();
     routeFromUrl(true);
   } catch (err) {
     state.adminKey = '';
@@ -207,6 +305,7 @@ function signOut() {
   sessionStorage.removeItem(STORAGE_KEY);
   state.adminKey = '';
   state.currentSessionId = null;
+  recentIdentitiesLoaded = false;
   $('#searchResults').innerHTML = '';
   $('#detailContent').innerHTML = '';
   setUrl('', false);
@@ -226,13 +325,14 @@ function renderSearchResults(sessions) {
       '<td><code>' + escapeHtml(s.organisation_id) + '</code></td>' +
       '<td>' + escapeHtml(s.purpose) + '</td>' +
       '<td>' + escapeHtml(s.status) + '</td>' +
-      '<td>' + escapeHtml(s.created_at) + '</td>' +
+      '<td>' + escapeHtml(formatTimestamp(s.created_at)) + '</td>' +
       '<td>' + (s.occupied ? 'Yes' : 'No') + '</td>' +
       '<td><button class="open-btn primary small">Open</button></td>' +
       '</tr>';
   }).join('');
   container.innerHTML =
-    '<p class="result-count">' + sessions.length + ' scan' + (sessions.length === 1 ? '' : 's') + ' found</p>' +
+    '<p class="result-count">' + sessions.length + ' scan' + (sessions.length === 1 ? '' : 's') + ' found' +
+      (sessions.length >= 100 ? ' (showing first 100 - narrow your search for the rest)' : '') + '</p>' +
     wrapTable('<table class="data-table"><thead><tr>' +
     '<th>Property</th><th>Unit</th><th>Organisation</th><th>Purpose</th>' +
     '<th>Status</th><th>Created</th><th>Occupied</th><th></th>' +
@@ -274,6 +374,7 @@ async function search(event) {
 
 async function openSession(sessionId, options) {
   const opts = options || {};
+  revokeAllBlobUrls();
   state.currentSessionId = sessionId;
   showDetail('search');
   if (!opts.fromHistory) setUrl('session=' + encodeURIComponent(sessionId), true);
@@ -338,7 +439,7 @@ function renderDetail(data, sessionId) {
       '<p class="meta">' +
         '<span>Org: <code>' + escapeHtml(data.organisation_id) + '</code></span>' +
         '<span>Purpose: ' + escapeHtml(data.purpose) + '</span>' +
-        '<span>Captured: ' + escapeHtml(data.captured_at) + '</span>' +
+        '<span>Captured: ' + escapeHtml(formatTimestamp(data.captured_at)) + '</span>' +
       '</p>' +
       '<p class="meta">' +
         '<span>' + rooms.length + ' room' + (rooms.length === 1 ? '' : 's') + '</span>' +
@@ -449,14 +550,33 @@ function showToast(message) {
 }
 
 function copyToClipboard(text, label) {
+  const legacyFallback = () => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      const ok = document.execCommand && document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (ok) {
+        showToast(label + ' copied to clipboard');
+        return;
+      }
+    } catch (e) {}
+    prompt(label, text);
+  };
+
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(() => {
       showToast(label + ' copied to clipboard');
-    }).catch(() => {
-      prompt(label, text);
-    });
+    }).catch(legacyFallback);
   } else {
-    prompt(label, text);
+    legacyFallback();
   }
 }
 
@@ -480,9 +600,9 @@ async function publishToPlatform(sessionId) {
   resultEl.className = 'publish-result';
   resultEl.textContent = 'Pushing to platform...';
   try {
-    const response = await fetch('/scan-sessions/' + encodeURIComponent(sessionId) + '/publish-to-platform', {
+    const response = await api('/scan-sessions/' + encodeURIComponent(sessionId) + '/publish-to-platform', {
       method: 'POST',
-      headers: { 'X-Admin-Api-Key': state.adminKey },
+      allowNonOk: true,
     });
     let body = {};
     try { body = await response.json(); } catch (e) {}
@@ -498,16 +618,18 @@ async function publishToPlatform(sessionId) {
     }
   } catch (err) {
     resultEl.className = 'publish-result error';
-    resultEl.textContent = 'Push failed: ' + err.message;
+    resultEl.textContent = 'Push failed: ' + friendlyApiError(err);
   }
 }
 
-function isServerHosted(url) {
+function serverHostedPath(url) {
   try {
     const u = new URL(url, location.href);
-    return u.host === location.host && u.pathname.indexOf('/scan-sessions/') === 0;
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    if (!/^\/scan-sessions\/[^/]+\/photo-uploads\/[^/]+$/.test(u.pathname)) return null;
+    return u.pathname;
   } catch (e) {
-    return false;
+    return null;
   }
 }
 
@@ -517,11 +639,16 @@ async function loadFloorPlanImage(sessionId) {
   if (!img) return;
   try {
     const blob = await apiBlob('/scan-sessions/' + encodeURIComponent(sessionId) + '/export/floorplan.png');
-    img.src = URL.createObjectURL(blob);
+    if (state.currentSessionId !== sessionId) return;
+    if (img.dataset.blobUrl) revokeBlobUrl(img.dataset.blobUrl);
+    const url = trackBlobUrl(URL.createObjectURL(blob));
+    img.dataset.blobUrl = url;
+    img.src = url;
   } catch (err) {
+    if (state.currentSessionId !== sessionId) return;
     img.style.display = 'none';
     if (errEl) {
-      errEl.textContent = 'Could not load floor plan: ' + err.message;
+      errEl.textContent = 'Could not load floor plan: ' + friendlyApiError(err);
       errEl.classList.remove('hidden');
     }
   }
@@ -531,7 +658,7 @@ function loadPhotoThumb(photo) {
   const grid = $('#photosGrid');
   if (!grid) return;
   const wrapper = document.createElement('div');
-  wrapper.className = 'photo-thumb';
+  wrapper.className = 'photo-thumb photo-loading';
   const img = document.createElement('img');
   img.alt = photo.caption || 'photo';
   wrapper.appendChild(img);
@@ -543,17 +670,35 @@ function loadPhotoThumb(photo) {
   }
   grid.appendChild(wrapper);
 
-  if (isServerHosted(photo.url)) {
-    apiBlob(photo.url).then((blob) => {
-      img.src = URL.createObjectURL(blob);
+  const clearLoading = () => wrapper.classList.remove('photo-loading');
+
+  const showPlaceholder = (text) => {
+    wrapper.classList.add('photo-failed');
+    if (img.parentNode) img.remove();
+    const placeholder = document.createElement('div');
+    placeholder.className = 'photo-thumb-placeholder';
+    placeholder.textContent = text;
+    wrapper.insertBefore(placeholder, wrapper.firstChild);
+  };
+
+  const hostedPath = serverHostedPath(photo.url);
+  if (hostedPath) {
+    apiBlob(hostedPath).then((blob) => {
+      const url = trackBlobUrl(URL.createObjectURL(blob));
+      img.dataset.blobUrl = url;
+      img.onload = clearLoading;
+      img.onerror = () => {
+        clearLoading();
+        showPlaceholder('Failed to load');
+      };
+      img.src = url;
     }).catch(() => {
-      wrapper.classList.add('photo-failed');
-      img.alt = 'Failed to load';
+      clearLoading();
+      showPlaceholder('Failed to load');
     });
   } else {
-    wrapper.classList.add('photo-failed');
-    img.alt = 'External photo \u2014 not rendered';
-    img.style.display = 'none';
+    clearLoading();
+    showPlaceholder('External photo - not rendered');
   }
 }
 
@@ -568,7 +713,7 @@ async function loadAccessLog(sessionId) {
       return;
     }
     const rows = entries.map((e) =>
-      '<tr><td>' + escapeHtml(e.occurred_at) + '</td>' +
+      '<tr><td>' + escapeHtml(formatTimestamp(e.occurred_at)) + '</td>' +
       '<td>' + escapeHtml(e.action) + '</td>' +
       '<td>' + escapeHtml(e.outcome) + '</td></tr>'
     ).join('');
@@ -576,7 +721,7 @@ async function loadAccessLog(sessionId) {
       '<th>Time</th><th>Action</th><th>Outcome</th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table>');
   } catch (err) {
-    renderError(container, 'Failed to load the access log: ' + err.message, () => {
+    renderError(container, 'Failed to load the access log: ' + friendlyApiError(err), () => {
       container.innerHTML = loadingHtml('Loading access log…');
       loadAccessLog(sessionId);
     });
@@ -716,7 +861,7 @@ function renderImportsList(imports) {
       '<td><code>' + escapeHtml(i.organisation_id) + '</code></td>' +
       '<td>' + escapeHtml(i.purpose) + '</td>' +
       '<td><span class="badge badge-' + escapeHtml(sig) + '">' + escapeHtml(sig) + '</span></td>' +
-      '<td>' + escapeHtml(i.imported_at) + '</td>' +
+      '<td>' + escapeHtml(formatTimestamp(i.imported_at)) + '</td>' +
       '<td><button class="open-import-btn primary small">Open</button></td>' +
       '</tr>';
   }).join('');
@@ -735,6 +880,7 @@ function renderImportsList(imports) {
 
 async function openImport(importId, options) {
   const opts = options || {};
+  revokeAllBlobUrls();
   state.currentSessionId = null;
   showDetail('imports');
   if (!opts.fromHistory) setUrl('import=' + encodeURIComponent(importId), true);
@@ -796,8 +942,8 @@ function renderImportDetail(data) {
       '<p class="meta">' +
         '<span>Org: <code>' + escapeHtml(data.organisation_id) + '</code></span>' +
         '<span>Purpose: ' + escapeHtml(data.purpose) + '</span>' +
-        '<span>Exported: ' + escapeHtml(data.exported_at) + '</span>' +
-        '<span>Imported: ' + escapeHtml(data.imported_at) + '</span>' +
+        '<span>Exported: ' + escapeHtml(formatTimestamp(data.exported_at)) + '</span>' +
+        '<span>Imported: ' + escapeHtml(formatTimestamp(data.imported_at)) + '</span>' +
       '</p>' +
       '<p class="meta">' +
         '<span>Origin: <code>' + escapeHtml(exportedFrom) + '</code></span>' +
@@ -908,6 +1054,7 @@ function init() {
     showLoading('Checking your session…');
     state.adminKey = stored;
     testKey().then(() => {
+      loadRecentIdentities();
       routeFromUrl(true);
     }).catch((err) => {
       if (err.isNetwork) {

@@ -54,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 $adminStaticPath = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-if (in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true) && $adminStaticPath !== false && ($adminStaticPath === '/admin' || str_starts_with($adminStaticPath, '/admin/'))) {
+if (in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true) && $adminStaticPath !== false && $adminStaticPath !== '/admin/recent-identities' && ($adminStaticPath === '/admin' || str_starts_with($adminStaticPath, '/admin/'))) {
     $relative = $adminStaticPath === '/admin' ? 'index.html' : ltrim(substr($adminStaticPath, strlen('/admin/')), '/');
     if ($relative === '') {
         $relative = 'index.html';
@@ -74,7 +74,7 @@ if (in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true) && $adminStaticP
         ];
         header('Content-Type: ' . ($mimeMap[$ext] ?? 'application/octet-stream'));
         if ($ext === 'html') {
-            header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none';");
+            header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none';");
         }
         readfile($adminFile);
         return;
@@ -479,18 +479,38 @@ function parseFloorPlanStyleFromQuery(): FloorPlanStyle
 }
 
 
-const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload', 'publish_to_platform'];
+const TENANT_DELETION_GRACE_DAYS = 7;
+
+function deletionStatus(array $session): array
+{
+    $requestedAt = (string) ($session['deletion_requested_at'] ?? '');
+    $requestedTs = $requestedAt === '' ? false : strtotime($requestedAt);
+    return [
+        'requested' => $requestedAt !== '',
+        'deletion_requested_at' => $requestedAt,
+        'purge_after' => $requestedTs === false ? '' : gmdate('c', $requestedTs + TENANT_DELETION_GRACE_DAYS * 86400),
+        'grace_period_days' => TENANT_DELETION_GRACE_DAYS,
+    ];
+}
+
+const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload'];
+const ADMIN_WRITE_ACTIONS = ['publish_to_platform'];
 
 function authorizeSession(ScanSessionRepository $repo, string $sessionId, string $action): ?array
 {
     $session = $repo->find($sessionId);
     $token = presented_token() ?? '';
 
-    if ($session !== null && adminAuthorized() && in_array($action, ADMIN_READ_ACTIONS, true)) {
-        if (rateLimited($repo, clientIp() . ':admin_session_read', 120, 300)) {
+    $adminAllowedActions = array_merge(ADMIN_READ_ACTIONS, ADMIN_WRITE_ACTIONS);
+    if ($session !== null && adminAuthorized() && in_array($action, $adminAllowedActions, true)) {
+        $isWrite = in_array($action, ADMIN_WRITE_ACTIONS, true);
+        $bucket = $isWrite ? 'admin_session_write' : 'admin_session_read';
+        $bucketLimit = $isWrite ? 30 : 120;
+        if (rateLimited($repo, clientIp() . ':' . $bucket, $bucketLimit, 300)) {
             return null;
         }
-        $repo->logAccess($session['id'], $action, 'granted_admin');
+        $outcome = $isWrite ? 'granted_admin_write' : 'granted_admin_read';
+        $repo->logAccess($session['id'], $action, $outcome);
         return $session;
     }
 
@@ -672,6 +692,10 @@ if ($method === 'POST' && $path === '/scan-sessions') {
             $repo->deleteSession($expiredId);
             deleteSessionPhotoDir($expiredId);
         }
+        foreach ($repo->findTenantDeletionCandidates(TENANT_DELETION_GRACE_DAYS, 20) as $tenantRequestedId) {
+            $repo->deleteSession($tenantRequestedId);
+            deleteSessionPhotoDir($tenantRequestedId);
+        }
         foreach (['listing', 'check_in', 'check_out', 'renovation', 'other'] as $purposeToCheck) {
             $retentionDaysRaw = getenv('SCAN_SERVICE_RETENTION_DAYS_' . strtoupper($purposeToCheck));
             if ($retentionDaysRaw === false || !ctype_digit(trim((string) $retentionDaysRaw)) || (int) $retentionDaysRaw < 1) {
@@ -689,6 +713,52 @@ if ($method === 'POST' && $path === '/scan-sessions') {
         'consent_obtained' => (bool) $session['consent_obtained'],
         'default_floor' => $session['default_floor'] ?? '',
     ]);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/note-only$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'mark_note_only');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':mark_note_only', 5, 300)) {
+        return;
+    }
+    $floorPlan = $repo->createNoteOnlyFloorPlan($session['id']);
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/request-deletion$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'request_deletion');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':request_deletion', 3, 3600)) {
+        return;
+    }
+    respond(200, deletionStatus($repo->requestDeletion($session['id'])));
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/deletion-request$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'read_deletion_request');
+    if ($session === null) {
+        return;
+    }
+    respond(200, deletionStatus($session));
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/cancel-deletion$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'cancel_deletion');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':cancel_deletion', 5, 3600)) {
+        return;
+    }
+    respond(200, deletionStatus($repo->cancelDeletion($session['id'])));
     return;
 }
 
@@ -736,7 +806,8 @@ if ($method === 'GET' && $path === '/scan-sessions') {
         respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header, and set SCAN_SERVICE_ADMIN_API_KEY on the server to enable this endpoint at all.');
         return;
     }
-    if (rateLimited($repo, clientIp() . ':list_sessions', 60, 300)) {
+    $adminListKeyHash = substr(hash('sha256', (string) ($_SERVER['HTTP_X_ADMIN_API_KEY'] ?? '')), 0, 16);
+    if (rateLimited($repo, 'list_sessions:' . $adminListKeyHash, 60, 300)) {
         return;
     }
 
@@ -1524,6 +1595,10 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         respondError(404, 'no_floor_plan_yet', 'This session doesn\'t have a captured floor plan yet — capture at least one room before exporting.');
         return;
     }
+    if ($floorPlan['rooms'] === []) {
+        respondError(422, 'no_floor_plan_geometry', 'This is a notes-only session, so there is no floor plan to draw. Export the PDF instead to get the notes and photos.');
+        return;
+    }
 
     $layout = $_GET['layout'] ?? 'auto';
     if (!in_array($layout, ['auto', 'tiles'], true)) {
@@ -1571,6 +1646,10 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     $floorPlan = $repo->findFloorPlan($session['id']);
     if ($floorPlan === null) {
         respondError(404, 'no_floor_plan_yet', 'This session doesn\'t have a captured floor plan yet — capture at least one room before exporting.');
+        return;
+    }
+    if ($floorPlan['rooms'] === []) {
+        respondError(422, 'no_floor_plan_geometry', 'This is a notes-only session, so there is no floor plan to draw. Export the PDF instead to get the notes and photos.');
         return;
     }
 
@@ -2114,6 +2193,21 @@ if ($method === 'GET' && preg_match('#^/imported-scans/([^/]+)$#', $path, $m)) {
     return;
 }
 
+if ($method === 'GET' && $path === '/admin/recent-identities') {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:recent_identities', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':recent_identities', 30, 300)) {
+        return;
+    }
+    respond(200, $repo->findRecentIdentities());
+    return;
+}
+
 if ($method === 'POST' && $path === '/admin/run-retention') {
     if (!adminAuthorized()) {
         if (rateLimited($repo, clientIp() . ':denied_admin_auth:run_retention', 20, 300)) {
@@ -2127,6 +2221,11 @@ if ($method === 'POST' && $path === '/admin/run-retention') {
     }
 
     $purged = 0;
+    foreach ($repo->findTenantDeletionCandidates(TENANT_DELETION_GRACE_DAYS, 100) as $tenantRequestedId) {
+        $repo->deleteSession($tenantRequestedId);
+        deleteSessionPhotoDir($tenantRequestedId);
+        $purged++;
+    }
     foreach ($repo->findExpiredBeyondGracePeriod(100) as $expiredId) {
         $repo->deleteSession($expiredId);
         deleteSessionPhotoDir($expiredId);

@@ -216,7 +216,7 @@ struct ScanHistoryView: View {
             }
             .accessibilityIdentifier("history.renameCancel")
         }
-        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        .dynamicTypeSize(...DynamicTypeSize.accessibility3)
     }
 
     private var forgetBinding: Binding<Bool> {
@@ -496,12 +496,51 @@ struct ScanHistoryView: View {
             Task { await shareFile(for: entry, pdf: true) }
         case .shareCode:
             shareAccessCode(for: entry)
+        case .revokeShares:
+            Task { await revokeShares(for: entry) }
         case .accessLog:
             break
         case .forget:
             pendingDeleteEntry = entry
         case .deleteFromServer:
             pendingServerDeleteEntry = entry
+        }
+    }
+
+    @MainActor
+    private func revokeShares(for entry: ScanHistoryEntry) async {
+        guard !entry.accessToken.isEmpty else {
+            appError = AppError(site: .historyTokenMissing, underlying: nil)
+            return
+        }
+        do {
+            let rotated = try await client.rotateToken(
+                sessionId: entry.sessionId,
+                accessToken: entry.accessToken
+            )
+            let updated = ScanHistoryEntry(
+                sessionId: entry.sessionId,
+                accessToken: rotated.accessToken,
+                propertyId: entry.propertyId,
+                unitId: entry.unitId,
+                organisationId: entry.organisationId,
+                purpose: entry.purpose,
+                createdAt: entry.createdAt,
+                expiresAt: rotated.expiresAt,
+                nickname: entry.nickname,
+                cachedRoomSummary: entry.cachedRoomSummary,
+                cachedFloorAreaM2: entry.cachedFloorAreaM2,
+                cachedRoomsByFloor: entry.cachedRoomsByFloor,
+                occupied: entry.occupied,
+                consentObtained: entry.consentObtained,
+                floor: entry.floor
+            )
+            ScanHistoryStore.shared.add(updated)
+            reloadEntries()
+            VuuroToast.shared.show(vuuroLocalized("Previous shares are now revoked"))
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .historySessionFetch, underlying: error)
         }
     }
 
@@ -942,6 +981,7 @@ enum HistoryCardAction {
     case shareImage
     case sharePDF
     case shareCode
+    case revokeShares
     case accessLog
     case forget
     case deleteFromServer
@@ -1074,6 +1114,12 @@ private struct HistoryCard: View {
                 Label("Share access (view and continue)", systemImage: "person.badge.plus")
             }
             .accessibilityIdentifier("history.card.shareAccess")
+            Button {
+                onAction(.revokeShares)
+            } label: {
+                Label("Revoke previous shares", systemImage: "person.badge.minus")
+            }
+            .accessibilityIdentifier("history.card.revokeShares")
             Divider()
             Button {
                 onAction(.forget)

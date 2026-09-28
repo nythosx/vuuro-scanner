@@ -145,7 +145,7 @@ struct SettingsView: View {
                 darkModeLocal = newValue
             }
         }
-        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+        .dynamicTypeSize(...DynamicTypeSize.accessibility3)
     }
 
     private var identity: some View {
@@ -277,6 +277,6 @@ struct SettingsView: View {
         try? fm.removeItem(at: ExportNaming.rootDirectory)
         computeCacheSize()
         prepareDiagnosticsExport()
-        VuuroToast.shared.show("Cache cleared")
+        VuuroToast.shared.show(vuuroLocalized("Cache cleared"))
     }
 }

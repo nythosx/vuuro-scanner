@@ -80,7 +80,7 @@ struct ErrorView: View {
             Spacer(minLength: 0)
             Button {
                 UIPasteboard.general.string = error.copyableDetails
-                VuuroToast.shared.show("Copied")
+                VuuroToast.shared.show(vuuroLocalized("Copied"))
             } label: {
                 Text("Copy")
                     .font(.system(size: 12, weight: .semibold))

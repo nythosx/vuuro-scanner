@@ -36,3 +36,12 @@ enum AppLanguageSettings {
         current.locale ?? Locale.autoupdatingCurrent
     }
 }
+
+func vuuroLocalized(_ key: String) -> String {
+    if AppLanguageSettings.current != .system,
+       let path = Bundle.main.path(forResource: AppLanguageSettings.current.rawValue, ofType: "lproj"),
+       let bundle = Bundle(path: path) {
+        return bundle.localizedString(forKey: key, value: key, table: nil)
+    }
+    return Bundle.main.localizedString(forKey: key, value: key, table: nil)
+}

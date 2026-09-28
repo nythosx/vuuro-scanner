@@ -14,14 +14,14 @@ enum InspectionTag: String, CaseIterable, Codable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .damage: return "Damage"
-        case .wearAndTear: return "Wear and tear"
-        case .missingItem: return "Missing item"
-        case .safetyIssue: return "Safety issue"
-        case .preExistingCondition: return "Pre-existing condition"
-        case .maintenanceNeeded: return "Maintenance needed"
-        case .confirmedPresent: return "Confirmed present"
-        case .other: return "Other"
+        case .damage: return vuuroLocalized("Damage")
+        case .wearAndTear: return vuuroLocalized("Wear and tear")
+        case .missingItem: return vuuroLocalized("Missing item")
+        case .safetyIssue: return vuuroLocalized("Safety issue")
+        case .preExistingCondition: return vuuroLocalized("Pre-existing condition")
+        case .maintenanceNeeded: return vuuroLocalized("Maintenance needed")
+        case .confirmedPresent: return vuuroLocalized("Confirmed present")
+        case .other: return vuuroLocalized("Other")
         }
     }
 }

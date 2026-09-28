@@ -60,6 +60,13 @@ final class Database
             }
         }
         try {
+            $pdo->exec("ALTER TABLE scan_sessions ADD COLUMN deletion_requested_at TEXT NOT NULL DEFAULT ''");
+        } catch (\PDOException $e) {
+            if (!str_contains($e->getMessage(), 'duplicate column name')) {
+                throw $e;
+            }
+        }
+        try {
             $pdo->exec("ALTER TABLE scan_sessions ADD COLUMN default_floor TEXT NOT NULL DEFAULT ''");
         } catch (\PDOException $e) {
             if (!str_contains($e->getMessage(), 'duplicate column name')) {

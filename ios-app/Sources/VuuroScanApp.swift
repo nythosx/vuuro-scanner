@@ -95,6 +95,7 @@ struct ScanFlowView: View {
         case resumingUpload(PendingUploadState)
         case capturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
         case multiRoomCapturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
+        case noteOnly(identity: ScanIdentity)
         case attachments(session: ScanSessionResponse, floorPlan: FloorPlan, identity: ScanIdentity)
         case summary(session: ScanSessionResponse, floorPlan: FloorPlan)
         case error(AppError, identity: ScanIdentity, existingSession: ScanSessionResponse?)
@@ -133,7 +134,12 @@ struct ScanFlowView: View {
                     },
                     onOpenSettings: { showSettings = true },
                     onOpenHistory: { showHistory = true },
-                    onOpenTerms: { showTerms = true }
+                    onOpenTerms: { showTerms = true },
+                    onResumePendingUpload: {
+                        if let pending = PendingUploadStore.load() {
+                            stage = .resumingUpload(pending)
+                        }
+                    }
                 )
                 .toolbar(.hidden, for: .navigationBar)
 
@@ -192,6 +198,18 @@ struct ScanFlowView: View {
                 .id(attempt)
                 .toolbar(.hidden, for: .navigationBar)
 
+            case .noteOnly(let identity):
+                NoteOnlyFlowStep(
+                    identity: identity,
+                    onFinished: { session, floorPlan in
+                        stage = .attachments(session: session, floorPlan: floorPlan, identity: identity)
+                    },
+                    onGoBack: {
+                        stage = .home
+                    }
+                )
+                .toolbar(.hidden, for: .navigationBar)
+
             case .attachments(let session, let floorPlan, let identity):
                 AttachmentsScreen(
                     session: session,
@@ -202,20 +220,22 @@ struct ScanFlowView: View {
                     stage = .capturing(identity: identity, session: session, attempt: UUID())
                 } onBack: {
                     PendingUploadStore.clear()
+                    DraftStore.clearAll(sessionId: session.id)
                     stage = .home
                 }
                 .toolbar(.hidden, for: .navigationBar)
 
             case .summary(let session, let floorPlan):
                 ResultSummaryView(session: session, floorPlan: floorPlan) {
-                    VuuroToast.shared.show("Scan saved to history")
+                    DraftStore.clearAll(sessionId: session.id)
+                    VuuroToast.shared.show(vuuroLocalized("Scan saved to history"))
                     stage = .home
                 }
                 .toolbar(.hidden, for: .navigationBar)
 
             case .error(let appError, let identity, let existingSession):
                 ErrorView(error: appError) {
-                    if let pending = PendingUploadStore.load() {
+                    if let pending = PendingUploadStore.load(), pending.skippedAt == nil, pending.identity == identity {
                         stage = .resumingUpload(pending)
                     } else {
                         stage = .capturing(identity: identity, session: existingSession, attempt: UUID())
@@ -225,7 +245,7 @@ struct ScanFlowView: View {
 
             case .multiRoomError(let appError, let identity, let existingSession):
                 ErrorView(error: appError) {
-                    if let pending = PendingUploadStore.load() {
+                    if let pending = PendingUploadStore.load(), pending.skippedAt == nil, pending.identity == identity {
                         stage = .resumingUpload(pending)
                     } else {
                         stage = .multiRoomCapturing(identity: identity, session: existingSession, attempt: UUID())
@@ -245,6 +265,10 @@ struct ScanFlowView: View {
                     } else {
                         stage = .capturing(identity: identity, session: nil, attempt: UUID())
                     }
+                },
+                onStartNoteOnly: { identity in
+                    showStartSheet = false
+                    stage = .noteOnly(identity: identity)
                 }
             )
             .presentationDetents([.large])
@@ -318,6 +342,7 @@ private struct RoomCaptureFlowStep: View {
     @State private var showCorrectionDialog = false
     @State private var captureFloor: String = ""
     @State private var showFloorPrompt = false
+    @State private var cameraDenied = CameraAccess.isDenied
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
@@ -336,6 +361,8 @@ private struct RoomCaptureFlowStep: View {
         Group {
             if !DeviceCapability.isRoomPlanSupported && !debugFakeCaptureActive {
                 UnsupportedDeviceScreen(onGoBack: onGoBack)
+            } else if DeviceCapability.isRoomPlanSupported && cameraDenied {
+                CameraAccessDeniedScreen(onGoBack: onGoBack, onAccessRestored: { cameraDenied = false })
             } else if let justCaptured {
                 AnotherRoomPromptView(roomCount: justCaptured.floorPlan.rooms.count) { addAnother in
                     onRoomCaptured(justCaptured.session, justCaptured.floorPlan, addAnother)
@@ -454,6 +481,17 @@ private struct RoomCaptureFlowStep: View {
                 .onChange(of: coordinator.state) { _, state in
                     handle(state)
                 }
+                .onChange(of: coordinator.cameraFeedMissing) { _, missing in
+                    guard missing else { return }
+                    onError(AppError(site: .captureFailed, underlying: PlainError(message: vuuroLocalized("The camera didn't start. Close any other app using the camera, then tap Try again."))), existingSession)
+                }
+                .task(id: didRequestStop) {
+                    guard didRequestStop else { return }
+                    try? await Task.sleep(nanoseconds: 45_000_000_000)
+                    guard !Task.isCancelled, didRequestStop, coordinator.state == .scanning, !isUploading else { return }
+                    DiagnosticsLog.shared.record("Finish room got no result from RoomPlan within 45s — surfacing an error instead of spinning", category: .error)
+                    onError(AppError(site: .captureFailed, underlying: PlainError(message: vuuroLocalized("Finishing the scan took too long. Please scan the room again."))), existingSession)
+                }
                 .onChange(of: scenePhase) { _, newPhase in
                     if newPhase == .background, coordinator.state == .scanning {
                         DiagnosticsLog.shared.record("App backgrounded mid-scan — ARKit/RoomPlan behavior here is unverified.", category: .state)
@@ -477,7 +515,7 @@ private struct RoomCaptureFlowStep: View {
                 VuuroCaptureTogglePill(isOn: roomTypeGuessOn) {
                     roomTypeGuessOn.toggle()
                     RoomTypeGuessSettings.isEnabled = roomTypeGuessOn
-                    VuuroToast.shared.show(roomTypeGuessOn ? "Room-type guessing on" : "Room-type guessing off")
+                    VuuroToast.shared.show(vuuroLocalized(roomTypeGuessOn ? "Room-type guessing on" : "Room-type guessing off"))
                 }
                 .accessibilityIdentifier("capture.roomTypeGuessToggle")
             }
@@ -733,6 +771,104 @@ private struct RoomCaptureFlowStep: View {
             justCaptured = (session, floorPlan)
         } catch {
             uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)
+        }
+    }
+}
+
+private struct NoteOnlyFlowStep: View {
+    let identity: ScanIdentity
+    let onFinished: (ScanSessionResponse, FloorPlan) -> Void
+    let onGoBack: () -> Void
+
+    @State private var isWorking = false
+    @State private var createdSession: ScanSessionResponse?
+    @State private var appError: AppError?
+    private let client = ScanServiceClient()
+
+    var body: some View {
+        VuuroCenterView {
+            VuuroIconBadge(
+                systemName: "note.text",
+                tint: VuuroColor.accent,
+                background: VuuroColor.accentSoft,
+                size: 72,
+                iconSize: 34
+            )
+            Text("Notes-only session")
+                .font(.system(size: 20, weight: .bold))
+                .tracking(-0.4)
+                .foregroundStyle(VuuroColor.textPrimary)
+            Text("This phone can't capture a floor plan, but you can still save inspection notes and photos against this property.")
+                .font(.system(size: 15))
+                .lineSpacing(5)
+                .foregroundStyle(VuuroColor.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 320)
+
+            if isWorking {
+                ProgressView()
+                    .tint(VuuroColor.accent)
+                    .padding(.top, 12)
+            } else {
+                VStack(spacing: 10) {
+                    Button("Start notes-only session") {
+                        Task { await createAndContinue() }
+                    }
+                    .accessibilityIdentifier("noteOnly.start")
+                    .buttonStyle(.vuuroPrimary)
+
+                    Button("Cancel", action: onGoBack)
+                        .accessibilityIdentifier("noteOnly.cancel")
+                        .buttonStyle(.vuuroGhostSmall)
+                }
+                .padding(.top, 12)
+                .frame(maxWidth: 340)
+            }
+
+            if let appError {
+                ErrorCodeView(error: appError)
+                    .frame(maxWidth: 340)
+                    .padding(.top, 8)
+            }
+        }
+        .background(VuuroColor.bgApp)
+    }
+
+    @MainActor
+    private func createAndContinue() async {
+        guard !isWorking else { return }
+        isWorking = true
+        appError = nil
+        defer { isWorking = false }
+        do {
+            let session: ScanSessionResponse
+            if let createdSession {
+                session = createdSession
+            } else {
+                session = try await client.createSession(identity: identity)
+                createdSession = session
+                ScanHistoryStore.shared.add(ScanHistoryEntry(
+                    sessionId: session.id,
+                    accessToken: session.accessToken,
+                    propertyId: identity.propertyId,
+                    unitId: identity.unitId,
+                    organisationId: identity.organisationId,
+                    purpose: identity.purpose,
+                    createdAt: Date(),
+                    expiresAt: session.expiresAt,
+                    occupied: identity.occupied,
+                    consentObtained: identity.consentObtained,
+                    floor: session.defaultFloor ?? identity.floor
+                ))
+            }
+            let floorPlan = try await client.markNoteOnly(
+                sessionId: session.id,
+                accessToken: session.accessToken
+            )
+            onFinished(session, floorPlan)
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .sessionCreate, underlying: error)
         }
     }
 }

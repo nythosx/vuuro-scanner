@@ -222,11 +222,27 @@ SVG;
                 foreach ($this->wrapTextLines($note['text'], 100) as $i => $wrapped) {
                     $lines[] = $i === 0 ? "  [{$room['label']}] {$wrapped}" : '        ' . $wrapped;
                 }
+                $tags = is_array($note['tags'] ?? null) ? $note['tags'] : [];
+                if ($tags !== []) {
+                    $labels = array_map(
+                        static fn (string $tagValue) => \VuuroScan\InspectionTag::labelFor($tagValue),
+                        $tags
+                    );
+                    $lines[] = '        tags: ' . implode(', ', $labels);
+                }
             }
         }
         foreach ($unitNotes as $note) {
             foreach ($this->wrapTextLines($note['text'], 100) as $i => $wrapped) {
                 $lines[] = $i === 0 ? "  [Whole unit] {$wrapped}" : '        ' . $wrapped;
+            }
+            $tags = is_array($note['tags'] ?? null) ? $note['tags'] : [];
+            if ($tags !== []) {
+                $labels = array_map(
+                    static fn (string $tagValue) => \VuuroScan\InspectionTag::labelFor($tagValue),
+                    $tags
+                );
+                $lines[] = '        tags: ' . implode(', ', $labels);
             }
         }
         return count($lines) > 1 ? $lines : [];

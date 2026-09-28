@@ -6,6 +6,7 @@ struct StartScanSheet: View {
     let type: ScanStartType
     let onCancel: () -> Void
     let onStart: (ScanIdentity) -> Void
+    var onStartNoteOnly: ((ScanIdentity) -> Void)? = nil
 
     @State private var propertyId = ""
     @State private var unitId = ""
@@ -18,6 +19,7 @@ struct StartScanSheet: View {
     @State private var isCheckingHealth = false
     @State private var healthCheckError: AppError?
     @State private var showReagreeSheet = false
+    @State private var pendingNoteOnlyIdentity: ScanIdentity? = nil
     @State private var previouslyUsedPropertyIds: [String] = []
     @State private var previouslyUsedUnitIds: [String] = []
     @State private var previouslyUsedOrganisationIds: [String] = []
@@ -242,18 +244,40 @@ struct StartScanSheet: View {
             .scrollIndicators(.hidden)
 
             VStack(spacing: 0) {
-                Button {
-                    Task { await startIfHealthy() }
-                } label: {
-                    if isCheckingHealth {
-                        ProgressView().tint(.white)
-                    } else {
-                        Text(type == .multi ? "Start unit scan" : "Start room scan")
+                if DeviceCapability.canCaptureRooms || onStartNoteOnly == nil {
+                    Button {
+                        Task { await startIfHealthy() }
+                    } label: {
+                        if isCheckingHealth {
+                            ProgressView().tint(.white)
+                        } else {
+                            Text(type == .multi ? "Start unit scan" : "Start room scan")
+                        }
                     }
+                    .accessibilityIdentifier("startScan.start")
+                    .buttonStyle(.vuuroPrimary)
+                    .disabled(!canStart || isCheckingHealth)
+                } else if let onStartNoteOnly {
+                    Text("This phone doesn't support LiDAR. You can still save inspection notes and photos, without a floor plan.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(VuuroColor.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 4)
+                        .padding(.bottom, 8)
+                    Button {
+                        guard LegalAgreementStore.agreedVersion == LegalDocument.currentVersion else {
+                            pendingNoteOnlyIdentity = currentIdentity
+                            showReagreeSheet = true
+                            return
+                        }
+                        onStartNoteOnly(currentIdentity)
+                    } label: {
+                        Text("Save notes and photos only")
+                    }
+                    .accessibilityIdentifier("startScan.noteOnly")
+                    .buttonStyle(.vuuroPrimary)
+                    .disabled(!canStart || isCheckingHealth)
                 }
-                .accessibilityIdentifier("startScan.start")
-                .buttonStyle(.vuuroPrimary)
-                .disabled(!canStart || isCheckingHealth)
             }
             .padding(.horizontal, 20)
             .padding(.top, 12)
@@ -271,9 +295,18 @@ struct StartScanSheet: View {
                     onAgree: {
                         LegalAgreementStore.recordAgreement()
                         showReagreeSheet = false
-                        Task { await startIfHealthy() }
+                        if let pending = pendingNoteOnlyIdentity, let onStartNoteOnly {
+                            pendingNoteOnlyIdentity = nil
+                            onStartNoteOnly(pending)
+                        } else {
+                            pendingNoteOnlyIdentity = nil
+                            Task { await startIfHealthy() }
+                        }
                     },
-                    onDecline: { showReagreeSheet = false }
+                    onDecline: {
+                        pendingNoteOnlyIdentity = nil
+                        showReagreeSheet = false
+                    }
                 )
             }
         }

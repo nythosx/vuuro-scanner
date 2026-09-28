@@ -7,6 +7,14 @@ enum DeviceCapability {
         RoomCaptureSession.isSupported
     }
 
+    static var canCaptureRooms: Bool {
+        #if DEBUG
+        isRoomPlanSupported || FakeLidarMode.isEnabled
+        #else
+        isRoomPlanSupported
+        #endif
+    }
+
     static var unsupportedReason: String {
         if isRoomPlanSupported {
             return ""

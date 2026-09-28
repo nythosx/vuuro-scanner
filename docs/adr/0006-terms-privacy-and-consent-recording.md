@@ -107,3 +107,20 @@ access tokens are still stored as sha256 hashes only, there is no encryption at
 rest beyond that, and the whole system still runs over plain HTTP locally. The
 specific assumption that motivated the choice has changed; the choice itself
 remains appropriate.
+
+## Amendment 2026-09-26
+
+Decision confirmed for the pilot: **stay local-only.**
+
+Rationale: the current pilot is single-tenant with one operator.
+Adding server-side proof of agreement adds an endpoint, a table, and a
+new failure mode for zero product value until multiple people can use
+the same scan under different legal identities.
+
+The gap is disclosed in the Privacy Policy text and is not a surprise
+to the operator. Server-side proof is small enough (one endpoint, one
+table, one app call site) to add later without redesign.
+
+Revisit trigger: any deployment where more than one person can access
+the same scan without holding the access code, or any commercial
+launch that a legal reviewer insists on server-side proof for.
