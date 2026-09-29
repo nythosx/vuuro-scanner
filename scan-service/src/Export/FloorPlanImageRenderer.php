@@ -15,6 +15,8 @@ final class FloorPlanImageRenderer
     private const MARGIN = 24;
     private const DIMENSION_GUTTER = 28;
     private const MAX_CANVAS_DIMENSION_PX = 4000;
+    private const MAX_GROUPED_CANVAS_HEIGHT_PX = 12000;
+    private const GROUP_HEADING_HEIGHT_PX = 40;
     private const ROOM_PALETTE = [
         [255, 229, 208],
         [230, 244, 200],
@@ -252,6 +254,13 @@ final class FloorPlanImageRenderer
         foreach ($rooms as $room) {
             if (!isset($room['outline_m'], $room['bounding_dimensions_m']['width_m'], $room['bounding_dimensions_m']['length_m'])) {
                 throw new \InvalidArgumentException("Cannot render a floor plan sheet: room '{$room['label']}' is missing outline_m/bounding_dimensions_m.");
+            }
+        }
+
+        if ($layout !== 'tiles' && $roomId === null) {
+            $groups = FloorGroups::split($rooms);
+            if (count($groups) > 1) {
+                return $this->renderGroups($floorPlan, $groups, $layout, $unit, $label, $style);
             }
         }
 
@@ -580,6 +589,62 @@ final class FloorPlanImageRenderer
         $titleWidth = $this->textWidth(4, $safe);
         $x = (int) ((imagesx($image) - $titleWidth) / 2);
         $this->drawText($image, 4, $x, imagesy($image) - 44, $safe, $color);
+    }
+
+    private function renderGroups(array $floorPlan, array $groups, string $layout, string $unit, ?string $label, FloorPlanStyle|string|null $style): string
+    {
+        $headings = FloorGroups::headings($groups);
+        $bandHeight = $this->planStyle->isFunda ? 0 : self::GROUP_HEADING_HEIGHT_PX;
+        $blocks = [];
+        $width = 0;
+        $height = 0;
+        foreach ($groups as $index => $group) {
+            $png = (new self())->render([...$floorPlan, 'rooms' => $group['rooms']], $layout, null, $unit, $label, $style);
+            $size = getimagesizefromstring($png);
+            if ($size === false) {
+                throw new \RuntimeException('Could not compose the per-floor plan images.');
+            }
+            $blocks[] = [$png, $headings[$index]];
+            $width = max($width, (int) $size[0]);
+            $height += (int) $size[1] + $bandHeight;
+        }
+        if ($height > self::MAX_GROUPED_CANVAS_HEIGHT_PX || $width * $height > self::MAX_CANVAS_DIMENSION_PX * self::MAX_CANVAS_DIMENSION_PX) {
+            throw new \InvalidArgumentException(sprintf(
+                'This floor plan would be %dx%dpx across %d floor sections, which is too large to draw as one image. Export one room at a time or use layout=tiles.',
+                $width,
+                $height,
+                count($groups)
+            ));
+        }
+
+        $image = imagecreatetruecolor($width, $height);
+        $surface = $this->planStyle->isFunda ? imagecolorallocate($image, 255, 255, 255) : imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_SURFACE));
+        $text = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK));
+        $rule = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK_MUTED));
+        imagefilledrectangle($image, 0, 0, $width, $height, $surface);
+
+        $y = 0;
+        foreach ($blocks as [$blockPng, $heading]) {
+            $block = imagecreatefromstring($blockPng);
+            if ($block === false) {
+                imagedestroy($image);
+                throw new \RuntimeException('Could not compose the per-floor plan images.');
+            }
+            if ($bandHeight > 0) {
+                imageline($image, self::MARGIN, $y + 4, $width - self::MARGIN, $y + 4, $rule);
+                $this->drawBoldText($image, 4, self::MARGIN, $y + 14, $this->printable($heading), $text);
+                $y += $bandHeight;
+            }
+            imagecopy($image, $block, 0, $y, 0, 0, imagesx($block), imagesy($block));
+            $y += imagesy($block);
+            imagedestroy($block);
+        }
+
+        ob_start();
+        imagepng($image);
+        $png = (string) ob_get_clean();
+        imagedestroy($image);
+        return $png;
     }
 
     private function renderFused(array $rooms, string $unit = UnitFormatter::METRIC, ?string $label = null, array $notes = []): string

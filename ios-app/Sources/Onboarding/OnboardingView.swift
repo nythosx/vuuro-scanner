@@ -189,7 +189,7 @@ struct OnboardingView: View {
         .frame(width: width, alignment: .leading)
         .background(
             LinearGradient(
-                colors: [.black.opacity(0.55), .black.opacity(0.6), .black.opacity(0.88)],
+                colors: [.black.opacity(0), .black.opacity(0), .black.opacity(0)],
                 startPoint: .top,
                 endPoint: .bottom
             )

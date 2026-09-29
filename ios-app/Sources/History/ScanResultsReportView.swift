@@ -477,30 +477,34 @@ struct ScanResultsReportView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 12)
         } else {
-            ForEach(floorPlan.rooms, id: \.roomId) { room in
-                RoomResultCard(
-                    room: room,
-                    showsRibbon: false,
-                    isFused: floorPlan.rooms.count > 1,
-                    photos: floorPlan.photos.filter { $0.roomId == room.roomId },
-                    notes: floorPlan.notes.filter { $0.roomId == room.roomId },
-                    session: entry.asResumableSession(),
-                    pendingObjectChanges: pendingObjectChanges,
-                    onObjectChange: { key, change in
-                        if let change {
-                            pendingObjectChanges[key] = change
-                        } else {
-                            pendingObjectChanges.removeValue(forKey: key)
-                        }
-                    },
-                    onAddMissingItem: {
-                        missingItemTarget = MissingItemTarget(room: room)
-                    },
-                    onRoomTypeChange: { value in
-                        Task { await updateRoomType(roomId: room.roomId, to: value) }
-                    },
-                    isUpdatingRoomType: updatingRoomTypeIds.contains(room.roomId)
-                )
+            ForEach(RoomFloorSection.sections(for: floorPlan.rooms)) { section in
+                if let title = section.title {
+                    RoomFloorSectionHeader(title: title)
+                }
+                ForEach(section.rooms, id: \.roomId) { room in
+                    RoomResultCard(
+                        room: room,
+                        showsRibbon: false,
+                        photos: floorPlan.photos.filter { $0.roomId == room.roomId },
+                        notes: floorPlan.notes.filter { $0.roomId == room.roomId },
+                        session: entry.asResumableSession(),
+                        pendingObjectChanges: pendingObjectChanges,
+                        onObjectChange: { key, change in
+                            if let change {
+                                pendingObjectChanges[key] = change
+                            } else {
+                                pendingObjectChanges.removeValue(forKey: key)
+                            }
+                        },
+                        onAddMissingItem: {
+                            missingItemTarget = MissingItemTarget(room: room)
+                        },
+                        onRoomTypeChange: { value in
+                            Task { await updateRoomType(roomId: room.roomId, to: value) }
+                        },
+                        isUpdatingRoomType: updatingRoomTypeIds.contains(room.roomId)
+                    )
+                }
             }
         }
     }

@@ -550,7 +550,7 @@ struct ScanHistoryView: View {
         shareCodeSource = ShareCodeItemSource(
             code: code,
             subject: "Vuuro Scan access — \(entry.propertyId) / \(entry.unitId)",
-            messageBody: "Paste this code into Vuuro Scan, under History → \"Add a scan someone shared with you\", to get full access to this scan: view, export, add rooms or floors to continue the walk, and delete. Only share it with someone you trust."
+            messageBody: "In Vuuro Scan, open History → Actions → \"Add a shared scan\" and paste this message or the code below to get full access to this scan: view, export, add rooms or floors to continue the walk, and delete. Only share it with someone you trust."
         )
         showQuickShare = true
     }
@@ -1143,6 +1143,7 @@ private struct ImportScanView: View {
 
     @State private var code = ""
     @State private var error: String?
+    @State private var pendingEntry: ScanHistoryEntry?
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -1187,6 +1188,16 @@ private struct ImportScanView: View {
                     .shadow(color: VuuroMetrics.cardShadowColor, radius: VuuroMetrics.cardShadowRadius, x: 0, y: 4)
                     .padding(.horizontal, 20)
 
+                    PasteButton(payloadType: String.self) { strings in
+                        guard let pasted = strings.first else { return }
+                        code = pasted
+                        error = nil
+                    }
+                    .accessibilityIdentifier("importScan.paste")
+                    .buttonBorderShape(.capsule)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+
                     if let error {
                         Text(error)
                             .font(.system(size: 12))
@@ -1212,6 +1223,29 @@ private struct ImportScanView: View {
         .background(VuuroColor.bgApp)
         .toolbar(.hidden, for: .navigationBar)
         .onAppear { isFocused = true }
+        .alert("Add this scan?", isPresented: pendingEntryBinding, presenting: pendingEntry) { entry in
+            Button("Add") {
+                pendingEntry = nil
+                onImported(entry)
+            }
+            .accessibilityIdentifier("importScan.confirm")
+            Button("Cancel", role: .cancel) { pendingEntry = nil }
+        } message: { entry in
+            Text(verbatim: importSummary(for: entry))
+        }
+    }
+
+    private var pendingEntryBinding: Binding<Bool> {
+        Binding(
+            get: { pendingEntry != nil },
+            set: { if !$0 { pendingEntry = nil } }
+        )
+    }
+
+    private func importSummary(for entry: ScanHistoryEntry) -> String {
+        let place = [entry.propertyId, entry.unitId].filter { !$0.isEmpty }.joined(separator: " / ")
+        let date = entry.createdAt.formatted(date: .abbreviated, time: .omitted)
+        return "\(place)\n\(vuuroLocalized(entry.purpose.displayName)) · \(date)"
     }
 
     private var trimmedCode: String {
@@ -1224,6 +1258,7 @@ private struct ImportScanView: View {
             return
         }
         error = nil
-        onImported(decoded)
+        isFocused = false
+        pendingEntry = decoded
     }
 }

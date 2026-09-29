@@ -95,7 +95,6 @@ enum ObjectCategoryCatalog {
 struct RoomResultCard: View {
     let room: FloorPlan.Room
     var showsRibbon: Bool = false
-    var isFused: Bool = false
     let photos: [FloorPlan.Photo]
     let notes: [FloorPlan.Note]
     let session: ScanSessionResponse
@@ -309,7 +308,7 @@ struct RoomResultCard: View {
         VuuroRoomMetricGrid(items: [
             .init(value: String(format: "%.1f", room.floorAreaM2), unit: "m\u{00B2}", label: "Area"),
             .init(value: String(format: "%.1f", room.perimeterM), unit: "m", label: "Perimeter"),
-            .init(value: heightText, unit: room.heightM == nil ? nil : "m", label: "Height"),
+            .init(value: heightText, unit: (room.heightM ?? 0) > 0 ? "m" : nil, label: "Height"),
         ])
     }
 

@@ -122,6 +122,13 @@ final class FloorPlanSvgRenderer
             }
         }
 
+        if ($layout !== 'tiles' && $roomId === null) {
+            $groups = FloorGroups::split($rooms);
+            if (count($groups) > 1) {
+                return $this->renderGroups($floorPlan, $groups, $layout, $unit, $label, $style);
+            }
+        }
+
         $isFused = $layout !== 'tiles' && $roomId === null && count($rooms) > 1 && array_reduce(
             $rooms,
             fn (bool $carry, array $room) => $carry && isset($room['structure_origin_m']),
@@ -153,6 +160,34 @@ SVG;
     private function num(float $n): string
     {
         return rtrim(rtrim(sprintf('%.2f', $n), '0'), '.') ?: '0';
+    }
+
+    private function renderGroups(array $floorPlan, array $groups, string $layout, string $unit, ?string $label, FloorPlanStyle|string|null $style): string
+    {
+        $headings = FloorGroups::headings($groups);
+        $bandHeight = 40;
+        $body = '';
+        $width = 0;
+        $y = 8;
+        foreach ($groups as $index => $group) {
+            $svg = (new self())->render([...$floorPlan, 'rooms' => $group['rooms']], $layout, null, $unit, $label, $style);
+            if (preg_match('/viewBox="0 0 (\d+) (\d+)"/', $svg, $size) !== 1) {
+                throw new \RuntimeException('Could not compose the per-floor plan drawings.');
+            }
+            $blockWidth = (int) $size[1];
+            $blockHeight = (int) $size[2];
+            $suffix = '-s' . ($index + 1);
+            $svg = preg_replace('/\bid="([^"]+)"/', 'id="$1' . $suffix . '"', $svg);
+            $svg = preg_replace('/url\(#([^)]+)\)/', 'url(#$1' . $suffix . ')', $svg);
+            $svg = preg_replace('/href="#([^"]+)"/', 'href="#$1' . $suffix . '"', $svg);
+            $nested = preg_replace('/width="100%" height="100%"/', 'x="0" y="' . ($y + $bandHeight) . '" width="' . $blockWidth . '" height="' . $blockHeight . '"', $svg, 1);
+            $body .= '<text x="' . self::MARGIN . '" y="' . ($y + 26) . '" font-size="16" font-weight="700" fill="' . self::TEXT . '">' . $this->esc($headings[$index]) . '</text>';
+            $body .= $nested;
+            $width = max($width, $blockWidth);
+            $y += $bandHeight + $blockHeight;
+        }
+
+        return $this->wrapSvg($width, $y, $body);
     }
 
     private function wrapSvg(int $width, int $height, string $body): string
@@ -476,7 +511,7 @@ SVG;
         $centroidX = $n > 0 ? array_sum(array_column($outline, 0)) / $n : 0.0;
         $centroidZ = $n > 0 ? array_sum(array_column($outline, 1)) / $n : 0.0;
 
-        $out = '<g id="openings">';
+        $out = '<g class="openings">';
         foreach ($room['openings'] ?? [] as $opening) {
             [$mx, $mz] = $opening['position_m'];
             $category = $opening['category'];

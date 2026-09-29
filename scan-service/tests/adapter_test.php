@@ -186,6 +186,23 @@ $truncatedDimsResult = $adapter->adapt([
 t_check('a truncated or missing objects[].dimensions drops the object instead of fabricating [0,0,0]',
     array_column($truncatedDimsResult['rooms'][0]['objects'], 'object_id') === ['real']);
 
+echo "\n== Walkthrough id and story ==\n";
+$square = [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]];
+$plainResult = $adapter->adapt(['floors' => $square], $identity);
+t_check('capture_group_id is null when the capture has none', $plainResult['rooms'][0]['capture_group_id'] === null);
+t_check('story is null when the capture has none', $plainResult['rooms'][0]['story'] === null);
+$taggedResult = $adapter->adapt(['floors' => $square, 'capture_group_id' => 'A1B2-c3d4', 'story' => 1], $identity);
+t_check('capture_group_id passes through', $taggedResult['rooms'][0]['capture_group_id'] === 'A1B2-c3d4');
+t_check('story passes through', $taggedResult['rooms'][0]['story'] === 1);
+foreach (['bad id' => ['capture_group_id' => 'has space'], 'long id' => ['capture_group_id' => str_repeat('a', 65)], 'numeric id' => ['capture_group_id' => 12], 'fractional story' => ['story' => 1.5], 'huge story' => ['story' => 999]] as $case => $extra) {
+    try {
+        $adapter->adapt(['floors' => $square] + $extra, $identity);
+        t_check("adapt() rejects a capture with a $case", false, 'no exception was thrown');
+    } catch (\InvalidArgumentException) {
+        t_check("adapt() rejects a capture with a $case", true);
+    }
+}
+
 echo "\n== LIDAR-5/11: structure_origin_m ==\n";
 $noOriginResult = $adapter->adapt([
     'floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]],

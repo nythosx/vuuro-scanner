@@ -105,6 +105,8 @@ struct ScanFlowView: View {
     @State private var stage: Stage
     @State private var showStartSheet = false
     @State private var startType: ScanStartType = .single
+    @State private var showScanInstructions = false
+    @State private var openSetupAfterInstructions = false
     @State private var showSettings = false
     @State private var showHistory = false
     @State private var showTerms = false
@@ -125,12 +127,10 @@ struct ScanFlowView: View {
             case .home:
                 HomeView(
                     onStartSingle: {
-                        startType = .single
-                        showStartSheet = true
+                        beginStart(.single)
                     },
                     onStartMulti: {
-                        startType = .multi
-                        showStartSheet = true
+                        beginStart(.multi)
                     },
                     onOpenSettings: { showSettings = true },
                     onOpenHistory: { showHistory = true },
@@ -275,6 +275,29 @@ struct ScanFlowView: View {
             .presentationDragIndicator(.hidden)
             .presentationCornerRadius(VuuroMetrics.sheetRadius)
         }
+        .sheet(isPresented: $showScanInstructions, onDismiss: {
+            if openSetupAfterInstructions {
+                openSetupAfterInstructions = false
+                showStartSheet = true
+            }
+        }) {
+            ScanInstructionsView(
+                type: startType,
+                primaryLabel: "Got it, set up the scan",
+                onPrimary: {
+                    ScanInstructionsSettings.markSeen(startType)
+                    openSetupAfterInstructions = true
+                    showScanInstructions = false
+                },
+                onClose: {
+                    ScanInstructionsSettings.markSeen(startType)
+                    showScanInstructions = false
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.hidden)
+            .presentationCornerRadius(VuuroMetrics.sheetRadius)
+        }
         .navigationDestination(isPresented: $showSettings) {
             SettingsView(
                 onBack: { showSettings = false },
@@ -314,6 +337,15 @@ struct ScanFlowView: View {
             DiagnosticsLogView()
         }
     }
+
+    private func beginStart(_ type: ScanStartType) {
+        startType = type
+        if ScanInstructionsSettings.hasSeen(type) {
+            showStartSheet = true
+        } else {
+            showScanInstructions = true
+        }
+    }
 }
 
 private struct RoomCaptureFlowStep: View {
@@ -342,6 +374,7 @@ private struct RoomCaptureFlowStep: View {
     @State private var showCorrectionDialog = false
     @State private var captureFloor: String = ""
     @State private var showFloorPrompt = false
+    @State private var showHowToScan = false
     @State private var cameraDenied = CameraAccess.isDenied
     @Environment(\.scenePhase) private var scenePhase
 
@@ -550,6 +583,8 @@ private struct RoomCaptureFlowStep: View {
             .padding(.top, 16)
 
             HStack {
+                ScanHowToChip { showHowToScan = true }
+                    .accessibilityIdentifier("capture.howToScan")
                 Spacer()
                 Button {
                     showFloorPrompt = true
@@ -557,7 +592,7 @@ private struct RoomCaptureFlowStep: View {
                     HStack(spacing: 6) {
                         Image(systemName: "building.2")
                             .font(.system(size: 11, weight: .semibold))
-                        Text(captureFloor.isEmpty ? "Set floor" : captureFloor)
+                        Text(captureFloor.isEmpty ? vuuroLocalized("Set floor") : captureFloor)
                             .font(.system(size: 12, weight: .semibold))
                             .lineLimit(1)
                     }
@@ -579,7 +614,7 @@ private struct RoomCaptureFlowStep: View {
 
             Spacer().frame(height: 14)
 
-            VuuroScanHint(text: "Slowly pan around the walls")
+            VuuroScanHint(text: vuuroLocalized("Slowly pan around the walls"))
 
             if let guess = coordinator.liveRoomTypeGuess, !coordinator.hasAnsweredRoomType {
                 Spacer().frame(height: 20)
@@ -596,6 +631,17 @@ private struct RoomCaptureFlowStep: View {
                     .padding(.horizontal, 24)
                     .padding(.bottom, 8)
             }
+        }
+        .sheet(isPresented: $showHowToScan) {
+            ScanInstructionsView(
+                type: .single,
+                primaryLabel: "Back to scanning",
+                onPrimary: { showHowToScan = false },
+                onClose: { showHowToScan = false }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.hidden)
+            .presentationCornerRadius(VuuroMetrics.sheetRadius)
         }
         .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
             Button("Discard", role: .destructive) {

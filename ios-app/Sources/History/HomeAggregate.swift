@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 struct HomeKey: Hashable, Identifiable {
     let propertyId: String
@@ -195,5 +196,65 @@ extension ScanHistoryEntry {
             }
         }
         return count
+    }
+}
+
+struct RoomFloorSection: Identifiable {
+    let id: String
+    let title: String?
+    let rooms: [FloorPlan.Room]
+
+    static func sections(for rooms: [FloorPlan.Room]) -> [RoomFloorSection] {
+        var order: [String] = []
+        var names: [String: String] = [:]
+        var grouped: [String: [FloorPlan.Room]] = [:]
+        for room in rooms {
+            let name = room.floor?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let key = name.lowercased()
+            if grouped[key] == nil {
+                order.append(key)
+                names[key] = name
+            }
+            grouped[key, default: []].append(room)
+        }
+        guard order.count > 1 else {
+            return [RoomFloorSection(id: "all", title: nil, rooms: rooms)]
+        }
+        let sorted = order.enumerated().sorted { lhs, rhs in
+            let left = names[lhs.element] ?? ""
+            let right = names[rhs.element] ?? ""
+            if left.isEmpty != right.isEmpty { return right.isEmpty }
+            if !left.isEmpty {
+                let leftRank = HomeAggregator.floorRank(left)
+                let rightRank = HomeAggregator.floorRank(right)
+                if leftRank != rightRank { return leftRank > rightRank }
+            }
+            return lhs.offset < rhs.offset
+        }
+        return sorted.map { entry in
+            let name = names[entry.element] ?? ""
+            return RoomFloorSection(
+                id: entry.element,
+                title: name.isEmpty ? vuuroLocalized("Floor not set") : name,
+                rooms: grouped[entry.element] ?? []
+            )
+        }
+    }
+}
+
+struct RoomFloorSectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 12, weight: .bold))
+            .tracking(0.6)
+            .textCase(.uppercase)
+            .foregroundStyle(VuuroColor.textSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+            .accessibilityAddTraits(.isHeader)
     }
 }

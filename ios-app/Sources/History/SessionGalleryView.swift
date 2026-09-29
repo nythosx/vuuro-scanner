@@ -12,6 +12,7 @@ struct SessionGalleryView: View {
     @State private var isLoadingFloorPlanPreview = false
     @State private var floorPlanPreviewFailed = false
     @State private var removingPhotoIds: Set<String> = []
+    @State private var pendingPhotoDeleteId: String?
     @State private var removingNoteIds: Set<String> = []
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
 
@@ -80,6 +81,25 @@ struct SessionGalleryView: View {
             }
         }
         .task { await load() }
+        .alert("Delete this photo?", isPresented: photoDeleteBinding) {
+            Button("Delete", role: .destructive) {
+                if let pendingPhotoDeleteId {
+                    Task { await removePhoto(photoId: pendingPhotoDeleteId) }
+                }
+                pendingPhotoDeleteId = nil
+            }
+            .accessibilityIdentifier("gallery.deletePhotoConfirm")
+            Button("Cancel", role: .cancel) { pendingPhotoDeleteId = nil }
+        } message: {
+            Text("The photo is removed from this scan and from the server. This cannot be undone.")
+        }
+    }
+
+    private var photoDeleteBinding: Binding<Bool> {
+        Binding(
+            get: { pendingPhotoDeleteId != nil },
+            set: { if !$0 { pendingPhotoDeleteId = nil } }
+        )
     }
 
     @ViewBuilder
@@ -164,7 +184,7 @@ struct SessionGalleryView: View {
                     }
                     Spacer()
                     Button {
-                        Task { await removePhoto(photoId: photo.photoId) }
+                        pendingPhotoDeleteId = photo.photoId
                     } label: {
                         if removingPhotoIds.contains(photo.photoId) {
                             ProgressView()

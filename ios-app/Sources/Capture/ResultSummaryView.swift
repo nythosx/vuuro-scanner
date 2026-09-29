@@ -75,30 +75,34 @@ struct ResultSummaryView: View {
                         floorPlanCard
                         ExportStyleSection(style: $exportStyle)
                     }
-                    ForEach(currentFloorPlan.rooms, id: \.roomId) { room in
-                        RoomResultCard(
-                            room: room,
-                            showsRibbon: false,
-                            isFused: currentFloorPlan.rooms.count > 1,
-                            photos: currentFloorPlan.photos.filter { $0.roomId == room.roomId },
-                            notes: currentFloorPlan.notes.filter { $0.roomId == room.roomId },
-                            session: session,
-                            pendingObjectChanges: pendingObjectChanges,
-                            onObjectChange: { key, change in
-                                if let change {
-                                    pendingObjectChanges[key] = change
-                                } else {
-                                    pendingObjectChanges.removeValue(forKey: key)
-                                }
-                            },
-                            onAddMissingItem: {
-                                missingItemTarget = MissingItemTarget(room: room)
-                            },
-                            onRoomTypeChange: { value in
-                                Task { await updateRoomType(roomId: room.roomId, to: value) }
-                            },
-                            isUpdatingRoomType: updatingRoomTypeIds.contains(room.roomId)
-                        )
+                    ForEach(RoomFloorSection.sections(for: currentFloorPlan.rooms)) { section in
+                        if let title = section.title {
+                            RoomFloorSectionHeader(title: title)
+                        }
+                        ForEach(section.rooms, id: \.roomId) { room in
+                            RoomResultCard(
+                                room: room,
+                                showsRibbon: false,
+                                photos: currentFloorPlan.photos.filter { $0.roomId == room.roomId },
+                                notes: currentFloorPlan.notes.filter { $0.roomId == room.roomId },
+                                session: session,
+                                pendingObjectChanges: pendingObjectChanges,
+                                onObjectChange: { key, change in
+                                    if let change {
+                                        pendingObjectChanges[key] = change
+                                    } else {
+                                        pendingObjectChanges.removeValue(forKey: key)
+                                    }
+                                },
+                                onAddMissingItem: {
+                                    missingItemTarget = MissingItemTarget(room: room)
+                                },
+                                onRoomTypeChange: { value in
+                                    Task { await updateRoomType(roomId: room.roomId, to: value) }
+                                },
+                                isUpdatingRoomType: updatingRoomTypeIds.contains(room.roomId)
+                            )
+                        }
                     }
 
                     if !currentFloorPlan.photos.filter({ $0.roomId == nil }).isEmpty

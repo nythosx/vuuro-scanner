@@ -12,6 +12,7 @@ final class VuuroScanUITests: XCTestCase {
         let environment = ProcessInfo.processInfo.environment
         app.launchEnvironment["SCAN_SERVICE_BASE_URL"] = environment["SCAN_SERVICE_BASE_URL"] ?? "http://127.0.0.1:8089"
         app.launchEnvironment["FAKE_LIDAR_MODE"] = "1"
+        app.launchArguments += ["-scanInstructions.seen.single", "YES", "-scanInstructions.seen.multi", "YES"]
         if onboardingDone {
             app.launchArguments += ["-hasCompletedOnboarding", "YES", "-onboardingCompletedVersion", "2"]
         } else {

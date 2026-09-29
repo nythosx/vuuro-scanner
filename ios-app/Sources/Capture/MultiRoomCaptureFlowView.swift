@@ -21,6 +21,8 @@ struct MultiRoomCaptureFlowView: View {
     @State private var showCapturedRoomsList = false
     @State private var showDiscardConfirmation = false
     @State private var showMultiFloorPrompt = false
+    @State private var showHowToScan = false
+    @State private var captureGroupId = UUID().uuidString
     @State private var capturedLocation: CaptureLocation?
     @State private var capturedHeadingDeg: Double?
     @State private var preUploadedSession: (session: ScanSessionResponse, floorPlan: FloorPlan)?
@@ -181,6 +183,9 @@ struct MultiRoomCaptureFlowView: View {
         .onChange(of: coordinator.state) { _, state in
             handle(state)
         }
+        .onChange(of: capturedFloor, initial: true) { _, newValue in
+            coordinator.currentFloor = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         .onChange(of: coordinator.capturedRooms.count) { _, _ in
             persistWalkthroughProgress()
         }
@@ -197,6 +202,17 @@ struct MultiRoomCaptureFlowView: View {
             .accessibilityIdentifier("multiCapture.startFresh")
         } message: { offer in
             Text("\(offer.rooms.count) room\(offer.rooms.count == 1 ? " was" : "s were") saved from a walkthrough that was interrupted. Upload them as they are, or discard them to start a new scan.")
+        }
+        .sheet(isPresented: $showHowToScan) {
+            ScanInstructionsView(
+                type: .multi,
+                primaryLabel: "Back to scanning",
+                onPrimary: { showHowToScan = false },
+                onClose: { showHowToScan = false }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.hidden)
+            .presentationCornerRadius(VuuroMetrics.sheetRadius)
         }
         .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
             Button("Discard", role: .destructive) {
@@ -219,7 +235,7 @@ struct MultiRoomCaptureFlowView: View {
             Button("Keep scanning", role: .cancel) {}
                 .accessibilityIdentifier("multiCapture.finishKeepScanning")
         } message: {
-            Text("\(coordinator.capturedRooms.count) room(s) captured so far will be merged and uploaded.")
+            Text("The room you are scanning now is included. Then all rooms are merged into one plan and uploaded.")
         }
         .sheet(isPresented: $showCapturedRoomsList) {
             CapturedRoomsListView(coordinator: coordinator)
@@ -241,7 +257,7 @@ struct MultiRoomCaptureFlowView: View {
             Button("Cancel", role: .cancel) {}
                 .accessibilityIdentifier("multiCapture.floorCancel")
         } message: {
-            Text("Applies to the next room you scan, and to the rest of this session, until you change it.")
+            Text("Applies to this room and to the next rooms you scan in this session, until you change it.")
         }
         .portraitLocked()
     }
@@ -286,9 +302,10 @@ struct MultiRoomCaptureFlowView: View {
                 headingDeg: capturedHeadingDeg
             )
             guard let data = try? JSONEncoder().encode(export) else { continue }
+            let roomFloor = coordinator.floor(forRoomAt: index)
             storedRooms.append(WalkthroughState.StoredRoom(
                 exportJSON: data,
-                floor: capturedFloor.isEmpty ? nil : capturedFloor,
+                floor: roomFloor.isEmpty ? nil : roomFloor,
                 label: "Room \(index + 1)"
             ))
         }
@@ -305,7 +322,12 @@ struct MultiRoomCaptureFlowView: View {
     @MainActor
     private func resumeFromStoredState(_ state: WalkthroughState) {
         resumeOffer = nil
-        let exports = state.rooms.compactMap { try? JSONDecoder().decode(RoomPlanCaptureExport.self, from: $0.exportJSON) }
+        let storedPairs: [(export: RoomPlanCaptureExport, floor: String?)] = state.rooms.compactMap { stored in
+            guard let export = try? JSONDecoder().decode(RoomPlanCaptureExport.self, from: stored.exportJSON) else { return nil }
+            return (export, stored.floor)
+        }
+        let exports = storedPairs.map { $0.export }
+        let storedFloors = storedPairs.map { $0.floor }
         guard !exports.isEmpty else {
             DiagnosticsLog.shared.record("Saved walkthrough could not be read — starting a new scan", category: .error)
             WalkthroughStore.clear()
@@ -313,7 +335,7 @@ struct MultiRoomCaptureFlowView: View {
             coordinator.start()
             return
         }
-        if let storedFloor = state.rooms.first?.floor {
+        if let storedFloor = state.rooms.last?.floor {
             capturedFloor = storedFloor
         }
         uploadTask = Task {
@@ -322,7 +344,7 @@ struct MultiRoomCaptureFlowView: View {
             for index in labels.indices {
                 uploadProgress.markUploading(index: index)
             }
-            guard let result = await submitExports(exports) else { return }
+            guard let result = await submitExports(exports, floors: storedFloors) else { return }
             for index in labels.indices {
                 uploadProgress.markDone(index: index, areaM2: exports[index].floorAreaM2)
             }
@@ -333,9 +355,12 @@ struct MultiRoomCaptureFlowView: View {
     private var roomHintText: String {
         let number = coordinator.capturedRooms.count + 1
         if let guess = coordinator.liveRoomTypeGuess {
-            return "Room \(number) · \(RoomTypeClassifier.displayName(for: guess.type))"
+            return String(format: vuuroLocalized("Room %lld · %@"), number, RoomTypeClassifier.displayName(for: guess.type))
         }
-        return "Scanning room \(number)"
+        if coordinator.capturedRooms.isEmpty {
+            return vuuroLocalized("Slowly pan around the walls")
+        }
+        return String(format: vuuroLocalized("Scanning room %lld"), number)
     }
 
     private var showsMultiCaptureChrome: Bool {
@@ -351,30 +376,6 @@ struct MultiRoomCaptureFlowView: View {
                     coordinator.stopCurrentRoom()
                 }
                 .accessibilityIdentifier("multiCapture.saveAndNext")
-
-                HStack(spacing: 8) {
-                    Button {
-                        showMultiFloorPrompt = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "building.2")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text(capturedFloor.isEmpty ? "Set floor" : capturedFloor)
-                                .font(.system(size: 12, weight: .semibold))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .background(Color.black.opacity(0.4), in: Capsule())
-                    }
-                    .accessibilityIdentifier("multiCapture.floor")
-                    .buttonStyle(.plain)
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 4)
 
                 if !coordinator.capturedRooms.isEmpty {
                     VuuroRoomsButton(count: coordinator.capturedRooms.count) {
@@ -415,6 +416,32 @@ struct MultiRoomCaptureFlowView: View {
             }
             .padding(.horizontal, 20)
             .padding(.top, 16)
+
+            HStack {
+                ScanHowToChip { showHowToScan = true }
+                    .accessibilityIdentifier("multiCapture.howToScan")
+                Spacer()
+                Button {
+                    showMultiFloorPrompt = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "building.2")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(capturedFloor.isEmpty ? vuuroLocalized("Set floor") : capturedFloor)
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .background(Color.black.opacity(0.4), in: Capsule())
+                }
+                .accessibilityIdentifier("multiCapture.floor")
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
 
             Spacer().frame(height: 24)
 
@@ -586,7 +613,11 @@ struct MultiRoomCaptureFlowView: View {
         for index in labels.indices {
             uploadProgress.markUploading(index: index)
         }
-        guard let result = await submitExportsSilent(exports) else {
+        let floors: [String?] = coordinator.capturedRooms.indices.map { index in
+            let roomFloor = coordinator.floor(forRoomAt: index)
+            return roomFloor.isEmpty ? nil : roomFloor
+        }
+        guard let result = await submitExportsSilent(exports, floors: floors) else {
             isFinishingUnit = false
             return
         }
@@ -617,7 +648,16 @@ struct MultiRoomCaptureFlowView: View {
             roomTypeConfirmationsByIdentifier: coordinator.roomTypeConfirmationsForStructure(structure),
             roomWalkPathsByIdentifier: coordinator.walkPathsForStructure(structure),
             headingDeg: capturedHeadingDeg
-        )
+        ).map { export -> RoomPlanCaptureExport in
+            var tagged = export
+            tagged.captureGroupId = captureGroupId
+            return tagged
+        }
+        let floorsByRoom = coordinator.floorsForStructure(structure)
+        let fusedFloors: [String?] = structure.rooms.map { room in
+            let roomFloor = floorsByRoom[room.identifier] ?? capturedFloor.trimmingCharacters(in: .whitespacesAndNewlines)
+            return roomFloor.isEmpty ? nil : roomFloor
+        }
 
         guard exports.allSatisfy({ $0.hasUsableFloorOutline }) else {
             DiagnosticsLog.shared.record(
@@ -649,7 +689,8 @@ struct MultiRoomCaptureFlowView: View {
                 floor: {
                     let trimmed = capturedFloor.trimmingCharacters(in: .whitespacesAndNewlines)
                     return trimmed.isEmpty ? nil : trimmed
-                }()
+                }(),
+                floors: fusedFloors
             )
             for index in labels.indices {
                 uploadProgress.markDone(index: index, areaM2: exports[index].floorAreaM2)
@@ -680,7 +721,8 @@ struct MultiRoomCaptureFlowView: View {
 
     @MainActor
     private func submitExportsSilent(
-        _ exports: [RoomPlanCaptureExport]
+        _ exports: [RoomPlanCaptureExport],
+        floors: [String?]? = nil
     ) async -> (session: ScanSessionResponse, floorPlan: FloorPlan)? {
         guard !exports.isEmpty else {
             onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
@@ -702,11 +744,17 @@ struct MultiRoomCaptureFlowView: View {
             return trimmed.isEmpty ? nil : trimmed
         }()
         var captures: [PendingUploadState.PendingCapture] = []
-        for export in exports {
+        for (index, export) in exports.enumerated() {
+            var tagged = export
+            tagged.captureGroupId = captureGroupId
+            let roomFloor: String? = {
+                guard let floors, floors.indices.contains(index) else { return floorForCaptures }
+                return floors[index] ?? ""
+            }()
             guard let bodyJSON = try? client.encodeCaptureBody(
-                capture: export,
+                capture: tagged,
                 location: capturedLocation,
-                floor: floorForCaptures
+                floor: roomFloor
             ) else {
                 onError(
                     AppError(
@@ -791,11 +839,12 @@ struct MultiRoomCaptureFlowView: View {
 
     @MainActor
     private func submitExports(
-        _ exports: [RoomPlanCaptureExport]
+        _ exports: [RoomPlanCaptureExport],
+        floors: [String?]? = nil
     ) async -> (session: ScanSessionResponse, floorPlan: FloorPlan)? {
         isUploading = true
         defer { isUploading = false }
-        return await submitExportsSilent(exports)
+        return await submitExportsSilent(exports, floors: floors)
     }
 
 

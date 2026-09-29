@@ -86,6 +86,8 @@ final class RoomPlanSimulatorAdapter
                 'volume_m3_indicative' => $volume,
                 'objects' => self::mapObjects($rawCapture, $minX, $minZ),
                 'structure_origin_m' => self::structureOriginM($rawCapture),
+                'capture_group_id' => self::captureGroupId($rawCapture),
+                'story' => self::story($rawCapture),
                 'floor' => self::normalizeFloor($identity['floor'] ?? null),
                 'heading_deg' => self::headingDeg($rawCapture),
                 'room_type' => self::mapRoomType($rawCapture),
@@ -304,6 +306,18 @@ final class RoomPlanSimulatorAdapter
         ];
     }
 
+    private static function captureGroupId(array $rawCapture): ?string
+    {
+        $group = $rawCapture['capture_group_id'] ?? null;
+        return is_string($group) && $group !== '' ? $group : null;
+    }
+
+    private static function story(array $rawCapture): ?int
+    {
+        $story = $rawCapture['story'] ?? null;
+        return is_int($story) ? $story : null;
+    }
+
     private static function structureOriginM(array $rawCapture): ?array
     {
         $origin = $rawCapture['structure_origin_m'] ?? null;
@@ -471,6 +485,16 @@ final class RoomPlanSimulatorAdapter
         $structureOrigin = $rawCapture['structure_origin_m'] ?? null;
         if (is_array($structureOrigin)) {
             self::validatePoints('structure_origin_m', [$structureOrigin]);
+        }
+
+        $captureGroup = $rawCapture['capture_group_id'] ?? null;
+        if ($captureGroup !== null && (!is_string($captureGroup) || preg_match('/^[A-Za-z0-9-]{1,64}$/', $captureGroup) !== 1)) {
+            throw new \InvalidArgumentException('capture_group_id must be 1-64 letters, digits or dashes.');
+        }
+
+        $story = $rawCapture['story'] ?? null;
+        if ($story !== null && (!is_int($story) || $story < -20 || $story > 200)) {
+            throw new \InvalidArgumentException('story must be a whole number between -20 and 200.');
         }
 
         $heading = $rawCapture['heading_deg'] ?? null;

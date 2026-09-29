@@ -5,6 +5,7 @@ declare(strict_types=1);
 require __DIR__ . '/../src/autoload.php';
 require __DIR__ . '/lib/pdf_object_graph.php';
 
+use VuuroScan\Export\FloorGroups;
 use VuuroScan\Export\FloorPlanImageRenderer;
 use VuuroScan\Export\FloorPlanPdfRenderer;
 use VuuroScan\Export\FloorPlanSvgRenderer;
@@ -667,6 +668,69 @@ x_check(
         && abs($lShapeFusion['poses'][0]['originZ'] - 0.0) < 1e-9
 );
 x_check('the smaller, drifted room is the one that actually gets corrected', abs($lShapeFusion['poses'][1]['rotationRad']) > 0.01);
+
+echo "\n== Multi-floor and multi-walkthrough plans are split into separate sections ==\n";
+$withGroup = static function (array $room, ?string $floor, ?string $group): array {
+    $room['floor'] = $floor;
+    $room['capture_group_id'] = $group;
+    return $room;
+};
+$groundA = $withGroup(build_room_with_outline('Ground A', $squareOutline, [0.0, 0.0], [], null, 'ground-a'), 'Ground floor', 'walk-1');
+$groundB = $withGroup(build_room_with_outline('Ground B', $squareOutline, [4.0, 0.0], [], null, 'ground-b'), 'Ground floor', 'walk-1');
+$upstairsA = $withGroup(build_room_with_outline('Upstairs A', $squareOutline, [0.5, 0.0], [], null, 'up-a'), '1st floor', 'walk-2');
+$upstairsB = $withGroup(build_room_with_outline('Upstairs B', $squareOutline, [4.5, 0.0], [], null, 'up-b'), '1st floor', 'walk-2');
+$atticRoom = $withGroup(build_room_with_outline('Attic', $squareOutline, null, [], null, 'attic'), 'Attic', null);
+$unsetRoom = $withGroup(build_room_with_outline('Unset', $squareOutline, null, [], null, 'unset'), null, null);
+
+$split = FloorGroups::split([$unsetRoom, $groundA, $upstairsA, $groundB, $atticRoom, $upstairsB]);
+x_check('rooms split into one section per floor and walkthrough', count($split) === 4, 'got ' . count($split));
+x_check('sections run from the top floor down, with no floor last', array_column($split, 'floor') === ['Attic', '1st floor', 'Ground floor', null], 'got ' . json_encode(array_column($split, 'floor')));
+x_check('rooms of one walkthrough stay together', array_column($split[2]['rooms'], 'room_id') === ['ground-a', 'ground-b']);
+
+$sameFloorTwoWalks = FloorGroups::split([$groundA, $groundB, $withGroup($upstairsA, 'Ground floor', 'walk-2')]);
+x_check('two walkthroughs on the same floor are kept apart', count($sameFloorTwoWalks) === 2, 'got ' . count($sameFloorTwoWalks));
+x_check('the second section on the same floor is labelled as a separate scan', FloorGroups::headings($sameFloorTwoWalks) === ['Ground floor', 'Ground floor (separate scan 2)'], 'got ' . json_encode(FloorGroups::headings($sameFloorTwoWalks)));
+
+$legacySplit = FloorGroups::split([
+    $withGroup($groundA, 'Ground floor', null),
+    $withGroup($upstairsA, '1st floor', null),
+]);
+x_check('older fused rooms without a walkthrough id are still split by floor', count($legacySplit) === 2, 'got ' . count($legacySplit));
+
+$twoFloorPlan = build_floor_plan([$groundA, $groundB, $upstairsA, $upstairsB]);
+x_check('the two floors overlap in raw position (the case that used to be flagged)', FusionOverlapDetector::detect($twoFloorPlan['rooms']) !== []);
+$twoFloorPdf = $renderer->render($twoFloorPlan);
+x_check('PDF has no overlap warning when the overlap is only between floors', !str_contains($twoFloorPdf, 'WARNING'));
+x_check('PDF lists the 1st floor section', str_contains($twoFloorPdf, '(1st floor) Tj'));
+x_check('PDF lists the ground floor section', str_contains($twoFloorPdf, '(Ground floor) Tj'));
+x_check('PDF has one drawing page per floor', str_contains($twoFloorPdf, 'Floor plan drawing - 1st floor') && str_contains($twoFloorPdf, 'Floor plan drawing - Ground floor'));
+x_check_pdf_graph('two-floor PDF', $twoFloorPdf);
+
+$twoFloorPng = $imageRenderer->render($twoFloorPlan);
+$singleFloorPng = $imageRenderer->render(build_floor_plan([$groundA, $groundB]));
+$twoFloorImage = imagecreatefromstring($twoFloorPng);
+$singleFloorImage = imagecreatefromstring($singleFloorPng);
+x_check('PNG stacks the floors into one taller image', $twoFloorImage !== false && $singleFloorImage !== false && imagesy($twoFloorImage) > imagesy($singleFloorImage) * 1.5);
+
+$twoFloorFundaPng = $imageRenderer->render($twoFloorPlan, style: 'funda');
+x_check('Funda PNG renders a multi-floor plan', str_starts_with($twoFloorFundaPng, "\x89PNG"));
+
+$twoFloorSvg = $svgRenderer->render($twoFloorPlan);
+x_check('SVG shows a heading for each floor', str_contains($twoFloorSvg, '>1st floor</text>') && str_contains($twoFloorSvg, '>Ground floor</text>'));
+x_check('SVG nests one drawing per floor', substr_count($twoFloorSvg, '<svg ') === 3, 'got ' . substr_count($twoFloorSvg, '<svg '));
+$svgDom = new DOMDocument();
+x_check('multi-floor SVG is well-formed XML', @$svgDom->loadXML($twoFloorSvg) === true);
+preg_match_all('/\bid="([^"]+)"/', $twoFloorSvg, $svgIds);
+x_check('every id in the multi-floor SVG is unique', count($svgIds[1]) === count(array_unique($svgIds[1])), 'duplicates: ' . json_encode(array_values(array_unique(array_diff_assoc($svgIds[1], array_unique($svgIds[1]))))));
+preg_match_all('/url\(#([^)]+)\)/', $twoFloorSvg, $svgRefs);
+x_check('every url(#...) in the multi-floor SVG points at an id that exists', array_diff(array_unique($svgRefs[1]), $svgIds[1]) === [], 'missing: ' . json_encode(array_values(array_diff(array_unique($svgRefs[1]), $svgIds[1]))));
+
+$upstairsOverlap = $withGroup(build_room_with_outline('Upstairs C', $squareOutline, [4.6, 0.0], [], null, 'up-c'), '1st floor', 'walk-2');
+$overlapOneFloorPdf = $renderer->render(build_floor_plan([$groundA, $groundB, $upstairsA, $upstairsB, $upstairsOverlap]));
+x_check('PDF overlap warning names the floor it belongs to', str_contains($overlapOneFloorPdf, 'WARNING: some rooms below overlap') && str_contains($overlapOneFloorPdf, '\(1st floor\)') && !str_contains($overlapOneFloorPdf, '\(Ground floor\)'));
+
+$oneWalkPng = $imageRenderer->render(build_floor_plan([$groundA, $groundB]));
+x_check('a single walkthrough on one floor renders exactly as before', $oneWalkPng === $singleFloorPng);
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {

@@ -98,7 +98,6 @@ struct ErrorView: View {
     }
 
     private var displayCode: String {
-        if !error.code.isEmpty { return error.code }
-        return "VS-\(error.site.rawValue)"
+        error.code
     }
 }

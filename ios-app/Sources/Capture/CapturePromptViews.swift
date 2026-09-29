@@ -142,38 +142,3 @@ struct UploadRejectedView: View {
         }
     }
 }
-
-struct UploadProgressOverlay: View {
-    let message: String
-    var onCancel: (() -> Void)? = nil
-    let stillWorkingAfterSeconds: Int = 5
-
-    @State private var elapsedSeconds = 0
-
-    var body: some View {
-        VStack(spacing: 8) {
-            ProgressView()
-                .tint(VuuroColor.accent)
-            Text(elapsedSeconds >= stillWorkingAfterSeconds ? "\(message) still trying… (\(elapsedSeconds)s)" : message)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(VuuroColor.textPrimary)
-            if let onCancel {
-                Button("Cancel", action: onCancel)
-                    .accessibilityIdentifier("uploadProgress.cancel")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(VuuroColor.danger)
-            }
-        }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 22)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: .black.opacity(0.2), radius: 24, x: 0, y: 10)
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if Task.isCancelled { return }
-                elapsedSeconds += 1
-            }
-        }
-    }
-}

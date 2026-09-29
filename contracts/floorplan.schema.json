@@ -108,6 +108,15 @@
             "maxLength": 60,
             "description": "Which floor this specific room sits on (e.g. \"attic\", \"1st floor\", \"basement\"). Free-form, not an enum — different organisations name floors differently. Set at capture time from the session's default_floor, or overridden per capture call. Null when neither the capture nor the session provided one — never fabricated."
           },
+          "capture_group_id": {
+            "type": ["string", "null"],
+            "pattern": "^[A-Za-z0-9-]{1,64}$",
+            "description": "Identifies the walkthrough this room was captured in. Rooms with the same capture_group_id share one structure_origin_m frame and are fused together; rooms from different walkthroughs or floors are drawn as separate sections. Null for rooms captured before this field existed."
+          },
+          "story": {
+            "type": ["integer", "null"],
+            "description": "RoomPlan's own story index for this room, passed through as captured. Informational only: the floor field is what exports group by."
+          },
           "heading_deg": {
             "type": ["number", "null"],
             "minimum": 0,

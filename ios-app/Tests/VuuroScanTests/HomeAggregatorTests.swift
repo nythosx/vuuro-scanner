@@ -275,4 +275,35 @@ final class HomeAggregatorTests: XCTestCase {
         XCTAssertEqual(buckets[""]?.roomCount, 1)
         XCTAssertEqual(buckets[""]?.areaM2, 12.0)
     }
+
+    func testRoomsAreSectionedByFloorFromTheTopDown() throws {
+        let json = """
+        [
+          {"room_id": "g1", "label": "Room 1", "floor_area_m2": 10.0, "perimeter_m": 13.0, "bounding_dimensions_m": {"width_m": 3.0, "length_m": 3.3}, "confidence": "high", "outline_m": [[0,0],[3,0],[3,3.3],[0,3.3]], "coverage": {"score": 90, "confidence_counts": {"high": 1, "medium": 0, "low": 0}, "usable": true, "message": null}, "openings": [], "objects": [], "structure_origin_m": null, "room_type": null, "floor": "Begane grond"},
+          {"room_id": "n1", "label": "Room 2", "floor_area_m2": 10.0, "perimeter_m": 13.0, "bounding_dimensions_m": {"width_m": 3.0, "length_m": 3.3}, "confidence": "high", "outline_m": [[0,0],[3,0],[3,3.3],[0,3.3]], "coverage": {"score": 90, "confidence_counts": {"high": 1, "medium": 0, "low": 0}, "usable": true, "message": null}, "openings": [], "objects": [], "structure_origin_m": null, "room_type": null, "floor": null},
+          {"room_id": "z1", "label": "Room 3", "floor_area_m2": 10.0, "perimeter_m": 13.0, "bounding_dimensions_m": {"width_m": 3.0, "length_m": 3.3}, "confidence": "high", "outline_m": [[0,0],[3,0],[3,3.3],[0,3.3]], "coverage": {"score": 90, "confidence_counts": {"high": 1, "medium": 0, "low": 0}, "usable": true, "message": null}, "openings": [], "objects": [], "structure_origin_m": null, "room_type": null, "floor": "Zolder"},
+          {"room_id": "g2", "label": "Room 4", "floor_area_m2": 10.0, "perimeter_m": 13.0, "bounding_dimensions_m": {"width_m": 3.0, "length_m": 3.3}, "confidence": "high", "outline_m": [[0,0],[3,0],[3,3.3],[0,3.3]], "coverage": {"score": 90, "confidence_counts": {"high": 1, "medium": 0, "low": 0}, "usable": true, "message": null}, "openings": [], "objects": [], "structure_origin_m": null, "room_type": null, "floor": "begane grond "},
+          {"room_id": "f1", "label": "Room 5", "floor_area_m2": 10.0, "perimeter_m": 13.0, "bounding_dimensions_m": {"width_m": 3.0, "length_m": 3.3}, "confidence": "high", "outline_m": [[0,0],[3,0],[3,3.3],[0,3.3]], "coverage": {"score": 90, "confidence_counts": {"high": 1, "medium": 0, "low": 0}, "usable": true, "message": null}, "openings": [], "objects": [], "structure_origin_m": null, "room_type": null, "floor": "1e verdieping"}
+        ]
+        """
+        let rooms = try JSONDecoder().decode([FloorPlan.Room].self, from: Data(json.utf8))
+        let sections = RoomFloorSection.sections(for: rooms)
+        XCTAssertEqual(sections.map(\.title), ["Zolder", "1e verdieping", "Begane grond", "Floor not set"])
+        XCTAssertEqual(sections[2].rooms.map(\.roomId), ["g1", "g2"])
+        XCTAssertEqual(sections[3].rooms.map(\.roomId), ["n1"])
+    }
+
+    func testRoomsOnOneFloorGetNoSectionHeading() throws {
+        let json = """
+        [
+          {"room_id": "a", "label": "Room 1", "floor_area_m2": 10.0, "perimeter_m": 13.0, "bounding_dimensions_m": {"width_m": 3.0, "length_m": 3.3}, "confidence": "high", "outline_m": [[0,0],[3,0],[3,3.3],[0,3.3]], "coverage": {"score": 90, "confidence_counts": {"high": 1, "medium": 0, "low": 0}, "usable": true, "message": null}, "openings": [], "objects": [], "structure_origin_m": null, "room_type": null, "floor": "Attic"},
+          {"room_id": "b", "label": "Room 2", "floor_area_m2": 10.0, "perimeter_m": 13.0, "bounding_dimensions_m": {"width_m": 3.0, "length_m": 3.3}, "confidence": "high", "outline_m": [[0,0],[3,0],[3,3.3],[0,3.3]], "coverage": {"score": 90, "confidence_counts": {"high": 1, "medium": 0, "low": 0}, "usable": true, "message": null}, "openings": [], "objects": [], "structure_origin_m": null, "room_type": null, "floor": "attic"}
+        ]
+        """
+        let rooms = try JSONDecoder().decode([FloorPlan.Room].self, from: Data(json.utf8))
+        let sections = RoomFloorSection.sections(for: rooms)
+        XCTAssertEqual(sections.count, 1)
+        XCTAssertNil(sections[0].title)
+        XCTAssertEqual(sections[0].rooms.count, 2)
+    }
 }

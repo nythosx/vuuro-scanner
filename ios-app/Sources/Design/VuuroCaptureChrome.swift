@@ -110,7 +110,7 @@ struct VuuroLiveStat: View {
                         .foregroundStyle(Color.white.opacity(0.6))
                 }
             }
-            Text(label)
+            Text(LocalizedStringKey(label))
                 .font(.system(size: 10, weight: .bold))
                 .tracking(0.5)
                 .textCase(.uppercase)
@@ -147,7 +147,7 @@ struct VuuroLiveStatsRow: View {
         HStack(spacing: 10) {
             VuuroLiveStat(value: "\(stats.walls)", unit: nil, label: "Walls")
             VuuroLiveStat(value: areaText, unit: areaUnit, label: "Area (est.)")
-            VuuroLiveStat(value: heightText, unit: stats.heightM == nil ? nil : "m", label: "Height")
+            VuuroLiveStat(value: heightText, unit: (stats.heightM ?? 0) > 0 ? "m" : nil, label: "Height")
         }
     }
 }
@@ -248,7 +248,7 @@ struct VuuroFinishRoomButton: View {
 
     var body: some View {
         Button(action: action) {
-            Text(label)
+            Text(LocalizedStringKey(label))
                 .font(.system(size: 15, weight: .bold))
                 .tracking(-0.2)
                 .foregroundStyle(Color(red: 24 / 255, green: 24 / 255, blue: 27 / 255))
@@ -268,7 +268,7 @@ struct VuuroFinishSecondaryButton: View {
 
     var body: some View {
         Button(action: action) {
-            Text(label)
+            Text(LocalizedStringKey(label))
                 .font(.system(size: 15, weight: .bold))
                 .tracking(-0.2)
                 .foregroundStyle(Color(red: 24 / 255, green: 24 / 255, blue: 27 / 255))

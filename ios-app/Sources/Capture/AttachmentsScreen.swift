@@ -371,7 +371,7 @@ private struct AttachmentRoomCard: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: 8) {
-            Text(room.label)
+            Text(headerTitle)
                 .font(.system(size: 16, weight: .bold))
                 .tracking(-0.3)
                 .foregroundStyle(VuuroColor.textPrimary)
@@ -381,6 +381,11 @@ private struct AttachmentRoomCard: View {
                 VuuroBadge("Confirmed", systemImage: "checkmark", style: .info)
             }
         }
+    }
+
+    private var headerTitle: String {
+        let confirmed = Self.confirmedTypeText(for: room)
+        return confirmed.isEmpty ? room.label : confirmed
     }
 
     private var labelField: some View {
@@ -822,6 +827,7 @@ private struct AttachmentPhotoViewer: View {
     @State private var image: UIImage?
     @State private var isLoading = false
     @State private var isDeleting = false
+    @State private var showDeleteConfirmation = false
     @State private var deleteError: AppError?
 
     private let client = ScanServiceClient()
@@ -838,6 +844,15 @@ private struct AttachmentPhotoViewer: View {
             }
         }
         .task { await loadImage() }
+        .alert("Delete this photo?", isPresented: $showDeleteConfirmation) {
+            Button("Delete", role: .destructive) {
+                Task { await deletePhoto() }
+            }
+            .accessibilityIdentifier("photoViewer.deleteConfirm")
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The photo is removed from this scan and from the server. This cannot be undone.")
+        }
     }
 
     private var header: some View {
@@ -906,7 +921,7 @@ private struct AttachmentPhotoViewer: View {
                 }
 
                 Button {
-                    Task { await confirmAndDelete() }
+                    showDeleteConfirmation = true
                 } label: {
                     if isDeleting {
                         ProgressView().tint(.white)
@@ -929,10 +944,6 @@ private struct AttachmentPhotoViewer: View {
             }
         }
         .padding(.bottom, 32)
-    }
-
-    private func confirmAndDelete() async {
-        await deletePhoto()
     }
 
     @MainActor

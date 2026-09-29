@@ -133,18 +133,28 @@ final class FloorPlanPdfRenderer
     {
         $pages = [];
 
-        try {
-            $floorPlanPng = (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $style);
-            $normalized = $this->toEmbeddableJpeg($floorPlanPng);
-            if ($normalized === null) {
-                error_log(sprintf(
-                    'FloorPlanPdfRenderer: floor plan drawing rendered but could not be re-encoded to JPEG for session %s — GD likely built without JPEG support (see Dockerfile). PDF will ship without the drawing page.',
-                    $floorPlan['scan_session_id'] ?? 'unknown'
-                ));
-            } else {
-                $pages[] = $this->layoutImagePage($normalized, [['text' => 'Floor plan drawing', 'style' => 'captionBold']]);
+        $drawings = [[$floorPlan, 'Floor plan drawing']];
+        $planGroups = ($roomId === null && $layout !== 'tiles') ? FloorGroups::split($floorPlan['rooms']) : [];
+        if (count($planGroups) > 1) {
+            $drawings = [];
+            foreach (FloorGroups::headings($planGroups) as $groupIndex => $heading) {
+                $drawings[] = [[...$floorPlan, 'rooms' => $planGroups[$groupIndex]['rooms']], 'Floor plan drawing - ' . $heading];
             }
-        } catch (\Throwable) {
+        }
+        foreach ($drawings as [$drawingPlan, $drawingCaption]) {
+            try {
+                $floorPlanPng = (new FloorPlanImageRenderer())->render($drawingPlan, $layout, $roomId, $unit, $label, $style);
+                $normalized = $this->toEmbeddableJpeg($floorPlanPng);
+                if ($normalized === null) {
+                    error_log(sprintf(
+                        'FloorPlanPdfRenderer: floor plan drawing rendered but could not be re-encoded to JPEG for session %s — GD likely built without JPEG support (see Dockerfile). PDF will ship without the drawing page.',
+                        $floorPlan['scan_session_id'] ?? 'unknown'
+                    ));
+                } else {
+                    $pages[] = $this->layoutImagePage($normalized, [['text' => $drawingCaption, 'style' => 'captionBold']]);
+                }
+            } catch (\Throwable) {
+            }
         }
 
         if ($photoLoader !== null) {
@@ -338,18 +348,41 @@ final class FloorPlanPdfRenderer
             'italic'
         );
         $add('');
-        $isFused = $layout !== 'tiles' && count($floorPlan['rooms']) > 1 && array_reduce(
-            $floorPlan['rooms'],
-            fn (bool $carry, array $room) => $carry && isset($room['structure_origin_m']),
-            true
-        );
-        if ($isFused && FusionOverlapDetector::detect($floorPlan['rooms']) !== []) {
-            $add('WARNING: some rooms below overlap in captured position - verify against the real layout before use.', 'warning');
+        $roomGroups = $layout !== 'tiles' ? FloorGroups::split($floorPlan['rooms']) : [['floor' => null, 'rooms' => $floorPlan['rooms']]];
+        $overlapHeadings = [];
+        $groupHeadings = FloorGroups::headings($roomGroups);
+        foreach ($layout !== 'tiles' ? $roomGroups : [] as $groupIndex => $roomGroup) {
+            if (FloorGroups::isFusable($roomGroup['rooms']) && FusionOverlapDetector::detect($roomGroup['rooms']) !== []) {
+                $overlapHeadings[] = $groupHeadings[$groupIndex];
+            }
+        }
+        $hasOverlap = $overlapHeadings !== [];
+        $orderedRooms = $floorPlan['rooms'];
+        $roomHeadings = [];
+        if (count($roomGroups) > 1) {
+            $orderedRooms = [];
+            foreach (FloorGroups::headings($roomGroups) as $groupIndex => $heading) {
+                $roomHeadings[count($orderedRooms)] = $heading;
+                foreach ($roomGroups[$groupIndex]['rooms'] as $groupRoom) {
+                    $orderedRooms[] = $groupRoom;
+                }
+            }
+        }
+        if ($hasOverlap) {
+            $add(
+                count($roomGroups) > 1
+                    ? 'WARNING: some rooms below overlap in captured position (' . implode(', ', $overlapHeadings) . ') - verify against the real layout before use.'
+                    : 'WARNING: some rooms below overlap in captured position - verify against the real layout before use.',
+                'warning'
+            );
             $add('');
         }
         $add('Rooms', 'section');
         $totalArea = 0.0;
-        foreach ($floorPlan['rooms'] as $room) {
+        foreach ($orderedRooms as $roomIndex => $room) {
+            if (isset($roomHeadings[$roomIndex])) {
+                $add($roomHeadings[$roomIndex], 'label');
+            }
             $totalArea += $room['floor_area_m2'];
             $roomType = $room['room_type'] ?? null;
             $roomTypeValue = $roomType !== null ? ($roomType['confirmed'] ?? $roomType['guess'] ?? null) : null;

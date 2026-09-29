@@ -67,6 +67,8 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     private var pendingPartialRoomWalkPath: [[Double]] = []
     private(set) var mergedStructure: CapturedStructure?
     private(set) var roomWalkPaths: [[[Double]]] = []
+    private(set) var roomFloors: [String] = []
+    var currentFloor: String = ""
     private var currentRoomWalkPath: [[Double]] = []
     nonisolated(unsafe) private var walkPathTask: Task<Void, Never>?
     private static let walkPathSampleIntervalNanoseconds: UInt64 = 500_000_000
@@ -169,6 +171,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
             pendingPartialRoomWalkPath = []
             return false
         }
+        roomFloors.append(currentFloor)
         capturedRooms.append(pendingPartialRoom)
         roomTypeConfirmations.append(roomTypeConfirmationForExport)
         roomWalkPaths.append(pendingPartialRoomWalkPath)
@@ -188,6 +191,9 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         roomTypeConfirmations.remove(at: index)
         if roomWalkPaths.indices.contains(index) {
             roomWalkPaths.remove(at: index)
+        }
+        if roomFloors.indices.contains(index) {
+            roomFloors.remove(at: index)
         }
         DiagnosticsLog.shared.record("Captured room removed at index \(index) (multi-room)", category: .info)
     }
@@ -257,6 +263,21 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
                     result[mergedId] = confirmation
                     break
                 }
+            }
+        }
+        return result
+    }
+
+    func floor(forRoomAt index: Int) -> String {
+        roomFloors.indices.contains(index) ? roomFloors[index] : currentFloor
+    }
+
+    func floorsForStructure(_ structure: CapturedStructure) -> [UUID: String] {
+        var result: [UUID: String] = [:]
+        for (mergedId, originalIndices) in mapMergedRoomsToOriginals(structure) {
+            let floors = originalIndices.map { floor(forRoomAt: $0) }
+            if let named = floors.first(where: { !$0.isEmpty }) ?? floors.first {
+                result[mergedId] = named
             }
         }
         return result
@@ -398,6 +419,7 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
                     self.state = .failed(message, partialRoomAvailable: hasUsableGeometry)
                 } else {
                     if CapturedRoomExporter.export(room).hasUsableFloorOutline {
+                        self.roomFloors.append(self.currentFloor)
                         self.capturedRooms.append(room)
                         self.roomTypeConfirmations.append(self.roomTypeConfirmationForExport)
                         self.roomWalkPaths.append(self.currentRoomWalkPath)

@@ -23,6 +23,7 @@ struct StartScanSheet: View {
     @State private var previouslyUsedPropertyIds: [String] = []
     @State private var previouslyUsedUnitIds: [String] = []
     @State private var previouslyUsedOrganisationIds: [String] = []
+    @State private var showHowToScan = false
 
     private let client = ScanServiceClient()
 
@@ -80,6 +81,11 @@ struct StartScanSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    ScanHowToBanner(type: type) { showHowToScan = true }
+                        .accessibilityIdentifier("startScan.howToScan")
+                        .padding(.horizontal, 20)
+                        .padding(.top, 4)
+
                     VuuroSectionLabel(text: "Property details")
 
                     VuuroInputGroup {
@@ -289,6 +295,17 @@ struct StartScanSheet: View {
         }
         .background(VuuroColor.bgApp)
         .onAppear { loadPreviouslyUsedValues() }
+        .sheet(isPresented: $showHowToScan) {
+            ScanInstructionsView(
+                type: type,
+                primaryLabel: "Back to setup",
+                onPrimary: { showHowToScan = false },
+                onClose: { showHowToScan = false }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.hidden)
+            .presentationCornerRadius(VuuroMetrics.sheetRadius)
+        }
         .sheet(isPresented: $showReagreeSheet) {
             NavigationStack {
                 ReagreeTermsView(

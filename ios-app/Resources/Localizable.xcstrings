@@ -3984,6 +3984,1094 @@
                     }
                 }
             }
+        },
+        "Delete this photo?": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Delete this photo?"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze foto verwijderen?"
+                    }
+                }
+            }
+        },
+        "The photo is removed from this scan and from the server. This cannot be undone.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The photo is removed from this scan and from the server. This cannot be undone."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De foto wordt uit deze scan en van de server verwijderd. Dit kan niet ongedaan worden gemaakt."
+                    }
+                }
+            }
+        },
+        "Add this scan?": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Add this scan?"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze scan toevoegen?"
+                    }
+                }
+            }
+        },
+        "Single room scan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Single room scan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Eén kamer scannen"
+                    }
+                }
+            }
+        },
+        "Whole unit scan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Whole unit scan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Hele eenheid scannen"
+                    }
+                }
+            }
+        },
+        "One room at a time.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "One room at a time."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Eén kamer tegelijk."
+                    }
+                }
+            }
+        },
+        "Walk once, capture everything.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Walk once, capture everything."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Eén keer rondlopen, alles vastleggen."
+                    }
+                }
+            }
+        },
+        "Scan room after room in one walk. When you finish, all rooms are merged into one connected plan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan room after room in one walk. When you finish, all rooms are merged into one connected plan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan kamer na kamer in één ronde. Als je afrondt, worden alle kamers samengevoegd tot één samenhangende plattegrond."
+                    }
+                }
+            }
+        },
+        "Scan a room on its own. Every room you add shows as its own tile on the plan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan a room on its own. Every room you add shows as its own tile on the plan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan een kamer los. Elke kamer die je toevoegt, verschijnt als een eigen tegel op de plattegrond."
+                    }
+                }
+            }
+        },
+        "Fill in the property details": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Fill in the property details"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Vul de gegevens van het object in"
+                    }
+                }
+            }
+        },
+        "Then tap Start room scan. The camera starts scanning right away.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Then tap Start room scan. The camera starts scanning right away."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tik daarna op Kamer scannen starten. De camera begint direct met scannen."
+                    }
+                }
+            }
+        },
+        "Pan slowly around the walls": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Pan slowly around the walls"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Beweeg langzaam langs de muren"
+                    }
+                }
+            }
+        },
+        "Hold the phone upright at chest height and keep each wall in view for a few seconds. The ring counts the walls found.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Hold the phone upright at chest height and keep each wall in view for a few seconds. The ring counts the walls found."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Houd de telefoon rechtop op borsthoogte en houd elke muur een paar seconden in beeld. De ring telt de gevonden muren."
+                    }
+                }
+            }
+        },
+        "Cover every corner and doorway": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Cover every corner and doorway"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Neem elke hoek en deuropening mee"
+                    }
+                }
+            }
+        },
+        "The plan is drawn from the floor outline, so make sure it closes all the way around.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The plan is drawn from the floor outline, so make sure it closes all the way around."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De plattegrond wordt getekend op basis van de vloeromtrek, dus zorg dat die helemaal rond sluit."
+                    }
+                }
+            }
+        },
+        "Tap Finish room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tap Finish room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tik op Kamer afronden"
+                    }
+                }
+            }
+        },
+        "The room uploads. Then choose Scan another room, or Finish unit to add notes and photos.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The room uploads. Then choose Scan another room, or Finish unit to add notes and photos."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De kamer wordt geüpload. Kies daarna Nog een kamer scannen, of Eenheid afronden om notities en foto's toe te voegen."
+                    }
+                }
+            }
+        },
+        "Start in the first room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Start in the first room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Begin in de eerste kamer"
+                    }
+                }
+            }
+        },
+        "Fill in the property details and tap Start unit scan. The camera starts scanning right away.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Fill in the property details and tap Start unit scan. The camera starts scanning right away."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Vul de gegevens van het object in en tik op Eenheid scannen starten. De camera begint direct met scannen."
+                    }
+                }
+            }
+        },
+        "Scan the room slowly": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan the room slowly"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan de kamer rustig"
+                    }
+                }
+            }
+        },
+        "Pan around all the walls and corners before you leave the room.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Pan around all the walls and corners before you leave the room."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Neem alle muren en hoeken mee voordat je de kamer verlaat."
+                    }
+                }
+            }
+        },
+        "Tap Save & next": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tap Save & next"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tik op Opslaan & volgende"
+                    }
+                }
+            }
+        },
+        "The room is saved on this phone and the next room starts scanning. Keep the camera up while you walk to the next room.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The room is saved on this phone and the next room starts scanning. Keep the camera up while you walk to the next room."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De kamer wordt op deze telefoon opgeslagen en de volgende kamer wordt gescand. Houd de camera omhoog terwijl je naar de volgende kamer loopt."
+                    }
+                }
+            }
+        },
+        "Repeat for every room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Repeat for every room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Herhaal dit voor elke kamer"
+                    }
+                }
+            }
+        },
+        "Tap the room counter next to Save & next to see the saved rooms, remove one to rescan it, or delete it.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tap the room counter next to Save & next to see the saved rooms, remove one to rescan it, or delete it."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tik op de kamerteller naast Opslaan & volgende om de opgeslagen kamers te zien, er een te verwijderen om opnieuw te scannen, of te wissen."
+                    }
+                }
+            }
+        },
+        "Tap Finish in the last room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tap Finish in the last room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tik in de laatste kamer op Afronden"
+                    }
+                }
+            }
+        },
+        "Finish appears once the first room is saved. The room you are scanning is included, then all rooms are merged and uploaded.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Finish appears once the first room is saved. The room you are scanning is included, then all rooms are merged and uploaded."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Afronden verschijnt zodra de eerste kamer is opgeslagen. De kamer die je nu scant telt mee, daarna worden alle kamers samengevoegd en geüpload."
+                    }
+                }
+            }
+        },
+        "Turn on the lights": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Turn on the lights"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Doe de lichten aan"
+                    }
+                }
+            }
+        },
+        "Dim rooms, mirrors and glass walls reduce accuracy.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Dim rooms, mirrors and glass walls reduce accuracy."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Donkere kamers, spiegels en glazen wanden verminderen de nauwkeurigheid."
+                    }
+                }
+            }
+        },
+        "Move slower than feels natural": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Move slower than feels natural"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Beweeg langzamer dan natuurlijk voelt"
+                    }
+                }
+            }
+        },
+        "Fast pans lose corners and door frames.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Fast pans lose corners and door frames."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Bij snel bewegen worden hoeken en deurkozijnen gemist."
+                    }
+                }
+            }
+        },
+        "Keep rooms under about 9 m across": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Keep rooms under about 9 m across"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Houd kamers onder ongeveer 9 m breed"
+                    }
+                }
+            }
+        },
+        "A warning appears on screen when a room gets too big.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "A warning appears on screen when a room gets too big."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Er verschijnt een waarschuwing op het scherm als een kamer te groot wordt."
+                    }
+                }
+            }
+        },
+        "Set the floor": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Set the floor"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Stel de verdieping in"
+                    }
+                }
+            }
+        },
+        "Tap Set floor at the top of the camera to note which floor the room is on.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tap Set floor at the top of the camera to note which floor the room is on."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tik bovenaan de camera op Verdieping instellen om aan te geven op welke verdieping de kamer ligt."
+                    }
+                }
+            }
+        },
+        "Need rooms joined into one layout?": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Need rooms joined into one layout?"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamers samen in één indeling nodig?"
+                    }
+                }
+            }
+        },
+        "Rooms scanned here are not placed next to each other. Use Scan a whole unit for one connected plan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Rooms scanned here are not placed next to each other. Use Scan a whole unit for one connected plan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamers die je hier scant, worden niet naast elkaar geplaatst. Gebruik Een hele eenheid scannen voor één samenhangende plattegrond."
+                    }
+                }
+            }
+        },
+        "Set the floor when you change floors": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Set the floor when you change floors"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Stel de verdieping in als je van verdieping wisselt"
+                    }
+                }
+            }
+        },
+        "Tap Set floor at the top of the camera. It applies to the room you are scanning and the rooms after it, until you change it.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tap Set floor at the top of the camera. It applies to the room you are scanning and the rooms after it, until you change it."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tik bovenaan de camera op Verdieping instellen. Dit geldt voor de kamer die je nu scant en de kamers daarna, totdat je het wijzigt."
+                    }
+                }
+            }
+        },
+        "Keep the app open while scanning": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Keep the app open while scanning"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Houd de app open tijdens het scannen"
+                    }
+                }
+            }
+        },
+        "Switching apps or locking the phone can interrupt the room you are scanning.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Switching apps or locking the phone can interrupt the room you are scanning."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Wisselen van app of de telefoon vergrendelen kan de kamer die je scant onderbreken."
+                    }
+                }
+            }
+        },
+        "Interrupted? Saved rooms are kept": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Interrupted? Saved rooms are kept"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Onderbroken? Opgeslagen kamers blijven bewaard"
+                    }
+                }
+            }
+        },
+        "Start a whole unit scan again with the same property details, and you can upload the rooms you already saved.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Start a whole unit scan again with the same property details, and you can upload the rooms you already saved."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Start opnieuw een scan van een hele eenheid met dezelfde objectgegevens, dan kun je de al opgeslagen kamers uploaden."
+                    }
+                }
+            }
+        },
+        "Don't tap Finish before the last room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Don't tap Finish before the last room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tik niet op Afronden vóór de laatste kamer"
+                    }
+                }
+            }
+        },
+        "Finish merges and uploads the unit. To add rooms later, open the scan in History and tap Continue this scan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Finish merges and uploads the unit. To add rooms later, open the scan in History and tap Continue this scan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Afronden voegt de eenheid samen en uploadt deze. Wil je later kamers toevoegen, open de scan in Geschiedenis en tik op Deze scan voortzetten."
+                    }
+                }
+            }
+        },
+        "Don't scan the same room twice": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Don't scan the same room twice"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan dezelfde kamer niet twee keer"
+                    }
+                }
+            }
+        },
+        "It can create overlapping rooms. To redo a room, remove it first with the retry arrow in the room list.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "It can create overlapping rooms. To redo a room, remove it first with the retry arrow in the room list."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Dat kan overlappende kamers opleveren. Wil je een kamer opnieuw doen, verwijder die dan eerst met de pijl opnieuw proberen in de kamerlijst."
+                    }
+                }
+            }
+        },
+        "How it works": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "How it works"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Zo werkt het"
+                    }
+                }
+            }
+        },
+        "Tips": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tips"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tips"
+                    }
+                }
+            }
+        },
+        "Avoid": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Avoid"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Vermijd"
+                    }
+                }
+            }
+        },
+        "Got it, set up the scan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Got it, set up the scan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Begrepen, scan instellen"
+                    }
+                }
+            }
+        },
+        "Back to scanning": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Back to scanning"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Terug naar scannen"
+                    }
+                }
+            }
+        },
+        "Back to setup": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Back to setup"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Terug naar instellen"
+                    }
+                }
+            }
+        },
+        "How to scan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "How to scan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Zo scan je"
+                    }
+                }
+            }
+        },
+        "How to scan a whole unit": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "How to scan a whole unit"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Zo scan je een hele eenheid"
+                    }
+                }
+            }
+        },
+        "How to scan a single room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "How to scan a single room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Zo scan je één kamer"
+                    }
+                }
+            }
+        },
+        "Steps, tips and what to avoid": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Steps, tips and what to avoid"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Stappen, tips en wat je moet vermijden"
+                    }
+                }
+            }
+        },
+        "Steps and tips": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Steps and tips"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Stappen en tips"
+                    }
+                }
+            }
+        },
+        "The room you are scanning now is included. Then all rooms are merged into one plan and uploaded.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The room you are scanning now is included. Then all rooms are merged into one plan and uploaded."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De kamer die je nu scant telt mee. Daarna worden alle kamers samengevoegd tot één plattegrond en geüpload."
+                    }
+                }
+            }
+        },
+        "Room %lld · %@": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Room %lld · %@"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamer %lld · %@"
+                    }
+                }
+            }
+        },
+        "Scanning room %lld": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scanning room %lld"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamer %lld wordt gescand"
+                    }
+                }
+            }
+        },
+        "Finish room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Finish room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamer afronden"
+                    }
+                }
+            }
+        },
+        "Set floor": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Set floor"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Verdieping instellen"
+                    }
+                }
+            }
+        },
+        "Continue this scan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Continue this scan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze scan voortzetten"
+                    }
+                }
+            }
+        },
+        "Walls": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Walls"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Muren"
+                    }
+                }
+            }
+        },
+        "Area (est.)": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Area (est.)"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Oppervlakte (schatting)"
+                    }
+                }
+            }
+        },
+        "Floor not set": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Floor not set"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Geen verdieping ingesteld"
+                    }
+                }
+            }
+        },
+        "Applies to this room and to the next rooms you scan in this session, until you change it.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Applies to this room and to the next rooms you scan in this session, until you change it."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Geldt voor deze kamer en de volgende kamers die je in deze sessie scant, totdat je het wijzigt."
+                    }
+                }
+            }
         }
     },
     "version": "1.0"

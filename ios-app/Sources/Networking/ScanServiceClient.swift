@@ -231,14 +231,15 @@ struct ScanServiceClient {
         exports: [RoomPlanCaptureExport],
         provider: String = "roomplan",
         location: CaptureLocation?,
-        floor: String? = nil
+        floor: String? = nil,
+        floors: [String?]? = nil
     ) async throws -> FloorPlan {
-        let body = ReplaceRoomsBody(captures: exports.map {
+        let body = ReplaceRoomsBody(captures: exports.enumerated().map { index, export in
             CaptureBody(
-                rawCapture: $0,
+                rawCapture: export,
                 captureProvider: provider,
                 captureLocation: location,
-                floor: floor
+                floor: floors.map { $0.indices.contains(index) ? ($0[index] ?? "") : floor } ?? floor
             )
         })
         return try await post(path: "/scan-sessions/\(sessionId)/rooms", body: body, accessToken: accessToken, timeoutSeconds: 90)

@@ -15,9 +15,11 @@ struct RoomPlanCaptureExport: Codable {
     var structureOriginM: [Double]? = nil
     var walkPathM: [[Double]]? = nil
     var headingDeg: Double? = nil
+    var captureGroupId: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case story, floors, walls, doors, windows, openings, objects
+        case captureGroupId = "capture_group_id"
         case roomType = "room_type"
         case structureOriginM = "structure_origin_m"
         case walkPathM = "walk_path"
@@ -55,7 +57,7 @@ struct RoomTypeConfirmation {
 enum CapturedRoomExporter {
     static func export(_ room: CapturedRoom, roomTypeConfirmation: RoomTypeConfirmation? = nil, walkPath: [[Double]]? = nil, headingDeg: Double? = nil) -> RoomPlanCaptureExport {
         var export = RoomPlanCaptureExport(
-            story: 0,
+            story: room.story,
             floors: room.floors.map { mapSurface($0, category: "floor") },
             walls: room.walls.map { mapSurface($0, category: "wall") },
             doors: room.doors.map { mapSurface($0, category: "door") },
