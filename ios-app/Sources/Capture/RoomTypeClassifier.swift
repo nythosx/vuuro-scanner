@@ -74,6 +74,7 @@ enum RoomTypeClassifier {
         case .bathroom: return "bathroom"
         case .kitchen: return "kitchen"
         case .diningRoom: return "dining_room"
+        case .unidentified: return nil
         @unknown default: return nil
         }
     }

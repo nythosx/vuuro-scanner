@@ -85,32 +85,7 @@ struct ResultSummaryView: View {
                             RoomFloorSectionHeader(title: title)
                         }
                         ForEach(section.rooms, id: \.roomId) { room in
-                            RoomResultCard(
-                                room: room,
-                                showsRibbon: false,
-                                photos: currentFloorPlan.photos.filter { $0.roomId == room.roomId },
-                                notes: currentFloorPlan.notes.filter { $0.roomId == room.roomId },
-                                session: session,
-                                pendingObjectChanges: pendingObjectChanges,
-                                onObjectChange: { key, change in
-                                    if let change {
-                                        pendingObjectChanges[key] = change
-                                    } else {
-                                        pendingObjectChanges.removeValue(forKey: key)
-                                    }
-                                },
-                                onAddMissingItem: {
-                                    missingItemTarget = MissingItemTarget(room: room)
-                                },
-                                onRoomTypeChange: { value in
-                                    Task { await updateRoomType(roomId: room.roomId, to: value) }
-                                },
-                                isUpdatingRoomType: updatingRoomTypeIds.contains(room.roomId),
-                                onSplitRoom: { beginSplit(room) },
-                                onUndoSplit: currentFloorPlan.lastSplitRoomIds.contains(room.roomId)
-                                    ? startUndoSplit
-                                    : nil
-                            )
+                            roomCard(room)
                         }
                     }
 
@@ -248,6 +223,34 @@ struct ResultSummaryView: View {
     private struct MissingItemTarget: Identifiable {
         let room: FloorPlan.Room
         var id: String { room.roomId }
+    }
+
+    private func roomCard(_ room: FloorPlan.Room) -> RoomResultCard {
+        let undo: (() -> Void)? = currentFloorPlan.lastSplitRoomIds.contains(room.roomId) ? startUndoSplit : nil
+        return RoomResultCard(
+            room: room,
+            showsRibbon: false,
+            photos: currentFloorPlan.photos.filter { $0.roomId == room.roomId },
+            notes: currentFloorPlan.notes.filter { $0.roomId == room.roomId },
+            session: session,
+            pendingObjectChanges: pendingObjectChanges,
+            onObjectChange: { key, change in
+                if let change {
+                    pendingObjectChanges[key] = change
+                } else {
+                    pendingObjectChanges.removeValue(forKey: key)
+                }
+            },
+            onAddMissingItem: {
+                missingItemTarget = MissingItemTarget(room: room)
+            },
+            onRoomTypeChange: { value in
+                Task { await updateRoomType(roomId: room.roomId, to: value) }
+            },
+            isUpdatingRoomType: updatingRoomTypeIds.contains(room.roomId),
+            onSplitRoom: { beginSplit(room) },
+            onUndoSplit: undo
+        )
     }
 
     private struct SplitTarget: Identifiable {

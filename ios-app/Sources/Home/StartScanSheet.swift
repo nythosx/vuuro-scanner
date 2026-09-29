@@ -345,7 +345,7 @@ struct StartScanSheet: View {
         }
     }
 
-    private static func recentDistinctValues(
+    nonisolated private static func recentDistinctValues(
         _ keyPath: KeyPath<ScanHistoryEntry, String>,
         in entries: [ScanHistoryEntry]
     ) -> [String] {
