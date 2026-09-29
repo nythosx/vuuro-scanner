@@ -369,6 +369,31 @@ struct ScanServiceClient {
         return try await post(path: "/scan-sessions/\(sessionId)/rooms/\(roomId)/label", body: Body(label: label), accessToken: accessToken)
     }
 
+    enum RoomSplitMode: String, Encodable {
+        case split
+        case trim
+    }
+
+    func splitRoom(sessionId: String, accessToken: String, roomId: String, line: [[Double]], keepPoint: [Double], mode: RoomSplitMode) async throws -> FloorPlan {
+        struct Body: Encodable {
+            let lineM: [[Double]]
+            let keepPointM: [Double]
+            let mode: RoomSplitMode
+
+            enum CodingKeys: String, CodingKey {
+                case lineM = "line_m"
+                case keepPointM = "keep_point_m"
+                case mode
+            }
+        }
+        return try await post(path: "/scan-sessions/\(sessionId)/rooms/\(roomId)/split", body: Body(lineM: line, keepPointM: keepPoint, mode: mode), accessToken: accessToken)
+    }
+
+    func undoRoomSplit(sessionId: String, accessToken: String) async throws -> FloorPlan {
+        struct Body: Encodable {}
+        return try await post(path: "/scan-sessions/\(sessionId)/room-splits/undo", body: Body(), accessToken: accessToken)
+    }
+
     func fetchAccessLog(sessionId: String, accessToken: String) async throws -> AccessLogResponse {
         try await get(path: "/scan-sessions/\(sessionId)/access-log", accessToken: accessToken)
     }

@@ -103,6 +103,8 @@ struct RoomResultCard: View {
     var onAddMissingItem: (() -> Void)? = nil
     var onRoomTypeChange: ((String?) -> Void)? = nil
     var isUpdatingRoomType: Bool = false
+    var onSplitRoom: (() -> Void)? = nil
+    var onUndoSplit: (() -> Void)? = nil
 
     @State private var showCustomRoomType = false
     @State private var customRoomTypeDraft: String = ""
@@ -128,6 +130,9 @@ struct RoomResultCard: View {
             }
             if let onAddMissingItem {
                 missingItemRow(action: onAddMissingItem)
+            }
+            if onSplitRoom != nil || onUndoSplit != nil {
+                splitRow
             }
             disclaimer
         }
@@ -501,6 +506,40 @@ struct RoomResultCard: View {
             }
             .accessibilityIdentifier("roomCard.addMissingItem")
             .buttonStyle(.plain)
+        }
+    }
+
+    private var splitRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider().background(VuuroColor.borderSoft)
+            HStack(spacing: 16) {
+                if let onSplitRoom {
+                    Button(action: onSplitRoom) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "scissors")
+                                .font(.system(size: 14, weight: .semibold))
+                            Text("Split or trim room")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundStyle(VuuroColor.accent)
+                    }
+                    .accessibilityIdentifier("roomCard.splitRoom")
+                    .buttonStyle(.plain)
+                }
+                if let onUndoSplit {
+                    Button(action: onUndoSplit) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: 14, weight: .semibold))
+                            Text("Undo split")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundStyle(VuuroColor.textSecondary)
+                    }
+                    .accessibilityIdentifier("roomCard.undoSplit")
+                    .buttonStyle(.plain)
+                }
+            }
         }
     }
 

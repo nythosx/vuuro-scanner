@@ -25,7 +25,6 @@ final class FloorPlanImageRenderer
         [224, 244, 240],
     ];
     private const WALL_COLOR = [0, 0, 0];
-    private const HEADER_ACCENT_COLOR = [255, 130, 18];
     private const DEFAULT_LINE_THICKNESS_PX = 1;
     private const FONT_SMALL = 1;
     private const NOTE_LINE_HEIGHT = 15;
@@ -69,12 +68,6 @@ final class FloorPlanImageRenderer
         return (int) ($box[2] - $box[0]);
     }
 
-    private function drawHeaderAccent($image): void
-    {
-        $accent = imagecolorallocate($image, ...self::HEADER_ACCENT_COLOR);
-        imagefilledrectangle($image, 0, 0, imagesx($image), 4, $accent);
-    }
-
     private static function roomTypeValue(array $room): ?string
     {
         $roomType = $room['room_type'] ?? null;
@@ -86,9 +79,7 @@ final class FloorPlanImageRenderer
 
     private function edgeThicknessM(array $roomEdgeTiers, int $edgeIndex): float
     {
-        return isset($roomEdgeTiers[$edgeIndex])
-            ? FloorPlanPalette::INTERIOR_WALL_THICKNESS_M
-            : FloorPlanPalette::EXTERIOR_WALL_THICKNESS_M;
+        return FloorPlanPalette::wallThicknessM($this->planStyle->isFunda, isset($roomEdgeTiers[$edgeIndex]));
     }
 
     private function roomWallPointSets(array $outlineM, array $pose, callable $toPx, array $roomEdgeTiers): array
@@ -101,7 +92,7 @@ final class FloorPlanImageRenderer
             $dx = $bx - $ax;
             $dz = $bz - $az;
             $len = sqrt($dx ** 2 + $dz ** 2);
-            if ($len < 1e-6) {
+            if ($len < 1e-6 || FloorPlanPalette::isOpenEdge($roomEdgeTiers, $i)) {
                 continue;
             }
             $ux = $dx / $len;
@@ -136,6 +127,19 @@ final class FloorPlanImageRenderer
     {
         foreach ($this->roomWallPointSets($outlineM, $pose, $toPx, $roomEdgeTiers) as $points) {
             imagefilledpolygon($image, $points, $wallColor);
+        }
+        $n = count($outlineM);
+        $openColor = null;
+        for ($i = 0; $i < $n; $i++) {
+            if (!FloorPlanPalette::isOpenEdge($roomEdgeTiers, $i)) {
+                continue;
+            }
+            $openColor ??= imagecolorallocate($image, 138, 138, 138);
+            [$awx, $awz] = RoomFusionSolver::transformPoint($pose, (float) $outlineM[$i][0], (float) $outlineM[$i][1]);
+            [$bwx, $bwz] = RoomFusionSolver::transformPoint($pose, (float) $outlineM[($i + 1) % $n][0], (float) $outlineM[($i + 1) % $n][1]);
+            [$apx, $apy] = $toPx($awx, $awz);
+            [$bpx, $bpy] = $toPx($bwx, $bwz);
+            $this->drawDashedSegment($image, (int) round($apx), (int) round($apy), (int) round($bpx), (int) round($bpy), $openColor);
         }
     }
 
@@ -191,8 +195,7 @@ final class FloorPlanImageRenderer
     {
         if ($this->planStyle->isFunda) {
             $type = self::roomTypeValue($room);
-            $group = is_string($type) ? (self::FUNDA_TYPE_GROUPS[$type] ?? 'living') : 'living';
-            return imagecolorallocate($image, ...self::FUNDA_FILLS[$group]);
+            return imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::fundaFillFor(is_string($type) ? $type : null)));
         }
         if ($this->planStyle->roomFill === 'white') {
             return imagecolorallocate($image, 255, 255, 255);
@@ -207,23 +210,6 @@ final class FloorPlanImageRenderer
     private string $fundaPlaceLine = '';
     private float $fundaTotalAreaM2 = 0.0;
     private string $fundaUnit = UnitFormatter::METRIC;
-
-    private const FUNDA_FILLS = [
-        'living' => [252, 228, 214],
-        'wet' => [212, 232, 244],
-        'utility' => [212, 212, 212],
-    ];
-    private const FUNDA_TYPE_GROUPS = [
-        'kitchen' => 'wet',
-        'bathroom' => 'wet',
-        'hallway' => 'wet',
-        'laundry_room' => 'wet',
-        'walk_in_closet' => 'wet',
-        'garage' => 'utility',
-        'storage_room' => 'utility',
-        'basement' => 'utility',
-        'balcony' => 'utility',
-    ];
 
     public function __construct()
     {
@@ -316,8 +302,6 @@ final class FloorPlanImageRenderer
         imagefilledrectangle($image, 0, 0, imagesx($image), imagesy($image), $surface);
         if ($this->planStyle->isFunda) {
             $this->drawFundaGrid($image);
-        } else {
-            $this->drawHeaderAccent($image);
         }
 
         if ($this->planStyle->isFunda) {
@@ -724,8 +708,6 @@ final class FloorPlanImageRenderer
         imagefilledrectangle($image, 0, 0, imagesx($image), imagesy($image), $surface);
         if ($this->planStyle->isFunda) {
             $this->drawFundaGrid($image);
-        } else {
-            $this->drawHeaderAccent($image);
         }
 
         $headerLineY = 46;
@@ -800,13 +782,13 @@ final class FloorPlanImageRenderer
                 imagepolygon($image, $points, $warnBorder);
                 imagesetthickness($image, self::DEFAULT_LINE_THICKNESS_PX);
             } else {
-                $this->drawRoomWallShadow($image, $room['outline_m'], $pose, $toPx, $edgeTiers[$i] ?? []);
+                $this->drawRoomWallShadow($image, $room['outline_m'], $pose, $toPx, FloorPlanPalette::withOpenEdges($edgeTiers[$i] ?? [], $room));
             }
         }
         foreach ($rooms as $i => $room) {
             $pose = $poses[$i];
             if (!in_array($i, $overlapping, true)) {
-                $this->drawRoomWalls($image, $room['outline_m'], $pose, $toPx, $edgeTiers[$i] ?? [], $wallColor);
+                $this->drawRoomWalls($image, $room['outline_m'], $pose, $toPx, FloorPlanPalette::withOpenEdges($edgeTiers[$i] ?? [], $room), $wallColor);
             }
         }
 
@@ -910,6 +892,21 @@ final class FloorPlanImageRenderer
         return RoomType::displayLabelForRoom($room);
     }
 
+    private static function openingWidthM(array $opening): float
+    {
+        $category = $opening['category'] ?? 'opening';
+        $measured = $opening['width_m'] ?? null;
+        if (is_int($measured) || is_float($measured)) {
+            $measured = (float) $measured;
+            return $category === 'door' ? max(0.6, min(1.2, $measured)) : $measured;
+        }
+        return match ($category) {
+            'door' => self::DOOR_LEAF_M,
+            'window' => self::WINDOW_WIDTH_M,
+            default => self::OPENING_WIDTH_M,
+        };
+    }
+
     private function drawOpenings($image, array $room, array $pose, callable $toPx, int $doorColor, int $windowColor, int $otherOpeningColor, array $roomEdgeTiers): void
     {
         $outline = $room['outline_m'] ?? [];
@@ -931,11 +928,7 @@ final class FloorPlanImageRenderer
             };
             [$wallDx, $wallDz, $normalDx, $normalDz, $edgeIndex] = $this->nearestWallOrientation($outline, $mx, $mz, $centroidX, $centroidZ);
             $wallHalfM = $this->edgeThicknessM($roomEdgeTiers, $edgeIndex) / 2;
-            $widthM = match ($category) {
-                'door' => self::DOOR_LEAF_M,
-                'window' => self::WINDOW_WIDTH_M,
-                default => self::OPENING_WIDTH_M,
-            };
+            $widthM = self::openingWidthM($opening);
             $half = $widthM / 2;
             $poseCos = cos($pose['rotationRad']);
             $poseSin = sin($pose['rotationRad']);
@@ -1155,15 +1148,13 @@ final class FloorPlanImageRenderer
             if (!$this->planStyle->shouldDrawFurniture((string) ($object['category'] ?? ''))) {
                 continue;
             }
-            [$mx, $mz] = $object['position_m'];
-            $dims = $object['dimensions_m'] ?? [0.5, 0.0, 0.5];
-            $halfWidth = ((float) ($dims[0] ?? 0.5)) / 2;
-            $halfDepth = ((float) ($dims[2] ?? 0.5)) / 2;
+            [$mx, $mz, $halfWidth, $halfDepth, $frameRad] = ObjectFootprint::fit($room, $object, FloorPlanPalette::wallThicknessM($this->planStyle->isFunda, false) / 2);
+            $objectPose = ObjectFootprint::objectPose($pose, $mx, $mz, $frameRad);
             $category = strtolower((string) $object['category']);
-            if ($this->drawObjectIcon($image, $pose, $toPx, $category, $mx, $mz, $halfWidth, $halfDepth)) {
+            if ($this->drawObjectIcon($image, $objectPose, $toPx, $category, $mx, $mz, $halfWidth, $halfDepth)) {
                 continue;
             }
-            $pts = $this->localRectPoints($pose, $toPx, $mx, $mz, $halfWidth, $halfDepth);
+            $pts = $this->localRectPoints($objectPose, $toPx, $mx, $mz, $halfWidth, $halfDepth);
             imagepolygon($image, $pts, $color);
             $labelText = isset($object['custom_name']) && is_string($object['custom_name']) && $object['custom_name'] !== ''
                 ? $object['custom_name']
@@ -1480,15 +1471,15 @@ final class FloorPlanImageRenderer
         $identityPose = ['originX' => 0.0, 'originZ' => 0.0, 'rotationRad' => 0.0];
         $labelDraws = [];
         $this->drawObjects($image, $room, $identityPose, $tileToPx, $objectColor, $text, $labelDraws);
-        $this->drawRoomWallShadow($image, $room['outline_m'], $identityPose, $tileToPx, []);
-        $this->drawRoomWalls($image, $room['outline_m'], $identityPose, $tileToPx, [], $wallColor);
+        $this->drawRoomWallShadow($image, $room['outline_m'], $identityPose, $tileToPx, FloorPlanPalette::withOpenEdges([], $room));
+        $this->drawRoomWalls($image, $room['outline_m'], $identityPose, $tileToPx, FloorPlanPalette::withOpenEdges([], $room), $wallColor);
         $this->drawWalkPath($image, $room, $identityPose, $tileToPx, $walkPathColor);
         $this->drawOpenings($image, $room, $identityPose, $tileToPx, $doorColor, $windowColor, $otherOpeningColor, []);
         if ($this->planStyle->isFunda) {
             $tile = $this->tileGeometry($room, $this->planStyle->orientation);
             $this->drawTileDimensionChains($image, $room, $tile, $originX, $originY, $rotation, $unit, $text);
         } else {
-            $this->drawWallLengths($image, $room['outline_m'], $identityPose, $tileToPx, $subtext, $unit, []);
+            $this->drawWallLengths($image, $room['outline_m'], $identityPose, $tileToPx, $subtext, $unit, FloorPlanPalette::withOpenEdges([], $room));
         }
         foreach ($labelDraws as $draw) {
             $draw();

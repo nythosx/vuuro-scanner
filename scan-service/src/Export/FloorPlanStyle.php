@@ -72,9 +72,7 @@ final class FloorPlanStyle
     ): self {
         $isFunda = $style === 'funda';
 
-        $showWalkPath = $walkPath !== null
-            ? ($walkPath === '1' || $walkPath === 'true')
-            : !$isFunda;
+        $showWalkPath = $walkPath === '1' || $walkPath === 'true';
 
         $furnitureCategories = null;
         if ($furniture !== null) {

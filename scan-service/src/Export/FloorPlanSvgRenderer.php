@@ -34,7 +34,9 @@ final class FloorPlanSvgRenderer
     private const OBJECT = '#5c5c5c';
     private const WARN_FILL = '#fadad7';
     private const WARN_BORDER = '#d6453e';
-    private const HEADER_ACCENT = '#ff8212';
+    private const FUNDA_GRID_STEP = 20.0;
+    private const FUNDA_GRID_LINE = '#e4e4e4';
+    private const FUNDA_INK = '#111111';
     private const FONT = "'Open Sans', Arial, Helvetica, sans-serif";
     private const FOOTER_TEXT = 'Indicative measurements — NEN2580-inspired, not certified. No rights can be derived from this plan.';
 
@@ -61,6 +63,9 @@ final class FloorPlanSvgRenderer
 
     private function roomFill(array $room, int $fallbackIndex): string
     {
+        if ($this->planStyle->isFunda) {
+            return FloorPlanPalette::fundaFillFor(self::roomTypeValue($room));
+        }
         if ($this->planStyle->roomFill === 'white') {
             return '#ffffff';
         }
@@ -95,6 +100,8 @@ final class FloorPlanSvgRenderer
 
     private FloorPlanStyle $planStyle;
     private ?string $resolvedTitle = null;
+    private ?string $fundaFloorName = null;
+    private string $fundaPlaceLine = '';
 
     public function __construct()
     {
@@ -105,6 +112,11 @@ final class FloorPlanSvgRenderer
     {
         $this->planStyle = $style instanceof FloorPlanStyle ? $style : FloorPlanStyle::from($style ?? 'default');
         $this->resolvedTitle = $this->planStyle->resolvedTitle($floorPlan);
+        $this->fundaFloorName = self::singleFloorName($floorPlan['rooms'] ?? []);
+        $this->fundaPlaceLine = implode(" \u{00B7} ", array_values(array_filter([
+            trim((string) ($floorPlan['property_id'] ?? '')),
+            trim((string) ($floorPlan['unit_id'] ?? '')),
+        ], static fn (string $part): bool => $part !== '')));
         $rooms = $floorPlan['rooms'];
         $notes = $floorPlan['notes'] ?? [];
         if ($roomId !== null) {
@@ -140,13 +152,81 @@ final class FloorPlanSvgRenderer
             : $this->renderTiles($rooms, $unit, $label, $notes);
     }
 
+    private static function singleFloorName(array $rooms): ?string
+    {
+        $floors = [];
+        foreach ($rooms as $room) {
+            $floor = $room['floor'] ?? null;
+            if (is_string($floor) && trim($floor) !== '') {
+                $floors[trim($floor)] = true;
+            }
+        }
+        return count($floors) === 1 ? (string) array_key_first($floors) : null;
+    }
+
+    private static function fundaArea(float $m2, string $unit): string
+    {
+        return $unit === UnitFormatter::IMPERIAL
+            ? sprintf('%.0f sq ft', $m2 * 10.7639104167)
+            : sprintf("%.1f m\u{00B2}", $m2);
+    }
+
+    private function fundaTitleBlockSvg(int $width, int $y, float $totalAreaM2, string $unit): string
+    {
+        $title = $this->resolvedTitle;
+        $heading = $this->fundaFloorName ?? (($title === null || $title === '') ? 'Floor plan' : $title);
+        $parts = [];
+        if ($this->fundaFloorName !== null && $this->fundaPlaceLine !== '') {
+            $parts[] = $this->fundaPlaceLine;
+        }
+        $parts[] = 'Total floor area ' . self::fundaArea($totalAreaM2, $unit) . ' (indicative)';
+        $x = (int) ($width / 2);
+        return '<text x="' . $x . '" y="' . $y . '" font-size="20" font-weight="700" fill="' . self::FUNDA_INK . '" text-anchor="middle">' . $this->esc($heading) . '</text>'
+            . '<text x="' . $x . '" y="' . ($y + 20) . '" font-size="11" fill="' . self::FUNDA_INK . '" text-anchor="middle">' . $this->esc(implode("  \u{00B7}  ", $parts)) . '</text>';
+    }
+
+    private function areaCentroidM(array $outlineM): array
+    {
+        $n = count($outlineM);
+        $twiceArea = 0.0;
+        $cx = 0.0;
+        $cz = 0.0;
+        for ($i = 0; $i < $n; $i++) {
+            [$x0, $z0] = $outlineM[$i];
+            [$x1, $z1] = $outlineM[($i + 1) % $n];
+            $cross = $x0 * $z1 - $x1 * $z0;
+            $twiceArea += $cross;
+            $cx += ($x0 + $x1) * $cross;
+            $cz += ($z0 + $z1) * $cross;
+        }
+        if (abs($twiceArea) < 1e-9) {
+            return $this->centroidM($outlineM);
+        }
+        return [$cx / (3 * $twiceArea), $cz / (3 * $twiceArea)];
+    }
+
+    private function fundaRoomLabelSvg(array $room, float $x, float $y): string
+    {
+        $confirmed = is_array($room['room_type'] ?? null) ? ($room['room_type']['confirmed'] ?? null) : null;
+        $name = is_string($confirmed) && trim($confirmed) !== '' ? RoomType::labelFor(trim($confirmed)) : (string) ($room['label'] ?? '');
+        $size = ((float) ($room['floor_area_m2'] ?? 0)) < 4.0 ? 11 : 16;
+        return '<text x="' . $this->num($x) . '" y="' . $this->num($y + $size * 0.35) . '" font-size="' . $size . '" font-weight="700" fill="' . self::FUNDA_INK . '" text-anchor="middle">' . $this->esc($name) . '</text>';
+    }
+
     private function defs(): string
     {
+        $gridStep = $this->planStyle->isFunda ? self::FUNDA_GRID_STEP : self::GRID_STEP;
+        $gridLine = $this->planStyle->isFunda ? self::FUNDA_GRID_LINE : self::GRID_LINE;
+        $gridWidth = $this->planStyle->isFunda ? '0.6' : '1';
+        $wallShadow = $this->planStyle->isFunda
+            ? '<filter id="wall-shadow" x="-5%" y="-5%" width="115%" height="115%"><feDropShadow dx="1" dy="2" stdDeviation="1.5" flood-color="#000000" flood-opacity="0.25"/></filter>'
+            : '';
         return <<<SVG
 <defs>
-  <pattern id="grid" width="{$this->num(self::GRID_STEP)}" height="{$this->num(self::GRID_STEP)}" patternUnits="userSpaceOnUse">
-    <path d="M {$this->num(self::GRID_STEP)} 0 L 0 0 0 {$this->num(self::GRID_STEP)}" fill="none" stroke="{$this->esc(self::GRID_LINE)}" stroke-width="1"/>
+  <pattern id="grid" width="{$this->num($gridStep)}" height="{$this->num($gridStep)}" patternUnits="userSpaceOnUse">
+    <path d="M {$this->num($gridStep)} 0 L 0 0 0 {$this->num($gridStep)}" fill="none" stroke="{$this->esc($gridLine)}" stroke-width="{$gridWidth}"/>
   </pattern>
+  {$wallShadow}
   <marker id="ar-s" markerWidth="7" markerHeight="7" refX="0.5" refY="3.5" orient="auto">
     <path d="M 7 0.6 L 0.5 3.5 L 7 6.4 Z" fill="{$this->esc(self::TEXT)}"/>
   </marker>
@@ -192,11 +272,12 @@ SVG;
 
     private function wrapSvg(int $width, int $height, string $body): string
     {
+        $canvas = $this->planStyle->isFunda ? '#ffffff' : self::CANVAS;
         return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' . $width . ' ' . $height . '" '
             . 'preserveAspectRatio="xMidYMid meet" width="100%" height="100%" font-family="' . self::FONT . '">'
-            . '<rect x="0" y="0" width="' . $width . '" height="' . $height . '" fill="' . self::CANVAS . '"/>'
+            . '<rect x="0" y="0" width="' . $width . '" height="' . $height . '" fill="' . $canvas . '"/>'
             . $this->defs()
-            . '<rect x="0" y="0" width="' . $width . '" height="4" fill="' . self::HEADER_ACCENT . '"/>'
+            . ($this->planStyle->isFunda ? '<rect x="0" y="0" width="' . $width . '" height="' . $height . '" fill="url(#grid)"/>' : '')
             . $body
             . '</svg>';
     }
@@ -387,9 +468,7 @@ SVG;
 
     private function edgeThicknessM(array $roomEdgeTiers, int $edgeIndex): float
     {
-        return isset($roomEdgeTiers[$edgeIndex])
-            ? FloorPlanPalette::INTERIOR_WALL_THICKNESS_M
-            : FloorPlanPalette::EXTERIOR_WALL_THICKNESS_M;
+        return FloorPlanPalette::wallThicknessM($this->planStyle->isFunda, isset($roomEdgeTiers[$edgeIndex]));
     }
 
     private function insetTowardCentroid(float $x, float $z, float $centroidX, float $centroidZ, float $insetM): array
@@ -431,6 +510,14 @@ SVG;
             $dz = $bz - $az;
             $len = sqrt($dx ** 2 + $dz ** 2);
             if ($len < 1e-6) {
+                continue;
+            }
+            if (FloorPlanPalette::isOpenEdge($roomEdgeTiers, $i)) {
+                [$awx, $awz] = RoomFusionSolver::transformPoint($pose, $ax, $az);
+                [$bwx, $bwz] = RoomFusionSolver::transformPoint($pose, $bx, $bz);
+                [$apx, $apy] = $toPx($awx, $awz);
+                [$bpx, $bpy] = $toPx($bwx, $bwz);
+                $out .= '<line class="open-edge" x1="' . $this->num($apx) . '" y1="' . $this->num($apy) . '" x2="' . $this->num($bpx) . '" y2="' . $this->num($bpy) . '" stroke="#8a8a8a" stroke-width="1" stroke-dasharray="4,3"/>';
                 continue;
             }
             $ux = $dx / $len;
@@ -504,6 +591,21 @@ SVG;
         return $out;
     }
 
+    private static function openingWidthM(array $opening): float
+    {
+        $category = $opening['category'] ?? 'opening';
+        $measured = $opening['width_m'] ?? null;
+        if (is_int($measured) || is_float($measured)) {
+            $measured = (float) $measured;
+            return $category === 'door' ? max(0.6, min(1.2, $measured)) : $measured;
+        }
+        return match ($category) {
+            'door' => self::DOOR_LEAF_M,
+            'window' => self::WINDOW_WIDTH_M,
+            default => self::OPENING_WIDTH_M,
+        };
+    }
+
     private function openingsSvg(array $room, array $pose, callable $toPx, array $roomEdgeTiers): string
     {
         $outline = $room['outline_m'] ?? [];
@@ -518,11 +620,7 @@ SVG;
             [$wallDx, $wallDz, $normalDx, $normalDz, $edgeIndex] = $this->nearestWallOrientation($outline, $mx, $mz, $centroidX, $centroidZ);
             $wallHalfM = $this->edgeThicknessM($roomEdgeTiers, $edgeIndex) / 2;
 
-            $widthM = match ($category) {
-                'door' => self::DOOR_LEAF_M,
-                'window' => self::WINDOW_WIDTH_M,
-                default => self::OPENING_WIDTH_M,
-            };
+            $widthM = self::openingWidthM($opening);
             $half = $widthM / 2;
             $corner = static fn (float $alongSign, float $acrossSign): array => [
                 $mx + $wallDx * $alongSign * $half + $normalDx * $acrossSign * $wallHalfM,
@@ -558,6 +656,12 @@ SVG;
                     . '<path d="M ' . $this->num($tipPx) . ' ' . $this->num($tipPy) . ' A ' . $this->num($radiusPx) . ' ' . $this->num($radiusPx) . ' 0 0 ' . $sweep . ' ' . $this->num($swingPx) . ' ' . $this->num($swingPy) . '"/>'
                     . '</g>';
                 $out .= $this->jambSquaresSvg($pose, $toPx, $mx, $mz, $wallDx, $wallDz, $half);
+            } elseif ($category === 'window' && $this->planStyle->isFunda) {
+                [$aWx, $aWz] = RoomFusionSolver::transformPoint($pose, $mx - $wallDx * $half, $mz - $wallDz * $half);
+                [$aPx, $aPy] = $toPx($aWx, $aWz);
+                [$bWx, $bWz] = RoomFusionSolver::transformPoint($pose, $mx + $wallDx * $half, $mz + $wallDz * $half);
+                [$bPx, $bPy] = $toPx($bWx, $bWz);
+                $out .= '<line x1="' . $this->num($aPx) . '" y1="' . $this->num($aPy) . '" x2="' . $this->num($bPx) . '" y2="' . $this->num($bPy) . '" stroke="' . self::WALL . '" stroke-width="1.5"/>';
             } elseif ($category === 'window') {
                 $endAX = $mx - $wallDx * $half;
                 $endAZ = $mz - $wallDz * $half;
@@ -638,8 +742,8 @@ SVG;
             [$x1] = $toPx($breakpoints[$i], 0.0);
             [$x2] = $toPx($breakpoints[$i + 1], 0.0);
             $out .= '<line x1="' . $this->num($x1) . '" y1="' . $this->num($y) . '" x2="' . $this->num($x2) . '" y2="' . $this->num($y) . '" marker-start="url(#ar-s)" marker-end="url(#ar-e)"/>'
-                . '<line x1="' . $this->num($x1) . '" y1="' . $this->num($y - 5) . '" x2="' . $this->num($x1) . '" y2="' . $this->num($y + 5) . '"/>'
-                . '<line x1="' . $this->num($x2) . '" y1="' . $this->num($y - 5) . '" x2="' . $this->num($x2) . '" y2="' . $this->num($y + 5) . '"/>';
+                . ($this->planStyle->isFunda ? '' : '<line x1="' . $this->num($x1) . '" y1="' . $this->num($y - 5) . '" x2="' . $this->num($x1) . '" y2="' . $this->num($y + 5) . '"/>'
+                . '<line x1="' . $this->num($x2) . '" y1="' . $this->num($y - 5) . '" x2="' . $this->num($x2) . '" y2="' . $this->num($y + 5) . '"/>');
             $text .= '<text x="' . $this->num(($x1 + $x2) / 2) . '" y="' . $this->num($y - 6) . '" font-size="10" fill="' . self::TEXT . '" text-anchor="middle">' . $this->esc(UnitFormatter::length($spanM, $unit)) . '</text>';
         }
         $out .= '</g>' . $text;
@@ -658,8 +762,8 @@ SVG;
             [, $y1] = $toPx(0.0, $breakpoints[$i]);
             [, $y2] = $toPx(0.0, $breakpoints[$i + 1]);
             $out .= '<line x1="' . $this->num($x) . '" y1="' . $this->num($y1) . '" x2="' . $this->num($x) . '" y2="' . $this->num($y2) . '" marker-start="url(#ar-s)" marker-end="url(#ar-e)"/>'
-                . '<line x1="' . $this->num($x - 5) . '" y1="' . $this->num($y1) . '" x2="' . $this->num($x + 5) . '" y2="' . $this->num($y1) . '"/>'
-                . '<line x1="' . $this->num($x - 5) . '" y1="' . $this->num($y2) . '" x2="' . $this->num($x + 5) . '" y2="' . $this->num($y2) . '"/>';
+                . ($this->planStyle->isFunda ? '' : '<line x1="' . $this->num($x - 5) . '" y1="' . $this->num($y1) . '" x2="' . $this->num($x + 5) . '" y2="' . $this->num($y1) . '"/>'
+                . '<line x1="' . $this->num($x - 5) . '" y1="' . $this->num($y2) . '" x2="' . $this->num($x + 5) . '" y2="' . $this->num($y2) . '"/>');
             $midY = ($y1 + $y2) / 2;
             $text .= '<text x="' . $this->num($x - 6) . '" y="' . $this->num($midY) . '" font-size="10" fill="' . self::TEXT . '" text-anchor="middle" transform="rotate(-90 ' . $this->num($x - 6) . ' ' . $this->num($midY) . ')">' . $this->esc(UnitFormatter::length($spanM, $unit)) . '</text>';
         }
@@ -762,17 +866,15 @@ SVG;
                 continue;
             }
             $drawn++;
-            [$mx, $mz] = $object['position_m'];
-            $dims = $object['dimensions_m'] ?? [0.5, 0.0, 0.5];
-            $halfWidth = ((float) ($dims[0] ?? 0.5)) / 2;
-            $halfDepth = ((float) ($dims[2] ?? 0.5)) / 2;
+            [$mx, $mz, $halfWidth, $halfDepth, $frameRad] = ObjectFootprint::fit($room, $object, FloorPlanPalette::wallThicknessM($this->planStyle->isFunda, false) / 2);
+            $objectPose = ObjectFootprint::objectPose($pose, $mx, $mz, $frameRad);
             $category = strtolower((string) $object['category']);
-            $icon = $this->objectIconSvg($pose, $toPx, $category, $mx, $mz, $halfWidth, $halfDepth);
+            $icon = $this->objectIconSvg($objectPose, $toPx, $category, $mx, $mz, $halfWidth, $halfDepth);
             if ($icon !== null) {
                 $out .= $icon;
                 continue;
             }
-            $pts = $this->localRectPolygon($pose, $toPx, $mx, $mz, $halfWidth, $halfDepth);
+            $pts = $this->localRectPolygon($objectPose, $toPx, $mx, $mz, $halfWidth, $halfDepth);
             $out .= '<polygon points="' . $pts . '" fill="none" stroke="' . self::OBJECT . '" stroke-width="0.9"/>';
             $labelText = isset($object['custom_name']) && is_string($object['custom_name']) && $object['custom_name'] !== ''
                 ? $object['custom_name']
@@ -827,9 +929,10 @@ SVG;
         }
         $subLines[] = sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms));
 
-        $headerHeight = self::HEADER_HEIGHT + (count($subLines) - 1) * 15;
+        $isFunda = $this->planStyle->isFunda;
+        $headerHeight = $isFunda ? 24 : self::HEADER_HEIGHT + (count($subLines) - 1) * 15;
         $y = $headerHeight;
-        $canvasHeight = $y + $tilesHeight + 20 + count($notesLines) * self::NOTE_LINE_HEIGHT + 66;
+        $canvasHeight = $y + $tilesHeight + 20 + ($this->planStyle->showNotes ? count($notesLines) * self::NOTE_LINE_HEIGHT : 0) + ($isFunda ? 90 : 66);
 
         if ($canvasWidth > self::MAX_CANVAS_DIMENSION_PX || $canvasHeight > self::MAX_CANVAS_DIMENSION_PX) {
             throw new \InvalidArgumentException(sprintf(
@@ -840,7 +943,7 @@ SVG;
             ));
         }
 
-        $body = $this->headerSvg('Vuuro Scan — indicative per-room floor plan sheet', $subLines, $canvasWidth);
+        $body = $isFunda ? '' : $this->headerSvg('Vuuro Scan — indicative per-room floor plan sheet', $subLines, $canvasWidth);
 
         $x = self::MARGIN;
         foreach ($rooms as $i => $room) {
@@ -853,7 +956,9 @@ SVG;
         if ($this->planStyle->showNotes) {
             $body .= $this->notesSvg($notesLines, self::MARGIN, $notesY);
         }
-        $body .= $this->titleBlockSvg($canvasWidth, $canvasHeight - 40);
+        $body .= $isFunda
+            ? $this->fundaTitleBlockSvg($canvasWidth, $canvasHeight - 62, $totalAreaM2, $unit)
+            : $this->titleBlockSvg($canvasWidth, $canvasHeight - 40);
         $body .= $this->footerSvg($canvasWidth, $canvasHeight - 14);
 
         return $this->wrapSvg($canvasWidth, $canvasHeight, $body);
@@ -979,10 +1084,11 @@ SVG;
         $identityPose = ['originX' => 0.0, 'originZ' => 0.0, 'rotationRad' => 0.0];
 
         $labels = '';
-        $out = '<rect x="0" y="0" width="' . $tile['width'] . '" height="' . ($tile['height'] - self::LABEL_HEIGHT) . '" fill="url(#grid)"/>';
+        $out = $this->planStyle->isFunda ? '' : '<rect x="0" y="0" width="' . $tile['width'] . '" height="' . ($tile['height'] - self::LABEL_HEIGHT) . '" fill="url(#grid)"/>';
         $out .= $this->roomFillSvg($room['outline_m'], $identityPose, $toPx, $fill);
         $out .= $this->objectsSvg($room, $identityPose, $toPx, $labels);
-        $out .= $this->roomWallsSvg($room['outline_m'], $identityPose, $toPx, []);
+        $walls = $this->roomWallsSvg($room['outline_m'], $identityPose, $toPx, FloorPlanPalette::withOpenEdges([], $room));
+        $out .= $this->planStyle->isFunda && $walls !== '' ? '<g filter="url(#wall-shadow)">' . $walls . '</g>' : $walls;
         $out .= $this->walkPathSvg($room, $identityPose, $toPx);
         $out .= $this->openingsSvg($room, $identityPose, $toPx, []);
         $headingDeg = self::roomHeadingDeg($room);
@@ -993,9 +1099,15 @@ SVG;
         if ($this->planStyle->isFunda) {
             $out .= $this->tileDimensionChainsSvg($room, $tile, $rotation, $unit);
         } else {
-            $out .= $this->wallLengthLabelsSvg($room['outline_m'], $identityPose, $toPx, $unit, []);
+            $out .= $this->wallLengthLabelsSvg($room['outline_m'], $identityPose, $toPx, $unit, FloorPlanPalette::withOpenEdges([], $room));
         }
         $out .= $labels;
+
+        if ($this->planStyle->isFunda) {
+            [$cx, $cz] = $this->areaCentroidM($room['outline_m']);
+            [$labelPx, $labelPy] = $toPx($cx, $cz);
+            return $out . $this->fundaRoomLabelSvg($room, $labelPx, $labelPy);
+        }
 
         $labelY = $tile['height'] - self::LABEL_HEIGHT + 20;
         $out .= '<text x="0" y="' . $labelY . '" font-size="13" font-weight="600" fill="' . self::TEXT . '">' . $this->esc($this->displayLabel($room)) . '</text>';
@@ -1049,16 +1161,17 @@ SVG;
         $totalAreaM2 = array_sum(array_column($rooms, 'floor_area_m2'));
         $subLines[] = sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms));
 
-        $headerHeight = self::HEADER_HEIGHT + (count($subLines) - 1) * 15;
+        $isFunda = $this->planStyle->isFunda;
+        $headerHeight = $isFunda ? 20 : self::HEADER_HEIGHT + (count($subLines) - 1) * 15;
         $dimGutter = 34;
         $topGutter = $headerHeight + $dimGutter;
         $drawingWidth = (int) round(($maxX - $minX) * self::PX_PER_M);
         $drawingHeight = (int) round(($maxZ - $minZ) * self::PX_PER_M);
         $canvasWidth = max(self::MARGIN * 2 + $dimGutter + $drawingWidth, 560);
         $canvasHeight = $topGutter + $drawingHeight + 40
-            + count($notesLines) * self::NOTE_LINE_HEIGHT
-            + count($summaryLines) * self::NOTE_LINE_HEIGHT
-            + 30;
+            + ($this->planStyle->showNotes ? count($notesLines) * self::NOTE_LINE_HEIGHT : 0)
+            + ($this->planStyle->showMetrics ? count($summaryLines) * self::NOTE_LINE_HEIGHT : 0)
+            + ($isFunda ? 70 : 30);
 
         if ($canvasWidth > self::MAX_CANVAS_DIMENSION_PX || $canvasHeight > self::MAX_CANVAS_DIMENSION_PX) {
             throw new \InvalidArgumentException(sprintf(
@@ -1076,8 +1189,11 @@ SVG;
             $originPxY + ($worldZ - $minZ) * self::PX_PER_M,
         ];
 
-        $body = $this->headerSvg('Vuuro Scan — fused floor plan (rooms captured together)', $subLines, $canvasWidth);
-        $body .= '<rect x="' . $originPxX . '" y="' . $originPxY . '" width="' . $drawingWidth . '" height="' . $drawingHeight . '" fill="url(#grid)"/>';
+        $body = '';
+        if (!$isFunda) {
+            $body .= $this->headerSvg('Vuuro Scan — fused floor plan (rooms captured together)', $subLines, $canvasWidth);
+            $body .= '<rect x="' . $originPxX . '" y="' . $originPxY . '" width="' . $drawingWidth . '" height="' . $drawingHeight . '" fill="url(#grid)"/>';
+        }
 
         $dimY = $headerHeight + 14;
         $xBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 0);
@@ -1104,7 +1220,7 @@ SVG;
         }
         $body .= '</g>';
 
-        $body .= '<g id="walls">';
+        $body .= $isFunda ? '<g id="walls" filter="url(#wall-shadow)">' : '<g id="walls">';
         foreach ($rooms as $i => $room) {
             $pose = $poses[$i];
             if (in_array($i, $overlapping, true)) {
@@ -1112,7 +1228,7 @@ SVG;
                 $strokePx = FloorPlanPalette::EXTERIOR_WALL_THICKNESS_M * self::PX_PER_M;
                 $body .= '<polygon points="' . $points . '" fill="none" stroke="' . self::WARN_BORDER . '" stroke-width="' . $this->num($strokePx) . '"/>';
             } else {
-                $body .= $this->roomWallsSvg($room['outline_m'], $pose, $toPx, $edgeTiers[$i] ?? []);
+                $body .= $this->roomWallsSvg($room['outline_m'], $pose, $toPx, FloorPlanPalette::withOpenEdges($edgeTiers[$i] ?? [], $room));
             }
         }
         $body .= '</g>';
@@ -1127,6 +1243,13 @@ SVG;
         $labels = $objectLabels;
         foreach ($rooms as $i => $room) {
             $pose = $poses[$i];
+            if ($isFunda) {
+                [$cx, $cz] = $this->areaCentroidM($room['outline_m']);
+                [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $cx, $cz);
+                [$labelX, $labelY] = $toPx($wx, $wz);
+                $labels .= $this->fundaRoomLabelSvg($room, $labelX, $labelY);
+                continue;
+            }
             [$cx, $cz] = $this->centroidM($room['outline_m']);
             [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $cx, $cz);
             [$labelX, $labelY] = $toPx($wx, $wz);
@@ -1167,7 +1290,9 @@ SVG;
                 . '</g>';
             $body .= $this->roomTypeLegendSvg($rooms, self::MARGIN, $legendY - 16);
         }
-        $body .= $this->titleBlockSvg($canvasWidth, $canvasHeight - 42);
+        $body .= $isFunda
+            ? $this->fundaTitleBlockSvg($canvasWidth, $canvasHeight - 62, $totalAreaM2, $unit)
+            : $this->titleBlockSvg($canvasWidth, $canvasHeight - 42);
         $body .= $this->footerSvg($canvasWidth, $canvasHeight - 12);
 
         return $this->wrapSvg($canvasWidth, $canvasHeight, $body);

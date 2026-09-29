@@ -267,13 +267,10 @@ final class FloorPlanPdfRenderer
 
     private function buildPageChrome(float $pageWidth, float $pageHeight, string $footerLabel, int $pageIndex, int $totalPages): string
     {
-        $accentBarHeight = 4;
-        $stream = "q\n" . $this->rgOp(self::ACCENT) . "\n0 " . ($pageHeight - $accentBarHeight) . " {$pageWidth} {$accentBarHeight} re\nf\nQ\n";
-
         $footerText = "{$footerLabel}  -  Page {$pageIndex} of {$totalPages}";
         $ascii = $this->toWinAnsi($footerText);
         $escaped = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $ascii);
-        $stream .= "q\n" . $this->rgOp(self::INK_MUTED) . "\nBT\n/F1 8 Tf\n1 0 0 1 24 16 Tm\n({$escaped}) Tj\nET\nQ\n";
+        $stream = "q\n" . $this->rgOp(self::INK_MUTED) . "\nBT\n/F1 8 Tf\n1 0 0 1 24 16 Tm\n({$escaped}) Tj\nET\nQ\n";
 
         return rtrim($stream);
     }
@@ -421,7 +418,7 @@ final class FloorPlanPdfRenderer
                 $add("             {$summary}", 'sub');
             }
             $walkPath = $room['walk_path_m'] ?? [];
-            if (count($walkPath) >= 2) {
+            if ($planStyle->showWalkPath && count($walkPath) >= 2) {
                 $add(sprintf('             walk path: %d point(s) recorded', count($walkPath)), 'sub');
             }
             $objects = $room['objects'] ?? [];

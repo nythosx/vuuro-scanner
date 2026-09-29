@@ -62,6 +62,29 @@ final class ExportStyleSettingsTests: XCTestCase {
         XCTAssertEqual(ExportStyleSettings.load().planType, .fullReport)
     }
 
+    func testWalkPathIsOffOnceAfterUpgradeButKeepsTheChosenPlan() {
+        let original = ExportStyleSettings.load()
+        defer { original.save() }
+        let defaults = UserDefaults.standard
+        defaults.set(ExportPlanType.fullReport.rawValue, forKey: "exportStyle.planType")
+        defaults.set(true, forKey: "exportStyle.showWalkPath")
+        defaults.set(2, forKey: "exportStyle.defaultsVersion")
+        let upgraded = ExportStyleSettings.load()
+        XCTAssertFalse(upgraded.showWalkPath)
+        XCTAssertEqual(upgraded.planType, .fullReport)
+        var chosen = upgraded
+        chosen.showWalkPath = true
+        chosen.save()
+        XCTAssertTrue(ExportStyleSettings.load().showWalkPath)
+    }
+
+    func testWalkPathIsOffWhenNeverSet() {
+        let original = ExportStyleSettings.load()
+        defer { original.save() }
+        UserDefaults.standard.removeObject(forKey: "exportStyle.showWalkPath")
+        XCTAssertFalse(ExportStyleSettings.load().showWalkPath)
+    }
+
     func testWalkPathToggleMapsToQueryValue() {
         var on = settings()
         on.showWalkPath = true

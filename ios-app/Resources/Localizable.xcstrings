@@ -1,6 +1,406 @@
 {
     "sourceLanguage": "en",
     "strings": {
+        "%ld room split(s) could not be re-applied because the room changed in this scan (%@). Split the room again if you still need it.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%ld room split(s) could not be re-applied because the room changed in this scan (%@). Split the room again if you still need it."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%ld splitsing(en) konden niet opnieuw worden toegepast omdat de ruimte in deze scan is veranderd (%@). Splits de ruimte opnieuw als dat nog nodig is."
+                    }
+                }
+            }
+        },
+        "%ld detected item(s) there are removed too. Notes and photos stay with %@.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%ld detected item(s) there are removed too. Notes and photos stay with %@."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%ld gedetecteerde item(s) daar worden ook verwijderd. Notities en foto's blijven bij %@."
+                    }
+                }
+            }
+        },
+        "Split": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Split"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Splitsen"
+                    }
+                }
+            }
+        },
+        "Trim": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Trim"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Inkorten"
+                    }
+                }
+            }
+        },
+        "Start of the cut line": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Start of the cut line"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Begin van de snijlijn"
+                    }
+                }
+            }
+        },
+        "End of the cut line": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "End of the cut line"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Einde van de snijlijn"
+                    }
+                }
+            }
+        },
+        "Split or trim room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Split or trim room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ruimte splitsen of inkorten"
+                    }
+                }
+            }
+        },
+        "Split into two rooms": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Split into two rooms"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Splitsen in twee ruimtes"
+                    }
+                }
+            }
+        },
+        "Trim off the other part": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Trim off the other part"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Het andere deel weghalen"
+                    }
+                }
+            }
+        },
+        "Undo split": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Undo split"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Splitsen ongedaan maken"
+                    }
+                }
+            }
+        },
+        "Undo": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Undo"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ongedaan maken"
+                    }
+                }
+            }
+        },
+        "Removed": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Removed"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Verwijderd"
+                    }
+                }
+            }
+        },
+        "New room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "New room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Nieuwe ruimte"
+                    }
+                }
+            }
+        },
+        "Room split in two": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Room split in two"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ruimte in tweeën gesplitst"
+                    }
+                }
+            }
+        },
+        "Room trimmed": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Room trimmed"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ruimte ingekort"
+                    }
+                }
+            }
+        },
+        "Save or discard your changes before splitting a room.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Save or discard your changes before splitting a room."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Bewaar of verwerp je wijzigingen voordat je een ruimte splitst."
+                    }
+                }
+            }
+        },
+        "Drag the two handles so the line runs across the opening where %@ should end. Tap the part that keeps the name.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Drag the two handles so the line runs across the opening where %@ should end. Tap the part that keeps the name."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Sleep de twee punten zodat de lijn over de doorgang loopt waar %@ moet eindigen. Tik op het deel dat de naam houdt."
+                    }
+                }
+            }
+        },
+        "%@ keeps %.1f m². The other %.1f m² becomes a new room.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%@ keeps %.1f m². The other %.1f m² becomes a new room."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%@ houdt %.1f m². De andere %.1f m² wordt een nieuwe ruimte."
+                    }
+                }
+            }
+        },
+        "%@ keeps %.1f m². The other %.1f m² is removed from the plan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%@ keeps %.1f m². The other %.1f m² is removed from the plan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%@ houdt %.1f m². De andere %.1f m² gaat uit de plattegrond."
+                    }
+                }
+            }
+        },
+        "The line is too short. Drag both ends across the room.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The line is too short. Drag both ends across the room."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De lijn is te kort. Sleep beide uiteinden over de ruimte."
+                    }
+                }
+            }
+        },
+        "Drag both ends outside the room so the line crosses it from wall to wall.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Drag both ends outside the room so the line crosses it from wall to wall."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Sleep beide uiteinden buiten de ruimte, zodat de lijn van muur tot muur loopt."
+                    }
+                }
+            }
+        },
+        "The line crosses the room more than twice. Use a shorter line that cuts off one part only.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The line crosses the room more than twice. Use a shorter line that cuts off one part only."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De lijn snijdt de ruimte meer dan twee keer. Gebruik een kortere lijn die maar één deel afsnijdt."
+                    }
+                }
+            }
+        },
+        "The line runs outside the room. Draw it across the part you want to separate.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The line runs outside the room. Draw it across the part you want to separate."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De lijn loopt buiten de ruimte. Trek hem over het deel dat je wilt scheiden."
+                    }
+                }
+            }
+        },
+        "The line runs along a wall. Draw it across the room instead.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The line runs along a wall. Draw it across the room instead."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De lijn loopt langs een muur. Trek hem dwars door de ruimte."
+                    }
+                }
+            }
+        },
+        "One side would only be %.2f m². Move the line so both parts are at least 0.5 m².": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "One side would only be %.2f m². Move the line so both parts are at least 0.5 m²."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Eén kant zou maar %.2f m² zijn. Verschuif de lijn zodat beide delen minstens 0,5 m² zijn."
+                    }
+                }
+            }
+        },
         "History": {
             "localizations": {
                 "en": {

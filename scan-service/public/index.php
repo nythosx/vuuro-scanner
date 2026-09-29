@@ -1577,6 +1577,103 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)/lab
     return;
 }
 
+function split_point(mixed $value): ?array
+{
+    if (!is_array($value) || !array_is_list($value) || count($value) !== 2) {
+        return null;
+    }
+    foreach ($value as $coordinate) {
+        if ((!is_int($coordinate) && !is_float($coordinate)) || !is_finite((float) $coordinate) || abs((float) $coordinate) > 1000) {
+            return null;
+        }
+    }
+    return [(float) $value[0], (float) $value[1]];
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)/split$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'split_room');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+    $roomId = $m[2];
+
+    if (rateLimited($repo, $sessionId . ':split_room', 30, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    $line = $body['line_m'] ?? null;
+    $start = is_array($line) && array_is_list($line) && count($line) === 2 ? split_point($line[0]) : null;
+    $end = is_array($line) && array_is_list($line) && count($line) === 2 ? split_point($line[1]) : null;
+    if ($start === null || $end === null) {
+        respondError(422, 'invalid_split_line', "'line_m' must be two [x, z] points in the room's own metres, e.g. [[0, 2.5], [6, 2.5]].");
+        return;
+    }
+    $keepPoint = split_point($body['keep_point_m'] ?? null);
+    if ($keepPoint === null) {
+        respondError(422, 'invalid_keep_point', "'keep_point_m' must be one [x, z] point inside the part that keeps the room's name.");
+        return;
+    }
+    $mode = $body['mode'] ?? null;
+    if ($mode !== 'split' && $mode !== 'trim') {
+        respondError(422, 'invalid_split_mode', "'mode' must be 'split' (make two rooms) or 'trim' (keep one part, drop the other).");
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->splitRoom($sessionId, $roomId, [$start, $end], $keepPoint, $mode);
+    } catch (\VuuroScan\UnknownRoomException $e) {
+        respondError(422, 'unknown_room_id', $e->getMessage());
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'invalid_split', $e->getMessage());
+        return;
+    } catch (\OverflowException $e) {
+        respondError(422, 'too_many_rooms', $e->getMessage());
+        return;
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
+    }
+
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/room-splits/undo$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'undo_room_split');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+
+    if (rateLimited($repo, $sessionId . ':undo_room_split', 30, 300)) {
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->undoLastSplit($sessionId);
+    } catch (\VuuroScan\UnknownRoomException $e) {
+        respondError(409, 'nothing_to_undo', $e->getMessage());
+        return;
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
+    }
+
+    respond(200, $floorPlan);
+    return;
+}
+
 if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.png$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'export_png');
     if ($session === null) {

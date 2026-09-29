@@ -17,6 +17,7 @@ final class ScanSessionRepository
     public const MAX_NOTES_PER_SESSION = 500;
 
     public const MAX_ROOMS_PER_SESSION = 500;
+    public const MAX_ROOM_SPLITS = 200;
 
     public const RATE_LIMIT_EVENT_RETENTION_SECONDS = 3600;
 
@@ -410,10 +411,293 @@ final class ScanSessionRepository
             $merged['rooms'] = $rooms;
             $merged['captured_at'] = $capturedAt;
             $merged['capture_provider'] = $captureProvider;
+            [$merged, $splitWarnings] = self::reapplySplits($merged);
+            if (count($merged['rooms']) > self::MAX_ROOMS_PER_SESSION) {
+                throw new \OverflowException(
+                    'Replacement room set has ' . count($merged['rooms']) . ' rooms after re-applying room splits, exceeding the ' . self::MAX_ROOMS_PER_SESSION . '-room limit.'
+                );
+            }
 
             $this->saveFloorPlan($sessionId, $merged);
+            if ($splitWarnings !== []) {
+                $merged['room_split_warnings'] = $splitWarnings;
+            }
             return $merged;
         });
+    }
+
+    public function splitRoom(string $sessionId, string $roomId, array $line, array $keepPoint, string $mode): array
+    {
+        return $this->withWriteLock(function () use ($sessionId, $roomId, $line, $keepPoint, $mode) {
+            $floorPlan = $this->findFloorPlan($sessionId);
+            if ($floorPlan === null) {
+                throw new \RuntimeException(
+                    "Cannot split a room on scan session $sessionId before it has a captured FloorPlan."
+                );
+            }
+            $index = self::roomIndex($floorPlan['rooms'], $roomId);
+            if ($index === null) {
+                throw new UnknownRoomException(
+                    "room_id '{$roomId}' does not match any room captured in this session."
+                );
+            }
+            if ($mode === 'split' && count($floorPlan['rooms']) + 1 > self::MAX_ROOMS_PER_SESSION) {
+                throw new \OverflowException('This session already has the maximum of ' . self::MAX_ROOMS_PER_SESSION . ' rooms.');
+            }
+            if (count($floorPlan['room_splits'] ?? []) >= self::MAX_ROOM_SPLITS) {
+                throw new \OverflowException('This session already has ' . self::MAX_ROOM_SPLITS . ' room splits. Undo one before adding another.');
+            }
+
+            $room = $floorPlan['rooms'][$index];
+            $newRoomId = self::unusedRoomId($floorPlan['rooms'], $roomId);
+            $newLabel = self::unusedRoomLabel($floorPlan['rooms']);
+            [$floorPlan, $results] = self::applySplit($floorPlan, $index, $line, $keepPoint, $mode, $newRoomId, $newLabel);
+
+            $round = static fn (array $p) => [round((float) $p[0], 4), round((float) $p[1], 4)];
+            $floorPlan['room_splits'][] = [
+                'room_id' => $roomId,
+                'new_room_id' => $mode === 'split' ? $newRoomId : null,
+                'new_label' => $mode === 'split' ? $newLabel : null,
+                'mode' => $mode,
+                'line_m' => [$round($line[0]), $round($line[1])],
+                'keep_point_m' => $round($keepPoint),
+                'original_room' => $room,
+                'results' => $results,
+                'created_at' => gmdate('c'),
+            ];
+
+            $this->saveFloorPlan($sessionId, $floorPlan);
+            return $floorPlan;
+        });
+    }
+
+    public function undoLastSplit(string $sessionId): array
+    {
+        return $this->withWriteLock(function () use ($sessionId) {
+            $floorPlan = $this->findFloorPlan($sessionId);
+            if ($floorPlan === null) {
+                throw new \RuntimeException(
+                    "Cannot undo a room split on scan session $sessionId before it has a captured FloorPlan."
+                );
+            }
+            $splits = $floorPlan['room_splits'] ?? [];
+            if ($splits === []) {
+                throw new UnknownRoomException('There is no room split to undo on this session.');
+            }
+            $last = array_pop($splits);
+            $index = self::roomIndex($floorPlan['rooms'], $last['room_id']);
+            if ($index === null) {
+                throw new UnknownRoomException("The room this split came from is no longer in this session, so it can't be undone.");
+            }
+            $newRoomId = $last['new_room_id'] ?? null;
+            $restored = self::mergeBack($last, $floorPlan['rooms']);
+            $rooms = [];
+            foreach ($floorPlan['rooms'] as $i => $room) {
+                if ($i === $index) {
+                    $rooms[] = $restored;
+                    continue;
+                }
+                if ($newRoomId !== null && $room['room_id'] === $newRoomId) {
+                    continue;
+                }
+                $rooms[] = $room;
+            }
+            $floorPlan['rooms'] = $rooms;
+            $floorPlan['room_splits'] = $splits;
+            if ($newRoomId !== null) {
+                foreach (['photos', 'notes'] as $list) {
+                    foreach ($floorPlan[$list] ?? [] as $k => $item) {
+                        if (($item['room_id'] ?? null) === $newRoomId) {
+                            $floorPlan[$list][$k]['room_id'] = $last['room_id'];
+                        }
+                    }
+                }
+            }
+            $this->saveFloorPlan($sessionId, $floorPlan);
+            return $floorPlan;
+        });
+    }
+
+    private static function mergeBack(array $split, array $currentRooms): array
+    {
+        $restored = $split['original_room'];
+        $results = $split['results'] ?? [];
+        $current = [];
+        foreach ($results as $result) {
+            $index = self::roomIndex($currentRooms, (string) $result['room_id']);
+            if ($index !== null) {
+                $current[$result['room_id']] = $currentRooms[$index];
+            }
+        }
+        $kept = $current[$split['room_id']] ?? null;
+        if ($kept !== null) {
+            $restored['label'] = $kept['label'] ?? $restored['label'];
+            $restored['room_type'] = $kept['room_type'] ?? null;
+        }
+        if ($results === []) {
+            return $restored;
+        }
+
+        $splitObjectIds = [];
+        $liveObjects = [];
+        foreach ($results as $result) {
+            foreach ($result['object_ids'] as $objectId) {
+                $splitObjectIds[$objectId] = true;
+            }
+            foreach ($current[$result['room_id']]['objects'] ?? [] as $object) {
+                $liveObjects[$object['object_id']] = [$object, $result['offset_m']];
+            }
+        }
+
+        $objects = [];
+        $seen = [];
+        foreach ($restored['objects'] ?? [] as $object) {
+            $objectId = $object['object_id'];
+            $seen[$objectId] = true;
+            if (!isset($splitObjectIds[$objectId])) {
+                $objects[] = $object;
+                continue;
+            }
+            if (!isset($liveObjects[$objectId])) {
+                continue;
+            }
+            $live = $liveObjects[$objectId][0];
+            $live['position_m'] = $object['position_m'];
+            $objects[] = $live;
+        }
+        foreach ($liveObjects as $objectId => [$object, $offset]) {
+            if (isset($seen[$objectId])) {
+                continue;
+            }
+            $object['position_m'] = [
+                round((float) $object['position_m'][0] + (float) $offset[0], 3),
+                round((float) $object['position_m'][1] + (float) $offset[1], 3),
+            ];
+            $objects[] = $object;
+        }
+        $restored['objects'] = $objects;
+        return $restored;
+    }
+
+    private static function applySplit(array $floorPlan, int $index, array $line, array $keepPoint, string $mode, string $newRoomId, string $newLabel): array
+    {
+        $room = $floorPlan['rooms'][$index];
+        $assignedOrigin = null;
+        $assignedGroupId = null;
+        if (!isset($room['structure_origin_m'])) {
+            foreach (\VuuroScan\Export\FloorGroups::split($floorPlan['rooms']) as $group) {
+                if (in_array($room['room_id'], array_column($group['rooms'], 'room_id'), true) && count($group['rooms']) === 1) {
+                    $assignedOrigin = [0.0, 0.0];
+                    $existingGroup = $room['capture_group_id'] ?? null;
+                    $assignedGroupId = is_string($existingGroup) && $existingGroup !== '' ? $existingGroup : 'split-' . $room['room_id'];
+                }
+            }
+        }
+        $applied = RoomSplitter::applyWithDetails($room, $line[0], $line[1], $keepPoint, $mode, $newRoomId, $newLabel, $assignedOrigin, $assignedGroupId);
+        array_splice($floorPlan['rooms'], $index, 1, $applied['rooms']);
+        return [$floorPlan, $applied['details']];
+    }
+
+    private static function reapplySplits(array $floorPlan): array
+    {
+        $kept = [];
+        $warnings = [];
+        $idMap = [];
+        foreach ($floorPlan['room_splits'] ?? [] as $split) {
+            $split['room_id'] = $idMap[$split['room_id']] ?? $split['room_id'];
+            $index = self::roomIndex($floorPlan['rooms'], (string) $split['room_id']);
+            if ($index === null) {
+                $index = self::roomIndexBySource($floorPlan['rooms'], (string) $split['room_id']);
+                if ($index !== null) {
+                    $idMap[$split['room_id']] = $floorPlan['rooms'][$index]['room_id'];
+                    $split['room_id'] = $floorPlan['rooms'][$index]['room_id'];
+                }
+            }
+            if ($index === null) {
+                $warnings[] = [
+                    'room_label' => (string) ($split['original_room']['label'] ?? $split['room_id']),
+                    'reason' => 'room_not_found',
+                ];
+                continue;
+            }
+            $room = $floorPlan['rooms'][$index];
+            $toLocal = static fn (array $p) => [(float) $p[0], (float) $p[1]];
+            if ($split['new_room_id'] !== null && self::roomIndex($floorPlan['rooms'], (string) $split['new_room_id']) !== null) {
+                continue;
+            }
+            try {
+                [$floorPlan, $split['results']] = self::applySplit(
+                    $floorPlan,
+                    $index,
+                    [$toLocal($split['line_m'][0]), $toLocal($split['line_m'][1])],
+                    $toLocal($split['keep_point_m']),
+                    (string) $split['mode'],
+                    (string) ($split['new_room_id'] ?? self::unusedRoomId($floorPlan['rooms'], (string) $split['room_id'])),
+                    (string) ($split['new_label'] ?? self::unusedRoomLabel($floorPlan['rooms']))
+                );
+            } catch (\InvalidArgumentException $e) {
+                error_log('VuuroScan: dropped a room split that no longer fits the re-uploaded room ' . $split['room_id'] . ': ' . $e->getMessage());
+                $warnings[] = ['room_label' => (string) ($room['label'] ?? $split['room_id']), 'reason' => 'geometry_changed'];
+                continue;
+            }
+            $split['original_room'] = $room;
+            $kept[] = $split;
+        }
+        if ($kept === [] && !isset($floorPlan['room_splits'])) {
+            return [$floorPlan, $warnings];
+        }
+        $floorPlan['room_splits'] = $kept;
+        return [$floorPlan, $warnings];
+    }
+
+    private static function roomIndexBySource(array $rooms, string $roomId): ?int
+    {
+        if (preg_match('/^room-\d+-(.+)$/', $roomId, $match) !== 1 || str_contains($match[1], '-split-')) {
+            return null;
+        }
+        $found = null;
+        foreach ($rooms as $i => $room) {
+            if (preg_match('/^room-\d+-(.+)$/', (string) ($room['room_id'] ?? ''), $candidate) === 1 && $candidate[1] === $match[1]) {
+                if ($found !== null) {
+                    return null;
+                }
+                $found = $i;
+            }
+        }
+        return $found;
+    }
+
+    private static function roomIndex(array $rooms, string $roomId): ?int
+    {
+        foreach ($rooms as $i => $room) {
+            if (($room['room_id'] ?? null) === $roomId) {
+                return $i;
+            }
+        }
+        return null;
+    }
+
+    private static function unusedRoomId(array $rooms, string $roomId): string
+    {
+        $ids = array_flip(array_column($rooms, 'room_id'));
+        $base = preg_replace('/-split-\d+$/', '', $roomId);
+        for ($k = 1; ; $k++) {
+            $candidate = $base . '-split-' . $k;
+            if (!isset($ids[$candidate])) {
+                return $candidate;
+            }
+        }
+    }
+
+    private static function unusedRoomLabel(array $rooms): string
+    {
+        $labels = array_flip(array_map(static fn ($label) => mb_strtolower((string) $label, 'UTF-8'), array_column($rooms, 'label')));
+        for ($n = count($rooms) + 1; ; $n++) {
+            $candidate = 'Room ' . $n;
+            if (!isset($labels[mb_strtolower($candidate, 'UTF-8')])) {
+                return $candidate;
+            }
+        }
     }
 
     public function appendPhoto(string $sessionId, array $photo): array

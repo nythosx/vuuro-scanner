@@ -88,6 +88,35 @@ struct FloorPlan: Codable {
     let photos: [Photo]
     let notes: [Note]
     let captureLocation: CaptureLocation?
+    let roomSplits: [RoomSplit]?
+    let roomSplitWarnings: [RoomSplitWarning]?
+
+    struct RoomSplitWarning: Codable {
+        let roomLabel: String
+        let reason: String
+
+        enum CodingKeys: String, CodingKey {
+            case roomLabel = "room_label"
+            case reason
+        }
+    }
+
+    struct RoomSplit: Codable {
+        let roomId: String
+        let newRoomId: String?
+        let mode: String
+
+        enum CodingKeys: String, CodingKey {
+            case roomId = "room_id"
+            case newRoomId = "new_room_id"
+            case mode
+        }
+    }
+
+    var lastSplitRoomIds: Set<String> {
+        guard let last = roomSplits?.last else { return [] }
+        return Set([last.roomId, last.newRoomId].compactMap { $0 })
+    }
 
     struct Photo: Codable {
         let photoId: String
@@ -137,6 +166,7 @@ struct FloorPlan: Codable {
         let structureOriginM: [Double]?
         let roomType: RoomType?
         let floor: String?
+        let openEdges: [Int]
 
         enum CodingKeys: String, CodingKey {
             case roomId = "room_id"
@@ -154,6 +184,7 @@ struct FloorPlan: Codable {
             case structureOriginM = "structure_origin_m"
             case roomType = "room_type"
             case floor
+            case openEdges = "open_edges"
         }
 
         init(from decoder: Decoder) throws {
@@ -173,6 +204,7 @@ struct FloorPlan: Codable {
             structureOriginM = try c.decodeIfPresent([Double].self, forKey: .structureOriginM)
             roomType = try c.decodeIfPresent(RoomType.self, forKey: .roomType)
             floor = try c.decodeIfPresent(String.self, forKey: .floor)
+            openEdges = try c.decodeIfPresent([Int].self, forKey: .openEdges) ?? []
         }
     }
 
@@ -281,5 +313,7 @@ struct FloorPlan: Codable {
         case photos
         case notes
         case captureLocation = "capture_location"
+        case roomSplits = "room_splits"
+        case roomSplitWarnings = "room_split_warnings"
     }
 }

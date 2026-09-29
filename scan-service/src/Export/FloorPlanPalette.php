@@ -8,6 +8,25 @@ final class FloorPlanPalette
 {
     public const EXTERIOR_WALL_THICKNESS_M = 0.30;
     public const INTERIOR_WALL_THICKNESS_M = 0.12;
+    public const FUNDA_EXTERIOR_WALL_THICKNESS_M = 0.20;
+    public const FUNDA_INTERIOR_WALL_THICKNESS_M = 0.10;
+
+    public const FUNDA_FILLS = [
+        'living' => '#fce4d6',
+        'wet' => '#d4e8f4',
+        'utility' => '#d4d4d4',
+    ];
+    public const FUNDA_TYPE_GROUPS = [
+        'kitchen' => 'wet',
+        'bathroom' => 'wet',
+        'hallway' => 'wet',
+        'laundry_room' => 'wet',
+        'walk_in_closet' => 'wet',
+        'garage' => 'utility',
+        'storage_room' => 'utility',
+        'basement' => 'utility',
+        'balcony' => 'utility',
+    ];
 
 
 
@@ -64,6 +83,38 @@ final class FloorPlanPalette
     public const FIXTURE_LIGHT = '#d4d4d4';
     public const HEARTH_FILL = '#5c5c5c';
     public const BED_FRAME_FILL = '#8f9bb3';
+
+    public static function fundaFillFor(?string $roomType): string
+    {
+        $group = is_string($roomType) ? (self::FUNDA_TYPE_GROUPS[$roomType] ?? 'living') : 'living';
+        return self::FUNDA_FILLS[$group];
+    }
+
+    public const OPEN_EDGE = 'open';
+
+    public static function withOpenEdges(array $roomEdgeTiers, array $room): array
+    {
+        $count = count($room['outline_m'] ?? []);
+        foreach ($room['open_edges'] ?? [] as $edge) {
+            if (is_int($edge) && $edge >= 0 && $edge < $count) {
+                $roomEdgeTiers[$edge] = self::OPEN_EDGE;
+            }
+        }
+        return $roomEdgeTiers;
+    }
+
+    public static function isOpenEdge(array $roomEdgeTiers, int $edgeIndex): bool
+    {
+        return ($roomEdgeTiers[$edgeIndex] ?? null) === self::OPEN_EDGE;
+    }
+
+    public static function wallThicknessM(bool $isFunda, bool $interior): float
+    {
+        if ($isFunda) {
+            return $interior ? self::FUNDA_INTERIOR_WALL_THICKNESS_M : self::FUNDA_EXTERIOR_WALL_THICKNESS_M;
+        }
+        return $interior ? self::INTERIOR_WALL_THICKNESS_M : self::EXTERIOR_WALL_THICKNESS_M;
+    }
 
     public static function roomFillFor(?string $roomType): ?string
     {

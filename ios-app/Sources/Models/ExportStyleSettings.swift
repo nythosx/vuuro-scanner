@@ -16,7 +16,7 @@ enum ExportPlanType: String, CaseIterable, Identifiable {
     var explanation: String {
         switch self {
         case .fullReport: return "Plan with measurements, notes and missing items. Use this for inspections and your own records."
-        case .listingPlan: return "Clean plan for a property listing: white rooms, dimension lines, no furniture, walk path or notes."
+        case .listingPlan: return "Clean plan for a property listing: color-coded rooms, dimension lines and fixed fixtures like sink, toilet and stove. No loose furniture, walk path or notes."
         }
     }
 }
@@ -39,7 +39,7 @@ struct ExportStyleSettings: Equatable {
         static let defaultsVersion = "exportStyle.defaultsVersion"
     }
 
-    private static let currentDefaultsVersion = 2
+    private static let currentDefaultsVersion = 3
 
     static let allFurnitureCategories: [String] = [
         "bed", "sofa", "chair", "table", "desk",
@@ -75,15 +75,19 @@ struct ExportStyleSettings: Equatable {
 
     static func load() -> ExportStyleSettings {
         let d = UserDefaults.standard
-        if d.integer(forKey: Keys.defaultsVersion) < currentDefaultsVersion {
-            d.set(ExportPlanType.listingPlan.rawValue, forKey: Keys.planType)
+        let storedVersion = d.integer(forKey: Keys.defaultsVersion)
+        if storedVersion < currentDefaultsVersion {
+            if storedVersion < 2 {
+                d.set(ExportPlanType.listingPlan.rawValue, forKey: Keys.planType)
+            }
+            d.set(false, forKey: Keys.showWalkPath)
             d.set(currentDefaultsVersion, forKey: Keys.defaultsVersion)
         }
         let storedCats = d.stringArray(forKey: Keys.furnitureCategories)
         let cats = Set(storedCats ?? allFurnitureCategories)
         return ExportStyleSettings(
             planType: d.string(forKey: Keys.planType).flatMap(ExportPlanType.init(rawValue:)) ?? .listingPlan,
-            showWalkPath: d.object(forKey: Keys.showWalkPath) as? Bool ?? true,
+            showWalkPath: d.object(forKey: Keys.showWalkPath) as? Bool ?? false,
             showFurniture: d.object(forKey: Keys.showFurniture) as? Bool ?? true,
             furnitureCategories: cats,
             orientation: d.string(forKey: Keys.orientation) ?? "as_captured",

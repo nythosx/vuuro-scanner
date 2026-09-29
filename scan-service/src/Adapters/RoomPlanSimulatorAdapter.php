@@ -190,15 +190,39 @@ final class RoomPlanSimulatorAdapter
                 }
                 $centroidX = array_sum(array_column($points2d, 0)) / count($points2d);
                 $centroidZ = array_sum(array_column($points2d, 1)) / count($points2d);
-                $openings[] = [
+                $opening = [
                     'opening_id' => (string) ($item['identifier'] ?? ($category . '-' . count($openings))),
                     'category' => $category,
                     'position_m' => [round($centroidX - $minX, 3), round($centroidZ - $minZ, 3)],
                     'confidence' => self::mapConfidence($item['confidence'] ?? null),
                 ];
+                $widthM = self::openingWidthM($item, $points2d);
+                if ($widthM !== null) {
+                    $opening['width_m'] = $widthM;
+                }
+                $openings[] = $opening;
             }
         }
         return $openings;
+    }
+
+    private static function openingWidthM(array $item, array $points2d): ?float
+    {
+        $dims = $item['dimensions'] ?? null;
+        $width = is_array($dims) && isset($dims[0]) && (is_int($dims[0]) || is_float($dims[0])) ? (float) $dims[0] : null;
+        if ($width === null || !is_finite($width) || $width <= 0) {
+            $width = 0.0;
+            $count = count($points2d);
+            for ($i = 0; $i < $count; $i++) {
+                for ($j = $i + 1; $j < $count; $j++) {
+                    $width = max($width, sqrt(($points2d[$i][0] - $points2d[$j][0]) ** 2 + ($points2d[$i][1] - $points2d[$j][1]) ** 2));
+                }
+            }
+        }
+        if ($width < 0.2 || $width > 6.0) {
+            return null;
+        }
+        return round($width, 2);
     }
 
     private static function mapWalkPath(array $rawCapture, float $minX, float $minZ): array
@@ -264,13 +288,18 @@ final class RoomPlanSimulatorAdapter
                 continue;
             }
             $dimensions = [(float) $dims[0], (float) $dims[1], (float) $dims[2]];
-            $objects[] = [
+            $object = [
                 'object_id' => (string) ($item['identifier'] ?? ('object-' . count($objects))),
                 'category' => is_string($item['category'] ?? null) ? $item['category'] : 'object',
                 'position_m' => [round(((float) ($position[0] ?? 0)) - $minX, 3), round(((float) ($position[2] ?? 0)) - $minZ, 3)],
                 'dimensions_m' => $dimensions,
                 'confidence' => self::mapConfidence($item['confidence'] ?? null),
             ];
+            $yaw = $item['yawDeg'] ?? null;
+            if ((is_int($yaw) || is_float($yaw)) && is_finite((float) $yaw)) {
+                $object['yaw_deg'] = round(fmod(fmod((float) $yaw, 360.0) + 360.0, 360.0), 1);
+            }
+            $objects[] = $object;
         }
         return $objects;
     }

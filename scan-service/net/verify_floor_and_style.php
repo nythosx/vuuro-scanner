@@ -103,6 +103,7 @@ check('default and funda SVG both return 200', $svgStatus === 200 && $fundaSvgSt
 $svgHasObjectsGroup = static fn (string $svg): bool => preg_match('/id="objects(-s\d+)?"/', $svg) === 1;
 $defaultHasDetail = $svgHasObjectsGroup($defaultSvg) || str_contains($defaultSvg, 'stroke-dasharray="6,5"');
 check('the default SVG draws furniture or the walk path (so the funda check below is meaningful)', $defaultHasDetail);
+check('the default SVG draws no walk path unless asked', !str_contains($defaultSvg, 'stroke-dasharray="6,5"'));
 check('the funda SVG draws no furniture group', !$svgHasObjectsGroup($fundaSvg));
 check('the funda SVG draws no walk path', !str_contains($fundaSvg, 'stroke-dasharray="6,5"'));
 [, , $fundaAllSvg] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?style=funda&furniture=all&walk_path=1", null, $token);

@@ -511,6 +511,27 @@ try {
     t_check('adapt() rejects a non-finite walk_path coordinate', true);
 }
 
+echo "== Opening width and object yaw are carried through ==\n";
+$sized = $adapter->adapt([
+    'floors' => [['identifier' => 'f', 'confidence' => 'high', 'polygonCorners' => [[0, 0, 0], [4, 0, 0], [4, 0, 3], [0, 0, 3]]]],
+    'windows' => [
+        ['identifier' => 'w1', 'confidence' => 'high', 'dimensions' => [1.37, 1.2, 0.1], 'polygonCorners' => [[1, 1, 0], [2.37, 1, 0], [2.37, 2.2, 0], [1, 2.2, 0]]],
+        ['identifier' => 'w2', 'confidence' => 'high', 'polygonCorners' => [[4, 1, 1], [4, 1, 1.8], [4, 2, 1.8], [4, 2, 1]]],
+        ['identifier' => 'w3', 'confidence' => 'high', 'dimensions' => [0.05, 1, 0.1], 'polygonCorners' => [[0, 1, 1], [0, 1, 1.05], [0, 2, 1.05], [0, 2, 1]]],
+    ],
+    'objects' => [
+        ['identifier' => 'o1', 'category' => 'bed', 'confidence' => 'high', 'position' => [2, 0, 1.5], 'dimensions' => [1.6, 0.5, 2.0], 'yawDeg' => -90.0],
+        ['identifier' => 'o2', 'category' => 'table', 'confidence' => 'high', 'position' => [1, 0, 1], 'dimensions' => [1, 0.7, 1]],
+    ],
+], $identity);
+$sizedOpenings = array_column($sized['rooms'][0]['openings'], null, 'opening_id');
+t_check('window width_m comes from dimensions[0]', ($sizedOpenings['w1']['width_m'] ?? null) === 1.37);
+t_check('window width_m falls back to the corner span when dimensions are missing', ($sizedOpenings['w2']['width_m'] ?? null) === 0.8);
+t_check('an implausibly narrow window gets no width_m', !array_key_exists('width_m', $sizedOpenings['w3']));
+$sizedObjects = array_column($sized['rooms'][0]['objects'], null, 'object_id');
+t_check('object yawDeg is normalised to 0-360 as yaw_deg', ($sizedObjects['o1']['yaw_deg'] ?? null) === 270.0);
+t_check('an object without yawDeg has no yaw_deg', !array_key_exists('yaw_deg', $sizedObjects['o2']));
+
 echo count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

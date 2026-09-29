@@ -34,6 +34,7 @@ struct RoomPlanCaptureExport: Codable {
         var polygonCorners: [[Double]]? = nil
 
         var position: [Double]? = nil
+        var yawDeg: Double? = nil
     }
 
     struct RoomTypeExport: Codable {
@@ -105,6 +106,11 @@ enum CapturedRoomExporter {
         )
         let translation = object.transform.columns.3
         export.position = [Double(translation.x), Double(translation.y), Double(translation.z)]
+        let axis = object.transform.columns.0
+        let yaw = atan2(Double(axis.z), Double(axis.x)) * 180 / Double.pi
+        if yaw.isFinite {
+            export.yawDeg = (yaw.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
+        }
         return export
     }
 

@@ -732,6 +732,41 @@ x_check('PDF overlap warning names the floor it belongs to', str_contains($overl
 $oneWalkPng = $imageRenderer->render(build_floor_plan([$groundA, $groundB]));
 x_check('a single walkthrough on one floor renders exactly as before', $oneWalkPng === $singleFloorPng);
 
+echo "\n== Objects stay inside the room and follow its walls ==\n";
+$squareRoom = ['outline_m' => [[0, 0], [4, 0], [4, 3], [0, 3]]];
+[$fx, $fz, $fw, $fd, $frame] = \VuuroScan\Export\ObjectFootprint::fit($squareRoom, ['position_m' => [3.9, 0.1], 'dimensions_m' => [2.0, 0.5, 1.6]], 0.05);
+x_check('an object pushed into the corner is moved back inside the walls', abs($fx - 2.95) < 1e-6 && abs($fz - 0.85) < 1e-6, "$fx,$fz");
+x_check('an axis-aligned room has no frame rotation', abs($frame) < 1e-9);
+[, , $sw, $sd] = \VuuroScan\Export\ObjectFootprint::fit($squareRoom, ['position_m' => [2, 1.5], 'dimensions_m' => [2.0, 0.5, 1.6], 'yaw_deg' => 90.0], 0.05);
+x_check('a quarter-turned object swaps width and depth', abs($sw - 0.8) < 1e-6 && abs($sd - 1.0) < 1e-6, "$sw,$sd");
+[$bx, $bz] = \VuuroScan\Export\ObjectFootprint::fit($squareRoom, ['position_m' => [1, 1], 'dimensions_m' => [9.0, 0.5, 9.0]], 0.05);
+x_check('an object larger than the room is centred', abs($bx - 2.0) < 1e-6 && abs($bz - 1.5) < 1e-6, "$bx,$bz");
+$tilt = deg2rad(25);
+$tiltedOutline = array_map(fn (array $p) => rotate_point($p[0], $p[1], $tilt), [[0, 0], [4, 0], [4, 3], [0, 3]]);
+[$lx, $lz] = rotate_point(3.0, 1.5, $tilt);
+[$tx, $tz, $tw, $td, $tFrame] = \VuuroScan\Export\ObjectFootprint::fit(['outline_m' => $tiltedOutline], ['position_m' => [$lx, $lz], 'dimensions_m' => [2.0, 0.5, 1.6], 'yaw_deg' => 25.0 + 90.0], 0.05);
+x_check('a tilted room aligns objects to its longest wall', abs($tFrame - $tilt) < 1e-6, (string) $tFrame);
+x_check('yaw is measured against the wall, not the world axis', abs($tw - 0.8) < 1e-6 && abs($td - 1.0) < 1e-6, "$tw,$td");
+[$ux, $uz] = rotate_point($tx, $tz, -$tilt);
+x_check('a tilted object is clamped inside the tilted room', $ux + $tw <= 3.95 + 1e-6 && $uz - $td >= 0.05 - 1e-6, "$ux,$uz");
+$objectPose = \VuuroScan\Export\ObjectFootprint::objectPose(['rotationRad' => 0.3, 'originX' => 1.0, 'originZ' => 2.0], $tx, $tz, $tFrame);
+$centerA = \VuuroScan\Export\RoomFusionSolver::transformPoint($objectPose, $tx, $tz);
+$centerB = \VuuroScan\Export\RoomFusionSolver::transformPoint(['rotationRad' => 0.3, 'originX' => 1.0, 'originZ' => 2.0], $tx, $tz);
+x_check('the object pose keeps the object centre where the room pose puts it', abs($centerA[0] - $centerB[0]) < 1e-9 && abs($centerA[1] - $centerB[1]) < 1e-9);
+
+echo "\n== No orange top bar in any style ==\n";
+$barPlan = build_floor_plan([build_room_with_outline('Kitchen', [[0, 0], [3, 0], [3, 3], [0, 3]], null)]);
+foreach (['default', 'funda'] as $barStyle) {
+    $barSvg = $svgRenderer->render($barPlan, 'auto', null, 'metric', null, \VuuroScan\Export\FloorPlanStyle::from($barStyle));
+    x_check("$barStyle SVG has no orange header bar", stripos($barSvg, '#ff8212') === false);
+}
+$barPdf = (new FloorPlanPdfRenderer())->render($barPlan);
+x_check('PDF has no full-width bar at the top of the page', preg_match('/\n0 [0-9.]+ [56][0-9][0-9](\.[0-9]+)? 4 re\nf\n/', $barPdf) !== 1);
+$fundaSvg = $svgRenderer->render($barPlan, 'auto', null, 'metric', null, \VuuroScan\Export\FloorPlanStyle::from('funda'));
+x_check('Funda SVG has a white canvas with the grid over it', str_contains($fundaSvg, 'fill="#ffffff"') && str_contains($fundaSvg, 'fill="url(#grid)"'));
+x_check('Funda SVG has no Vuuro Scan header', !str_contains($fundaSvg, 'Vuuro Scan'));
+x_check('Funda SVG shows the total floor area title', str_contains($fundaSvg, 'Total floor area'));
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

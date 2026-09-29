@@ -54,6 +54,24 @@
       "description": "Why this scan was taken. First-class per the brief's 'ops memory' principle, not an afterthought tag.",
       "enum": ["listing", "check_in", "check_out", "renovation", "other"]
     },
+    "room_splits": {
+      "type": "array",
+      "description": "Corrections made after capture with POST .../rooms/{room_id}/split, oldest first. Kept so a Continue re-upload (which replaces every room) can re-apply them, and so the last one can be undone with POST .../room-splits/undo. line_m and keep_point_m are in the split room's own outline_m frame.",
+      "items": {
+        "type": "object",
+        "required": ["room_id", "mode", "line_m", "keep_point_m"],
+        "properties": {
+          "room_id": { "type": "string" },
+          "new_room_id": { "type": ["string", "null"] },
+          "new_label": { "type": ["string", "null"] },
+          "mode": { "type": "string", "enum": ["split", "trim"] },
+          "line_m": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" } } },
+          "keep_point_m": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" } },
+          "original_room": { "type": "object" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
     "capture_location": {
       "type": ["object", "null"],
       "description": "Session-wide (not per-room), set once from the first capture call that reported it and never overwritten to null by a later one. Null when location permission was denied or never asked — never fabricated. No public exposure of this exists in this repo (ADR-0003: no public session listing).",
@@ -139,9 +157,20 @@
                   "items": { "type": "number" },
                   "description": "Room-local [x, z] centroid of the opening's captured outline, same frame/translation as outline_m."
                 },
+                "width_m": {
+                  "type": "number",
+                  "minimum": 0.2,
+                  "maximum": 6.0,
+                  "description": "Measured width of the opening along its wall, from RoomPlan's dimensions (or the span of its corners). Omitted when nothing plausible was reported; renderers then use a standard width."
+                },
                 "confidence": { "type": "string", "enum": ["low", "medium", "high"] }
               }
             }
+          },
+          "open_edges": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 0 },
+            "description": "Indices into outline_m (edge i runs from point i to point i+1) where there is no wall: the line a person drew when splitting or trimming an open-plan room. Renderers draw these as a thin dashed line instead of a wall. Omitted or empty for rooms that were never split."
           },
           "height_m": {
             "type": ["number", "null"],
@@ -175,6 +204,12 @@
                   "maxItems": 3,
                   "items": { "type": "number" },
                   "description": "[width, height, depth] as RoomPlan reported them."
+                },
+                "yaw_deg": {
+                  "type": "number",
+                  "minimum": 0,
+                  "exclusiveMaximum": 360,
+                  "description": "Direction of the object's width axis as atan2(z, x) in degrees, in the same frame as outline_m. Omitted for captures made before the app sent it; renderers then draw the object unrotated."
                 },
                 "confidence": { "type": "string", "enum": ["low", "medium", "high"] }
               }

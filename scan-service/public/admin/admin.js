@@ -6,7 +6,17 @@ const state = {
   adminKey: '',
   currentSessionId: null,
   returnTo: null,
+  planStyle: 'funda',
 };
+
+const PLAN_STYLES = [
+  { value: 'funda', label: 'Listing plan' },
+  { value: 'default', label: 'Full report' },
+];
+
+function planStyleQuery() {
+  return state.planStyle === 'funda' ? '?style=funda' : '';
+}
 
 const VIEWS = ['loading', 'login', 'search', 'detail', 'imports'];
 
@@ -448,6 +458,11 @@ function renderDetail(data, sessionId) {
     '</div>' +
 
     '<div class="floor-plan">' +
+      '<label class="plan-style">Plan style ' +
+        '<select id="planStyleSelect">' +
+          PLAN_STYLES.map((s) => '<option value="' + s.value + '"' + (s.value === state.planStyle ? ' selected' : '') + '>' + s.label + '</option>').join('') +
+        '</select>' +
+      '</label>' +
       '<img id="floorPlanImage" alt="Floor plan">' +
       '<p id="floorPlanError" class="error hidden"></p>' +
     '</div>' +
@@ -482,6 +497,13 @@ function renderDetail(data, sessionId) {
     '<div id="accessLog">' + loadingHtml('Loading access log…') + '</div>';
 
   loadFloorPlanImage(sessionId);
+  const styleSelect = $('#planStyleSelect');
+  if (styleSelect) {
+    styleSelect.addEventListener('change', () => {
+      state.planStyle = PLAN_STYLES.some((s) => s.value === styleSelect.value) ? styleSelect.value : 'funda';
+      loadFloorPlanImage(sessionId);
+    });
+  }
   photos.forEach((p) => loadPhotoThumb(p));
   loadAccessLog(sessionId);
 
@@ -637,15 +659,18 @@ async function loadFloorPlanImage(sessionId) {
   const img = $('#floorPlanImage');
   const errEl = $('#floorPlanError');
   if (!img) return;
+  const style = state.planStyle;
   try {
-    const blob = await apiBlob('/scan-sessions/' + encodeURIComponent(sessionId) + '/export/floorplan.png');
-    if (state.currentSessionId !== sessionId) return;
+    const blob = await apiBlob('/scan-sessions/' + encodeURIComponent(sessionId) + '/export/floorplan.png' + planStyleQuery());
+    if (state.currentSessionId !== sessionId || state.planStyle !== style) return;
+    img.style.display = '';
+    if (errEl) errEl.classList.add('hidden');
     if (img.dataset.blobUrl) revokeBlobUrl(img.dataset.blobUrl);
     const url = trackBlobUrl(URL.createObjectURL(blob));
     img.dataset.blobUrl = url;
     img.src = url;
   } catch (err) {
-    if (state.currentSessionId !== sessionId) return;
+    if (state.currentSessionId !== sessionId || state.planStyle !== style) return;
     img.style.display = 'none';
     if (errEl) {
       errEl.textContent = 'Could not load floor plan: ' + friendlyApiError(err);
@@ -748,7 +773,7 @@ function exportFileName(fp, sessionId, suffix, kind) {
 }
 
 async function downloadExport(sessionId, kind, fp) {
-  const path = '/scan-sessions/' + encodeURIComponent(sessionId) + '/export/floorplan.' + kind;
+  const path = '/scan-sessions/' + encodeURIComponent(sessionId) + '/export/floorplan.' + kind + planStyleQuery();
   const filename = exportFileName(fp, sessionId, 'floorplan', kind);
   try {
     const blob = await apiBlob(path);

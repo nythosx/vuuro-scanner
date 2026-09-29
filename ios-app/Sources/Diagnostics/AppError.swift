@@ -28,6 +28,7 @@ struct AppError {
         case photoDelete = "PHOTO_DELETE"
         case roomTypeUpdate = "ROOM_TYPE_UPDATE"
         case roomLabelUpdate = "ROOM_LABEL_UPDATE"
+        case roomSplit = "ROOM_SPLIT"
         case resultImageLoad = "RESULT_IMAGE_LOAD"
         case resultImageDecode = "RESULT_IMAGE_DECODE"
         case resultPDFLoad = "RESULT_PDF_LOAD"

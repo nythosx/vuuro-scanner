@@ -37,13 +37,15 @@ $withPath['walk_path'] = [[0.2, 0.0, 0.2], [1.0, 0.0, 0.4], [1.8, 0.0, 0.6], [2.
 check('capture with walk_path accepted (HTTP 200)', $captureStatus === 200, "got HTTP $captureStatus");
 check('walk_path_m has the same point count as recorded', count($afterCapture['rooms'][0]['walk_path_m'] ?? []) === 4, 'got ' . count($afterCapture['rooms'][0]['walk_path_m'] ?? []));
 
-[$pngStatus, $pngContentType, $pngWithPath] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png", null, $accessToken);
+[$pngStatus, $pngContentType, $pngWithPath] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png?walk_path=1", null, $accessToken);
 check('PNG export with a walk path succeeds (HTTP 200)', $pngStatus === 200, "got HTTP $pngStatus");
 check('PNG export has the real PNG content type', $pngContentType === 'image/png', "got $pngContentType");
 
-[$pdfStatus, , $pdfBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.pdf", null, $accessToken);
+[$pdfStatus, , $pdfBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.pdf?walk_path=1", null, $accessToken);
 check('PDF export with a walk path succeeds (HTTP 200)', $pdfStatus === 200, "got HTTP $pdfStatus");
 check('PDF text mentions the recorded walk path point count', str_contains($pdfBytes, 'walk path: 4 point\\(s\\) recorded'), 'PDF text did not mention the walk path');
+[, , $pdfDefaultBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.pdf", null, $accessToken);
+check('without walk_path=1 the PDF does not mention the walk path', !str_contains($pdfDefaultBytes, 'walk path:'));
 
 echo "\n== Adjacent case: a room with no walk_path renders a visibly different PNG (the path is actually drawn, not a no-op) ==\n";
 
@@ -52,8 +54,11 @@ echo "\n== Adjacent case: a room with no walk_path renders a visibly different P
     'purpose' => 'listing', 'occupied' => false,
 ]);
 net_http_json('POST', "$baseUrl/scan-sessions/{$noPathSession['id']}/capture", ['raw_capture' => $fixture], $noPathSession['access_token']);
-[, , $pngNoPath] = net_http_raw('GET', "$baseUrl/scan-sessions/{$noPathSession['id']}/export/floorplan.png", null, $noPathSession['access_token']);
+[, , $pngNoPath] = net_http_raw('GET', "$baseUrl/scan-sessions/{$noPathSession['id']}/export/floorplan.png?walk_path=1", null, $noPathSession['access_token']);
 check('a session with a walk path renders different PNG bytes than one without', $pngWithPath !== $pngNoPath);
+[, , $pngPathOff] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png", null, $accessToken);
+[, , $pngNoPathOff] = net_http_raw('GET', "$baseUrl/scan-sessions/{$noPathSession['id']}/export/floorplan.png", null, $noPathSession['access_token']);
+check('the walk path is off unless walk_path=1 is asked for', $pngPathOff === $pngNoPathOff);
 
 echo "\n== Adjacent case: a fused (2-room) session with per-room walk paths renders without throwing ==\n";
 

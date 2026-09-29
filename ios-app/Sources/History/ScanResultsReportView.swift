@@ -36,6 +36,8 @@ struct ScanResultsReportView: View {
     @State private var saveSuccessVisible = false
     @State private var missingItemTarget: MissingItemTarget?
     @State private var updatingRoomTypeIds: Set<String> = []
+    @State private var splitTarget: SplitTarget?
+    @State private var isUndoingSplit = false
     @State private var previewImage: PreviewImage?
     @State private var showContinueChoices = false
     @State private var showContinueNewFloor = false
@@ -188,6 +190,15 @@ struct ScanResultsReportView: View {
                 onCancel: { missingItemTarget = nil }
             )
             .presentationDetents([.medium, .large])
+        }
+        .sheet(item: $splitTarget) { target in
+            RoomSplitSheet(
+                session: entry.asResumableSession(),
+                room: target.room,
+                onSaved: { updated, mode in applySplitResult(updated, mode: mode) },
+                onCancel: { splitTarget = nil }
+            )
+            .presentationDetents([.large])
         }
         .alert("Forget this scan?", isPresented: $showForgetConfirmation) {
             Button("Forget", role: .destructive) {
@@ -502,7 +513,11 @@ struct ScanResultsReportView: View {
                         onRoomTypeChange: { value in
                             Task { await updateRoomType(roomId: room.roomId, to: value) }
                         },
-                        isUpdatingRoomType: updatingRoomTypeIds.contains(room.roomId)
+                        isUpdatingRoomType: updatingRoomTypeIds.contains(room.roomId),
+                        onSplitRoom: { beginSplit(room) },
+                        onUndoSplit: floorPlan.lastSplitRoomIds.contains(room.roomId)
+                            ? startUndoSplit
+                            : nil
                     )
                 }
             }
@@ -574,6 +589,60 @@ struct ScanResultsReportView: View {
     private struct MissingItemTarget: Identifiable {
         let room: FloorPlan.Room
         var id: String { room.roomId }
+    }
+
+    private struct SplitTarget: Identifiable {
+        let room: FloorPlan.Room
+        var id: String { room.roomId }
+    }
+
+    @MainActor
+    private func beginSplit(_ room: FloorPlan.Room) {
+        guard pendingObjectChanges.isEmpty else {
+            VuuroToast.shared.show(vuuroLocalized("Save or discard your changes before splitting a room."))
+            return
+        }
+        splitTarget = SplitTarget(room: room)
+    }
+
+    @MainActor
+    private func applySplitResult(_ updated: FloorPlan, mode: ScanServiceClient.RoomSplitMode) {
+        splitTarget = nil
+        applyRoomChange(updated)
+        VuuroToast.shared.show(
+            vuuroLocalized(mode == .split ? "Room split in two" : "Room trimmed"),
+            undoLabel: vuuroLocalized("Undo"),
+            duration: 8
+        ) {
+            startUndoSplit()
+        }
+    }
+
+    @MainActor
+    private func startUndoSplit() {
+        guard !isUndoingSplit else { return }
+        isUndoingSplit = true
+        Task { await undoSplit() }
+    }
+
+    @MainActor
+    private func undoSplit() async {
+        defer { isUndoingSplit = false }
+        do {
+            let updated = try await client.undoRoomSplit(sessionId: entry.sessionId, accessToken: entry.accessToken)
+            applyRoomChange(updated)
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .roomSplit, underlying: error)
+        }
+    }
+
+    @MainActor
+    private func applyRoomChange(_ updated: FloorPlan) {
+        floorPlan = updated
+        cacheRoomBreakdown(updated)
+        discardRenderedExports()
+        Task { await loadImage() }
     }
 
     private var saveChangesBar: some View {
