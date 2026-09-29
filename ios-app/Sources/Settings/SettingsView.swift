@@ -6,7 +6,6 @@ struct SettingsView: View {
     let onOpenDiagnostics: () -> Void
 
     @AppStorage("darkModeEnabled") private var darkMode: Bool = false
-    @AppStorage("autoUploadWhenOnline") private var autoUpload: Bool = true
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
     @State private var roomTypeGuess = RoomTypeGuessSettings.isEnabled
     @State private var cacheSizeLabel: String = "—"
@@ -48,7 +47,7 @@ struct SettingsView: View {
                         VuuroInputRow(
                             leadingIcon: "wand.and.stars",
                             label: "Room-type guessing",
-                            showsDivider: true
+                            showsDivider: false
                         ) {
                             Toggle("", isOn: $roomTypeGuess)
                                 .accessibilityIdentifier("settings.roomTypeGuess")
@@ -57,16 +56,6 @@ struct SettingsView: View {
                                 .onChange(of: roomTypeGuess) { _, newValue in
                                     RoomTypeGuessSettings.isEnabled = newValue
                                 }
-                        }
-                        VuuroInputRow(
-                            leadingIcon: "icloud.and.arrow.up",
-                            label: "Auto-upload when online",
-                            showsDivider: false
-                        ) {
-                            Toggle("", isOn: $autoUpload)
-                                .accessibilityIdentifier("settings.autoUpload")
-                                .labelsHidden()
-                                .tint(VuuroColor.lime)
                         }
                     }
                     .padding(.horizontal, 20)

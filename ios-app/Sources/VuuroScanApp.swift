@@ -455,19 +455,27 @@ private struct RoomCaptureFlowStep: View {
                 #endif
             } else {
                 ZStack {
-                    RoomCaptureScreen(coordinator: coordinator)
-                        .ignoresSafeArea()
+                    Color.black.ignoresSafeArea()
+                    VStack(spacing: 0) {
+                        ZStack {
+                            RoomCaptureScreen(coordinator: coordinator)
+                                .ignoresSafeArea(edges: .top)
 
-                    if isUploading {
-                        UploadProgressView(message: "Uploading capture…", onCancel: { uploadTask?.cancel() })
-                            .padding()
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                    } else if didRequestStop {
-                        ProgressView("Finishing scan…")
-                            .padding()
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                    } else if coordinator.state == .scanning {
-                        singleCaptureOverlay
+                            if isUploading {
+                                UploadProgressView(message: "Uploading capture…", onCancel: { uploadTask?.cancel() })
+                                    .padding()
+                                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                            } else if didRequestStop {
+                                ProgressView("Finishing scan…")
+                                    .padding()
+                                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                            } else if coordinator.state == .scanning {
+                                singleCaptureOverlay
+                            }
+                        }
+                        singleCaptureBottomChrome
+                            .opacity(showsSingleCaptureChrome ? 1 : 0)
+                            .allowsHitTesting(showsSingleCaptureChrome)
                     }
                 }
                 .onAppear {
@@ -499,6 +507,25 @@ private struct RoomCaptureFlowStep: View {
                 }
             }
         }
+    }
+
+    private var showsSingleCaptureChrome: Bool {
+        coordinator.state == .scanning && !isUploading && !didRequestStop
+    }
+
+    private var singleCaptureBottomChrome: some View {
+        VStack(spacing: 12) {
+            VuuroLiveStatsRow(stats: coordinator.liveStats)
+            VuuroFinishRoomButton(label: "Finish room") {
+                didRequestStop = true
+                coordinator.stop()
+            }
+            .accessibilityIdentifier("capture.finishRoom")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(Color.black)
     }
 
     private var singleCaptureOverlay: some View {
@@ -569,19 +596,6 @@ private struct RoomCaptureFlowStep: View {
                     .padding(.horizontal, 24)
                     .padding(.bottom, 8)
             }
-
-            VuuroLiveStatsRow(stats: coordinator.liveStats)
-                .padding(.horizontal, 20)
-
-            Spacer().frame(height: 12)
-
-            VuuroFinishRoomButton(label: "Finish room") {
-                didRequestStop = true
-                coordinator.stop()
-            }
-            .accessibilityIdentifier("capture.finishRoom")
-            .padding(.horizontal, 20)
-            .padding(.bottom, 24)
         }
         .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
             Button("Discard", role: .destructive) {

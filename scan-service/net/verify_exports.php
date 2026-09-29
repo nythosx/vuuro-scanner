@@ -314,7 +314,23 @@ if ($unicodeSessionId === null || $unicodeSessionToken === null) {
             break;
         }
     }
-    check('no raw high-byte (non-ASCII) bytes appear inside any PDF text-showing operator', !$hasHighByteInText);
+    $hasUndefinedCp1252 = false;
+    foreach ($tjMatches[1] as $shown) {
+        if (preg_match('/[\x81\x8D\x8F\x90\x9D]/', $shown)) {
+            $hasUndefinedCp1252 = true;
+            break;
+        }
+    }
+    check('no undefined WinAnsi (CP1252) bytes appear inside any PDF text-showing operator', !$hasUndefinedCp1252);
+
+    $hasWinAnsiAccent = false;
+    foreach ($tjMatches[1] as $shown) {
+        if (str_contains($shown, "\xE9") || str_contains($shown, "\xFC") || str_contains($shown, "\xDF")) {
+            $hasWinAnsiAccent = true;
+            break;
+        }
+    }
+    check('WinAnsi CP1252 bytes for e-acute/u-umlaut/eszett now appear in PDF text operators (P1-6 fix)', $hasWinAnsiAccent);
 
     check('the ASCII-safe prefix of property_id ("prop-caf") still appears', str_contains($unicodePdfBytes, 'prop-caf'));
     check('the ASCII-safe prefix of unit_id ("unit-Stra") still appears', str_contains($unicodePdfBytes, 'unit-Stra'));

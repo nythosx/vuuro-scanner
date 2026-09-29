@@ -45,7 +45,7 @@ $corsOrigin = getenv('SCAN_SERVICE_CORS_ORIGIN') ?: 'http://127.0.0.1:8090';
 if (($_SERVER['HTTP_ORIGIN'] ?? null) === $corsOrigin) {
     header("Access-Control-Allow-Origin: $corsOrigin");
     header('Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, X-Scan-Access-Token, Idempotency-Key');
+    header('Access-Control-Allow-Headers: Content-Type, X-Scan-Access-Token, Idempotency-Key, X-Admin-Api-Key');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {

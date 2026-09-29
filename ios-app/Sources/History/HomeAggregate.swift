@@ -35,7 +35,7 @@ struct FloorGroup: Identifiable {
 
     var id: String { key ?? "__unknown__" }
 
-    var latestDate: Date { sessions.map(\.createdAt).max() ?? .distantPast }
+    var latestDate: Date { sessions.map(\.lastActivityAt).max() ?? .distantPast }
 }
 
 struct HomeAggregate: Identifiable {
@@ -54,7 +54,7 @@ struct HomeAggregate: Identifiable {
         return floors
             .flatMap(\.sessions)
             .filter { seen.insert($0.sessionId).inserted }
-            .max { $0.createdAt < $1.createdAt }
+            .max { $0.lastActivityAt < $1.lastActivityAt }
     }
 }
 
@@ -143,7 +143,7 @@ enum HomeAggregator {
                 key: key,
                 displayName: value.display,
                 rank: floorRank(key),
-                sessions: value.sessions.sorted { $0.createdAt > $1.createdAt },
+                sessions: value.sessions.sorted { $0.lastActivityAt > $1.lastActivityAt },
                 roomCount: value.roomCount,
                 totalAreaM2: value.areaM2
             )
@@ -153,7 +153,7 @@ enum HomeAggregator {
                 key: nil,
                 displayName: nil,
                 rank: -1000,
-                sessions: unknownSessions.sorted { $0.createdAt > $1.createdAt },
+                sessions: unknownSessions.sorted { $0.lastActivityAt > $1.lastActivityAt },
                 roomCount: unknownRoomCount,
                 totalAreaM2: unknownAreaM2
             ))

@@ -23,7 +23,7 @@ final class ScanHistoryStore {
                 entry.accessToken = KeychainTokenStore.loadToken(forSessionId: entry.sessionId) ?? entry.accessToken
                 return entry
             }
-            .sorted { $0.createdAt > $1.createdAt }
+            .sorted { $0.lastActivityAt > $1.lastActivityAt }
     }
 
     func add(_ entry: ScanHistoryEntry) {
@@ -36,6 +36,9 @@ final class ScanHistoryStore {
             DiagnosticsLog.shared.record("Keeping the access token for session \(entry.sessionId) in local history because the Keychain refused it", category: .error)
         }
         var entries = readRedacted()
+        if let existing = entries.first(where: { $0.sessionId == entry.sessionId }), let existingCapture = existing.lastCapturedAt {
+            redacted.lastCapturedAt = max(existingCapture, redacted.lastCapturedAt ?? existingCapture)
+        }
         entries.removeAll { $0.sessionId == entry.sessionId }
         entries.append(redacted)
         save(entries)
@@ -75,6 +78,15 @@ final class ScanHistoryStore {
         if let floorAreaM2 {
             entries[index].cachedFloorAreaM2 = floorAreaM2
         }
+        save(entries)
+    }
+
+    func markCaptured(sessionId: String, at date: Date = Date()) {
+        lock.lock()
+        defer { lock.unlock() }
+        var entries = readRedacted()
+        guard let index = entries.firstIndex(where: { $0.sessionId == sessionId }) else { return }
+        entries[index].lastCapturedAt = date
         save(entries)
     }
 

@@ -744,15 +744,34 @@ final class ScanSessionRepository
 
     public function recordAndCountRecentEvents(string $bucket, int $windowSeconds): int
     {
-        $this->db->exec('BEGIN IMMEDIATE');
-        try {
-            $this->recordEvent($bucket);
-            $count = $this->countRecentEvents($bucket, $windowSeconds);
-            $this->db->exec('COMMIT');
-            return $count;
-        } catch (\Throwable $e) {
-            $this->db->exec('ROLLBACK');
-            throw $e;
+        $attempts = 0;
+        $maxAttempts = 3;
+        while (true) {
+            try {
+                $this->db->exec('BEGIN IMMEDIATE');
+            } catch (\PDOException $e) {
+                if (str_contains($e->getMessage(), 'database is locked') && ++$attempts < $maxAttempts) {
+                    usleep(100_000 * $attempts);
+                    continue;
+                }
+                throw $e;
+            }
+            try {
+                $this->recordEvent($bucket);
+                $count = $this->countRecentEvents($bucket, $windowSeconds);
+                $this->db->exec('COMMIT');
+                return $count;
+            } catch (\PDOException $e) {
+                $this->db->exec('ROLLBACK');
+                if (str_contains($e->getMessage(), 'database is locked') && ++$attempts < $maxAttempts) {
+                    usleep(100_000 * $attempts);
+                    continue;
+                }
+                throw $e;
+            } catch (\Throwable $e) {
+                $this->db->exec('ROLLBACK');
+                throw $e;
+            }
         }
     }
 

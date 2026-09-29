@@ -44,6 +44,13 @@ final class RoomPlanSimulatorAdapter
 
             $points2d = array_map(static fn (array $p) => [(float) ($p[0] ?? 0), (float) ($p[2] ?? 0)], $corners);
 
+            if (self::polygonSelfIntersects($points2d)) {
+                error_log(sprintf(
+                    'VuuroScan WARNING: floors[%d] has a self-intersecting outline — area may be unreliable, but the capture is accepted.',
+                    $index
+                ));
+            }
+
             $area = self::polygonArea($points2d);
             $perimeter = self::polygonPerimeter($points2d);
             [$width, $length] = self::boundingDimensions($points2d);
@@ -527,6 +534,50 @@ final class RoomPlanSimulatorAdapter
                 }
             }
         }
+    }
+
+    private static function polygonSelfIntersects(array $points): bool
+    {
+        $n = count($points);
+        if ($n < 4) {
+            return false;
+        }
+        for ($i = 0; $i < $n; $i++) {
+            $a1 = $points[$i];
+            $a2 = $points[($i + 1) % $n];
+            for ($j = $i + 1; $j < $n; $j++) {
+                if ($j === $i) {
+                    continue;
+                }
+                if ($j === ($i + 1) % $n) {
+                    continue;
+                }
+                if ($i === ($j + 1) % $n) {
+                    continue;
+                }
+                $b1 = $points[$j];
+                $b2 = $points[($j + 1) % $n];
+                if (self::segmentsProperlyIntersect($a1, $a2, $b1, $b2)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static function segmentsProperlyIntersect(array $p1, array $p2, array $p3, array $p4): bool
+    {
+        $d1 = self::orientation($p3, $p4, $p1);
+        $d2 = self::orientation($p3, $p4, $p2);
+        $d3 = self::orientation($p1, $p2, $p3);
+        $d4 = self::orientation($p1, $p2, $p4);
+        return (($d1 > 0 && $d2 < 0) || ($d1 < 0 && $d2 > 0))
+            && (($d3 > 0 && $d4 < 0) || ($d3 < 0 && $d4 > 0));
+    }
+
+    private static function orientation(array $a, array $b, array $c): float
+    {
+        return ($b[0] - $a[0]) * ($c[1] - $a[1]) - ($b[1] - $a[1]) * ($c[0] - $a[0]);
     }
 
     private static function mapConfidence(mixed $raw): string

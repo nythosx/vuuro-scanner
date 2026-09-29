@@ -35,6 +35,7 @@ struct ScanResultsReportView: View {
     @State private var isSavingChanges = false
     @State private var saveSuccessVisible = false
     @State private var missingItemTarget: MissingItemTarget?
+    @State private var updatingRoomTypeIds: Set<String> = []
     @State private var previewImage: PreviewImage?
     @State private var showContinueChoices = false
     @State private var showContinueNewFloor = false
@@ -494,7 +495,11 @@ struct ScanResultsReportView: View {
                     },
                     onAddMissingItem: {
                         missingItemTarget = MissingItemTarget(room: room)
-                    }
+                    },
+                    onRoomTypeChange: { value in
+                        Task { await updateRoomType(roomId: room.roomId, to: value) }
+                    },
+                    isUpdatingRoomType: updatingRoomTypeIds.contains(room.roomId)
                 )
             }
         }
@@ -606,6 +611,27 @@ struct ScanResultsReportView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 10)
         .background(.regularMaterial)
+    }
+
+    @MainActor
+    private func updateRoomType(roomId: String, to value: String?) async {
+        updatingRoomTypeIds.insert(roomId)
+        defer { updatingRoomTypeIds.remove(roomId) }
+        do {
+            let updated = try await client.updateRoomType(
+                sessionId: entry.sessionId,
+                accessToken: entry.accessToken,
+                roomId: roomId,
+                roomType: value
+            )
+            floorPlan = updated
+            cacheRoomBreakdown(updated)
+            discardRenderedExports()
+            await loadImage()
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .roomTypeUpdate, underlying: error)
+        }
     }
 
     @MainActor

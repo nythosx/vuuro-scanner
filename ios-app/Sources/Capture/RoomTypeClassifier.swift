@@ -35,6 +35,12 @@ enum RoomTypeClassifier {
         }
     }
 
+    static func storedValue(forEntered text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return allTypes.first { displayName(for: $0).caseInsensitiveCompare(trimmed) == .orderedSame } ?? String(trimmed.prefix(60))
+    }
+
     private static let objectHeuristics: [(categories: Set<String>, type: String)] = [
         (categories: ["toilet", "bathtub"], type: "bathroom"),
         (categories: ["stove", "oven", "dishwasher", "refrigerator"], type: "kitchen"),

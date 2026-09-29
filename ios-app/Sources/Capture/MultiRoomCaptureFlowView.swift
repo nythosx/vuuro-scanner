@@ -95,38 +95,49 @@ struct MultiRoomCaptureFlowView: View {
                 )
             } else {
                 ZStack {
-                    MultiRoomCaptureScreen(coordinator: coordinator)
-                        .ignoresSafeArea()
+                    Color.black.ignoresSafeArea()
+                    VStack(spacing: 0) {
+                        ZStack {
+                            MultiRoomCaptureScreen(coordinator: coordinator)
+                                .ignoresSafeArea(edges: .top)
 
-                    if isDegenerateCapture {
-                        resolutionOverlay {
-                            DegenerateCaptureView {
-                                isDegenerateCapture = false
-                                coordinator.start()
+                            if isDegenerateCapture {
+                                resolutionOverlay {
+                                    DegenerateCaptureView {
+                                        isDegenerateCapture = false
+                                        coordinator.start()
+                                    }
+                                }
+                            } else if let partialRoomFailureMessage {
+                                resolutionOverlay {
+                                    PartialRoomChoiceView(
+                                        message: partialRoomFailureMessage,
+                                        onKeep: {
+                                            self.partialRoomFailureMessage = nil
+                                            let kept = coordinator.keepPendingPartialRoom()
+                                            if !kept {
+                                                VuuroToast.shared.show(vuuroLocalized("This room's outline was too small or flat to keep — discarding it."))
+                                            }
+                                            continueAfterRoomResolved()
+                                        },
+                                        onDiscard: {
+                                            self.partialRoomFailureMessage = nil
+                                            coordinator.discardPendingPartialRoom()
+                                            continueAfterRoomResolved()
+                                        }
+                                    )
+                                }
+                            } else if didRequestStopRoom {
+                                ProgressView("Finishing room…")
+                                    .padding()
+                                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                            } else if coordinator.state == .scanning {
+                                multiCaptureOverlay
                             }
                         }
-                    } else if let partialRoomFailureMessage {
-                        resolutionOverlay {
-                            PartialRoomChoiceView(
-                                message: partialRoomFailureMessage,
-                                onKeep: {
-                                    self.partialRoomFailureMessage = nil
-                                    coordinator.keepPendingPartialRoom()
-                                    continueAfterRoomResolved()
-                                },
-                                onDiscard: {
-                                    self.partialRoomFailureMessage = nil
-                                    coordinator.discardPendingPartialRoom()
-                                    continueAfterRoomResolved()
-                                }
-                            )
-                        }
-                    } else if didRequestStopRoom {
-                        ProgressView("Finishing room…")
-                            .padding()
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                    } else if coordinator.state == .scanning {
-                        multiCaptureOverlay
+                        multiCaptureBottomChrome
+                            .opacity(showsMultiCaptureChrome ? 1 : 0)
+                            .allowsHitTesting(showsMultiCaptureChrome)
                     }
                 }
                 .onAppear {
@@ -327,6 +338,63 @@ struct MultiRoomCaptureFlowView: View {
         return "Scanning room \(number)"
     }
 
+    private var showsMultiCaptureChrome: Bool {
+        coordinator.state == .scanning && !isDegenerateCapture && partialRoomFailureMessage == nil && !didRequestStopRoom
+    }
+
+    private var multiCaptureBottomChrome: some View {
+        VStack(spacing: 12) {
+            VuuroLiveStatsRow(stats: coordinator.liveStats)
+            HStack(spacing: 10) {
+                VuuroFinishRoomButton(label: "Save & next") {
+                    didRequestStopRoom = true
+                    coordinator.stopCurrentRoom()
+                }
+                .accessibilityIdentifier("multiCapture.saveAndNext")
+
+                HStack(spacing: 8) {
+                    Button {
+                        showMultiFloorPrompt = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "building.2")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(capturedFloor.isEmpty ? "Set floor" : capturedFloor)
+                                .font(.system(size: 12, weight: .semibold))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .background(Color.black.opacity(0.4), in: Capsule())
+                    }
+                    .accessibilityIdentifier("multiCapture.floor")
+                    .buttonStyle(.plain)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 4)
+
+                if !coordinator.capturedRooms.isEmpty {
+                    VuuroRoomsButton(count: coordinator.capturedRooms.count) {
+                        showCapturedRoomsList = true
+                    }
+                    .accessibilityIdentifier("multiCapture.rooms")
+
+                    VuuroFinishSecondaryButton(label: "Finish") {
+                        showFinishConfirmation = true
+                    }
+                    .accessibilityIdentifier("multiCapture.finish")
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(Color.black)
+    }
+
     private var multiCaptureOverlay: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
@@ -380,57 +448,6 @@ struct MultiRoomCaptureFlowView: View {
                     .padding(.horizontal, 24)
                     .padding(.bottom, 4)
             }
-
-            VuuroLiveStatsRow(stats: coordinator.liveStats)
-                .padding(.horizontal, 20)
-
-            Spacer().frame(height: 12)
-
-            HStack(spacing: 10) {
-                VuuroFinishRoomButton(label: "Save & next") {
-                    didRequestStopRoom = true
-                    coordinator.stopCurrentRoom()
-                }
-                .accessibilityIdentifier("multiCapture.saveAndNext")
-
-                HStack(spacing: 8) {
-                    Button {
-                        showMultiFloorPrompt = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "building.2")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text(capturedFloor.isEmpty ? "Set floor" : capturedFloor)
-                                .font(.system(size: 12, weight: .semibold))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .background(Color.black.opacity(0.4), in: Capsule())
-                    }
-                    .accessibilityIdentifier("multiCapture.floor")
-                    .buttonStyle(.plain)
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 4)
-
-                if !coordinator.capturedRooms.isEmpty {
-                    VuuroRoomsButton(count: coordinator.capturedRooms.count) {
-                        showCapturedRoomsList = true
-                    }
-                    .accessibilityIdentifier("multiCapture.rooms")
-
-                    VuuroFinishSecondaryButton(label: "Finish") {
-                        showFinishConfirmation = true
-                    }
-                    .accessibilityIdentifier("multiCapture.finish")
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 24)
         }
     }
 

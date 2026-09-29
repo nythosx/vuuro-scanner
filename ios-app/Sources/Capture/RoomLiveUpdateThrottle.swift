@@ -24,15 +24,6 @@ final class RoomLiveUpdateThrottle: @unchecked Sendable {
         }
         return RoomLiveUpdateDecision(shouldProcess: shouldProcess, roomTypeAnswered: isAnswered)
     }
-    func shouldProcessUpdate() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        let now = Date()
-        guard now.timeIntervalSince(lastUpdateAt) >= interval else { return false }
-        lastUpdateAt = now
-        return true
-    }
-
     func isRoomTypeAnswered() -> Bool {
         lock.lock()
         defer { lock.unlock() }

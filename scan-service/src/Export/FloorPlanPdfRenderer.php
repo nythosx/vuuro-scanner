@@ -78,9 +78,9 @@ final class FloorPlanPdfRenderer
         $regularFontObjNum = 3;
         $boldFontObjNum = 4;
         $italicFontObjNum = 5;
-        $objects[$regularFontObjNum] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
-        $objects[$boldFontObjNum] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>";
-        $objects[$italicFontObjNum] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique >>";
+        $objects[$regularFontObjNum] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+        $objects[$boldFontObjNum] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>";
+        $objects[$italicFontObjNum] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding >>";
         $fontResources = "/F1 {$regularFontObjNum} 0 R /F2 {$boldFontObjNum} 0 R /F3 {$italicFontObjNum} 0 R";
 
         $pageObjNums = [];
@@ -261,7 +261,7 @@ final class FloorPlanPdfRenderer
         $stream = "q\n" . $this->rgOp(self::ACCENT) . "\n0 " . ($pageHeight - $accentBarHeight) . " {$pageWidth} {$accentBarHeight} re\nf\nQ\n";
 
         $footerText = "{$footerLabel}  -  Page {$pageIndex} of {$totalPages}";
-        $ascii = preg_replace('/[^\x20-\x7E]/', '-', $footerText) ?? $footerText;
+        $ascii = $this->toWinAnsi($footerText);
         $escaped = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $ascii);
         $stream .= "q\n" . $this->rgOp(self::INK_MUTED) . "\nBT\n/F1 8 Tf\n1 0 0 1 24 16 Tm\n({$escaped}) Tj\nET\nQ\n";
 
@@ -297,7 +297,7 @@ final class FloorPlanPdfRenderer
         foreach ($imagePage['caption'] as $line) {
             [$font, $size] = self::STYLE_FONTS[$line['style']];
             $color = self::STYLE_COLORS[$line['style']] ?? self::INK;
-            $ascii = preg_replace('/[^\x20-\x7E]/', '-', $line['text']) ?? $line['text'];
+            $ascii = $this->toWinAnsi($line['text']);
             $escaped = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $ascii);
             $stream .= 'q' . "\n" . $this->rgOp($color) . "\nBT\n/{$font} {$size} Tf\n1 0 0 1 " . self::IMAGE_PAGE_MARGIN . " {$capY} Tm\n({$escaped}) Tj\nET\nQ\n";
             $capY -= self::LINE_HEIGHT;
@@ -473,6 +473,15 @@ final class FloorPlanPdfRenderer
         return sprintf('%.3f %.3f %.3f rg', $rgb[0] / 255, $rgb[1] / 255, $rgb[2] / 255);
     }
 
+    private function toWinAnsi(string $text): string
+    {
+        $converted = @iconv('UTF-8', 'Windows-1252//TRANSLIT//IGNORE', $text);
+        if ($converted === false) {
+            $converted = preg_replace('/[^\x20-\x7E]/', '-', $text) ?? $text;
+        }
+        return $converted;
+    }
+
 
     private function buildContentStream(array $lines): string
     {
@@ -496,7 +505,7 @@ final class FloorPlanPdfRenderer
 
 
 
-                $ascii = preg_replace('/[^\x20-\x7E]/', '-', $line['text']) ?? $line['text'];
+                $ascii = $this->toWinAnsi($line['text']);
                 $escaped = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $ascii);
                 $stream .= 'q' . "\n" . $this->rgOp($color) . "\nBT\n/{$font} {$size} Tf\n1 0 0 1 " . self::PAGE_MARGIN_X . " {$y} Tm\n({$escaped}) Tj\nET\nQ\n";
             }

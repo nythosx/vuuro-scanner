@@ -13,7 +13,7 @@ final class FloorPlanImageCache {
     private var knownKeys: Set<String> = []
     private var inFlightTasks: [String: Task<Data?, Never>] = [:]
     private var lastErrors: [String: Error] = [:]
-    private var generation = 0
+    private var generations: [String: Int] = [:]
 
     private init() {}
 
@@ -31,7 +31,7 @@ final class FloorPlanImageCache {
             return Task { cached as Data }
         }
         let task = Task<Data?, Never> {
-            let capturedGeneration = self.generation
+            let capturedGeneration = self.generations[sessionId, default: 0]
             let data: Data?
             do {
                 data = try await client.fetchFloorPlanImage(sessionId: sessionId, accessToken: accessToken, unit: unit)
@@ -39,7 +39,7 @@ final class FloorPlanImageCache {
                     self.lastErrors[cacheKey] = nil
                 }
             } catch is CancellationError {
-                if capturedGeneration == self.generation {
+                if capturedGeneration == self.generations[sessionId, default: 0] {
                     self.inFlightTasks[cacheKey] = nil
                 }
                 return nil
@@ -51,12 +51,12 @@ final class FloorPlanImageCache {
                 }
             }
             guard !Task.isCancelled else {
-                if capturedGeneration == self.generation {
+                if capturedGeneration == self.generations[sessionId, default: 0] {
                     self.inFlightTasks[cacheKey] = nil
                 }
                 return nil
             }
-            guard capturedGeneration == self.generation else {
+            guard capturedGeneration == self.generations[sessionId, default: 0] else {
                 return nil
             }
             if let data {
@@ -79,7 +79,7 @@ final class FloorPlanImageCache {
     }
 
     func invalidate(sessionId: String) {
-        generation += 1
+        generations[sessionId, default: 0] += 1
         let prefix = "\(sessionId)|"
         for cacheKey in knownKeys where cacheKey.hasPrefix(prefix) {
             entries.removeObject(forKey: cacheKey as NSString)

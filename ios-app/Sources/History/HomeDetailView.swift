@@ -115,7 +115,7 @@ struct HomeDetailView: View {
         guard let latest = home?.mostRecentEntry else {
             return "This saves as a new report, grouped under this home."
         }
-        let date = Self.dateFormatter.string(from: latest.createdAt)
+        let date = Self.dateFormatter.string(from: latest.lastActivityAt)
         return "Adding to the latest scan (\(date)) keeps every floor in one report. A new visit saves as its own report, grouped under this home."
     }
 
@@ -233,7 +233,7 @@ struct HomeDetailView: View {
     }
 
     private func sessionSubtitle(_ entry: ScanHistoryEntry) -> String {
-        var parts: [String] = [Self.dateFormatter.string(from: entry.createdAt)]
+        var parts: [String] = [Self.dateFormatter.string(from: entry.lastActivityAt)]
         if entry.parsedRoomCount > 0 {
             parts.append("\(entry.parsedRoomCount) \(entry.parsedRoomCount == 1 ? "room" : "rooms")")
         }

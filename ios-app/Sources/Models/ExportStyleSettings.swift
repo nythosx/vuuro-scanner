@@ -1,8 +1,8 @@
 import Foundation
 
 enum ExportPlanType: String, CaseIterable, Identifiable {
-    case fullReport = "full_report"
     case listingPlan = "listing_plan"
+    case fullReport = "full_report"
 
     var id: String { rawValue }
 
@@ -36,7 +36,10 @@ struct ExportStyleSettings: Equatable {
         static let furnitureCategories = "exportStyle.furnitureCategories"
         static let orientation = "exportStyle.orientation"
         static let roomFill = "exportStyle.roomFill"
+        static let defaultsVersion = "exportStyle.defaultsVersion"
     }
+
+    private static let currentDefaultsVersion = 2
 
     static let allFurnitureCategories: [String] = [
         "bed", "sofa", "chair", "table", "desk",
@@ -72,10 +75,14 @@ struct ExportStyleSettings: Equatable {
 
     static func load() -> ExportStyleSettings {
         let d = UserDefaults.standard
+        if d.integer(forKey: Keys.defaultsVersion) < currentDefaultsVersion {
+            d.set(ExportPlanType.listingPlan.rawValue, forKey: Keys.planType)
+            d.set(currentDefaultsVersion, forKey: Keys.defaultsVersion)
+        }
         let storedCats = d.stringArray(forKey: Keys.furnitureCategories)
         let cats = Set(storedCats ?? allFurnitureCategories)
         return ExportStyleSettings(
-            planType: d.string(forKey: Keys.planType).flatMap(ExportPlanType.init(rawValue:)) ?? .fullReport,
+            planType: d.string(forKey: Keys.planType).flatMap(ExportPlanType.init(rawValue:)) ?? .listingPlan,
             showWalkPath: d.object(forKey: Keys.showWalkPath) as? Bool ?? true,
             showFurniture: d.object(forKey: Keys.showFurniture) as? Bool ?? true,
             furnitureCategories: cats,

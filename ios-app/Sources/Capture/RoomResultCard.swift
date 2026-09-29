@@ -102,7 +102,11 @@ struct RoomResultCard: View {
     var pendingObjectChanges: [ObjectChangeKey: PendingObjectChange] = [:]
     var onObjectChange: ((ObjectChangeKey, PendingObjectChange?) -> Void)? = nil
     var onAddMissingItem: (() -> Void)? = nil
+    var onRoomTypeChange: ((String?) -> Void)? = nil
+    var isUpdatingRoomType: Bool = false
 
+    @State private var showCustomRoomType = false
+    @State private var customRoomTypeDraft: String = ""
     @State private var renameTarget: ObjectChangeKey?
     @State private var renameDraft: String = ""
     @State private var categoryTarget: ObjectChangeKey?
@@ -112,6 +116,9 @@ struct RoomResultCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
+            if let onRoomTypeChange {
+                roomTypeRow(onRoomTypeChange)
+            }
             metrics
             VuuroQualityBar(score: room.coverage.score)
             if !visibleObjects.isEmpty || editingEnabled {
@@ -143,6 +150,19 @@ struct RoomResultCard: View {
         } message: {
             Text("Give this object a name you'll recognize in the floor plan.")
         }
+        .alert("Room type", isPresented: $showCustomRoomType) {
+            TextField("e.g. Play room", text: $customRoomTypeDraft)
+                .accessibilityIdentifier("roomCard.roomTypeCustomField")
+            Button("Save") {
+                if let value = RoomTypeClassifier.storedValue(forEntered: customRoomTypeDraft) {
+                    onRoomTypeChange?(value)
+                }
+            }
+            .accessibilityIdentifier("roomCard.roomTypeCustomSave")
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Name the room the way it should appear on the plan.")
+        }
         .confirmationDialog("Object type", isPresented: categoryBinding, titleVisibility: .visible) {
             ForEach(ObjectCategoryCatalog.knownCategories, id: \.id) { entry in
                 Button(entry.name) { commitCategoryChange(entry.name) }
@@ -169,6 +189,64 @@ struct RoomResultCard: View {
 
     private var categoryBinding: Binding<Bool> {
         Binding(get: { categoryTarget != nil }, set: { if !$0 { categoryTarget = nil } })
+    }
+
+    private func roomTypeRow(_ onChange: @escaping (String?) -> Void) -> some View {
+        let confirmed = room.roomType?.confirmed.flatMap { $0.isEmpty ? nil : $0 }
+        let guess = room.roomType?.guess.flatMap { $0.isEmpty ? nil : $0 }
+        return HStack(spacing: 8) {
+            Menu {
+                if confirmed == nil, let guess {
+                    Button {
+                        onChange(guess)
+                    } label: {
+                        Label("Confirm \(RoomTypeClassifier.displayName(for: guess))", systemImage: "checkmark")
+                    }
+                    .accessibilityIdentifier("roomCard.roomTypeConfirmGuess")
+                }
+                ForEach(RoomTypeClassifier.allTypes, id: \.self) { type in
+                    Button(RoomTypeClassifier.displayName(for: type)) { onChange(type) }
+                }
+                Button("Other name\u{2026}") {
+                    customRoomTypeDraft = confirmed.map { RoomTypeClassifier.displayName(for: $0) } ?? ""
+                    showCustomRoomType = true
+                }
+                .accessibilityIdentifier("roomCard.roomTypeCustom")
+                if confirmed != nil {
+                    Button("Clear room type", role: .destructive) { onChange(nil) }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "tag")
+                    Text(roomTypeMenuTitle(confirmed: confirmed, guess: guess))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(VuuroColor.textPrimary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(VuuroColor.surfaceMuted, in: Capsule())
+            }
+            .disabled(isUpdatingRoomType)
+            .accessibilityIdentifier("roomCard.roomType")
+            if isUpdatingRoomType {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func roomTypeMenuTitle(confirmed: String?, guess: String?) -> String {
+        if let confirmed {
+            return RoomTypeClassifier.displayName(for: confirmed)
+        }
+        if let guess {
+            return String(format: vuuroLocalized("%@? Tap to confirm or change"), RoomTypeClassifier.displayName(for: guess))
+        }
+        return vuuroLocalized("Set room type")
     }
 
     private var header: some View {

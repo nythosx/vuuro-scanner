@@ -243,27 +243,19 @@ Purge runs opportunistically on every tenth session creation and on demand via `
   `concurrency_test.php` (a real multi-process `proc_open` test — the write-lock race it
   checks can't be proven any other way against `php -S`'s single-threaded server).
 - `net/verify_*.php` — the independent net, the actual merge gate. HTTP-only, re-derives
-  expected results with separate logic, never imports `src/`. Run in order (all but the
-  last are chained against one shared server/DB — `verify_enterprise_hardening.php`'s
-  rate-limit check must run last):
+  expected results with separate logic, never imports `src/`. Run all of it with:
   ```
-  php net/verify_capture_geometry.php http://127.0.0.1:8089
-  php net/verify_multiroom_and_attachments.php http://127.0.0.1:8089
-  php net/verify_multiroom_fusion.php http://127.0.0.1:8089
-  php net/verify_exports.php http://127.0.0.1:8089
-  php net/verify_acl.php http://127.0.0.1:8089
-  php net/verify_coverage.php http://127.0.0.1:8089
-  php net/verify_openings_and_objects.php http://127.0.0.1:8089
-  php net/verify_replace_rooms.php http://127.0.0.1:8089
-  php net/verify_security_fixes.php http://127.0.0.1:8089
-  php net/verify_error_messages.php http://127.0.0.1:8089
-  php net/verify_session_delete.php http://127.0.0.1:8089
-  php net/verify_floor_and_style.php http://127.0.0.1:8089
-  php net/verify_enterprise_hardening.php http://127.0.0.1:8089
+  php net/run_all.php
   ```
-  `net/verify_post_body_read_rate_limit.php` is deliberately standalone — it floods a
-  global per-IP bucket that would spuriously 429 every other script above if it shared
-  a server, so run it last against its own fresh server/DB on a different port.
-- `.github/workflows/scan-service-ci.yml` and `.gitlab-ci.yml` both run the full
-  sequence above automatically. GitLab is where merges to this repo actually happen —
-  that's the real merge gate.
+  It starts its own Scan Service on 127.0.0.1:18089 with a throwaway database and the
+  raised rate limits the suites need, runs every suite in order against it
+  (`verify_enterprise_hardening.php`'s rate-limit check last), then starts a second fresh
+  server on 127.0.0.1:19499 for `verify_post_body_read_rate_limit.php`, which floods a
+  global per-IP bucket and would 429 everything else if it shared a server. Your local
+  `data/scan_service.sqlite` is never touched. Pass other ports as arguments if those two
+  are taken: `php net/run_all.php 18189 19599`. Running a single suite by hand against a
+  dev server with default rate limits can hit 429s once the bucket fills; that is the
+  limiter doing its job, not a regression.
+- `.github/workflows/scan-service-ci.yml` and `.gitlab-ci.yml` both call `net/run_all.php`,
+  so the suite list lives in one place. GitLab is where merges to this repo actually
+  happen — that's the real merge gate.

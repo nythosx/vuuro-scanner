@@ -22,6 +22,7 @@ struct ResultSummaryView: View {
     @State private var appError: AppError?
     @State private var saveSuccessVisible = false
     @State private var missingItemTarget: MissingItemTarget?
+    @State private var updatingRoomTypeIds: Set<String> = []
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
     @State private var exportStyle: ExportStyleSettings = ExportStyleSettings.load()
     @State private var savedExportStyle: ExportStyleSettings = ExportStyleSettings.load()
@@ -92,7 +93,11 @@ struct ResultSummaryView: View {
                             },
                             onAddMissingItem: {
                                 missingItemTarget = MissingItemTarget(room: room)
-                            }
+                            },
+                            onRoomTypeChange: { value in
+                                Task { await updateRoomType(roomId: room.roomId, to: value) }
+                            },
+                            isUpdatingRoomType: updatingRoomTypeIds.contains(room.roomId)
                         )
                     }
 
@@ -567,6 +572,27 @@ struct ResultSummaryView: View {
         try? await Task.sleep(nanoseconds: 1_500_000_000)
         withAnimation(.easeInOut(duration: 0.2)) {
             saveSuccessVisible = false
+        }
+    }
+
+    @MainActor
+    private func updateRoomType(roomId: String, to value: String?) async {
+        updatingRoomTypeIds.insert(roomId)
+        defer { updatingRoomTypeIds.remove(roomId) }
+        do {
+            let updated = try await client.updateRoomType(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                roomId: roomId,
+                roomType: value
+            )
+            currentFloorPlan = updated
+            ScanHistoryStore.shared.updateRoomSummary(sessionId: session.id, summary: RoomSummary.text(for: updated.rooms))
+            discardRenderedExports()
+            await loadImage()
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .roomTypeUpdate, underlying: error)
         }
     }
 

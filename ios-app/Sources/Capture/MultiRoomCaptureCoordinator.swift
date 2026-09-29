@@ -160,19 +160,21 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         captureSession?.stop(pauseARSession: false)
     }
 
-    func keepPendingPartialRoom() {
-        guard let pendingPartialRoom else { return }
+    @discardableResult
+    func keepPendingPartialRoom() -> Bool {
+        guard let pendingPartialRoom else { return false }
         guard CapturedRoomExporter.export(pendingPartialRoom).hasUsableFloorOutline else {
             DiagnosticsLog.shared.record("Partial room rejected locally: degenerate floor outline", category: .error)
             self.pendingPartialRoom = nil
             pendingPartialRoomWalkPath = []
-            return
+            return false
         }
         capturedRooms.append(pendingPartialRoom)
         roomTypeConfirmations.append(roomTypeConfirmationForExport)
         roomWalkPaths.append(pendingPartialRoomWalkPath)
         self.pendingPartialRoom = nil
         pendingPartialRoomWalkPath = []
+        return true
     }
 
     func discardPendingPartialRoom() {

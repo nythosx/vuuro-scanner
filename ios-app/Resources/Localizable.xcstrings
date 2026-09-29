@@ -3824,6 +3824,166 @@
                     }
                 }
             }
+        },
+        "Room type": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Room type"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamertype"
+                    }
+                }
+            }
+        },
+        "e.g. Play room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "e.g. Play room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "bijv. Speelkamer"
+                    }
+                }
+            }
+        },
+        "Name the room the way it should appear on the plan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Name the room the way it should appear on the plan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Geef de kamer de naam die op de plattegrond moet staan."
+                    }
+                }
+            }
+        },
+        "Other name…": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Other name…"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Andere naam…"
+                    }
+                }
+            }
+        },
+        "Clear room type": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Clear room type"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamertype wissen"
+                    }
+                }
+            }
+        },
+        "%@? Tap to confirm or change": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%@? Tap to confirm or change"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%@? Tik om te bevestigen of te wijzigen"
+                    }
+                }
+            }
+        },
+        "Set room type": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Set room type"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamertype instellen"
+                    }
+                }
+            }
+        },
+        "Room type (suggested: %@)": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Room type (suggested: %@)"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamertype (voorgesteld: %@)"
+                    }
+                }
+            }
+        },
+        "Confirm %@": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Confirm %@"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%@ bevestigen"
+                    }
+                }
+            }
+        },
+        "This room's outline was too small or flat to keep — discarding it.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This room's outline was too small or flat to keep — discarding it."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De omtrek van deze kamer was te klein of te vlak om te bewaren — hij wordt verwijderd."
+                    }
+                }
+            }
         }
     },
     "version": "1.0"

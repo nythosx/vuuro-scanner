@@ -2,6 +2,44 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
+@MainActor
+final class AttachmentFlushCoordinator: ObservableObject {
+    @Published private(set) var generation: Int = 0
+    private var expected: Int = 0
+    private var received: Int = 0
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func reset(expected: Int) {
+        self.expected = expected
+        self.received = 0
+        if expected == 0, let continuation {
+            continuation.resume()
+            self.continuation = nil
+        }
+    }
+
+    func signal() {
+        guard expected > 0 else { return }
+        received += 1
+        if received >= expected, let continuation {
+            continuation.resume()
+            self.continuation = nil
+        }
+    }
+
+    func requestFlush() async {
+        if expected == 0 { return }
+        if received >= expected { return }
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func bumpGeneration() {
+        generation &+= 1
+    }
+}
+
 struct AttachmentsScreen: View {
     let session: ScanSessionResponse
     let floorPlan: FloorPlan
@@ -13,8 +51,19 @@ struct AttachmentsScreen: View {
     @State private var isSaving = false
     @State private var appError: AppError?
     @State private var preview: PhotoPreview?
+    @StateObject private var flushCoordinator = AttachmentFlushCoordinator()
 
     private let client = ScanServiceClient()
+
+    private var expectedFlushCount: Int {
+        var count = current.rooms.count
+        let unitPhotos = current.photos.filter { $0.roomId == nil }
+        let unitNotes = current.notes.filter { $0.roomId == nil }
+        if !unitPhotos.isEmpty || !unitNotes.isEmpty || current.rooms.isEmpty {
+            count += 1
+        }
+        return count
+    }
 
     init(
         session: ScanSessionResponse,
@@ -64,6 +113,7 @@ struct AttachmentsScreen: View {
             .disabled(isSaving)
         }
         .background(VuuroColor.bgApp)
+        .environmentObject(flushCoordinator)
         .sheet(item: $preview) { item in
             AttachmentPhotoViewer(
                 session: session,
@@ -155,7 +205,13 @@ struct AttachmentsScreen: View {
             Button {
                 guard !isSaving else { return }
                 isSaving = true
-                onFinished(current)
+                let expected = expectedFlushCount
+                flushCoordinator.reset(expected: expected)
+                flushCoordinator.bumpGeneration()
+                Task { @MainActor in
+                    await flushCoordinator.requestFlush()
+                    onFinished(current)
+                }
             } label: {
                 if isSaving {
                     ProgressView().tint(.white)
@@ -206,6 +262,7 @@ private struct AttachmentRoomCard: View {
     @State private var labelSaveTask: Task<Void, Never>?
     @State private var noteSaveTask: Task<Void, Never>?
     @State private var showCameraPicker = false
+    @EnvironmentObject private var flushCoordinator: AttachmentFlushCoordinator
     @State private var showCameraDeniedAlert = false
     @State private var showPhotoSourceDialog = false
     @State private var showPhotoPicker = false
@@ -229,8 +286,21 @@ private struct AttachmentRoomCard: View {
         self.onOpenPhoto = onOpenPhoto
         self.onUpdate = onUpdate
         self.onError = onError
-        _labelDraft = State(initialValue: room.label)
-        _committedLabel = State(initialValue: room.label)
+        let confirmedType = Self.confirmedTypeText(for: room)
+        _labelDraft = State(initialValue: confirmedType)
+        _committedLabel = State(initialValue: confirmedType)
+    }
+
+    private static func confirmedTypeText(for room: FloorPlan.Room) -> String {
+        guard let confirmed = room.roomType?.confirmed, !confirmed.isEmpty else { return "" }
+        return RoomTypeClassifier.displayName(for: confirmed)
+    }
+
+    private var roomTypePlaceholder: String {
+        if let guess = room.roomType?.guess, !guess.isEmpty {
+            return String(format: vuuroLocalized("Room type (suggested: %@)"), RoomTypeClassifier.displayName(for: guess))
+        }
+        return vuuroLocalized("Room type, e.g. Living room")
     }
 
     var body: some View {
@@ -253,6 +323,12 @@ private struct AttachmentRoomCard: View {
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase != .active {
                 flushPendingSaves()
+            }
+        }
+        .onChange(of: flushCoordinator.generation) { _, _ in
+            Task { @MainActor in
+                await flushPendingSavesAsync()
+                flushCoordinator.signal()
             }
         }
         .confirmationDialog("Add a photo", isPresented: $showPhotoSourceDialog, titleVisibility: .visible) {
@@ -308,7 +384,7 @@ private struct AttachmentRoomCard: View {
     }
 
     private var labelField: some View {
-        TextField("Room type", text: $labelDraft)
+        TextField(roomTypePlaceholder, text: $labelDraft)
             .accessibilityIdentifier("attachments.roomLabel")
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(VuuroColor.textSecondary)
@@ -395,8 +471,8 @@ private struct AttachmentRoomCard: View {
         let serverTags = Set((notes.first?.tags ?? []).compactMap { InspectionTag(rawValue: $0) })
         let draft = DraftStore.drafts(for: session.id).rooms[room.roomId]
         if let draft {
-            labelDraft = draft.label
-            committedLabel = room.label
+            committedLabel = Self.confirmedTypeText(for: room)
+            labelDraft = draft.label == room.label ? committedLabel : draft.label
             noteDraft = draft.note
             committedNote = notes.first?.text ?? ""
             savedNoteId = draft.savedNoteId ?? notes.first?.noteId
@@ -454,22 +530,22 @@ private struct AttachmentRoomCard: View {
     @MainActor
     private func saveLabel(_ value: String) async {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard let storedValue = RoomTypeClassifier.storedValue(forEntered: trimmed) else { return }
         guard trimmed != committedLabel else { return }
         do {
-            let updated = try await client.updateRoomLabel(
+            let updated = try await client.updateRoomType(
                 sessionId: session.id,
                 accessToken: session.accessToken,
                 roomId: room.roomId,
-                label: trimmed
+                roomType: storedValue
             )
             committedLabel = trimmed
             onUpdate(updated)
             clearDraftIfFullySynced()
         } catch is CancellationError {
-            DiagnosticsLog.shared.record("Label save task was cancelled.", category: .info)
+            DiagnosticsLog.shared.record("Room type save task was cancelled.", category: .info)
         } catch {
-            onError(AppError(site: .roomLabelUpdate, underlying: error))
+            onError(AppError(site: .roomTypeUpdate, underlying: error))
             labelDraft = committedLabel
         }
     }
@@ -488,19 +564,22 @@ private struct AttachmentRoomCard: View {
     }
 
     private func flushPendingSaves() {
+        Task { @MainActor in await flushPendingSavesAsync() }
+    }
+
+    @MainActor
+    private func flushPendingSavesAsync() async {
         labelSaveTask?.cancel()
         noteSaveTask?.cancel()
         let labelTarget = labelDraft
         let noteTarget = noteDraft
         let existingNote = savedNoteId
-        Task { @MainActor in
-            persistDraft()
-            if labelTarget != committedLabel {
-                await saveLabel(labelTarget)
-            }
-            if noteTarget != committedNote || selectedTags != committedTags {
-                await saveNote(noteTarget, existingId: existingNote)
-            }
+        persistDraft()
+        if labelTarget != committedLabel {
+            await saveLabel(labelTarget)
+        }
+        if noteTarget != committedNote || selectedTags != committedTags {
+            await saveNote(noteTarget, existingId: existingNote)
         }
     }
 
@@ -945,6 +1024,7 @@ private struct SessionAttachmentEditor: View {
     @State private var showPhotoPicker = false
     @State private var isUploadingPhoto = false
     @State private var removingPhotoIds: Set<String> = []
+    @EnvironmentObject private var flushCoordinator: AttachmentFlushCoordinator
 
     private let client = ScanServiceClient()
 
@@ -998,6 +1078,12 @@ private struct SessionAttachmentEditor: View {
         .onDisappear {
             noteSaveTask?.cancel()
             flushSave()
+        }
+        .onChange(of: flushCoordinator.generation) { _, _ in
+            Task { @MainActor in
+                await flushSaveAsync()
+                flushCoordinator.signal()
+            }
         }
         .confirmationDialog("Add a photo", isPresented: $showPhotoSourceDialog, titleVisibility: .visible) {
             if CameraAccess.canTakePhoto {
@@ -1131,9 +1217,14 @@ private struct SessionAttachmentEditor: View {
     }
 
     private func flushSave() {
+        Task { @MainActor in await flushSaveAsync() }
+    }
+
+    @MainActor
+    private func flushSaveAsync() async {
         noteSaveTask?.cancel()
         persistDraft()
-        Task { @MainActor in await save() }
+        await save()
     }
 
     @MainActor

@@ -43,6 +43,22 @@ final class HomeAggregatorTests: XCTestCase {
         )
     }
 
+    func testContinuingAnOldScanMovesItsLastScannedDate() {
+        var continued = entry("old", floor: "Attic", daysAgo: 6)
+        continued.lastCapturedAt = Date()
+        let other = entry("other", property: "prop-2", floor: "Attic", daysAgo: 2)
+        let homes = HomeAggregator.aggregate([other, continued])
+        XCTAssertEqual(homes.first?.key.propertyId, "prop-1")
+        XCTAssertEqual(homes.first?.latestDate, continued.lastCapturedAt)
+        XCTAssertEqual(homes.first?.mostRecentEntry?.sessionId, "old")
+    }
+
+    func testLastActivityIgnoresACaptureDateBeforeCreation() {
+        var legacy = entry("legacy", floor: nil, daysAgo: 1)
+        legacy.lastCapturedAt = legacy.createdAt.addingTimeInterval(-60)
+        XCTAssertEqual(legacy.lastActivityAt, legacy.createdAt)
+    }
+
     func testDutchFloorNamesAreRanked() {
         XCTAssertGreaterThan(HomeAggregator.floorRank("Zolder"), HomeAggregator.floorRank("Eerste verdieping"))
         XCTAssertGreaterThan(HomeAggregator.floorRank("Eerste verdieping"), HomeAggregator.floorRank("Begane grond"))

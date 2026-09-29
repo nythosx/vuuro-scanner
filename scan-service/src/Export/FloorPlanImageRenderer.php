@@ -40,6 +40,15 @@ final class FloorPlanImageRenderer
         return __DIR__ . '/../../assets/fonts/OpenSans-Variable.ttf';
     }
 
+    private function assertFontAvailable(): void
+    {
+        $path = $this->fontPath();
+        if (!is_file($path) || !is_readable($path)) {
+            error_log("VuuroScan: bundled font file missing or unreadable at {$path} — floor plan rendering is unavailable on this server.");
+            throw new \RuntimeException('Floor plan rendering is unavailable on this server.');
+        }
+    }
+
     private function drawText($image, int $sizeKey, int $x, int $y, string $text, int $color): void
     {
         $size = self::TTF_SIZE[$sizeKey];
@@ -178,6 +187,11 @@ final class FloorPlanImageRenderer
 
     private function roomTypeFillColor($image, array $room)
     {
+        if ($this->planStyle->isFunda) {
+            $type = self::roomTypeValue($room);
+            $group = is_string($type) ? (self::FUNDA_TYPE_GROUPS[$type] ?? 'living') : 'living';
+            return imagecolorallocate($image, ...self::FUNDA_FILLS[$group]);
+        }
         if ($this->planStyle->roomFill === 'white') {
             return imagecolorallocate($image, 255, 255, 255);
         }
@@ -187,6 +201,27 @@ final class FloorPlanImageRenderer
 
     private FloorPlanStyle $planStyle;
     private ?string $resolvedTitle = null;
+    private ?string $fundaFloorName = null;
+    private string $fundaPlaceLine = '';
+    private float $fundaTotalAreaM2 = 0.0;
+    private string $fundaUnit = UnitFormatter::METRIC;
+
+    private const FUNDA_FILLS = [
+        'living' => [252, 228, 214],
+        'wet' => [212, 232, 244],
+        'utility' => [212, 212, 212],
+    ];
+    private const FUNDA_TYPE_GROUPS = [
+        'kitchen' => 'wet',
+        'bathroom' => 'wet',
+        'hallway' => 'wet',
+        'laundry_room' => 'wet',
+        'walk_in_closet' => 'wet',
+        'garage' => 'utility',
+        'storage_room' => 'utility',
+        'basement' => 'utility',
+        'balcony' => 'utility',
+    ];
 
     public function __construct()
     {
@@ -195,8 +230,14 @@ final class FloorPlanImageRenderer
 
     public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null, FloorPlanStyle|string|null $style = null): string
     {
+        $this->assertFontAvailable();
         $this->planStyle = $style instanceof FloorPlanStyle ? $style : FloorPlanStyle::from($style ?? 'default');
         $this->resolvedTitle = $this->planStyle->resolvedTitle($floorPlan);
+        $this->fundaFloorName = $this->singleFloorName($floorPlan['rooms'] ?? []);
+        $this->fundaPlaceLine = implode(" \u{00B7} ", array_values(array_filter([
+            trim((string) ($floorPlan['property_id'] ?? '')),
+            trim((string) ($floorPlan['unit_id'] ?? '')),
+        ], static fn (string $part): bool => $part !== '')));
         $rooms = $floorPlan['rooms'];
         $notes = $floorPlan['notes'] ?? [];
         if ($roomId !== null) {
@@ -224,7 +265,7 @@ final class FloorPlanImageRenderer
         }
 
         $tiles = array_map(fn (array $room) => $this->tileGeometry($room, $this->planStyle->orientation), $rooms);
-        $notesLines = $this->buildNotesLines($rooms, $notes);
+        $notesLines = $this->planStyle->showNotes ? $this->buildNotesLines($rooms, $notes) : [];
 
         $tilesWidth = self::MARGIN * 2 + array_sum(array_column($tiles, 'width'))
             + self::TILE_GAP * (count($tiles) - 1) + 40;
@@ -253,7 +294,7 @@ final class FloorPlanImageRenderer
         }
 
         $image = imagecreatetruecolor(max($canvasWidth, 400), $canvasHeight + 72);
-        $surface = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_SURFACE));
+        $surface = $this->planStyle->isFunda ? imagecolorallocate($image, 255, 255, 255) : imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_SURFACE));
         $defaultFill = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::ROOM_BUCKET_FILL['neutral']));
         $wallColor = imagecolorallocate($image, ...self::WALL_COLOR);
         $text = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK));
@@ -264,15 +305,23 @@ final class FloorPlanImageRenderer
         $walkPathColor = imagecolorallocate($image, 150, 60, 190);
         $objectColor = imagecolorallocate($image, 96, 96, 96);
         imagefilledrectangle($image, 0, 0, imagesx($image), imagesy($image), $surface);
-        $this->drawHeaderAccent($image);
-
-        $this->drawText($image, 5, self::MARGIN, 8, 'Vuuro Scan - indicative per-room floor plan sheet', $text);
-        $this->drawText($image, 2, self::MARGIN, 26, 'Room shapes accurate individually; rooms are not laid out relative to each other.', $subtext);
-        if ($label !== null && $label !== '') {
-            $this->drawText($image, 2, self::MARGIN, 40, $label, $subtext);
+        if ($this->planStyle->isFunda) {
+            $this->drawFundaGrid($image);
+        } else {
+            $this->drawHeaderAccent($image);
         }
 
-        $this->drawText($image, 2, self::MARGIN, 54, sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms)), $subtext);
+        if ($this->planStyle->isFunda) {
+            $this->fundaTotalAreaM2 = $totalAreaM2;
+            $this->fundaUnit = $unit;
+        } else {
+            $this->drawText($image, 5, self::MARGIN, 12, 'Vuuro Scan - indicative per-room floor plan sheet', $text);
+            $this->drawText($image, 2, self::MARGIN, 32, 'Room shapes accurate individually; rooms are not laid out relative to each other.', $subtext);
+            if ($label !== null && $label !== '') {
+                $this->drawText($image, 2, self::MARGIN, 46, $label, $subtext);
+            }
+            $this->drawText($image, 2, self::MARGIN, 60, sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms)), $subtext);
+        }
 
         $x = self::MARGIN;
         $y = self::MARGIN + self::LABEL_HEIGHT;
@@ -393,6 +442,124 @@ final class FloorPlanImageRenderer
         return preg_replace('/[^\x20-\x7E]/', '-', $s) ?? $s;
     }
 
+    private function printable(string $s): string
+    {
+        return preg_replace('/[\x00-\x1F\x7F]/u', '', $s) ?? $this->asciiSafe($s);
+    }
+
+    private function fundaArea(float $m2, string $unit): string
+    {
+        return $unit === UnitFormatter::IMPERIAL
+            ? sprintf('%.0f sq ft', $m2 * 10.7639104167)
+            : sprintf("%.1f m\u{00B2}", $m2);
+    }
+
+    private function singleFloorName(array $rooms): ?string
+    {
+        $floors = [];
+        foreach ($rooms as $room) {
+            $floor = $room['floor'] ?? null;
+            if (is_string($floor) && trim($floor) !== '') {
+                $floors[trim($floor)] = true;
+            }
+        }
+        return count($floors) === 1 ? (string) array_key_first($floors) : null;
+    }
+
+    private function drawBoldText($image, int $sizeKey, int $x, int $y, string $text, int $color): void
+    {
+        $this->drawText($image, $sizeKey, $x, $y, $text, $color);
+        $this->drawText($image, $sizeKey, $x + 1, $y, $text, $color);
+    }
+
+    private function drawFundaGrid($image): void
+    {
+        $gridColor = imagecolorallocate($image, 236, 236, 236);
+        for ($x = 0; $x < imagesx($image); $x += 20) {
+            imageline($image, $x, 0, $x, imagesy($image), $gridColor);
+        }
+        for ($y = 0; $y < imagesy($image); $y += 20) {
+            imageline($image, 0, $y, imagesx($image), $y, $gridColor);
+        }
+    }
+
+    private function drawFundaTitleBlock($image, int $color): void
+    {
+        $heading = $this->printable($this->fundaFloorName ?? $this->resolvedTitle ?? 'Floor plan');
+        $this->drawBoldText($image, 5, (int) ((imagesx($image) - $this->textWidth(5, $heading)) / 2), imagesy($image) - 66, $heading, $color);
+        $parts = [];
+        if ($this->fundaFloorName !== null && $this->fundaPlaceLine !== '') {
+            $parts[] = $this->printable($this->fundaPlaceLine);
+        }
+        $parts[] = 'Total floor area ' . $this->fundaArea($this->fundaTotalAreaM2, $this->fundaUnit) . ' (indicative)';
+        $sub = implode("  \u{00B7}  ", $parts);
+        $this->drawText($image, 2, (int) ((imagesx($image) - $this->textWidth(2, $sub)) / 2), imagesy($image) - 38, $sub, $color);
+    }
+
+    private function drawFundaRoomLabel($image, int $x, int $y, array $room, string $unit, int $text, int $subtext): void
+    {
+        $confirmed = is_array($room['room_type'] ?? null) ? ($room['room_type']['confirmed'] ?? null) : null;
+        $name = $this->printable(is_string($confirmed) && trim($confirmed) !== '' ? RoomType::labelFor(trim($confirmed)) : (string) ($room['label'] ?? ''));
+        $sizeKey = ((float) ($room['floor_area_m2'] ?? 0)) < 4.0 ? 2 : 4;
+        $this->drawBoldText($image, $sizeKey, $x - (int) ($this->textWidth($sizeKey, $name) / 2), $y - 9, $name, $text);
+    }
+
+    private function drawArrowHead($image, float $tipX, float $tipY, float $fromX, float $fromY, int $color): void
+    {
+        $dx = $tipX - $fromX;
+        $dy = $tipY - $fromY;
+        $len = sqrt($dx * $dx + $dy * $dy);
+        if ($len < 1e-6) {
+            return;
+        }
+        $ux = $dx / $len;
+        $uy = $dy / $len;
+        $baseX = $tipX - $ux * 7;
+        $baseY = $tipY - $uy * 7;
+        imagefilledpolygon($image, [
+            (int) round($tipX), (int) round($tipY),
+            (int) round($baseX - $uy * 3.5), (int) round($baseY + $ux * 3.5),
+            (int) round($baseX + $uy * 3.5), (int) round($baseY - $ux * 3.5),
+        ], $color);
+    }
+
+    private function drawDimensionSegment($image, int $x1, int $y1, int $x2, int $y2, int $color): void
+    {
+        imageline($image, $x1, $y1, $x2, $y2, $color);
+        if ($this->planStyle->isFunda) {
+            $this->drawArrowHead($image, $x1, $y1, $x2, $y2, $color);
+            $this->drawArrowHead($image, $x2, $y2, $x1, $y1, $color);
+            return;
+        }
+        if ($y1 === $y2) {
+            imageline($image, $x1, $y1 - 4, $x1, $y1 + 4, $color);
+            imageline($image, $x2, $y2 - 4, $x2, $y2 + 4, $color);
+        } else {
+            imageline($image, $x1 - 4, $y1, $x1 + 4, $y1, $color);
+            imageline($image, $x2 - 4, $y2, $x2 + 4, $y2, $color);
+        }
+    }
+
+    private function areaCentroidM(array $outlineM): array
+    {
+        $n = count($outlineM);
+        $twiceArea = 0.0;
+        $cx = 0.0;
+        $cz = 0.0;
+        for ($i = 0; $i < $n; $i++) {
+            [$x0, $z0] = $outlineM[$i];
+            [$x1, $z1] = $outlineM[($i + 1) % $n];
+            $cross = $x0 * $z1 - $x1 * $z0;
+            $twiceArea += $cross;
+            $cx += ($x0 + $x1) * $cross;
+            $cz += ($z0 + $z1) * $cross;
+        }
+        if (abs($twiceArea) < 1e-9) {
+            return $this->centroidM($outlineM);
+        }
+        return [$cx / (3 * $twiceArea), $cz / (3 * $twiceArea)];
+    }
+
     private function drawFooter($image, int $color): void
     {
         $footerWidth = $this->textWidth(self::FONT_SMALL, self::FOOTER_TEXT);
@@ -401,11 +568,15 @@ final class FloorPlanImageRenderer
 
     private function drawTitleBlock($image, int $color): void
     {
+        if ($this->planStyle->isFunda) {
+            $this->drawFundaTitleBlock($image, $color);
+            return;
+        }
         $title = $this->resolvedTitle;
         if ($title === null || $title === '') {
             return;
         }
-        $safe = $this->asciiSafe($title);
+        $safe = $this->printable($title);
         $titleWidth = $this->textWidth(4, $safe);
         $x = (int) ((imagesx($image) - $titleWidth) / 2);
         $this->drawText($image, 4, $x, imagesy($image) - 44, $safe, $color);
@@ -432,8 +603,8 @@ final class FloorPlanImageRenderer
                 $maxZ = max($maxZ, $worldZ);
             }
         }
-        $notesLines = $this->buildNotesLines($rooms, $notes);
-        $summaryLines = $this->roomSummaryLines($rooms, $unit);
+        $notesLines = $this->planStyle->showNotes ? $this->buildNotesLines($rooms, $notes) : [];
+        $summaryLines = $this->planStyle->showMetrics ? $this->roomSummaryLines($rooms, $unit) : [];
         $totalAreaM2 = array_sum(array_column($rooms, 'floor_area_m2'));
 
         $extraHeaderLines = ($overlapping !== [] ? 1 : 0) + (($label !== null && $label !== '') ? 1 : 0) + 1;
@@ -469,10 +640,10 @@ final class FloorPlanImageRenderer
         }
 
         $image = imagecreatetruecolor(max($canvasWidth, 400), $canvasHeight + 72);
-        $surface = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_SURFACE));
+        $surface = $this->planStyle->isFunda ? imagecolorallocate($image, 255, 255, 255) : imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_SURFACE));
         $text = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK));
         $subtext = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK_MUTED));
-        $dimColor = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK_MUTED));
+        $dimColor = $this->planStyle->isFunda ? $text : imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK_MUTED));
         $doorColor = imagecolorallocate($image, ...$this->planStyle->doorColor);
         $windowColor = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_ACCENT_CYAN));
         $otherOpeningColor = imagecolorallocate($image, 140, 140, 142);
@@ -486,20 +657,32 @@ final class FloorPlanImageRenderer
             self::ROOM_PALETTE
         );
         imagefilledrectangle($image, 0, 0, imagesx($image), imagesy($image), $surface);
-        $this->drawHeaderAccent($image);
+        if ($this->planStyle->isFunda) {
+            $this->drawFundaGrid($image);
+        } else {
+            $this->drawHeaderAccent($image);
+        }
 
-        $this->drawText($image, 5, self::MARGIN, 8, 'Vuuro Scan - fused floor plan (rooms captured together in one visit)', $text);
-        $this->drawText($image, 2, self::MARGIN, 26, 'Room positions relative to each other, not independently verified beyond this capture (see docs/proposals/multi-room-fusion.md).', $subtext);
-        $headerLineY = 42;
+        $headerLineY = 46;
+        if ($this->planStyle->isFunda) {
+            $this->fundaTotalAreaM2 = $totalAreaM2;
+            $this->fundaUnit = $unit;
+            $headerLineY = 14;
+        } else {
+            $this->drawText($image, 5, self::MARGIN, 12, 'Vuuro Scan - fused floor plan (rooms captured together in one visit)', $text);
+            $this->drawText($image, 2, self::MARGIN, 30, 'Room positions relative to each other, not independently verified beyond this capture.', $subtext);
+        }
         if ($overlapping !== []) {
             $this->drawText($image, 3, self::MARGIN, $headerLineY, 'WARNING: rooms below overlap in captured position - verify against the real layout before use.', $warnBorder);
             $headerLineY += 16;
         }
-        if ($label !== null && $label !== '') {
+        if ($label !== null && $label !== '' && !$this->planStyle->isFunda) {
             $this->drawText($image, 2, self::MARGIN, $headerLineY, $label, $subtext);
             $headerLineY += 16;
         }
-        $this->drawText($image, 2, self::MARGIN, $headerLineY, sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms)), $subtext);
+        if (!$this->planStyle->isFunda) {
+            $this->drawText($image, 2, self::MARGIN, $headerLineY, sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms)), $subtext);
+        }
 
         $originPxX = self::MARGIN + self::DIMENSION_GUTTER;
         $originPxY = self::MARGIN + $topGutter;
@@ -575,6 +758,13 @@ final class FloorPlanImageRenderer
             [$cx, $cz] = $this->centroidM($room['outline_m']);
             [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $cx, $cz);
             [$labelX, $labelY] = $toPx($wx, $wz);
+            if ($this->planStyle->isFunda) {
+                [$px, $pz] = $this->areaCentroidM($room['outline_m']);
+                [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $px, $pz);
+                [$labelX, $labelY] = $toPx($wx, $wz);
+                $labelDraws[] = fn () => $this->drawFundaRoomLabel($image, $labelX, $labelY, $room, $unit, $text, $subtext);
+                continue;
+            }
             $displayLabel = $this->displayLabel($room);
             $labelWidth = $this->textWidth(3, $displayLabel);
             $labelDraws[] = fn () => $this->drawText($image, 3, $labelX - (int) ($labelWidth / 2), $labelY - 6, $displayLabel, $text);
@@ -717,6 +907,16 @@ final class FloorPlanImageRenderer
                 $swingY = $hingeY + $normalDz * $radius;
                 imageline($image, (int) round($hingeX), (int) round($hingeY), (int) round($swingX), (int) round($swingY), $color);
                 $this->drawJambSquares($image, $wallColor, $px, $py, $wallDx, $wallDz, $half * self::PIXELS_PER_METER);
+            } elseif ($category === 'window' && $this->planStyle->isFunda) {
+                $spanPx = $half * self::PIXELS_PER_METER;
+                imageline(
+                    $image,
+                    (int) round($px - $wallDx * $spanPx),
+                    (int) round($py - $wallDz * $spanPx),
+                    (int) round($px + $wallDx * $spanPx),
+                    (int) round($py + $wallDz * $spanPx),
+                    $wallColor
+                );
             } elseif ($category === 'window') {
                 $half = self::WINDOW_TICK_LENGTH_M * self::PIXELS_PER_METER / 2;
                 imagesetthickness($image, 3);
@@ -1021,9 +1221,7 @@ final class FloorPlanImageRenderer
             }
             [$x1] = $toPx($breakpoints[$i], 0.0);
             [$x2] = $toPx($breakpoints[$i + 1], 0.0);
-            imageline($image, $x1, $y, $x2, $y, $color);
-            imageline($image, $x1, $y - 4, $x1, $y + 4, $color);
-            imageline($image, $x2, $y - 4, $x2, $y + 4, $color);
+            $this->drawDimensionSegment($image, $x1, $y, $x2, $y, $color);
             $label = UnitFormatter::length($spanM, $unit);
             $this->drawText($image, 1, (int) (($x1 + $x2) / 2) - 12, $y - 12, $label, $color);
         }
@@ -1038,9 +1236,7 @@ final class FloorPlanImageRenderer
             }
             [, $y1] = $toPx(0.0, $breakpoints[$i]);
             [, $y2] = $toPx(0.0, $breakpoints[$i + 1]);
-            imageline($image, $x, $y1, $x, $y2, $color);
-            imageline($image, $x - 4, $y1, $x + 4, $y1, $color);
-            imageline($image, $x - 4, $y2, $x + 4, $y2, $color);
+            $this->drawDimensionSegment($image, $x, $y1, $x, $y2, $color);
             $label = UnitFormatter::length($spanM, $unit);
             $this->drawTextUp($image, 1, $x - 14, (int) (($y1 + $y2) / 2) + 20, $label, $color);
         }
@@ -1127,62 +1323,46 @@ final class FloorPlanImageRenderer
         foreach ($xBreak as $xv) {
             [$px] = $toPx($xv, $zBreak[0]);
             if ($prev !== null) {
-                imageline($image, $prev[0], $topY, $px, $topY, $color);
-                imageline($image, $prev[0], $topY - 4, $prev[0], $topY + 4, $color);
+                $this->drawDimensionSegment($image, $prev[0], $topY, $px, $topY, $color);
                 $label = UnitFormatter::length($xv - $prev[1], $unit);
                 $w = $this->textWidth(1, $label);
                 $this->drawText($image, 1, intval(($prev[0] + $px) / 2) - intval($w / 2), $topY - 14, $label, $color);
             }
             $prev = [$px, $xv];
         }
-        if ($prev !== null) {
-            imageline($image, $prev[0], $topY - 4, $prev[0], $topY + 4, $color);
-        }
 
         $prev = null;
         foreach ($xBreak as $xv) {
             [$px] = $toPx($xv, $zBreak[0]);
             if ($prev !== null) {
-                imageline($image, $prev[0], $bottomY, $px, $bottomY, $color);
-                imageline($image, $prev[0], $bottomY - 4, $prev[0], $bottomY + 4, $color);
+                $this->drawDimensionSegment($image, $prev[0], $bottomY, $px, $bottomY, $color);
                 $label = UnitFormatter::length($xv - $prev[1], $unit);
                 $w = $this->textWidth(1, $label);
                 $this->drawText($image, 1, intval(($prev[0] + $px) / 2) - intval($w / 2), $bottomY + 4, $label, $color);
             }
             $prev = [$px, $xv];
         }
-        if ($prev !== null) {
-            imageline($image, $prev[0], $bottomY - 4, $prev[0], $bottomY + 4, $color);
-        }
 
         $prev = null;
         foreach ($zBreak as $zv) {
             [, $py] = $toPx($xBreak[0], $zv);
             if ($prev !== null) {
-                imageline($image, $leftX, $prev[0], $leftX, $py, $color);
-                imageline($image, $leftX - 4, $prev[0], $leftX + 4, $prev[0], $color);
+                $this->drawDimensionSegment($image, $leftX, $prev[0], $leftX, $py, $color);
                 $label = UnitFormatter::length($zv - $prev[1], $unit);
                 $this->drawTextUp($image, 1, $leftX - 13, intval(($prev[0] + $py) / 2) + 12, $label, $color);
             }
             $prev = [$py, $zv];
         }
-        if ($prev !== null) {
-            imageline($image, $leftX - 4, $prev[0], $leftX + 4, $prev[0], $color);
-        }
 
         $prev = null;
         foreach ($zBreak as $zv) {
             [, $py] = $toPx($xBreak[0], $zv);
             if ($prev !== null) {
-                imageline($image, $rightX, $prev[0], $rightX, $py, $color);
-                imageline($image, $rightX - 4, $prev[0], $rightX + 4, $prev[0], $color);
+                $this->drawDimensionSegment($image, $rightX, $prev[0], $rightX, $py, $color);
                 $label = UnitFormatter::length($zv - $prev[1], $unit);
                 $this->drawTextUp($image, 1, $rightX + 3, intval(($prev[0] + $py) / 2) + 12, $label, $color);
             }
             $prev = [$py, $zv];
-        }
-        if ($prev !== null) {
-            imageline($image, $rightX - 4, $prev[0], $rightX + 4, $prev[0], $color);
         }
     }
 
@@ -1249,6 +1429,12 @@ final class FloorPlanImageRenderer
             $draw();
         }
 
+        if ($this->planStyle->isFunda) {
+            [$cx, $cz] = $this->areaCentroidM($room['outline_m']);
+            [$labelX, $labelY] = $tileToPx($cx, $cz);
+            $this->drawFundaRoomLabel($image, $labelX, $labelY, $room, $unit, $text, $subtext);
+            return;
+        }
         $drawnHeightM = $zs === [] ? $room['bounding_dimensions_m']['length_m'] : max($zs) - min($zs);
         $labelY = $originY + self::TILE_PADDING + (int) round($drawnHeightM * self::PIXELS_PER_METER)
             + (int) round(self::WALL_LABEL_INSET_M * self::PIXELS_PER_METER) + 14;

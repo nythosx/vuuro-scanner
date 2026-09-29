@@ -559,7 +559,19 @@ struct ScanServiceClient {
             throw ScanServiceError.unexpectedStatus(status ?? -1, body: String(data: data, encoding: .utf8) ?? "")
         }
 
+        await recordSessionChange(request)
         return try JSONDecoder().decode(Response.self, from: data)
+    }
+
+    private func recordSessionChange(_ request: URLRequest) async {
+        guard let method = request.httpMethod?.uppercased(), method != "GET", let path = request.url?.path else { return }
+        let parts = path.split(separator: "/")
+        guard let index = parts.firstIndex(of: "scan-sessions"), parts.count > index + 1 else { return }
+        let sessionId = String(parts[index + 1])
+        await FloorPlanImageCache.shared.invalidate(sessionId: sessionId)
+        if method == "POST", parts.count == index + 3, parts[index + 2] == "capture" || parts[index + 2] == "rooms" {
+            ScanHistoryStore.shared.markCaptured(sessionId: sessionId)
+        }
     }
     private func unreachableError(_ request: URLRequest, underlying: Error) -> Error {
         let attempted = request.url?.absoluteString ?? baseURL.absoluteString

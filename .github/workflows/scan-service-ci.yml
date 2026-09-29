@@ -36,53 +36,6 @@ jobs:
           php tests/export_renderer_test.php
           php tests/concurrency_test.php
 
-      - name: Start the Scan Service (fresh DB)
+      - name: The independent net (every suite, fresh servers and DBs)
         working-directory: scan-service
-        env:
-          SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX: "2000"
-          SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_WINDOW_SECONDS: "600"
-          SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_MAX: "4000"
-          SCAN_SERVICE_ADMIN_API_KEY: "ci-test-admin-key"
-        run: |
-          rm -f data/scan_service.sqlite
-          php -d post_max_size=30M -d upload_max_filesize=26M -d display_errors=0 -S 127.0.0.1:8089 public/index.php &
-          for i in $(seq 1 20); do
-            curl -sf http://127.0.0.1:8089/health > /dev/null && break
-            sleep 0.5
-          done
-
-      # Chained on purpose, one shared server/DB — see scan-service/README.md
-      # for why the order isn't arbitrary (verify_enterprise_hardening.php's
-      # rate-limit check must run last).
-      - name: The independent net (10-script merge gate)
-        working-directory: scan-service
-        run: |
-          php net/verify_capture_geometry.php http://127.0.0.1:8089
-          php net/verify_multiroom_and_attachments.php http://127.0.0.1:8089
-          php net/verify_multiroom_fusion.php http://127.0.0.1:8089
-          php net/verify_exports.php http://127.0.0.1:8089
-          php net/verify_acl.php http://127.0.0.1:8089
-          php net/verify_coverage.php http://127.0.0.1:8089
-          php net/verify_openings_and_objects.php http://127.0.0.1:8089
-          php net/verify_security_fixes.php http://127.0.0.1:8089
-          php net/verify_error_messages.php http://127.0.0.1:8089
-          php net/verify_session_delete.php http://127.0.0.1:8089
-          php net/verify_floor_and_style.php http://127.0.0.1:8089
-          php net/verify_enterprise_hardening.php http://127.0.0.1:8089
-
-      # Deliberately its own server/DB on a different port — see this
-      # script's own header for why it can't share the suite above (it
-      # floods a global-per-IP bucket that would spuriously 429 every
-      # other script's session/capture calls sharing 127.0.0.1).
-      - name: The standalone post-body-read rate-limit net
-        working-directory: scan-service
-        env:
-          SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_MAX: "4000"
-        run: |
-          rm -f data/scan_service.sqlite
-          php -d post_max_size=30M -d upload_max_filesize=26M -d display_errors=0 -S 127.0.0.1:9499 public/index.php &
-          for i in $(seq 1 20); do
-            curl -sf http://127.0.0.1:9499/health > /dev/null && break
-            sleep 0.5
-          done
-          php net/verify_post_body_read_rate_limit.php http://127.0.0.1:9499
+        run: php net/run_all.php

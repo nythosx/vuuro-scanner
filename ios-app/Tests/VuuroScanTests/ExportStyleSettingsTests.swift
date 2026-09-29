@@ -49,6 +49,19 @@ final class ExportStyleSettingsTests: XCTestCase {
         XCTAssertEqual(ExportStyleSettings.load(), changed)
     }
 
+    func testListingPlanIsTheDefaultOnceAfterUpgrade() {
+        let original = ExportStyleSettings.load()
+        defer { original.save() }
+        let defaults = UserDefaults.standard
+        defaults.set(ExportPlanType.fullReport.rawValue, forKey: "exportStyle.planType")
+        defaults.removeObject(forKey: "exportStyle.defaultsVersion")
+        XCTAssertEqual(ExportStyleSettings.load().planType, .listingPlan)
+        var chosen = ExportStyleSettings.load()
+        chosen.planType = .fullReport
+        chosen.save()
+        XCTAssertEqual(ExportStyleSettings.load().planType, .fullReport)
+    }
+
     func testWalkPathToggleMapsToQueryValue() {
         var on = settings()
         on.showWalkPath = true

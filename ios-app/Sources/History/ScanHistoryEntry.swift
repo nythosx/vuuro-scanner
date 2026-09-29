@@ -36,14 +36,20 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
     var occupied: Bool = false
     var consentObtained: Bool = false
     var floor: String? = nil
+    var lastCapturedAt: Date? = nil
 
     var id: String { sessionId }
 
-    enum CodingKeys: String, CodingKey {
-        case sessionId, accessToken, propertyId, unitId, organisationId, purpose, createdAt, expiresAt, nickname, cachedRoomSummary, cachedFloorAreaM2, cachedRoomsByFloor, occupied, consentObtained, floor
+    var lastActivityAt: Date {
+        guard let lastCapturedAt, lastCapturedAt > createdAt else { return createdAt }
+        return lastCapturedAt
     }
 
-    init(sessionId: String, accessToken: String, propertyId: String, unitId: String, organisationId: String, purpose: ScanPurpose, createdAt: Date, expiresAt: String?, nickname: String? = nil, cachedRoomSummary: String? = nil, cachedFloorAreaM2: Double? = nil, cachedRoomsByFloor: [String: CachedFloorSummary]? = nil, occupied: Bool = false, consentObtained: Bool = false, floor: String? = nil) {
+    enum CodingKeys: String, CodingKey {
+        case sessionId, accessToken, propertyId, unitId, organisationId, purpose, createdAt, expiresAt, nickname, cachedRoomSummary, cachedFloorAreaM2, cachedRoomsByFloor, occupied, consentObtained, floor, lastCapturedAt
+    }
+
+    init(sessionId: String, accessToken: String, propertyId: String, unitId: String, organisationId: String, purpose: ScanPurpose, createdAt: Date, expiresAt: String?, nickname: String? = nil, cachedRoomSummary: String? = nil, cachedFloorAreaM2: Double? = nil, cachedRoomsByFloor: [String: CachedFloorSummary]? = nil, occupied: Bool = false, consentObtained: Bool = false, floor: String? = nil, lastCapturedAt: Date? = nil) {
         self.sessionId = sessionId
         self.accessToken = accessToken
         self.propertyId = propertyId
@@ -59,6 +65,7 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
         self.occupied = occupied
         self.consentObtained = consentObtained
         self.floor = floor
+        self.lastCapturedAt = lastCapturedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -78,6 +85,7 @@ struct ScanHistoryEntry: Codable, Identifiable, Equatable {
         occupied = try container.decodeIfPresent(Bool.self, forKey: .occupied) ?? false
         consentObtained = try container.decodeIfPresent(Bool.self, forKey: .consentObtained) ?? false
         floor = try container.decodeIfPresent(String.self, forKey: .floor)
+        lastCapturedAt = try container.decodeIfPresent(Date.self, forKey: .lastCapturedAt)
     }
 
     func asResumableSession() -> ScanSessionResponse {
