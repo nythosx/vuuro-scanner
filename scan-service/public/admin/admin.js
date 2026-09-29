@@ -6,16 +6,19 @@ const state = {
   adminKey: '',
   currentSessionId: null,
   returnTo: null,
-  planStyle: 'funda',
+  planStyle: 'auto',
 };
 
 const PLAN_STYLES = [
+  { value: 'auto', label: 'Automatic (per purpose)' },
   { value: 'funda', label: 'Listing plan' },
   { value: 'default', label: 'Full report' },
 ];
 
 function planStyleQuery() {
-  return state.planStyle === 'funda' ? '?style=funda' : '';
+  if (state.planStyle === 'funda') return '?style=funda';
+  if (state.planStyle === 'auto') return '?style=auto';
+  return '';
 }
 
 const VIEWS = ['loading', 'login', 'search', 'detail', 'imports', 'settings'];
@@ -306,7 +309,20 @@ function renderSettings(data) {
     '</tr>';
   }).join('');
   const tenant = data.tenant_deletion;
+  const planRows = RETENTION_PURPOSES.map((p) => {
+    const current = (data.plan_style || {})[p.value] || 'listing';
+    return '<tr>' +
+      '<td>' + escapeHtml(p.label) + '</td>' +
+      '<td><select data-plan-style="' + p.value + '">' +
+        '<option value="listing"' + (current === 'listing' ? ' selected' : '') + '>Listing plan</option>' +
+        '<option value="full"' + (current === 'full' ? ' selected' : '') + '>Full report</option>' +
+      '</select></td>' +
+    '</tr>';
+  }).join('');
   container.innerHTML =
+    '<h2>Default floor plan</h2>' +
+    '<p class="muted">Used when the app is set to Automatic, and for Automatic in this dashboard. Listing plan is the clean Funda-style plan; Full report adds measurements, notes and missing items.</p>' +
+    wrapTable('<table class="data-table settings-table"><thead><tr><th>Purpose</th><th>Plan</th></tr></thead><tbody>' + planRows + '</tbody></table>') +
     '<h2>Delete scans automatically</h2>' +
     '<p class="muted">When a purpose is on, scans of that purpose are deleted once they are older than the number of days set. Off means they are kept until the access link expires.</p>' +
     wrapTable('<table class="data-table settings-table"><thead><tr><th>Purpose</th><th>Auto-delete</th><th>After</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>') +
@@ -378,7 +394,12 @@ async function saveSettings() {
         days: readWholeNumber(document.querySelector('[data-retention-days="' + p.value + '"]'), settingsLimits.retention_days.min, settingsLimits.retention_days.max, p.label + ' days'),
       };
     });
+    const planStyle = {};
+    RETENTION_PURPOSES.forEach((p) => {
+      planStyle[p.value] = document.querySelector('[data-plan-style="' + p.value + '"]').value;
+    });
     payload = {
+      plan_style: planStyle,
       retention,
       tenant_deletion: {
         enabled: $('#tenantDeletionEnabled').checked,
@@ -662,7 +683,7 @@ function renderDetail(data, sessionId) {
   const styleSelect = $('#planStyleSelect');
   if (styleSelect) {
     styleSelect.addEventListener('change', () => {
-      state.planStyle = PLAN_STYLES.some((s) => s.value === styleSelect.value) ? styleSelect.value : 'funda';
+      state.planStyle = PLAN_STYLES.some((s) => s.value === styleSelect.value) ? styleSelect.value : 'auto';
       loadFloorPlanImage(sessionId);
     });
   }

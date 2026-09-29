@@ -438,12 +438,15 @@ function adminAuthorized(): bool
     return is_string($presentedKey) && $presentedKey !== '' && hash_equals($configuredKey, $presentedKey);
 }
 
-function parseFloorPlanStyleFromQuery(): FloorPlanStyle
+function parseFloorPlanStyleFromQuery(string $automaticStyle = 'default'): FloorPlanStyle
 {
     $style = $_GET['style'] ?? 'default';
-    if (!in_array($style, ['default', 'funda'], true)) {
-        respondError(422, 'invalid_style', "'style' must be 'default' or 'funda' if given.");
+    if (!in_array($style, ['default', 'funda', 'auto'], true)) {
+        respondError(422, 'invalid_style', "'style' must be 'default', 'funda' or 'auto' if given.");
         exit;
+    }
+    if ($style === 'auto') {
+        $style = $automaticStyle;
     }
     $walkPathParam = $_GET['walk_path'] ?? null;
     if ($walkPathParam !== null && !in_array((string) $walkPathParam, ['0', '1'], true)) {
@@ -1724,7 +1727,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
         return;
     }
-    $planStyle = parseFloorPlanStyleFromQuery();
+    $planStyle = parseFloorPlanStyleFromQuery($settings->planStyleFor((string) $session['purpose']) === 'full' ? 'default' : 'funda');
 
     try {
         $png = (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $planStyle);
@@ -1777,7 +1780,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
         return;
     }
-    $planStyle = parseFloorPlanStyleFromQuery();
+    $planStyle = parseFloorPlanStyleFromQuery($settings->planStyleFor((string) $session['purpose']) === 'full' ? 'default' : 'funda');
 
     try {
         $svg = (new FloorPlanSvgRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $planStyle);
@@ -1828,7 +1831,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
         return;
     }
-    $planStyle = parseFloorPlanStyleFromQuery();
+    $planStyle = parseFloorPlanStyleFromQuery($settings->planStyleFor((string) $session['purpose']) === 'full' ? 'default' : 'funda');
 
     $photoLoader = static function (string $url) use ($session): ?string {
         $filePath = ownedPhotoFilePath($session['id'], $url);
@@ -2085,9 +2088,10 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/vuuroscan$#
         return;
     }
 
+    $bundleStyle = FloorPlanStyle::from($settings->planStyleFor((string) $session['purpose']) === 'full' ? 'default' : 'funda');
     $pngBytes = null;
     try {
-        $pngBytes = (new FloorPlanImageRenderer())->render($floorPlan);
+        $pngBytes = (new FloorPlanImageRenderer())->render($floorPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, $bundleStyle);
     } catch (\Throwable $e) {
         $pngBytes = null;
     }
@@ -2098,7 +2102,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/vuuroscan$#
             $filePath = ownedPhotoFilePath($session['id'], $url);
             return $filePath !== null ? file_get_contents($filePath) : null;
         };
-        $pdfBytes = (new FloorPlanPdfRenderer())->render($floorPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, $photoLoader);
+        $pdfBytes = (new FloorPlanPdfRenderer())->render($floorPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, $photoLoader, $bundleStyle);
     } catch (\Throwable $e) {
         $pdfBytes = null;
     }
@@ -2338,6 +2342,9 @@ if ($method === 'GET' && $path === '/admin/settings/history') {
             return;
         }
         respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':admin_settings_history', 30, 300)) {
         return;
     }
     respond(200, ['changes' => $settings->history()]);

@@ -16,6 +16,7 @@ final class ServiceSettings
         'renovation' => 365,
         'other' => 180,
     ];
+    public const PLAN_STYLES = ['listing', 'full'];
     public const MIN_RETENTION_DAYS = 1;
     public const MAX_RETENTION_DAYS = 3650;
     public const DEFAULT_TENANT_GRACE_DAYS = 7;
@@ -49,8 +50,14 @@ final class ServiceSettings
                 'server_config_days' => $env,
             ];
         }
+        $planStyle = [];
+        foreach (self::PURPOSES as $purpose) {
+            $saved = $stored['plan_style.' . $purpose]['style'] ?? null;
+            $planStyle[$purpose] = in_array($saved, self::PLAN_STYLES, true) ? $saved : 'listing';
+        }
         $tenant = $stored['tenant_deletion'] ?? null;
         return [
+            'plan_style' => $planStyle,
             'limits' => [
                 'retention_days' => ['min' => self::MIN_RETENTION_DAYS, 'max' => self::MAX_RETENTION_DAYS],
                 'tenant_grace_days' => ['min' => self::MIN_TENANT_GRACE_DAYS, 'max' => self::MAX_TENANT_GRACE_DAYS],
@@ -72,6 +79,11 @@ final class ServiceSettings
             }
         }
         return $active;
+    }
+
+    public function planStyleFor(string $purpose): string
+    {
+        return $this->all()['plan_style'][$purpose] ?? 'listing';
     }
 
     public function tenantDeletionEnabled(): bool
@@ -115,6 +127,20 @@ final class ServiceSettings
                 $writes['retention.' . $purpose] = ['enabled' => $enabled, 'days' => $days];
             }
         }
+        if (array_key_exists('plan_style', $changes)) {
+            if (!is_array($changes['plan_style'])) {
+                throw new \InvalidArgumentException("'plan_style' must be an object keyed by purpose.");
+            }
+            foreach ($changes['plan_style'] as $purpose => $style) {
+                if (!in_array($purpose, self::PURPOSES, true)) {
+                    throw new \InvalidArgumentException("Unknown purpose '{$purpose}'. Use one of: " . implode(', ', self::PURPOSES) . '.');
+                }
+                if (!in_array($style, self::PLAN_STYLES, true)) {
+                    throw new \InvalidArgumentException("plan_style.{$purpose} must be 'listing' or 'full'.");
+                }
+                $writes['plan_style.' . $purpose] = ['style' => $style];
+            }
+        }
         if (array_key_exists('tenant_deletion', $changes)) {
             $rule = $changes['tenant_deletion'];
             if (!is_array($rule)) {
@@ -131,7 +157,7 @@ final class ServiceSettings
             $writes['tenant_deletion'] = ['enabled' => $enabled, 'grace_days' => $graceDays];
         }
         if ($writes === [] && $resets === []) {
-            throw new \InvalidArgumentException("Nothing to change. Send 'retention' and/or 'tenant_deletion'.");
+            throw new \InvalidArgumentException("Nothing to change. Send 'retention', 'plan_style' and/or 'tenant_deletion'.");
         }
 
         $stmt = $this->db->prepare(
@@ -180,7 +206,7 @@ final class ServiceSettings
 
     private static function policyOnly(array $settings): array
     {
-        $policy = ['retention' => [], 'tenant_deletion' => $settings['tenant_deletion']];
+        $policy = ['plan_style' => $settings['plan_style'], 'retention' => [], 'tenant_deletion' => $settings['tenant_deletion']];
         foreach ($settings['retention'] as $purpose => $rule) {
             $policy['retention'][$purpose] = ['enabled' => $rule['enabled'], 'days' => $rule['days'], 'source' => $rule['source']];
         }

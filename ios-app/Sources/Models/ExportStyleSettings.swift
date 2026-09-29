@@ -1,6 +1,7 @@
 import Foundation
 
 enum ExportPlanType: String, CaseIterable, Identifiable {
+    case automatic = "automatic"
     case listingPlan = "listing_plan"
     case fullReport = "full_report"
 
@@ -8,6 +9,7 @@ enum ExportPlanType: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
+        case .automatic: return "Automatic"
         case .fullReport: return "Full report"
         case .listingPlan: return "Listing plan"
         }
@@ -15,6 +17,7 @@ enum ExportPlanType: String, CaseIterable, Identifiable {
 
     var explanation: String {
         switch self {
+        case .automatic: return "Uses the plan your admin chose for each scan purpose: Listing plan or Full report."
         case .fullReport: return "Plan with measurements, notes and missing items. Use this for inspections and your own records."
         case .listingPlan: return "Clean plan for a property listing: color-coded rooms, dimension lines and fixed fixtures like sink, toilet and stove. No loose furniture, walk path or notes."
         }
@@ -39,7 +42,7 @@ struct ExportStyleSettings: Equatable {
         static let defaultsVersion = "exportStyle.defaultsVersion"
     }
 
-    private static let currentDefaultsVersion = 3
+    private static let currentDefaultsVersion = 4
 
     static let allFurnitureCategories: [String] = [
         "bed", "sofa", "chair", "table", "desk",
@@ -80,13 +83,18 @@ struct ExportStyleSettings: Equatable {
             if storedVersion < 2 {
                 d.set(ExportPlanType.listingPlan.rawValue, forKey: Keys.planType)
             }
-            d.set(false, forKey: Keys.showWalkPath)
+            if storedVersion < 3 {
+                d.set(false, forKey: Keys.showWalkPath)
+            }
+            if d.string(forKey: Keys.planType) == ExportPlanType.listingPlan.rawValue {
+                d.set(ExportPlanType.automatic.rawValue, forKey: Keys.planType)
+            }
             d.set(currentDefaultsVersion, forKey: Keys.defaultsVersion)
         }
         let storedCats = d.stringArray(forKey: Keys.furnitureCategories)
         let cats = Set(storedCats ?? allFurnitureCategories)
         return ExportStyleSettings(
-            planType: d.string(forKey: Keys.planType).flatMap(ExportPlanType.init(rawValue:)) ?? .listingPlan,
+            planType: d.string(forKey: Keys.planType).flatMap(ExportPlanType.init(rawValue:)) ?? .automatic,
             showWalkPath: d.object(forKey: Keys.showWalkPath) as? Bool ?? false,
             showFurniture: d.object(forKey: Keys.showFurniture) as? Bool ?? true,
             furnitureCategories: cats,
@@ -113,6 +121,9 @@ struct ExportStyleSettings: Equatable {
     }
 
     var queryItems: [URLQueryItem] {
+        if planType == .automatic {
+            return [URLQueryItem(name: "style", value: "auto")]
+        }
         if planType == .listingPlan {
             return [URLQueryItem(name: "style", value: "funda")]
         }

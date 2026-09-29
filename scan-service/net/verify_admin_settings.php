@@ -71,12 +71,30 @@ $latest = $historyBody['changes'][0] ?? [];
 check('the settings log records the change, with who made it', $historyStatus === 200 && str_starts_with((string) ($latest['actor'] ?? ''), 'admin key ') && ($latest['after']['tenant_deletion']['enabled'] ?? null) === true, json_encode($latest));
 check('the log never contains the admin key itself', !str_contains(json_encode($historyBody), $adminKey));
 
-$restore = ['tenant_deletion' => $initial['tenant_deletion'], 'retention' => []];
+echo "
+== Automatic plan follows the purpose ==
+";
+$fixture = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_single_room.json'), true, 512, JSON_THROW_ON_ERROR);
+net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $fixture], $token);
+admin_call('POST', "$baseUrl/admin/settings", ['plan_style' => ['check_out' => 'listing']], $adminKey);
+[, , $autoListing] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?style=auto", null, $token);
+[, , $funda] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?style=funda", null, $token);
+check('style=auto gives the Listing plan when that is the purpose default', $autoListing !== '' && $autoListing === $funda);
+admin_call('POST', "$baseUrl/admin/settings", ['plan_style' => ['check_out' => 'full']], $adminKey);
+[$autoStatus, , $autoFull] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?style=auto", null, $token);
+[, , $full] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg", null, $token);
+check('style=auto gives the Full report once the admin switches check-out to it', $autoStatus === 200 && $autoFull === $full && $autoFull !== $funda);
+[$badStyle] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?style=fancy", null, $token);
+check('an unknown style is still refused', $badStyle === 422, "got HTTP $badStyle");
+
+$restore = ['tenant_deletion' => $initial['tenant_deletion'], 'plan_style' => $initial['plan_style'], 'retention' => []];
 foreach ($initial['retention'] as $purpose => $rule) {
-    $restore['retention'][$purpose] = ['enabled' => $rule['enabled'], 'days' => $rule['days']];
+    $restore['retention'][$purpose] = $rule['source'] === 'admin' ? ['enabled' => $rule['enabled'], 'days' => $rule['days']] : null;
 }
 [$restoreStatus] = admin_call('POST', "$baseUrl/admin/settings", $restore, $adminKey);
 check('settings are put back for the other suites', $restoreStatus === 200, "HTTP $restoreStatus");
+[, $restored] = admin_call('GET', "$baseUrl/admin/settings", null, $adminKey);
+check('purposes that were not set here go back to the server config or default', array_column($restored['retention'] ?? [], 'source') === array_column($initial['retention'], 'source'), json_encode(array_column($restored['retention'] ?? [], 'source')));
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {

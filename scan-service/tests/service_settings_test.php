@@ -84,6 +84,14 @@ ss_check('each saved change is written to the settings log', count($history) ===
 ss_check('the newest entry names who changed it', $history[0]['actor'] === 'admin key abcd1234 from 10.0.0.5');
 ss_check('the log keeps the value before and after', $history[0]['before']['tenant_deletion']['enabled'] === false && $history[0]['after']['tenant_deletion']['enabled'] === true);
 ss_check('refused changes are not logged', count(array_filter($history, static fn (array $h) => $h['before'] === $h['after'] && $h['actor'] === 'admin')) === 0);
+echo "
+== Default plan per purpose ==
+";
+ss_check('every purpose starts on Listing plan', array_unique(array_values($settings->all()['plan_style'])) === ['listing']);
+$settings->update(['plan_style' => ['check_in' => 'full', 'check_out' => 'full']]);
+ss_check('check-in and check-out can default to Full report', $settings->planStyleFor('check_in') === 'full' && $settings->planStyleFor('check_out') === 'full' && $settings->planStyleFor('listing') === 'listing');
+ss_check('an unknown plan is refused', ss_rejects(fn () => $settings->update(['plan_style' => ['listing' => 'fancy']])));
+ss_check('the plan change is in the log', $settings->history()[0]['after']['plan_style']['check_in'] === 'full' && $settings->history()[0]['before']['plan_style']['check_in'] === 'listing');
 ss_check('the limits are sent so the admin page does not hard-code them', $settings->all()['limits']['tenant_grace_days'] === ['min' => 1, 'max' => 90]);
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";

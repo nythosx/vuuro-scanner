@@ -55,7 +55,7 @@ final class ExportStyleSettingsTests: XCTestCase {
         let defaults = UserDefaults.standard
         defaults.set(ExportPlanType.fullReport.rawValue, forKey: "exportStyle.planType")
         defaults.removeObject(forKey: "exportStyle.defaultsVersion")
-        XCTAssertEqual(ExportStyleSettings.load().planType, .listingPlan)
+        XCTAssertEqual(ExportStyleSettings.load().planType, .automatic)
         var chosen = ExportStyleSettings.load()
         chosen.planType = .fullReport
         chosen.save()
@@ -83,6 +83,26 @@ final class ExportStyleSettingsTests: XCTestCase {
         defer { original.save() }
         UserDefaults.standard.removeObject(forKey: "exportStyle.showWalkPath")
         XCTAssertFalse(ExportStyleSettings.load().showWalkPath)
+    }
+
+    func testAutomaticLetsTheServerPickByPurpose() {
+        XCTAssertEqual(query(settings(planType: .automatic)), ["style": "auto"])
+    }
+
+    func testDefaultListingPlanMovesToAutomaticButAChosenFullReportStays() {
+        let original = ExportStyleSettings.load()
+        defer { original.save() }
+        let defaults = UserDefaults.standard
+        defaults.set(ExportPlanType.listingPlan.rawValue, forKey: "exportStyle.planType")
+        defaults.set(3, forKey: "exportStyle.defaultsVersion")
+        XCTAssertEqual(ExportStyleSettings.load().planType, .automatic)
+        defaults.set(ExportPlanType.fullReport.rawValue, forKey: "exportStyle.planType")
+        defaults.set(3, forKey: "exportStyle.defaultsVersion")
+        XCTAssertEqual(ExportStyleSettings.load().planType, .fullReport)
+        var chosen = ExportStyleSettings.load()
+        chosen.planType = .listingPlan
+        chosen.save()
+        XCTAssertEqual(ExportStyleSettings.load().planType, .listingPlan)
     }
 
     func testWalkPathToggleMapsToQueryValue() {
