@@ -144,7 +144,7 @@ final class ScanSessionRepository
         $where = $conditions === [] ? '' : 'WHERE ' . implode(' AND ', $conditions);
         $stmt = $this->db->prepare(
             "SELECT id, property_id, unit_id, organisation_id, purpose, status, created_at, expires_at, occupied, default_floor
-             FROM scan_sessions $where ORDER BY created_at DESC LIMIT :limit"
+             FROM scan_sessions $where ORDER BY created_at DESC, rowid DESC LIMIT :limit"
         );
         foreach ($params as $key => $value) {
             $stmt->bindValue(":$key", $value, PDO::PARAM_STR);
@@ -838,7 +838,7 @@ final class ScanSessionRepository
     public function findRecentIdentities(int $limit = 100): array
     {
         $stmt = $this->db->prepare(
-            'SELECT property_id, unit_id, organisation_id FROM scan_sessions ORDER BY created_at DESC LIMIT :limit'
+            'SELECT property_id, unit_id, organisation_id FROM scan_sessions ORDER BY created_at DESC, rowid DESC LIMIT :limit'
         );
         $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
         $stmt->execute();

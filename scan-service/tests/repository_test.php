@@ -563,6 +563,19 @@ r_check(
     "query plan was: $planDetail"
 );
 
+echo "\n== Recent identities put the newest session first even within the same second ==\n";
+$sameSecondDb = Database::connect(':memory:');
+$sameSecondRepo = new ScanSessionRepository($sameSecondDb);
+for ($i = 0; $i < 30; $i++) {
+    $sameSecondRepo->create("prop-older-$i", 'unit-1', 'org-1', 'listing', false, false);
+}
+$newest = $sameSecondRepo->create('prop-newest', 'unit-1', 'org-1', 'listing', false, false);
+$sameSecondDb->exec("UPDATE scan_sessions SET created_at = '2026-09-29T00:00:00+00:00'");
+$recent = $sameSecondRepo->findRecentIdentities();
+r_check('the newest property is listed first', ($recent['property_ids'][0] ?? null) === 'prop-newest', 'got ' . json_encode(array_slice($recent['property_ids'], 0, 3)));
+$byFilter = $sameSecondRepo->findByFilters('prop-', null, null, 5);
+r_check('the newest session comes first in a filtered lookup', ($byFilter[0]['id'] ?? null) === $newest['id'], 'got ' . ($byFilter[0]['property_id'] ?? 'none'));
+
 echo count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");
