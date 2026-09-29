@@ -113,7 +113,7 @@ final class VuuroScanUITests: XCTestCase {
         let planType = element(app, "exportStyle.planType")
         XCTAssertTrue(planType.waitForExistence(timeout: timeout))
         scrollIntoView(app, planType)
-        planType.buttons["Listing plan"].tap()
+        planType.buttons["Full report"].tap()
         XCTAssertTrue(element(app, "result.saveChanges").waitForExistence(timeout: timeout))
         tap(app, "result.discardChanges")
         XCTAssertFalse(element(app, "result.saveChanges").waitForExistence(timeout: 3))
