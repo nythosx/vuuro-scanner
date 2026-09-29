@@ -36,6 +36,7 @@ jobs:
           php tests/export_renderer_test.php
           php tests/concurrency_test.php
           php tests/room_split_test.php
+          php tests/service_settings_test.php
 
       - name: The independent net (every suite, fresh servers and DBs)
         working-directory: scan-service

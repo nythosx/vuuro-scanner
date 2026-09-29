@@ -34,6 +34,7 @@ $groups = [
             ['verify_crud.php'],
             ['verify_delete_and_fusion_hardening.php'],
             ['verify_floor_and_style.php'],
+            ['verify_admin_settings.php', $adminKey],
             ['verify_room_split.php'],
             ['verify_enterprise_hardening.php'],
         ],

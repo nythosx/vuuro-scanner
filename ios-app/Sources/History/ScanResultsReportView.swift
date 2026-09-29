@@ -814,7 +814,7 @@ struct ScanResultsReportView: View {
                 .accessibilityIdentifier("report.cancelDeletionRequest")
                 .buttonStyle(.vuuroGhostSmall)
                 .disabled(isRequestingDeletion)
-            } else {
+            } else if deletionStatus?.requestsEnabled != false {
                 Button {
                     showDeletionRequestConfirmation = true
                 } label: {
@@ -1061,6 +1061,9 @@ struct ScanResultsReportView: View {
         } catch is CancellationError {
         } catch {
             appError = AppError(site: .historyServerDelete, underlying: error)
+            if case ScanServiceError.unexpectedStatus(403, _) = error {
+                await loadDeletionStatus()
+            }
         }
     }
 

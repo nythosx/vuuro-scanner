@@ -178,7 +178,7 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
 
 ## Retention defaults by purpose
 
-Early purge is opt-in per purpose. Set the matching `SCAN_SERVICE_RETENTION_DAYS_<PURPOSE>` env var to a positive integer to enable it; leave it empty to disable early purge for that purpose. Values used as defaults in `.env.example`:
+Early purge is opt-in per purpose and is switched on or off in the admin dashboard under **Settings** (`GET`/`POST /admin/settings`, admin key required), together with whether tenants can request deletion and how many days that takes (default on, 7 days). Until an admin saves a choice for a purpose, the matching `SCAN_SERVICE_RETENTION_DAYS_<PURPOSE>` env var still applies; with neither set, nothing is purged early. The day counts pre-filled in Settings, and used in `.env.example`:
 
 | Purpose | Days | Rationale |
 | --- | --- | --- |

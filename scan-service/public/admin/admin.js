@@ -18,7 +18,15 @@ function planStyleQuery() {
   return state.planStyle === 'funda' ? '?style=funda' : '';
 }
 
-const VIEWS = ['loading', 'login', 'search', 'detail', 'imports'];
+const VIEWS = ['loading', 'login', 'search', 'detail', 'imports', 'settings'];
+
+const RETENTION_PURPOSES = [
+  { value: 'listing', label: 'Listing' },
+  { value: 'check_in', label: 'Check-in' },
+  { value: 'check_out', label: 'Check-out' },
+  { value: 'renovation', label: 'Renovation' },
+  { value: 'other', label: 'Other' },
+];
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -254,6 +262,159 @@ function showImports(options) {
   loadImportsList();
 }
 
+function showSettings(options) {
+  const opts = options || {};
+  showView('settings');
+  setTopnav('settings');
+  if (!opts.fromHistory) setUrl('view=settings', opts.push !== false);
+  loadSettings();
+}
+
+async function loadSettings() {
+  const container = $('#settingsContent');
+  container.innerHTML = loadingHtml('Loading settings…');
+  try {
+    renderSettings(await apiJson('/admin/settings'));
+  } catch (err) {
+    container.innerHTML = '<p class="error">Could not load settings: ' + escapeHtml(friendlyApiError(err)) + '</p>';
+  }
+}
+
+let settingsLimits = { retention_days: { min: 1, max: 3650 }, tenant_grace_days: { min: 1, max: 90 } };
+
+function settingsSourceNote(rule) {
+  if (rule.source === 'env') return 'Set by the server config';
+  if (rule.source === 'default') return 'Suggested default';
+  return 'Set here';
+}
+
+function renderSettings(data) {
+  const container = $('#settingsContent');
+  if (data.limits) settingsLimits = data.limits;
+  const dayLimits = settingsLimits.retention_days;
+  const graceLimits = settingsLimits.tenant_grace_days;
+  const rows = RETENTION_PURPOSES.map((p) => {
+    const rule = data.retention[p.value];
+    const reset = rule.source === 'admin'
+      ? ' <button type="button" class="small ghost" data-retention-reset="' + p.value + '">' + (rule.server_config_days ? 'Use server config (' + escapeHtml(String(rule.server_config_days)) + ' days)' : 'Reset') + '</button>'
+      : '';
+    return '<tr>' +
+      '<td>' + escapeHtml(p.label) + '</td>' +
+      '<td><label class="switch"><input type="checkbox" data-retention-enabled="' + p.value + '"' + (rule.enabled ? ' checked' : '') + '> <span>' + (rule.enabled ? 'On' : 'Off') + '</span></label></td>' +
+      '<td><input type="number" min="' + dayLimits.min + '" max="' + dayLimits.max + '" step="1" class="days-input" data-retention-days="' + p.value + '" value="' + escapeHtml(String(rule.days)) + '"> days</td>' +
+      '<td class="muted">' + escapeHtml(settingsSourceNote(rule)) + reset + '</td>' +
+    '</tr>';
+  }).join('');
+  const tenant = data.tenant_deletion;
+  container.innerHTML =
+    '<h2>Delete scans automatically</h2>' +
+    '<p class="muted">When a purpose is on, scans of that purpose are deleted once they are older than the number of days set. Off means they are kept until the access link expires.</p>' +
+    wrapTable('<table class="data-table settings-table"><thead><tr><th>Purpose</th><th>Auto-delete</th><th>After</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>') +
+    '<h2>Tenant deletion requests</h2>' +
+    '<div class="settings-row"><label class="switch"><input type="checkbox" id="tenantDeletionEnabled"' + (tenant.enabled ? ' checked' : '') + '> <span>Tenants can ask for a scan to be deleted from the app</span></label></div>' +
+    '<div class="settings-row"><label>Delete after <input type="number" min="' + graceLimits.min + '" max="' + graceLimits.max + '" step="1" class="days-input" id="tenantGraceDays" value="' + escapeHtml(String(tenant.grace_days)) + '"> days, unless the request is cancelled first</label></div>' +
+    '<div class="actions">' +
+      '<button id="saveSettingsBtn" class="primary" type="button">Save settings</button>' +
+      '<button id="runRetentionBtn" class="ghost" type="button">Run clean-up now</button>' +
+    '</div>' +
+    '<p id="settingsMessage" class="hidden"></p>';
+
+  container.querySelectorAll('input[type="checkbox"][data-retention-enabled]').forEach((box) => {
+    box.addEventListener('change', () => {
+      box.nextElementSibling.textContent = box.checked ? 'On' : 'Off';
+    });
+  });
+  container.querySelectorAll('[data-retention-reset]').forEach((btn) => {
+    btn.addEventListener('click', () => resetRetention(btn.getAttribute('data-retention-reset')));
+  });
+  $('#saveSettingsBtn').addEventListener('click', saveSettings);
+  $('#runRetentionBtn').addEventListener('click', runRetentionNow);
+}
+
+function settingsMessage(text, isError) {
+  const el = $('#settingsMessage');
+  if (!el) return;
+  el.textContent = text;
+  el.className = isError ? 'error' : 'muted';
+}
+
+function readWholeNumber(input, min, max, label) {
+  const value = Number(input.value);
+  if (!Number.isInteger(value) || value < min || value > max) {
+    input.focus();
+    throw new Error(label + ' must be a whole number from ' + min + ' to ' + max + '.');
+  }
+  return value;
+}
+
+async function postSettings(payload) {
+  const response = await api('/admin/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return response.json();
+}
+
+async function resetRetention(purpose) {
+  const retention = {};
+  retention[purpose] = null;
+  try {
+    renderSettings(await postSettings({ retention }));
+    settingsMessage('Back to the server config for that purpose.', false);
+  } catch (err) {
+    settingsMessage('Could not reset: ' + friendlyApiError(err), true);
+  }
+}
+
+async function saveSettings() {
+  const btn = $('#saveSettingsBtn');
+  let payload;
+  try {
+    const retention = {};
+    RETENTION_PURPOSES.forEach((p) => {
+      retention[p.value] = {
+        enabled: document.querySelector('[data-retention-enabled="' + p.value + '"]').checked,
+        days: readWholeNumber(document.querySelector('[data-retention-days="' + p.value + '"]'), settingsLimits.retention_days.min, settingsLimits.retention_days.max, p.label + ' days'),
+      };
+    });
+    payload = {
+      retention,
+      tenant_deletion: {
+        enabled: $('#tenantDeletionEnabled').checked,
+        grace_days: readWholeNumber($('#tenantGraceDays'), settingsLimits.tenant_grace_days.min, settingsLimits.tenant_grace_days.max, 'Tenant deletion days'),
+      },
+    };
+  } catch (err) {
+    settingsMessage(err.message, true);
+    return;
+  }
+  btn.disabled = true;
+  try {
+    renderSettings(await postSettings(payload));
+    settingsMessage('Settings saved.', false);
+    showToast('Settings saved');
+  } catch (err) {
+    settingsMessage('Could not save settings: ' + friendlyApiError(err), true);
+    btn.disabled = false;
+  }
+}
+
+async function runRetentionNow() {
+  if (!window.confirm('Delete every scan that is past its auto-delete date or tenant deletion date now? This cannot be undone.')) return;
+  const btn = $('#runRetentionBtn');
+  btn.disabled = true;
+  try {
+    const response = await api('/admin/run-retention', { method: 'POST' });
+    const data = await response.json();
+    settingsMessage('Clean-up finished: ' + data.purged + ' scan' + (data.purged === 1 ? '' : 's') + ' deleted.', false);
+  } catch (err) {
+    settingsMessage('Clean-up failed: ' + friendlyApiError(err), true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function showLoading(message, retry) {
   showView('loading');
   const container = $('#loadingState');
@@ -276,6 +437,7 @@ function routeFromUrl(fromHistory) {
   if (sessionId) openSession(sessionId, { fromHistory });
   else if (importId) openImport(importId, { fromHistory });
   else if (params.get('view') === 'imports') showImports({ fromHistory, push: false });
+  else if (params.get('view') === 'settings') showSettings({ fromHistory, push: false });
   else showSearch({ fromHistory, push: false });
 }
 
@@ -1051,6 +1213,7 @@ function init() {
       const target = btn.getAttribute('data-nav');
       if (target === 'search') showSearch();
       else if (target === 'imports') showImports();
+      else if (target === 'settings') showSettings();
     });
   });
   setupImportDropZone();

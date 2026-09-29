@@ -250,12 +250,14 @@ struct ScanServiceClient {
         let deletionRequestedAt: String
         let purgeAfter: String?
         let gracePeriodDays: Int
+        let requestsEnabled: Bool?
 
         enum CodingKeys: String, CodingKey {
             case requested
             case deletionRequestedAt = "deletion_requested_at"
             case purgeAfter = "purge_after"
             case gracePeriodDays = "grace_period_days"
+            case requestsEnabled = "requests_enabled"
         }
     }
 

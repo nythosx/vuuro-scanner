@@ -107,3 +107,15 @@ CREATE TABLE IF NOT EXISTS imported_scans (
 );
 CREATE INDEX IF NOT EXISTS idx_imported_scans_filters ON imported_scans(property_id, unit_id, organisation_id);
 CREATE INDEX IF NOT EXISTS idx_imported_scans_imported_at ON imported_scans(imported_at DESC);
+CREATE TABLE IF NOT EXISTS app_settings (
+    setting_key TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS app_settings_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    changed_at TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    before_json TEXT NOT NULL,
+    after_json TEXT NOT NULL
+);

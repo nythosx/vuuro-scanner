@@ -14,6 +14,7 @@ scan-service-net:
     - php tests/export_renderer_test.php
     - php tests/concurrency_test.php
     - php tests/room_split_test.php
+    - php tests/service_settings_test.php
     - php net/run_all.php
   after_script:
     - Get-Process | Where-Object { $_.ProcessName -eq 'php' } | ForEach-Object { Stop-Process -Id $_.Id -Force }

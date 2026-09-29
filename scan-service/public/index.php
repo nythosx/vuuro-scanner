@@ -54,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 $adminStaticPath = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-if (in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true) && $adminStaticPath !== false && $adminStaticPath !== '/admin/recent-identities' && ($adminStaticPath === '/admin' || str_starts_with($adminStaticPath, '/admin/'))) {
+if (in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true) && $adminStaticPath !== false && !in_array(rtrim((string) $adminStaticPath, '/'), ['/admin/recent-identities', '/admin/settings', '/admin/settings/history'], true) && ($adminStaticPath === '/admin' || str_starts_with($adminStaticPath, '/admin/'))) {
     $relative = $adminStaticPath === '/admin' ? 'index.html' : ltrim(substr($adminStaticPath, strlen('/admin/')), '/');
     if ($relative === '') {
         $relative = 'index.html';
@@ -479,18 +479,41 @@ function parseFloorPlanStyleFromQuery(): FloorPlanStyle
 }
 
 
-const TENANT_DELETION_GRACE_DAYS = 7;
-
-function deletionStatus(array $session): array
+function deletionStatus(array $session, \VuuroScan\ServiceSettings $settings): array
 {
     $requestedAt = (string) ($session['deletion_requested_at'] ?? '');
     $requestedTs = $requestedAt === '' ? false : strtotime($requestedAt);
+    $graceDays = $settings->tenantGraceDays();
     return [
         'requested' => $requestedAt !== '',
         'deletion_requested_at' => $requestedAt,
-        'purge_after' => $requestedTs === false ? '' : gmdate('c', $requestedTs + TENANT_DELETION_GRACE_DAYS * 86400),
-        'grace_period_days' => TENANT_DELETION_GRACE_DAYS,
+        'purge_after' => $requestedTs === false ? '' : gmdate('c', $requestedTs + $graceDays * 86400),
+        'grace_period_days' => $graceDays,
+        'requests_enabled' => $settings->tenantDeletionEnabled(),
     ];
+}
+
+function purgeExpiredSessions(ScanSessionRepository $repo, \VuuroScan\ServiceSettings $settings, int $limit): int
+{
+    $purged = 0;
+    foreach ($repo->findTenantDeletionCandidates($settings->tenantGraceDays(), $limit) as $tenantRequestedId) {
+        $repo->deleteSession($tenantRequestedId);
+        deleteSessionPhotoDir($tenantRequestedId);
+        $purged++;
+    }
+    foreach ($repo->findExpiredBeyondGracePeriod($limit) as $expiredId) {
+        $repo->deleteSession($expiredId);
+        deleteSessionPhotoDir($expiredId);
+        $purged++;
+    }
+    foreach ($settings->activeRetentionDays() as $purpose => $days) {
+        foreach ($repo->findEarlyPurgeCandidates($purpose, $days, $limit) as $expiredId) {
+            $repo->deleteSession($expiredId);
+            deleteSessionPhotoDir($expiredId);
+            $purged++;
+        }
+    }
+    return $purged;
 }
 
 const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload'];
@@ -563,6 +586,7 @@ function authorizeSession(ScanSessionRepository $repo, string $sessionId, string
 
 $db = Database::connect();
 $repo = new ScanSessionRepository($db);
+$settings = new \VuuroScan\ServiceSettings($db);
 
 $method = $_SERVER['REQUEST_METHOD'];
 $path = rtrim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
@@ -688,24 +712,7 @@ if ($method === 'POST' && $path === '/scan-sessions') {
     backupDatabaseIfDue($db);
 
     if ($repo->lastInsertRowId() % 10 === 0) {
-        foreach ($repo->findExpiredBeyondGracePeriod() as $expiredId) {
-            $repo->deleteSession($expiredId);
-            deleteSessionPhotoDir($expiredId);
-        }
-        foreach ($repo->findTenantDeletionCandidates(TENANT_DELETION_GRACE_DAYS, 20) as $tenantRequestedId) {
-            $repo->deleteSession($tenantRequestedId);
-            deleteSessionPhotoDir($tenantRequestedId);
-        }
-        foreach (['listing', 'check_in', 'check_out', 'renovation', 'other'] as $purposeToCheck) {
-            $retentionDaysRaw = getenv('SCAN_SERVICE_RETENTION_DAYS_' . strtoupper($purposeToCheck));
-            if ($retentionDaysRaw === false || !ctype_digit(trim((string) $retentionDaysRaw)) || (int) $retentionDaysRaw < 1) {
-                continue;
-            }
-            foreach ($repo->findEarlyPurgeCandidates($purposeToCheck, (int) $retentionDaysRaw) as $expiredId) {
-                $repo->deleteSession($expiredId);
-                deleteSessionPhotoDir($expiredId);
-            }
-        }
+        purgeExpiredSessions($repo, $settings, 20);
     }
     respond(201, [
         ...$session,
@@ -737,7 +744,11 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/request-deletion$
     if (rateLimited($repo, $session['id'] . ':request_deletion', 3, 3600)) {
         return;
     }
-    respond(200, deletionStatus($repo->requestDeletion($session['id'])));
+    if (!$settings->tenantDeletionEnabled()) {
+        respondError(403, 'tenant_deletion_disabled', 'Deletion requests are switched off for this Scan Service. Ask the property manager to delete this scan instead.');
+        return;
+    }
+    respond(200, deletionStatus($repo->requestDeletion($session['id']), $settings));
     return;
 }
 
@@ -746,7 +757,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/deletion-request$#
     if ($session === null) {
         return;
     }
-    respond(200, deletionStatus($session));
+    respond(200, deletionStatus($session, $settings));
     return;
 }
 
@@ -758,7 +769,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/cancel-deletion$#
     if (rateLimited($repo, $session['id'] . ':cancel_deletion', 5, 3600)) {
         return;
     }
-    respond(200, deletionStatus($repo->cancelDeletion($session['id'])));
+    respond(200, deletionStatus($repo->cancelDeletion($session['id']), $settings));
     return;
 }
 
@@ -2317,30 +2328,43 @@ if ($method === 'POST' && $path === '/admin/run-retention') {
         return;
     }
 
-    $purged = 0;
-    foreach ($repo->findTenantDeletionCandidates(TENANT_DELETION_GRACE_DAYS, 100) as $tenantRequestedId) {
-        $repo->deleteSession($tenantRequestedId);
-        deleteSessionPhotoDir($tenantRequestedId);
-        $purged++;
-    }
-    foreach ($repo->findExpiredBeyondGracePeriod(100) as $expiredId) {
-        $repo->deleteSession($expiredId);
-        deleteSessionPhotoDir($expiredId);
-        $purged++;
-    }
-    foreach (['listing', 'check_in', 'check_out', 'renovation', 'other'] as $purposeToCheck) {
-        $retentionDaysRaw = getenv('SCAN_SERVICE_RETENTION_DAYS_' . strtoupper($purposeToCheck));
-        if ($retentionDaysRaw === false || !ctype_digit(trim((string) $retentionDaysRaw)) || (int) $retentionDaysRaw < 1) {
-            continue;
-        }
-        foreach ($repo->findEarlyPurgeCandidates($purposeToCheck, (int) $retentionDaysRaw, 100) as $expiredId) {
-            $repo->deleteSession($expiredId);
-            deleteSessionPhotoDir($expiredId);
-            $purged++;
-        }
-    }
+    respond(200, ['purged' => purgeExpiredSessions($repo, $settings, 100)]);
+    return;
+}
 
-    respond(200, ['purged' => $purged]);
+if ($method === 'GET' && $path === '/admin/settings/history') {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:settings', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    respond(200, ['changes' => $settings->history()]);
+    return;
+}
+
+if (($method === 'GET' || $method === 'POST') && $path === '/admin/settings') {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:settings', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':admin_settings', 60, 300)) {
+        return;
+    }
+    if ($method === 'GET') {
+        respond(200, $settings->all());
+        return;
+    }
+    $body = json_body($rawRequestBody);
+    try {
+        respond(200, $settings->update($body, 'admin key ' . substr(hash('sha256', (string) ($_SERVER['HTTP_X_ADMIN_API_KEY'] ?? '')), 0, 8) . ' from ' . clientIp()));
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'invalid_settings', $e->getMessage());
+    }
     return;
 }
 
