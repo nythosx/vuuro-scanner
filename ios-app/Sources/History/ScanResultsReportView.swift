@@ -566,8 +566,12 @@ struct ScanResultsReportView: View {
         var id: String { room.roomId }
     }
 
+    @MainActor
     private func roomCard(_ room: FloorPlan.Room, floorPlan: FloorPlan) -> RoomResultCard {
-        let undo: (() -> Void)? = floorPlan.lastSplitRoomIds.contains(room.roomId) ? startUndoSplit : nil
+        var undo: (() -> Void)? = nil
+        if floorPlan.lastSplitRoomIds.contains(room.roomId) {
+            undo = { startUndoSplit() }
+        }
         return RoomResultCard(
             room: room,
             showsRibbon: false,
