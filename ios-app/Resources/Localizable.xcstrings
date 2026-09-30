@@ -2881,6 +2881,54 @@
                 }
             }
         },
+        "Separate plans": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Separate plans"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Losse plattegronden"
+                    }
+                }
+            }
+        },
+        "One plan per floor, and each room on its own.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "One plan per floor, and each room on its own."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Eén plattegrond per verdieping, en elke ruimte apart."
+                    }
+                }
+            }
+        },
+        "Whole floor · %d rooms": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Whole floor · %d rooms"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Hele verdieping · %d ruimtes"
+                    }
+                }
+            }
+        },
         "Clear search": {
             "localizations": {
                 "en": {

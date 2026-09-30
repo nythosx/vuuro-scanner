@@ -25,6 +25,7 @@ struct ResultSummaryView: View {
     @State private var updatingRoomTypeIds: Set<String> = []
     @State private var splitTarget: SplitTarget?
     @State private var isUndoingSplit = false
+    @State private var loadingPlanTarget: PlanTarget?
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
     @State private var exportStyle: ExportStyleSettings = ExportStyleSettings.load()
     @State private var savedExportStyle: ExportStyleSettings = ExportStyleSettings.load()
@@ -78,6 +79,7 @@ struct ResultSummaryView: View {
                     }
                     if !currentFloorPlan.rooms.isEmpty {
                         floorPlanCard
+                        separatePlans
                         ExportStyleSection(style: $exportStyle)
                     }
                     ForEach(RoomFloorSection.sections(for: currentFloorPlan.rooms)) { section in
@@ -715,6 +717,42 @@ struct ResultSummaryView: View {
         floorPlanImage = nil
         imageFailed = false
         pdfURL = nil
+    }
+
+    @ViewBuilder
+    private var separatePlans: some View {
+        if currentFloorPlan.rooms.count > 1 {
+            SeparatePlansSection(
+                rooms: currentFloorPlan.rooms,
+                loadingTarget: loadingPlanTarget,
+                onOpen: { target in
+                    Task { await openPlan(target) }
+                }
+            )
+        }
+    }
+
+    @MainActor
+    private func openPlan(_ target: PlanTarget) async {
+        guard loadingPlanTarget == nil else { return }
+        loadingPlanTarget = target
+        defer { loadingPlanTarget = nil }
+        do {
+            let data = try await client.fetchFloorPlanImage(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                unit: exportUnit,
+                roomId: target.roomId,
+                floor: target.floor
+            )
+            guard let decoded = UIImage(data: data) else {
+                throw PlainError(message: "The floor plan image came back from the Scan Service but could not be decoded.")
+            }
+            previewImage = PreviewImage(image: decoded)
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .historyImageDownload, underlying: error)
+        }
     }
 
     @MainActor

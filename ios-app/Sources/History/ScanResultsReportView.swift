@@ -38,6 +38,7 @@ struct ScanResultsReportView: View {
     @State private var updatingRoomTypeIds: Set<String> = []
     @State private var splitTarget: SplitTarget?
     @State private var isUndoingSplit = false
+    @State private var loadingPlanTarget: PlanTarget?
     @State private var previewImage: PreviewImage?
     @State private var showContinueChoices = false
     @State private var showContinueNewFloor = false
@@ -488,6 +489,7 @@ struct ScanResultsReportView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 12)
         } else {
+            separatePlans(floorPlan)
             ForEach(RoomFloorSection.sections(for: floorPlan.rooms)) { section in
                 if let title = section.title {
                     RoomFloorSectionHeader(title: title)
@@ -965,6 +967,42 @@ struct ScanResultsReportView: View {
             return
         }
         floorPlanImage = image
+    }
+
+    @ViewBuilder
+    private func separatePlans(_ floorPlan: FloorPlan) -> some View {
+        if floorPlan.rooms.count > 1 {
+            SeparatePlansSection(
+                rooms: floorPlan.rooms,
+                loadingTarget: loadingPlanTarget,
+                onOpen: { target in
+                    Task { await openPlan(target) }
+                }
+            )
+        }
+    }
+
+    @MainActor
+    private func openPlan(_ target: PlanTarget) async {
+        guard loadingPlanTarget == nil else { return }
+        loadingPlanTarget = target
+        defer { loadingPlanTarget = nil }
+        do {
+            let data = try await client.fetchFloorPlanImage(
+                sessionId: entry.sessionId,
+                accessToken: entry.accessToken,
+                unit: exportUnit,
+                roomId: target.roomId,
+                floor: target.floor
+            )
+            guard let decoded = UIImage(data: data) else {
+                throw PlainError(message: "The floor plan image came back from the Scan Service but could not be decoded.")
+            }
+            previewImage = PreviewImage(image: decoded)
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .historyImageDownload, underlying: error)
+        }
     }
 
     @MainActor

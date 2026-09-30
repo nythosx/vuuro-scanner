@@ -70,7 +70,7 @@ struct MultiRoomCaptureFlowView: View {
                         .frame(maxWidth: 300)
                     Button("Scan (fake data)") {
                         uploadTask = Task {
-                            let exports = (0..<Int.random(in: 2...4)).map { _ in FakeCaptureGenerator.random() }
+                            let exports = FakeCaptureGenerator.unit(roomCount: Int.random(in: 3...7))
                             if let result = await submitExports(exports) {
                                 onFinished(result.session, result.floorPlan)
                             }

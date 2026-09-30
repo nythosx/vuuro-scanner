@@ -13,9 +13,9 @@ final class FakeCaptureTests: XCTestCase {
             let floors = try XCTUnwrap(body["floors"] as? [[String: Any]])
             XCTAssertEqual(floors.count, 1)
             let corners = try XCTUnwrap(floors[0]["polygonCorners"] as? [[Double]])
-            XCTAssertEqual(corners.count, 4)
+            XCTAssertTrue([4, 6].contains(corners.count))
             let walls = try XCTUnwrap(body["walls"] as? [[String: Any]])
-            XCTAssertTrue((3...4).contains(walls.count))
+            XCTAssertEqual(walls.count, corners.count)
             for corner in corners {
                 XCTAssertEqual(corner.count, 3)
                 XCTAssertTrue(corner.allSatisfy { $0.isFinite && $0 >= 0 })
@@ -23,8 +23,16 @@ final class FakeCaptureTests: XCTestCase {
         }
     }
 
+    func testFakeUnitRoomsShareOneLayout() throws {
+        for count in 2...8 {
+            let exports = FakeCaptureGenerator.unit(roomCount: count)
+            XCTAssertEqual(exports.count, count)
+            XCTAssertTrue(exports.allSatisfy { $0.structureOriginM?.count == 2 && $0.hasUsableFloorOutline })
+        }
+    }
+
     func testFakeMultiRoomCapturesHaveDistinctSurfaces() throws {
-        let exports = (0..<4).map { _ in FakeCaptureGenerator.random() }
+        let exports = FakeCaptureGenerator.unit(roomCount: 5)
         var identifiers = Set<String>()
         for export in exports {
             let body = try json(export)

@@ -326,9 +326,9 @@ struct ScanServiceClient {
         return data
     }
 
-    func fetchFloorPlanImage(sessionId: String, accessToken: String, unit: MeasurementUnit = .metric, label: String? = nil, style: ExportStyleSettings? = nil) async throws -> Data {
+    func fetchFloorPlanImage(sessionId: String, accessToken: String, unit: MeasurementUnit = .metric, label: String? = nil, style: ExportStyleSettings? = nil, roomId: String? = nil, floor: String? = nil) async throws -> Data {
         let resolved = style ?? ExportStyleSettings.load()
-        return try await getData(path: "/scan-sessions/\(sessionId)/export/floorplan.png\(exportQuery(unit: unit, label: label, style: resolved))", accessToken: accessToken)
+        return try await getData(path: "/scan-sessions/\(sessionId)/export/floorplan.png\(exportQuery(unit: unit, label: label, style: resolved, roomId: roomId, floor: floor))", accessToken: accessToken)
     }
 
     func fetchFloorPlanPDF(sessionId: String, accessToken: String, unit: MeasurementUnit = .metric, label: String? = nil, style: ExportStyleSettings? = nil) async throws -> Data {
@@ -336,10 +336,16 @@ struct ScanServiceClient {
         return try await getData(path: "/scan-sessions/\(sessionId)/export/floorplan.pdf\(exportQuery(unit: unit, label: label, style: resolved))", accessToken: accessToken)
     }
 
-    private func exportQuery(unit: MeasurementUnit, label: String?, style: ExportStyleSettings) -> String {
+    private func exportQuery(unit: MeasurementUnit, label: String?, style: ExportStyleSettings, roomId: String? = nil, floor: String? = nil) -> String {
         var items = [URLQueryItem(name: "unit", value: unit.rawValue)]
         if let label, !label.isEmpty {
             items.append(URLQueryItem(name: "label", value: label))
+        }
+        if let roomId {
+            items.append(URLQueryItem(name: "room_id", value: roomId))
+        }
+        if let floor {
+            items.append(URLQueryItem(name: "floor", value: floor))
         }
         items.append(contentsOf: style.queryItems)
         var components = URLComponents()

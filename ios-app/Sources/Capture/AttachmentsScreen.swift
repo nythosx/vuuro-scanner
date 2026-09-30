@@ -636,7 +636,8 @@ private struct AttachmentRoomCard: View {
         isUploadingPhoto = true
         defer { isUploadingPhoto = false }
         do {
-            guard let data = try await item.loadTransferable(type: Data.self) else {
+            guard let raw = try await item.loadTransferable(type: Data.self),
+                  let data = PhotoUploadImage.jpegData(from: raw) else {
                 throw PlainError(message: "Couldn't read the selected photo.")
             }
             if data.count > 25 * 1024 * 1024 {
@@ -1297,7 +1298,8 @@ private struct SessionAttachmentEditor: View {
         isUploadingPhoto = true
         defer { isUploadingPhoto = false }
         do {
-            guard let data = try await item.loadTransferable(type: Data.self) else {
+            guard let raw = try await item.loadTransferable(type: Data.self),
+                  let data = PhotoUploadImage.jpegData(from: raw) else {
                 throw PlainError(message: "Couldn't read the selected photo.")
             }
             if data.count > 25 * 1024 * 1024 {

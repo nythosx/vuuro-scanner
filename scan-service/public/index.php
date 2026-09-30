@@ -1237,11 +1237,12 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#',
     $file = $_FILES['photo'];
     if ($file['error'] !== UPLOAD_ERR_OK) {
         $tooLarge = in_array($file['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true);
-        $repo->logAccess($sessionId, 'upload_photo', $tooLarge ? 'rejected_too_large' : 'rejected_upload_error');
+        $repo->logAccess($sessionId, 'upload_photo', $tooLarge ? 'rejected_too_large' : 'rejected_upload_error_' . (int) $file['error']);
         respondError(
             422,
             $tooLarge ? 'photo_too_large' : 'photo_upload_failed',
-            $tooLarge ? 'The uploaded photo is too large.' : 'The photo upload failed — please try again.'
+            $tooLarge ? 'The uploaded photo is too large.' : 'The photo upload failed — please try again.',
+            ['upload_error_code' => (int) $file['error']]
         );
         return;
     }
@@ -1727,10 +1728,22 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
         return;
     }
+    if (isset($_GET['floor'])) {
+        $wantedFloor = mb_strtolower(trim((string) $_GET['floor']), 'UTF-8');
+        $floorRooms = array_values(array_filter(
+            $floorPlan['rooms'],
+            static fn (array $room) => mb_strtolower(trim((string) ($room['floor'] ?? '')), 'UTF-8') === $wantedFloor
+        ));
+        if ($floorRooms === []) {
+            respondError(404, 'no_rooms_on_floor', 'This scan has no rooms on that floor.');
+            return;
+        }
+        $floorPlan = [...$floorPlan, 'rooms' => $floorRooms];
+    }
     $planStyle = parseFloorPlanStyleFromQuery($settings->planStyleFor((string) $session['purpose']) === 'full' ? 'default' : 'funda');
 
     try {
-        $png = (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $planStyle);
+        $png =(new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $planStyle);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;
