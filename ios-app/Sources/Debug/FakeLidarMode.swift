@@ -5,16 +5,12 @@ import Foundation
 
 enum FakeLidarMode {
     static var isEnabled: Bool {
-        if let raw = ProcessInfo.processInfo.environment["FAKE_LIDAR_MODE"] {
+        if let raw = ProcessInfo.processInfo.environment["FAKE_LIDAR_MODE"] ?? UserDefaults.standard.string(forKey: "FAKE_LIDAR_MODE") {
             return raw == "1" || raw.lowercased() == "true"
         }
         return fallback
     }
 
-    #if targetEnvironment(simulator)
-    private static let fallback = true
-    #else
     private static let fallback = false
-    #endif
 }
 #endif
