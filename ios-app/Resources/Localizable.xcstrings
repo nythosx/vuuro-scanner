@@ -2897,18 +2897,18 @@
                 }
             }
         },
-        "One plan per floor, and each room on its own.": {
+        "One plan for each floor.": {
             "localizations": {
                 "en": {
                     "stringUnit": {
                         "state": "translated",
-                        "value": "One plan per floor, and each room on its own."
+                        "value": "One plan for each floor."
                     }
                 },
                 "nl": {
                     "stringUnit": {
                         "state": "translated",
-                        "value": "Eén plattegrond per verdieping, en elke ruimte apart."
+                        "value": "Eén plattegrond per verdieping."
                     }
                 }
             }
@@ -2925,6 +2925,22 @@
                     "stringUnit": {
                         "state": "translated",
                         "value": "Hele verdieping · %d ruimtes"
+                    }
+                }
+            }
+        },
+        "Rooms": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Rooms"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ruimtes"
                     }
                 }
             }

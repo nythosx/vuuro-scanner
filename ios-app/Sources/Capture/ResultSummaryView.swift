@@ -464,6 +464,16 @@ struct ResultSummaryView: View {
             }
             .accessibilityIdentifier("result.floorPlanPreview")
 
+            if currentFloorPlan.rooms.count > 1 {
+                RoomPlanStrip(
+                    rooms: currentFloorPlan.rooms,
+                    sessionId: session.id,
+                    accessToken: session.accessToken,
+                    unit: exportUnit,
+                    onOpen: { image in previewImage = PreviewImage(image: image) }
+                )
+            }
+
             HStack(spacing: 8) {
                 Button {
                     Task { await fetchAndPreviewImage() }
@@ -721,7 +731,7 @@ struct ResultSummaryView: View {
 
     @ViewBuilder
     private var separatePlans: some View {
-        if currentFloorPlan.rooms.count > 1 {
+        if SeparatePlansSection.hasSeveralFloors(currentFloorPlan.rooms) {
             SeparatePlansSection(
                 rooms: currentFloorPlan.rooms,
                 loadingTarget: loadingPlanTarget,

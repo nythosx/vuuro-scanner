@@ -316,7 +316,8 @@ final class FloorPlanImageRenderer
             $this->drawText($image, 2, self::MARGIN, 60, sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms)), $subtext);
         }
 
-        $x = self::MARGIN;
+        $tilesContentWidth = array_sum(array_column($tiles, 'width')) + self::TILE_GAP * (count($tiles) - 1);
+        $x = max(self::MARGIN, (int) round((imagesx($image) - $tilesContentWidth) / 2));
         $y = self::MARGIN + self::LABEL_HEIGHT;
         foreach ($rooms as $i => $room) {
             $tile = $tiles[$i];
@@ -731,7 +732,9 @@ final class FloorPlanImageRenderer
             $this->drawText($image, 2, self::MARGIN, $headerLineY, sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms)), $subtext);
         }
 
-        $originPxX = self::MARGIN + self::DIMENSION_GUTTER;
+        $planBlockWidth = self::DIMENSION_GUTTER + (int) round(($maxX - $minX) * self::PIXELS_PER_METER);
+        $planLeft = max(self::MARGIN, (int) round((imagesx($image) - $planBlockWidth) / 2));
+        $originPxX = $planLeft + self::DIMENSION_GUTTER;
         $originPxY = self::MARGIN + $topGutter;
         $toPx = function (float $worldX, float $worldZ) use ($minX, $minZ, $originPxX, $originPxY): array {
             return [
@@ -743,7 +746,7 @@ final class FloorPlanImageRenderer
         $xBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 0);
         $this->drawHorizontalDimensionChain($image, $xBreakpoints, $dimensionLineY, $toPx, $unit, $dimColor);
         $zBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 1);
-        $this->drawVerticalDimensionChain($image, $zBreakpoints, self::MARGIN + 14, $toPx, $unit, $dimColor);
+        $this->drawVerticalDimensionChain($image, $zBreakpoints, $planLeft + 14, $toPx, $unit, $dimColor);
 
         $edgeTiers = $fusion['edgeTiers'];
         $objectLabelDraws = [];

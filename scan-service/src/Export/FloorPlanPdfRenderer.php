@@ -18,6 +18,7 @@ final class FloorPlanPdfRenderer
     private const MAX_EMBEDDED_IMAGE_DIMENSION_PX = 1600;
 
     private const IMAGE_PAGE_MARGIN = 36;
+    private const MAX_ROOM_PAGES = 40;
 
 
     private const STYLE_FONTS = [
@@ -60,10 +61,11 @@ final class FloorPlanPdfRenderer
             }
             $floorPlan = [...$floorPlan, 'rooms' => $rooms];
         }
-        $lines = $this->buildTextLines($floorPlan, $layout, $unit, $label, $planStyle);
-        $textPages = $this->paginate($lines);
-
         $imagePages = $this->buildImagePages($floorPlan, $layout, $roomId, $unit, $label, $photoLoader, $planStyle);
+        $headerPrinted = $imagePages !== [] && $imagePages[0]['header'] !== [];
+
+        $lines = $this->buildTextLines($floorPlan, $layout, $unit, $label, $planStyle, $headerPrinted);
+        $textPages = $this->paginate($lines);
 
         if (count($textPages) + count($imagePages) > self::MAX_PAGES) {
             throw new \InvalidArgumentException(sprintf(
@@ -141,6 +143,7 @@ final class FloorPlanPdfRenderer
                 $drawings[] = [[...$floorPlan, 'rooms' => $planGroups[$groupIndex]['rooms']], 'Floor plan drawing - ' . $heading];
             }
         }
+        $planStyle = $style instanceof FloorPlanStyle ? $style : FloorPlanStyle::from($style ?? 'default');
         foreach ($drawings as [$drawingPlan, $drawingCaption]) {
             try {
                 $floorPlanPng = (new FloorPlanImageRenderer())->render($drawingPlan, $layout, $roomId, $unit, $label, $style);
@@ -151,9 +154,36 @@ final class FloorPlanPdfRenderer
                         $floorPlan['scan_session_id'] ?? 'unknown'
                     ));
                 } else {
-                    $pages[] = $this->layoutImagePage($normalized, [['text' => $drawingCaption, 'style' => 'captionBold']]);
+                    $pages[] = $this->layoutImagePage(
+                        $normalized,
+                        [['text' => $drawingCaption, 'style' => 'captionBold']],
+                        $pages === [] ? $this->headerLines($floorPlan, $label) : [],
+                        $this->drawingDescription($drawingPlan['rooms'], $unit)
+                    );
                 }
             } catch (\Throwable) {
+            }
+        }
+
+        $roomCount = count($floorPlan['rooms']);
+        if ($pages !== [] && $roomId === null && $roomCount > 1 && $roomCount <= self::MAX_ROOM_PAGES) {
+            $floorNames = array_unique(array_map(static fn (array $room) => mb_strtolower(trim((string) ($room['floor'] ?? '')), 'UTF-8'), $floorPlan['rooms']));
+            foreach ($floorPlan['rooms'] as $room) {
+                try {
+                    $roomPng = (new FloorPlanImageRenderer())->render($floorPlan, 'auto', $room['room_id'], $unit, null, $style);
+                    $normalized = $this->toEmbeddableJpeg($roomPng);
+                } catch (\Throwable) {
+                    $normalized = null;
+                }
+                if ($normalized === null) {
+                    continue;
+                }
+                $pages[] = $this->layoutImagePage(
+                    $normalized,
+                    [],
+                    $this->roomHeaderLines($room, count($floorNames) > 1),
+                    $this->roomDescriptionLines($room, $floorPlan, $unit, $planStyle)
+                );
             }
         }
 
@@ -184,15 +214,25 @@ final class FloorPlanPdfRenderer
     }
 
 
-    private function layoutImagePage(array $normalized, array $caption): array
+    private function layoutImagePage(array $normalized, array $caption, array $header = [], array $description = []): array
     {
-        $captionHeight = count($caption) * self::LINE_HEIGHT;
-        $captionGap = $caption !== [] ? 10 : 0;
+        $below = $caption;
+        if ($caption !== [] && $description !== []) {
+            $below[] = ['text' => '', 'style' => 'body'];
+        }
+        $maxBelowLines = 18;
+        $description = array_slice($description, 0, max(0, $maxBelowLines - count($below)));
+        $below = [...$below, ...$description];
+        $belowHeight = $below !== [] ? count($below) * self::LINE_HEIGHT + 4 : 0;
 
         $pageWidth = self::PAGE_WIDTH;
         $pageHeight = self::PAGE_HEIGHT;
+        $top = $header !== []
+            ? self::PAGE_TOP_Y - (count($header) - 1) * self::LINE_HEIGHT - 18
+            : $pageHeight - self::IMAGE_PAGE_MARGIN;
+        $bottom = self::IMAGE_PAGE_MARGIN + 10;
         $maxDrawWidth = $pageWidth - 2 * self::IMAGE_PAGE_MARGIN;
-        $maxDrawHeight = $pageHeight - 2 * self::IMAGE_PAGE_MARGIN - $captionHeight - $captionGap;
+        $maxDrawHeight = max(120, $top - $bottom - $belowHeight);
 
         $aspect = $normalized['width'] / max($normalized['height'], 1);
         $drawWidth = $maxDrawWidth;
@@ -201,19 +241,127 @@ final class FloorPlanPdfRenderer
             $drawHeight = $maxDrawHeight;
             $drawWidth = $drawHeight * $aspect;
         }
-        $offsetY = max(0, ($maxDrawHeight - $drawHeight) / 2);
-        $offsetX = max(0, ($maxDrawWidth - $drawWidth) / 2);
+        $imageX = self::IMAGE_PAGE_MARGIN + max(0, ($maxDrawWidth - $drawWidth) / 2);
+        $imageY = $header !== []
+            ? $top - $drawHeight
+            : $bottom + $belowHeight + max(0, ($maxDrawHeight - $drawHeight) / 2);
 
         return [
             ...$normalized,
-            'caption' => $caption,
+            'header' => $header,
+            'below' => $below,
             'drawWidth' => $drawWidth,
             'drawHeight' => $drawHeight,
-            'offsetY' => $offsetY,
-            'offsetX' => $offsetX,
+            'imageX' => $imageX,
+            'imageY' => $imageY,
             'pageWidth' => $pageWidth,
             'pageHeight' => $pageHeight,
         ];
+    }
+
+    private function headerLines(array $floorPlan, ?string $label): array
+    {
+        $lines = [['text' => 'Vuuro Scan - Floor Plan', 'style' => 'title']];
+        if ($label !== null && $label !== '') {
+            $lines[] = ['text' => $label, 'style' => 'label'];
+        }
+        $lines[] = ['text' => sprintf('Property: %s   Unit: %s   Organisation: %s', $floorPlan['property_id'], $floorPlan['unit_id'], $floorPlan['organisation_id']), 'style' => 'body'];
+        $lines[] = ['text' => sprintf('Purpose: %s   Captured: %s', self::purposeLabel($floorPlan['purpose']), self::formatCapturedDate($floorPlan['captured_at'])), 'style' => 'body'];
+        $lines[] = [
+            'text' => $floorPlan['measurement_basis'] === 'indicative_nen2580_inspired'
+                ? 'Indicative, NEN2580-inspired measurements. This is NOT a certified survey.'
+                : 'Measurement basis: ' . $floorPlan['measurement_basis'],
+            'style' => 'italic',
+        ];
+        return $lines;
+    }
+
+    private function drawingDescription(array $rooms, string $unit): array
+    {
+        $total = array_sum(array_column($rooms, 'floor_area_m2'));
+        $lines = [[
+            'text' => sprintf('%d room(s)  -  total indicative area %s', count($rooms), UnitFormatter::area($total, $unit)),
+            'style' => 'body',
+        ]];
+        $shown = array_slice($rooms, 0, 12);
+        foreach ($shown as $room) {
+            $lines[] = [
+                'text' => sprintf('%s  -  %s', RoomType::displayLabelForRoom($room), UnitFormatter::area((float) $room['floor_area_m2'], $unit)),
+                'style' => 'sub',
+            ];
+        }
+        if (count($rooms) > count($shown)) {
+            $lines[] = ['text' => sprintf('+ %d more room(s), each on its own page', count($rooms) - count($shown)), 'style' => 'sub'];
+        }
+        return $lines;
+    }
+
+    private function roomHeaderLines(array $room, bool $showFloor): array
+    {
+        $lines = [['text' => RoomType::displayLabelForRoom($room), 'style' => 'title']];
+        $floor = trim((string) ($room['floor'] ?? ''));
+        if ($showFloor && $floor !== '') {
+            $lines[] = ['text' => 'Floor: ' . $floor, 'style' => 'body'];
+        }
+        return $lines;
+    }
+
+    private function roomDescriptionLines(array $room, array $floorPlan, string $unit, FloorPlanStyle $planStyle): array
+    {
+        $lines = [];
+        $width = $room['bounding_dimensions_m']['width_m'] ?? null;
+        $length = $room['bounding_dimensions_m']['length_m'] ?? null;
+        $size = ($width !== null && $length !== null)
+            ? sprintf('   Size: %s x %s', UnitFormatter::length((float) $width, $unit), UnitFormatter::length((float) $length, $unit))
+            : '';
+        $lines[] = ['text' => sprintf('Area: %s   Perimeter: %s%s', UnitFormatter::area((float) $room['floor_area_m2'], $unit), UnitFormatter::length((float) $room['perimeter_m'], $unit), $size), 'style' => 'body'];
+        $heightM = $room['height_m'] ?? null;
+        $volumeM3 = $room['volume_m3_indicative'] ?? null;
+        if ($heightM !== null) {
+            $lines[] = ['text' => $volumeM3 !== null
+                ? sprintf('Height: %s   Indicative capacity: %s', UnitFormatter::length((float) $heightM, $unit), UnitFormatter::volume((float) $volumeM3, $unit))
+                : sprintf('Height: %s', UnitFormatter::length((float) $heightM, $unit)), 'style' => 'sub'];
+        }
+        $openingCounts = [];
+        foreach ($room['openings'] ?? [] as $opening) {
+            $openingCounts[$opening['category']] = ($openingCounts[$opening['category']] ?? 0) + 1;
+        }
+        if ($openingCounts !== []) {
+            $lines[] = ['text' => 'Openings: ' . implode(', ', array_map(
+                static fn (string $category, int $count) => "{$count} {$category}" . ($count === 1 ? '' : 's'),
+                array_keys($openingCounts),
+                array_values($openingCounts)
+            )), 'style' => 'sub'];
+        }
+        $objectCounts = [];
+        foreach ($room['objects'] ?? [] as $object) {
+            $objectCounts[$object['category']] = ($objectCounts[$object['category']] ?? 0) + 1;
+        }
+        if ($objectCounts !== []) {
+            $lines[] = ['text' => 'Detected objects: ' . implode(', ', array_map(
+                static fn (string $category, int $count) => "{$count} {$category}",
+                array_keys($objectCounts),
+                array_values($objectCounts)
+            )), 'style' => 'sub'];
+        }
+        $lines[] = ['text' => 'Confidence: ' . $room['confidence'], 'style' => 'sub'];
+        if ($planStyle->showNotes) {
+            foreach ($floorPlan['notes'] ?? [] as $note) {
+                if (($note['room_id'] ?? null) !== $room['room_id']) {
+                    continue;
+                }
+                $tags = is_array($note['tags'] ?? null) ? $note['tags'] : [];
+                $prefix = in_array('missing_item', $tags, true) ? 'Missing item: ' : 'Note: ';
+                foreach ($this->wrapTextLines($prefix . $note['text'], 95) as $wrapped) {
+                    $lines[] = ['text' => $wrapped, 'style' => 'sub'];
+                }
+            }
+        }
+        $photoCount = count(array_filter($floorPlan['photos'] ?? [], static fn (array $photo) => ($photo['room_id'] ?? null) === $room['room_id']));
+        if ($photoCount > 0) {
+            $lines[] = ['text' => sprintf('Photos: %d (on the photo pages)', $photoCount), 'style' => 'sub'];
+        }
+        return $lines;
     }
 
 
@@ -294,26 +442,18 @@ final class FloorPlanPdfRenderer
 
     private function buildImagePageContentStream(array $imagePage, int $imgObjNum): string
     {
-        $captionHeight = count($imagePage['caption']) * self::LINE_HEIGHT;
-        $captionGap = $imagePage['caption'] !== [] ? 10 : 0;
         $drawWidth = $imagePage['drawWidth'];
         $drawHeight = $imagePage['drawHeight'];
+        $x = $imagePage['imageX'];
+        $y = $imagePage['imageY'];
 
-        $offsetY = $imagePage['offsetY'] ?? 0;
-
-        $x = self::IMAGE_PAGE_MARGIN + ($imagePage['offsetX'] ?? 0);
-        $y = self::IMAGE_PAGE_MARGIN + $offsetY + $captionHeight + $captionGap;
-
-        $stream = "q\n{$drawWidth} 0 0 {$drawHeight} {$x} {$y} cm\n/Im{$imgObjNum} Do\nQ\n";
-
-        $capY = self::IMAGE_PAGE_MARGIN + $offsetY + $captionHeight;
-        foreach ($imagePage['caption'] as $line) {
-            [$font, $size] = self::STYLE_FONTS[$line['style']];
-            $color = self::STYLE_COLORS[$line['style']] ?? self::INK;
-            $ascii = $this->toWinAnsi($line['text']);
-            $escaped = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $ascii);
-            $stream .= 'q' . "\n" . $this->rgOp($color) . "\nBT\n/{$font} {$size} Tf\n1 0 0 1 {$x} {$capY} Tm\n({$escaped}) Tj\nET\nQ\n";
-            $capY -= self::LINE_HEIGHT;
+        $stream = '';
+        if ($imagePage['header'] !== []) {
+            $stream .= $this->textLinesStream($imagePage['header'], self::PAGE_MARGIN_X, self::PAGE_TOP_Y) . "\n";
+        }
+        $stream .= "q\n{$drawWidth} 0 0 {$drawHeight} {$x} {$y} cm\n/Im{$imgObjNum} Do\nQ\n";
+        if ($imagePage['below'] !== []) {
+            $stream .= $this->textLinesStream($imagePage['below'], $x, $y - 14);
         }
 
         return rtrim($stream);
@@ -328,7 +468,7 @@ final class FloorPlanPdfRenderer
     }
 
 
-    private function buildTextLines(array $floorPlan, string $layout = 'auto', string $unit = UnitFormatter::METRIC, ?string $label = null, ?FloorPlanStyle $planStyle = null): array
+    private function buildTextLines(array $floorPlan, string $layout = 'auto', string $unit = UnitFormatter::METRIC, ?string $label = null, ?FloorPlanStyle $planStyle = null, bool $headerPrinted = false): array
     {
         $planStyle ??= FloorPlanStyle::from('default');
         $lines = [];
@@ -336,21 +476,26 @@ final class FloorPlanPdfRenderer
             $lines[] = [...['text' => $text, 'style' => $style], ...$extra];
         };
 
-        $add('Vuuro Scan - Floor Plan Metrics', 'title');
-        if ($label !== null && $label !== '') {
-            $add($label, 'label');
+        if ($headerPrinted) {
+            $add('Floor Plan Metrics', 'title');
+            $add('');
+        } else {
+            $add('Vuuro Scan - Floor Plan Metrics', 'title');
+            if ($label !== null && $label !== '') {
+                $add($label, 'label');
+            }
+            $add('');
+            $add(sprintf('Property: %s   Unit: %s   Organisation: %s', $floorPlan['property_id'], $floorPlan['unit_id'], $floorPlan['organisation_id']));
+            $add(sprintf('Purpose: %s   Captured: %s', self::purposeLabel($floorPlan['purpose']), self::formatCapturedDate($floorPlan['captured_at'])));
+            $add('');
+            $add(
+                $floorPlan['measurement_basis'] === 'indicative_nen2580_inspired'
+                    ? 'Indicative, NEN2580-inspired measurements. This is NOT a certified survey.'
+                    : 'Measurement basis: ' . $floorPlan['measurement_basis'],
+                'italic'
+            );
+            $add('');
         }
-        $add('');
-        $add(sprintf('Property: %s   Unit: %s   Organisation: %s', $floorPlan['property_id'], $floorPlan['unit_id'], $floorPlan['organisation_id']));
-        $add(sprintf('Purpose: %s   Captured: %s', self::purposeLabel($floorPlan['purpose']), self::formatCapturedDate($floorPlan['captured_at'])));
-        $add('');
-        $add(
-            $floorPlan['measurement_basis'] === 'indicative_nen2580_inspired'
-                ? 'Indicative, NEN2580-inspired measurements. This is NOT a certified survey.'
-                : 'Measurement basis: ' . $floorPlan['measurement_basis'],
-            'italic'
-        );
-        $add('');
         $roomGroups = $layout !== 'tiles' ? FloorGroups::split($floorPlan['rooms']) : [['floor' => null, 'rooms' => $floorPlan['rooms']]];
         $overlapHeadings = [];
         $groupHeadings = FloorGroups::headings($roomGroups);
@@ -521,18 +666,23 @@ final class FloorPlanPdfRenderer
 
     private function buildContentStream(array $lines): string
     {
+        return $this->textLinesStream($lines, self::PAGE_MARGIN_X, self::PAGE_TOP_Y);
+    }
+
+    private function textLinesStream(array $lines, float $x, float $startY): string
+    {
         $stream = '';
-        $y = self::PAGE_TOP_Y;
+        $y = $startY;
         foreach ($lines as $line) {
             if ($line['style'] === 'warning') {
                 $stream .= "q\n" . $this->rgOp([250, 214, 212]) . "\n0 " . ($y - 4) . ' ' . self::PAGE_WIDTH . ' ' . self::LINE_HEIGHT . " re\nf\nQ\n";
             }
             if ($line['style'] === 'section') {
-                $stream .= "q\n" . $this->rgOp(self::ACCENT) . "\n" . self::PAGE_MARGIN_X . ' ' . ($y - 4) . ' 24 2 re' . "\nf\nQ\n";
+                $stream .= "q\n" . $this->rgOp(self::ACCENT) . "\n" . $x . ' ' . ($y - 4) . ' 24 2 re' . "\nf\nQ\n";
             }
             if (isset($line['bullet'])) {
-                $stream .= "q\n" . $this->rgOp($line['bullet']) . "\n" . (self::PAGE_MARGIN_X - 14) . ' ' . ($y - 1) . " 8 8 re\nf\n"
-                    . $this->rgOp(self::BORDER) . "\n1 w\n" . (self::PAGE_MARGIN_X - 14) . ' ' . ($y - 1) . " 8 8 re\nS\nQ\n";
+                $stream .= "q\n" . $this->rgOp($line['bullet']) . "\n" . ($x - 14) . ' ' . ($y - 1) . " 8 8 re\nf\n"
+                    . $this->rgOp(self::BORDER) . "\n1 w\n" . ($x - 14) . ' ' . ($y - 1) . " 8 8 re\nS\nQ\n";
             }
             if ($line['text'] !== '') {
                 [$font, $size] = self::STYLE_FONTS[$line['style']];
@@ -543,7 +693,7 @@ final class FloorPlanPdfRenderer
 
                 $ascii = $this->toWinAnsi($line['text']);
                 $escaped = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $ascii);
-                $stream .= 'q' . "\n" . $this->rgOp($color) . "\nBT\n/{$font} {$size} Tf\n1 0 0 1 " . self::PAGE_MARGIN_X . " {$y} Tm\n({$escaped}) Tj\nET\nQ\n";
+                $stream .= 'q' . "\n" . $this->rgOp($color) . "\nBT\n/{$font} {$size} Tf\n1 0 0 1 {$x} {$y} Tm\n({$escaped}) Tj\nET\nQ\n";
             }
             $y -= self::LINE_HEIGHT;
         }

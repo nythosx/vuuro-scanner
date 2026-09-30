@@ -283,14 +283,14 @@ check('session created for the export rate-limit test', $exportRateLimitSessionI
 
 if ($exportRateLimitSessionId !== null && $exportRateLimitToken !== null) {
     $sawPngThrottle = false;
-    for ($i = 0; $i < 35; $i++) {
+    for ($i = 0; $i < 125; $i++) {
         [$status, ] = net_http_raw('GET', "$baseUrl/scan-sessions/$exportRateLimitSessionId/export/floorplan.png", null, $exportRateLimitToken);
         if ($status === 429) {
             $sawPngThrottle = true;
             break;
         }
     }
-    check('repeated PNG export calls against one session eventually hit HTTP 429', $sawPngThrottle, 'never saw a 429 across 35 rapid PNG export calls');
+    check('repeated PNG export calls against one session eventually hit HTTP 429', $sawPngThrottle, 'never saw a 429 across 125 rapid PNG export calls');
 
     $sawPdfThrottle = false;
     for ($i = 0; $i < 35; $i++) {

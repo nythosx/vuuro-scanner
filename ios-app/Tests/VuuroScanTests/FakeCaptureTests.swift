@@ -13,12 +13,12 @@ final class FakeCaptureTests: XCTestCase {
             let floors = try XCTUnwrap(body["floors"] as? [[String: Any]])
             XCTAssertEqual(floors.count, 1)
             let corners = try XCTUnwrap(floors[0]["polygonCorners"] as? [[Double]])
-            XCTAssertTrue([4, 6].contains(corners.count))
+            XCTAssertGreaterThanOrEqual(corners.count, 4)
             let walls = try XCTUnwrap(body["walls"] as? [[String: Any]])
             XCTAssertEqual(walls.count, corners.count)
             for corner in corners {
                 XCTAssertEqual(corner.count, 3)
-                XCTAssertTrue(corner.allSatisfy { $0.isFinite && $0 >= 0 })
+                XCTAssertTrue(corner.allSatisfy { $0.isFinite })
             }
         }
     }

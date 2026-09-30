@@ -1698,7 +1698,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
 
 
 
-    if (rateLimited($repo, $session['id'] . ':export_png', 30, 300)) {
+    if (rateLimited($repo, $session['id'] . ':export_png', 120, 300)) {
         return;
     }
 

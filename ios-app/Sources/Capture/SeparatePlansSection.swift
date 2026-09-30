@@ -22,7 +22,7 @@ struct SeparatePlansSection: View {
                 .tracking(0.6)
                 .textCase(.uppercase)
                 .foregroundStyle(VuuroColor.textSecondary)
-            Text("One plan per floor, and each room on its own.")
+            Text("One plan for each floor.")
                 .font(.system(size: 13))
                 .foregroundStyle(VuuroColor.textSecondary)
 
@@ -40,6 +40,10 @@ struct SeparatePlansSection: View {
         .padding(.bottom, 12)
     }
 
+    static func hasSeveralFloors(_ rooms: [FloorPlan.Room]) -> Bool {
+        RoomFloorSection.sections(for: rooms).count > 1
+    }
+
     @ViewBuilder
     private func sectionRows(_ section: RoomFloorSection, showsFloorRow: Bool) -> some View {
         if showsFloorRow {
@@ -50,14 +54,6 @@ struct SeparatePlansSection: View {
                 subtitle: String(format: vuuroLocalized("Whole floor · %d rooms"), section.rooms.count),
                 icon: "square.grid.2x2",
                 identifier: "plans.floor.\(floorName)"
-            )
-        }
-        ForEach(section.rooms, id: \.roomId) { room in
-            planRow(
-                PlanTarget(title: room.label, roomId: room.roomId, floor: nil),
-                subtitle: nil,
-                icon: "square",
-                identifier: "plans.room.\(room.roomId)"
             )
         }
     }

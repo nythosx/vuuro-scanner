@@ -421,6 +421,16 @@ struct ScanResultsReportView: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityLabel("Open floor plan full screen")
 
+            if floorPlan.rooms.count > 1 {
+                RoomPlanStrip(
+                    rooms: floorPlan.rooms,
+                    sessionId: entry.sessionId,
+                    accessToken: entry.accessToken,
+                    unit: exportUnit,
+                    onOpen: { image in previewImage = PreviewImage(image: image) }
+                )
+            }
+
             HStack(spacing: 8) {
                 Button {
                     Task { await shareImage() }
@@ -971,7 +981,7 @@ struct ScanResultsReportView: View {
 
     @ViewBuilder
     private func separatePlans(_ floorPlan: FloorPlan) -> some View {
-        if floorPlan.rooms.count > 1 {
+        if SeparatePlansSection.hasSeveralFloors(floorPlan.rooms) {
             SeparatePlansSection(
                 rooms: floorPlan.rooms,
                 loadingTarget: loadingPlanTarget,
