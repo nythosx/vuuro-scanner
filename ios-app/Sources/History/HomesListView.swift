@@ -55,12 +55,12 @@ private struct HomeCard: View {
     let home: HomeAggregate
     let onTap: () -> Void
 
-    private static let dateFormatter: DateFormatter = {
+    private static var dateFormatter: DateFormatter {
         let f = DateFormatter()
         f.dateFormat = "MMM d, yyyy"
         f.locale = AppLanguageSettings.effectiveLocale
         return f
-    }()
+    }
 
     var body: some View {
         Button(action: onTap) {

@@ -2817,6 +2817,86 @@
                 }
             }
         },
+        "By scanning, you agree to our ": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "By scanning, you agree to our "
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Door te scannen ga je akkoord met onze "
+                    }
+                }
+            }
+        },
+        "Terms & Privacy Policy": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Terms & Privacy Policy"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Gebruiksvoorwaarden en Privacybeleid"
+                    }
+                }
+            }
+        },
+        "Room scanning not available": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Room scanning not available"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ruimtes scannen is niet beschikbaar"
+                    }
+                }
+            }
+        },
+        "Forget this scan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Forget this scan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze scan vergeten"
+                    }
+                }
+            }
+        },
+        "Clear search": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Clear search"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Zoekopdracht wissen"
+                    }
+                }
+            }
+        },
         "Read Terms of Service & Privacy Policy": {
             "localizations": {
                 "en": {

@@ -587,7 +587,7 @@ struct ResultSummaryView: View {
             .buttonStyle(.vuuroPrimary)
             .disabled(isSavingChanges)
 
-            Button("Delete this scan", role: .destructive) {
+            Button("Forget this scan", role: .destructive) {
                 showForgetConfirmation = true
             }
             .accessibilityIdentifier("result.deleteScan")

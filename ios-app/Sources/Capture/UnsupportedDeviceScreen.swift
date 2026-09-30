@@ -6,7 +6,7 @@ struct UnsupportedDeviceScreen: View {
     var body: some View {
         VuuroCenterView {
             VuuroIconBadge(systemName: "exclamationmark.triangle", tint: VuuroColor.accent, background: VuuroColor.accent.opacity(0.12), size: 72, iconSize: 34)
-            Text("LiDAR not available")
+            Text("Room scanning not available")
                 .font(.system(size: 20, weight: .bold))
                 .tracking(-0.4)
                 .foregroundStyle(VuuroColor.textPrimary)

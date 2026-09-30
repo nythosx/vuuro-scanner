@@ -31,6 +31,7 @@ struct MultiRoomCaptureFlowView: View {
     @State private var cameraDenied = CameraAccess.isDenied
     @State private var showCorrectionDialog = false
     @State private var capturedFloor: String = ""
+    @State private var floorBeforePrompt: String = ""
     @State private var resumeOffer: WalkthroughState?
     @State private var showResumePrompt = false
     @Environment(\.scenePhase) private var scenePhase
@@ -254,8 +255,10 @@ struct MultiRoomCaptureFlowView: View {
                 Task { await persistMultiFloor() }
             }
             .accessibilityIdentifier("multiCapture.floorClear")
-            Button("Cancel", role: .cancel) {}
-                .accessibilityIdentifier("multiCapture.floorCancel")
+            Button("Cancel", role: .cancel) {
+                capturedFloor = floorBeforePrompt
+            }
+            .accessibilityIdentifier("multiCapture.floorCancel")
         } message: {
             Text("Applies to this room and to the next rooms you scan in this session, until you change it.")
         }
@@ -277,7 +280,7 @@ struct MultiRoomCaptureFlowView: View {
         } catch is CancellationError {
         } catch {
             DiagnosticsLog.shared.record("Failed to update default floor (multi-room): \(error.localizedDescription)", category: .error)
-            capturedFloor = existingSession?.defaultFloor ?? identity.floor ?? ""
+            capturedFloor = floorBeforePrompt
             VuuroToast.shared.show(vuuroLocalized("Couldn't save the floor change"))
         }
     }
@@ -422,6 +425,7 @@ struct MultiRoomCaptureFlowView: View {
                     .accessibilityIdentifier("multiCapture.howToScan")
                 Spacer()
                 Button {
+                    floorBeforePrompt = capturedFloor
                     showMultiFloorPrompt = true
                 } label: {
                     HStack(spacing: 6) {

@@ -291,8 +291,11 @@ function settingsSourceNote(rule) {
   return 'Set here';
 }
 
+let loadedSettings = null;
+
 function renderSettings(data) {
   const container = $('#settingsContent');
+  loadedSettings = data;
   if (data.limits) settingsLimits = data.limits;
   const dayLimits = settingsLimits.retention_days;
   const graceLimits = settingsLimits.tenant_grace_days;
@@ -377,7 +380,7 @@ async function resetRetention(purpose) {
   retention[purpose] = null;
   try {
     renderSettings(await postSettings({ retention }));
-    settingsMessage('Back to the server config for that purpose.', false);
+    settingsMessage('Reset to the server config, or the suggested default if the server has none.', false);
   } catch (err) {
     settingsMessage('Could not reset: ' + friendlyApiError(err), true);
   }
@@ -385,29 +388,31 @@ async function resetRetention(purpose) {
 
 async function saveSettings() {
   const btn = $('#saveSettingsBtn');
-  let payload;
+  const payload = {};
   try {
     const retention = {};
-    RETENTION_PURPOSES.forEach((p) => {
-      retention[p.value] = {
-        enabled: document.querySelector('[data-retention-enabled="' + p.value + '"]').checked,
-        days: readWholeNumber(document.querySelector('[data-retention-days="' + p.value + '"]'), settingsLimits.retention_days.min, settingsLimits.retention_days.max, p.label + ' days'),
-      };
-    });
     const planStyle = {};
     RETENTION_PURPOSES.forEach((p) => {
-      planStyle[p.value] = document.querySelector('[data-plan-style="' + p.value + '"]').value;
+      const rule = { enabled: document.querySelector('[data-retention-enabled="' + p.value + '"]').checked,
+        days: readWholeNumber(document.querySelector('[data-retention-days="' + p.value + '"]'), settingsLimits.retention_days.min, settingsLimits.retention_days.max, p.label + ' days') };
+      const before = loadedSettings.retention[p.value];
+      if (rule.enabled !== before.enabled || rule.days !== before.days) retention[p.value] = rule;
+      const style = document.querySelector('[data-plan-style="' + p.value + '"]').value;
+      if (style !== loadedSettings.plan_style[p.value]) planStyle[p.value] = style;
     });
-    payload = {
-      plan_style: planStyle,
-      retention,
-      tenant_deletion: {
-        enabled: $('#tenantDeletionEnabled').checked,
-        grace_days: readWholeNumber($('#tenantGraceDays'), settingsLimits.tenant_grace_days.min, settingsLimits.tenant_grace_days.max, 'Tenant deletion days'),
-      },
+    const tenant = {
+      enabled: $('#tenantDeletionEnabled').checked,
+      grace_days: readWholeNumber($('#tenantGraceDays'), settingsLimits.tenant_grace_days.min, settingsLimits.tenant_grace_days.max, 'Tenant deletion days'),
     };
+    if (Object.keys(retention).length) payload.retention = retention;
+    if (Object.keys(planStyle).length) payload.plan_style = planStyle;
+    if (tenant.enabled !== loadedSettings.tenant_deletion.enabled || tenant.grace_days !== loadedSettings.tenant_deletion.grace_days) payload.tenant_deletion = tenant;
   } catch (err) {
     settingsMessage(err.message, true);
+    return;
+  }
+  if (Object.keys(payload).length === 0) {
+    settingsMessage('Nothing changed.', false);
     return;
   }
   btn.disabled = true;

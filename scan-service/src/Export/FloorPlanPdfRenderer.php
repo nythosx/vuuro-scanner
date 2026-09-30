@@ -201,12 +201,16 @@ final class FloorPlanPdfRenderer
             $drawHeight = $maxDrawHeight;
             $drawWidth = $drawHeight * $aspect;
         }
+        $offsetY = max(0, ($maxDrawHeight - $drawHeight) / 2);
+        $offsetX = max(0, ($maxDrawWidth - $drawWidth) / 2);
 
         return [
             ...$normalized,
             'caption' => $caption,
             'drawWidth' => $drawWidth,
             'drawHeight' => $drawHeight,
+            'offsetY' => $offsetY,
+            'offsetX' => $offsetX,
             'pageWidth' => $pageWidth,
             'pageHeight' => $pageHeight,
         ];
@@ -295,18 +299,20 @@ final class FloorPlanPdfRenderer
         $drawWidth = $imagePage['drawWidth'];
         $drawHeight = $imagePage['drawHeight'];
 
-        $x = self::IMAGE_PAGE_MARGIN;
-        $y = self::IMAGE_PAGE_MARGIN + $captionHeight + $captionGap;
+        $offsetY = $imagePage['offsetY'] ?? 0;
+
+        $x = self::IMAGE_PAGE_MARGIN + ($imagePage['offsetX'] ?? 0);
+        $y = self::IMAGE_PAGE_MARGIN + $offsetY + $captionHeight + $captionGap;
 
         $stream = "q\n{$drawWidth} 0 0 {$drawHeight} {$x} {$y} cm\n/Im{$imgObjNum} Do\nQ\n";
 
-        $capY = self::IMAGE_PAGE_MARGIN + $captionHeight;
+        $capY = self::IMAGE_PAGE_MARGIN + $offsetY + $captionHeight;
         foreach ($imagePage['caption'] as $line) {
             [$font, $size] = self::STYLE_FONTS[$line['style']];
             $color = self::STYLE_COLORS[$line['style']] ?? self::INK;
             $ascii = $this->toWinAnsi($line['text']);
             $escaped = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $ascii);
-            $stream .= 'q' . "\n" . $this->rgOp($color) . "\nBT\n/{$font} {$size} Tf\n1 0 0 1 " . self::IMAGE_PAGE_MARGIN . " {$capY} Tm\n({$escaped}) Tj\nET\nQ\n";
+            $stream .= 'q' . "\n" . $this->rgOp($color) . "\nBT\n/{$font} {$size} Tf\n1 0 0 1 {$x} {$capY} Tm\n({$escaped}) Tj\nET\nQ\n";
             $capY -= self::LINE_HEIGHT;
         }
 

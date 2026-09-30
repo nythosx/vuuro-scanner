@@ -264,6 +264,7 @@ struct ScanHistoryView: View {
                         .foregroundStyle(VuuroColor.textTertiary)
                 }
                 .accessibilityIdentifier("history.searchClear")
+                .accessibilityLabel("Clear search")
                 .buttonStyle(.plain)
             }
         }

@@ -287,10 +287,10 @@ struct HomeDetailView: View {
         }
     }
 
-    private static let dateFormatter: DateFormatter = {
+    private static var dateFormatter: DateFormatter {
         let f = DateFormatter()
         f.dateFormat = "MMM d, yyyy"
         f.locale = AppLanguageSettings.effectiveLocale
         return f
-    }()
+    }
 }

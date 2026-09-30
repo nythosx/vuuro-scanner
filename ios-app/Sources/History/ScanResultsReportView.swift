@@ -912,7 +912,7 @@ struct ScanResultsReportView: View {
               let date = ISO8601DateFormatter().date(from: purgeAfter) else {
             return String(format: vuuroLocalized("Deletion requested. This scan is removed from the server after a %d-day grace period."), status.gracePeriodDays)
         }
-        let formatted = date.formatted(date: .abbreviated, time: .shortened)
+        let formatted = date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(AppLanguageSettings.effectiveLocale))
         return String(format: vuuroLocalized("Deletion requested. This scan is removed from the server after %@."), formatted)
     }
 

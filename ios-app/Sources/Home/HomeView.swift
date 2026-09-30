@@ -129,14 +129,18 @@ struct HomeView: View {
             }
         }
         .background(VuuroColor.bgApp)
-        .task {
-            let (all, pending) = await Task.detached(priority: .userInitiated) {
-                (ScanHistoryStore.shared.all(), PendingUploadStore.load())
-            }.value
-            recentScan = all.first
-            hasPendingUpload = pending != nil && pending?.skippedAt != nil
+        .onAppear {
+            Task { await reloadRecent() }
         }
         .dynamicTypeSize(...DynamicTypeSize.accessibility3)
+    }
+
+    private func reloadRecent() async {
+        let (all, pending) = await Task.detached(priority: .userInitiated) {
+            (ScanHistoryStore.shared.all(), PendingUploadStore.load())
+        }.value
+        recentScan = all.first
+        hasPendingUpload = pending != nil && pending?.skippedAt != nil
     }
 
     private func displayName(for entry: ScanHistoryEntry) -> String {

@@ -373,6 +373,7 @@ private struct RoomCaptureFlowStep: View {
     @State private var didStart = false
     @State private var showCorrectionDialog = false
     @State private var captureFloor: String = ""
+    @State private var captureFloorBeforePrompt: String = ""
     @State private var showFloorPrompt = false
     @State private var showHowToScan = false
     @State private var cameraDenied = CameraAccess.isDenied
@@ -587,6 +588,7 @@ private struct RoomCaptureFlowStep: View {
                     .accessibilityIdentifier("capture.howToScan")
                 Spacer()
                 Button {
+                    captureFloorBeforePrompt = captureFloor
                     showFloorPrompt = true
                 } label: {
                     HStack(spacing: 6) {
@@ -668,8 +670,10 @@ private struct RoomCaptureFlowStep: View {
                 Task { await persistCaptureFloor() }
             }
             .accessibilityIdentifier("capture.floorClear")
-            Button("Cancel", role: .cancel) {}
-                .accessibilityIdentifier("capture.floorCancel")
+            Button("Cancel", role: .cancel) {
+                captureFloor = captureFloorBeforePrompt
+            }
+            .accessibilityIdentifier("capture.floorCancel")
         } message: {
             Text("Applies to this room and to the next rooms you scan in this session, until you change it.")
         }
