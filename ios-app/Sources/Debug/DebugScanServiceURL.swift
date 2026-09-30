@@ -12,6 +12,10 @@ enum DebugScanServiceURL {
         return fallback.flatMap(URL.init(string:))
     }
 
+    #if targetEnvironment(simulator)
+    private static let fallback: String? = "https://vuuroscan-joven.loca.lt"
+    #else
     private static let fallback: String? = nil
+    #endif
 }
 #endif

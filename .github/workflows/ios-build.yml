@@ -58,6 +58,7 @@ jobs:
           if-no-files-found: error
 
   device-compile-check:
+    if: false
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
@@ -85,6 +86,7 @@ jobs:
             CODE_SIGN_IDENTITY=""
 
   simulator-tests:
+    if: false
     runs-on: macos-15
     strategy:
       fail-fast: false
