@@ -8,6 +8,8 @@ use VuuroScan\RoomType;
 
 final class FloorPlanImageRenderer
 {
+    private const WALL_GAP_MERGE_M = 0.35;
+    private const TILE_BREAKPOINT_MERGE_M = 0.15;
     private const PIXELS_PER_METER = 60;
     private const TILE_PADDING = 34;
     private const LABEL_HEIGHT = 80;
@@ -28,7 +30,6 @@ final class FloorPlanImageRenderer
     private const DEFAULT_LINE_THICKNESS_PX = 1;
     private const FONT_SMALL = 1;
     private const NOTE_LINE_HEIGHT = 15;
-    private const WINDOW_TICK_LENGTH_M = 0.5;
     private const DOOR_LEAF_M = 0.8;
     private const WINDOW_WIDTH_M = 1.0;
     private const OPENING_WIDTH_M = 0.7;
@@ -151,44 +152,16 @@ final class FloorPlanImageRenderer
         }
         $shadowDx = 1;
         $shadowDy = 2;
-        $pad = 4;
-        $minX = PHP_INT_MAX;
-        $minY = PHP_INT_MAX;
-        $maxX = PHP_INT_MIN;
-        $maxY = PHP_INT_MIN;
-        foreach ($pointSets as $points) {
-            for ($k = 0; $k < count($points); $k += 2) {
-                $minX = min($minX, $points[$k]);
-                $maxX = max($maxX, $points[$k]);
-                $minY = min($minY, $points[$k + 1]);
-                $maxY = max($maxY, $points[$k + 1]);
-            }
-        }
-        $cropX = max(0, (int) floor($minX) - $pad);
-        $cropY = max(0, (int) floor($minY) - $pad);
-        $cropW = min(imagesx($image) - $cropX, (int) ceil($maxX - $minX) + $pad * 2 + $shadowDx);
-        $cropH = min(imagesy($image) - $cropY, (int) ceil($maxY - $minY) + $pad * 2 + $shadowDy);
-        if ($cropW <= 0 || $cropH <= 0) {
-            return;
-        }
-
-        $layer = imagecreatetruecolor($cropW, $cropH);
-        imagecopy($layer, $image, 0, 0, $cropX, $cropY, $cropW, $cropH);
-        imagealphablending($layer, true);
-        $shadowColor = imagecolorallocatealpha($layer, 0, 0, 0, 70);
+        imagealphablending($image, true);
+        $shadowColor = imagecolorallocatealpha($image, 0, 0, 0, 100);
         foreach ($pointSets as $points) {
             $shifted = [];
             for ($k = 0; $k < count($points); $k += 2) {
-                $shifted[] = $points[$k] - $cropX + $shadowDx;
-                $shifted[] = $points[$k + 1] - $cropY + $shadowDy;
+                $shifted[] = $points[$k] + $shadowDx;
+                $shifted[] = $points[$k + 1] + $shadowDy;
             }
-            imagefilledpolygon($layer, $shifted, $shadowColor);
+            imagefilledpolygon($image, $shifted, $shadowColor);
         }
-        imagefilter($layer, IMG_FILTER_GAUSSIAN_BLUR);
-        imagefilter($layer, IMG_FILTER_GAUSSIAN_BLUR);
-
-        imagecopy($image, $layer, $cropX, $cropY, 0, 0, $cropW, $cropH);
-        imagedestroy($layer);
     }
 
     private function roomTypeFillColor($image, array $room)
@@ -798,7 +771,7 @@ final class FloorPlanImageRenderer
         foreach ($rooms as $i => $room) {
             $this->drawWalkPath($image, $room, $poses[$i], $toPx, $walkPathColor);
         }
-        foreach ($rooms as $i => $room) {
+        foreach (OpeningDedup::filter($rooms, $poses) as $i => $room) {
             $this->drawOpenings($image, $room, $poses[$i], $toPx, $doorColor, $windowColor, $otherOpeningColor, $edgeTiers[$i] ?? []);
         }
 
@@ -933,10 +906,8 @@ final class FloorPlanImageRenderer
             $wallHalfM = $this->edgeThicknessM($roomEdgeTiers, $edgeIndex) / 2;
             $widthM = self::openingWidthM($opening);
             $half = $widthM / 2;
-            $poseCos = cos($pose['rotationRad']);
-            $poseSin = sin($pose['rotationRad']);
-            [$wallDx, $wallDz] = [$wallDx * $poseCos - $wallDz * $poseSin, $wallDx * $poseSin + $wallDz * $poseCos];
-            [$normalDx, $normalDz] = [$normalDx * $poseCos - $normalDz * $poseSin, $normalDx * $poseSin + $normalDz * $poseCos];
+            [$wallDx, $wallDz] = $this->pixelDirection($pose, $toPx, $mx, $mz, $px, $py, $wallDx, $wallDz);
+            [$normalDx, $normalDz] = $this->pixelDirection($pose, $toPx, $mx, $mz, $px, $py, $normalDx, $normalDz);
 
             $punchCorner = fn (float $alongSign, float $acrossSign): array => [
                 $px + $wallDx * $alongSign * $half * self::PIXELS_PER_METER + $normalDx * $acrossSign * $wallHalfM * self::PIXELS_PER_METER,
@@ -979,7 +950,7 @@ final class FloorPlanImageRenderer
                     $wallColor
                 );
             } elseif ($category === 'window') {
-                $half = self::WINDOW_TICK_LENGTH_M * self::PIXELS_PER_METER / 2;
+                $half = $half * self::PIXELS_PER_METER;
                 imagesetthickness($image, 3);
                 imageline(
                     $image,
@@ -995,6 +966,17 @@ final class FloorPlanImageRenderer
                 $this->drawJambSquares($image, $wallColor, $px, $py, $wallDx, $wallDz, $half * self::PIXELS_PER_METER);
             }
         }
+    }
+
+    private function pixelDirection(array $pose, callable $toPx, float $mx, float $mz, float $px, float $py, float $dx, float $dz): array
+    {
+        [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $mx + $dx, $mz + $dz);
+        [$qx, $qy] = $toPx($wx, $wz);
+        $length = hypot($qx - $px, $qy - $py);
+        if ($length < 1e-6) {
+            return [$dx, $dz];
+        }
+        return [($qx - $px) / $length, ($qy - $py) / $length];
     }
 
     private function drawJambSquares($image, int $wallColor, float $px, float $py, float $wallDx, float $wallDz, float $halfPx): void
@@ -1264,7 +1246,7 @@ final class FloorPlanImageRenderer
         sort($values);
         $breakpoints = [];
         foreach ($values as $v) {
-            if ($breakpoints === [] || $v - end($breakpoints) > 0.05) {
+            if ($breakpoints === [] || $v - end($breakpoints) > self::WALL_GAP_MERGE_M) {
                 $breakpoints[] = $v;
             }
         }
@@ -1430,7 +1412,7 @@ final class FloorPlanImageRenderer
         sort($vals);
         $out = [];
         foreach ($vals as $v) {
-            if ($out === [] || abs($v - end($out)) > 0.05) {
+            if ($out === [] || abs($v - end($out)) > self::TILE_BREAKPOINT_MERGE_M) {
                 $out[] = $v;
             }
         }

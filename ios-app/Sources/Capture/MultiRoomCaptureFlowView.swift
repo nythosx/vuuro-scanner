@@ -344,13 +344,7 @@ struct MultiRoomCaptureFlowView: View {
         uploadTask = Task {
             let labels = roomLabels(for: exports)
             uploadProgress.begin(roomLabels: labels)
-            for index in labels.indices {
-                uploadProgress.markUploading(index: index)
-            }
             guard let result = await submitExports(exports, floors: storedFloors) else { return }
-            for index in labels.indices {
-                uploadProgress.markDone(index: index, areaM2: exports[index].floorAreaM2)
-            }
             onFinished(result.session, result.floorPlan)
         }
     }
@@ -614,9 +608,6 @@ struct MultiRoomCaptureFlowView: View {
         }
         let labels = roomLabels(for: exports)
         uploadProgress.begin(roomLabels: labels)
-        for index in labels.indices {
-            uploadProgress.markUploading(index: index)
-        }
         let floors: [String?] = coordinator.capturedRooms.indices.map { index in
             let roomFloor = coordinator.floor(forRoomAt: index)
             return roomFloor.isEmpty ? nil : roomFloor
@@ -807,7 +798,8 @@ struct MultiRoomCaptureFlowView: View {
         }
 
         var floorPlan: FloorPlan?
-        for capture in pending.captures {
+        for (index, capture) in pending.captures.enumerated() {
+            uploadProgress.markUploading(index: index)
             do {
                 floorPlan = try await client.uploadCapture(
                     sessionId: session.id,
@@ -815,10 +807,12 @@ struct MultiRoomCaptureFlowView: View {
                     idempotencyKey: capture.idempotencyKey,
                     bodyJSON: capture.bodyJSON
                 )
+                uploadProgress.markDone(index: index, areaM2: exports.indices.contains(index) ? exports[index].floorAreaM2 : nil)
             } catch is CancellationError {
                 onError(AppError(site: .uploadCancelled, underlying: nil), session)
                 return nil
             } catch {
+                uploadProgress.markFailed(index: index)
                 onError(AppError(site: .captureUpload, underlying: error), session)
                 return nil
             }

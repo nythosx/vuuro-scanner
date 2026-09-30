@@ -120,7 +120,7 @@ struct ScanResultsReportView: View {
             Button("Cancel", role: .cancel) {}
                 .accessibilityIdentifier("report.continueCancel")
         } message: {
-            Text("New rooms are added to this same report.")
+            Text("New rooms are added to this same report, shown as their own section next to the existing plan.")
         }
         .alert("Which floor?", isPresented: $showContinueNewFloor) {
             TextField("e.g. Attic, 1st floor", text: $continueNewFloorName)

@@ -8,6 +8,8 @@ use VuuroScan\RoomType;
 
 final class FloorPlanSvgRenderer
 {
+    private const WALL_GAP_MERGE_M = 0.35;
+    private const TILE_BREAKPOINT_MERGE_M = 0.15;
     private const PX_PER_M = 60.0;
     private const MAX_CANVAS_DIMENSION_PX = 4000;
     private const DOOR_LEAF_M = 0.8;
@@ -723,7 +725,7 @@ SVG;
         sort($values);
         $breakpoints = [];
         foreach ($values as $v) {
-            if ($breakpoints === [] || $v - end($breakpoints) > 0.05) {
+            if ($breakpoints === [] || $v - end($breakpoints) > self::WALL_GAP_MERGE_M) {
                 $breakpoints[] = $v;
             }
         }
@@ -969,7 +971,7 @@ SVG;
         sort($vals);
         $out = [];
         foreach ($vals as $v) {
-            if ($out === [] || abs($v - end($out)) > 0.05) {
+            if ($out === [] || abs($v - end($out)) > self::TILE_BREAKPOINT_MERGE_M) {
                 $out[] = $v;
             }
         }
@@ -1236,7 +1238,7 @@ SVG;
         foreach ($rooms as $i => $room) {
             $body .= $this->walkPathSvg($room, $poses[$i], $toPx);
         }
-        foreach ($rooms as $i => $room) {
+        foreach (OpeningDedup::filter($rooms, $poses) as $i => $room) {
             $body .= $this->openingsSvg($room, $poses[$i], $toPx, $edgeTiers[$i] ?? []);
         }
 

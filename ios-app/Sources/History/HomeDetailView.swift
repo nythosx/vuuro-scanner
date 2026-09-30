@@ -116,7 +116,7 @@ struct HomeDetailView: View {
             return "This saves as a new report, grouped under this home."
         }
         let date = Self.dateFormatter.string(from: latest.lastActivityAt)
-        return "Adding to the latest scan (\(date)) keeps every floor in one report. A new visit saves as its own report, grouped under this home."
+        return "Adding to the latest scan (\(date)) keeps every floor in one report; the new rooms show as their own section next to the existing plan. A new visit saves as its own report, grouped under this home."
     }
 
     private var hero: some View {

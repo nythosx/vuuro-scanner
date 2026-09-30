@@ -158,10 +158,17 @@ final class FloorPlanPdfRenderer
                         $normalized,
                         [['text' => $drawingCaption, 'style' => 'captionBold']],
                         $pages === [] ? $this->headerLines($floorPlan, $label) : [],
-                        $this->drawingDescription($drawingPlan['rooms'], $unit)
+                        $this->drawingDescription($drawingPlan['rooms'], $unit, $roomId === null && count($floorPlan['rooms']) <= self::MAX_ROOM_PAGES)
                     );
                 }
-            } catch (\Throwable) {
+            } catch (\Throwable $e) {
+                error_log(sprintf(
+                    'FloorPlanPdfRenderer: floor plan drawing "%s" could not be rendered for session %s (%s: %s). PDF will ship without it.',
+                    $drawingCaption,
+                    $floorPlan['scan_session_id'] ?? 'unknown',
+                    get_class($e),
+                    $e->getMessage()
+                ));
             }
         }
 
@@ -172,7 +179,14 @@ final class FloorPlanPdfRenderer
                 try {
                     $roomPng = (new FloorPlanImageRenderer())->render($floorPlan, 'auto', $room['room_id'], $unit, null, $style);
                     $normalized = $this->toEmbeddableJpeg($roomPng);
-                } catch (\Throwable) {
+                } catch (\Throwable $e) {
+                    error_log(sprintf(
+                        'FloorPlanPdfRenderer: room %s could not be rendered for session %s (%s: %s). Skipping its page.',
+                        $room['room_id'] ?? 'unknown',
+                        $floorPlan['scan_session_id'] ?? 'unknown',
+                        get_class($e),
+                        $e->getMessage()
+                    ));
                     $normalized = null;
                 }
                 if ($normalized === null) {
@@ -276,7 +290,7 @@ final class FloorPlanPdfRenderer
         return $lines;
     }
 
-    private function drawingDescription(array $rooms, string $unit): array
+    private function drawingDescription(array $rooms, string $unit, bool $roomPagesFollow = true): array
     {
         $total = array_sum(array_column($rooms, 'floor_area_m2'));
         $lines = [[
@@ -291,7 +305,7 @@ final class FloorPlanPdfRenderer
             ];
         }
         if (count($rooms) > count($shown)) {
-            $lines[] = ['text' => sprintf('+ %d more room(s), each on its own page', count($rooms) - count($shown)), 'style' => 'sub'];
+            $lines[] = ['text' => sprintf($roomPagesFollow ? '+ %d more room(s), each on its own page' : '+ %d more room(s), listed in the metrics table', count($rooms) - count($shown)), 'style' => 'sub'];
         }
         return $lines;
     }

@@ -37,6 +37,7 @@ jobs:
           php tests/concurrency_test.php
           php tests/room_split_test.php
           php tests/service_settings_test.php
+          php tests/opening_dedup_test.php
 
       - name: The independent net (every suite, fresh servers and DBs)
         working-directory: scan-service

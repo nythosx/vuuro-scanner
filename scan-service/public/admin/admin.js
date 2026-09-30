@@ -868,6 +868,7 @@ async function loadFloorPlanImage(sessionId) {
 }
 
 function loadPhotoThumb(photo) {
+  const sessionId = state.currentSessionId;
   const grid = $('#photosGrid');
   if (!grid) return;
   const wrapper = document.createElement('div');
@@ -897,6 +898,7 @@ function loadPhotoThumb(photo) {
   const hostedPath = serverHostedPath(photo.url);
   if (hostedPath) {
     apiBlob(hostedPath).then((blob) => {
+      if (state.currentSessionId !== sessionId) return;
       const url = trackBlobUrl(URL.createObjectURL(blob));
       img.dataset.blobUrl = url;
       img.onload = clearLoading;
@@ -920,6 +922,7 @@ async function loadAccessLog(sessionId) {
   if (!container) return;
   try {
     const data = await apiJson('/scan-sessions/' + encodeURIComponent(sessionId) + '/access-log');
+    if (state.currentSessionId !== sessionId) return;
     const entries = data.access_log || [];
     if (entries.length === 0) {
       container.innerHTML = emptyHtml('No access attempts recorded.');
@@ -934,6 +937,7 @@ async function loadAccessLog(sessionId) {
       '<th>Time</th><th>Action</th><th>Outcome</th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table>');
   } catch (err) {
+    if (state.currentSessionId !== sessionId) return;
     renderError(container, 'Failed to load the access log: ' + friendlyApiError(err), () => {
       container.innerHTML = loadingHtml('Loading access log…');
       loadAccessLog(sessionId);

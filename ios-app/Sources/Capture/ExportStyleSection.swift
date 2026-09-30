@@ -45,10 +45,10 @@ struct ExportStyleSection: View {
                     .tint(VuuroColor.lime)
             }
 
-            VuuroInputRow(leadingIcon: "rectangle.portrait.rotate", label: "Room orientation", showsDivider: true) {
+            VuuroInputRow(leadingIcon: "rectangle.portrait.rotate", label: "Plan orientation", showsDivider: true) {
                 Picker("", selection: $style.orientation) {
                     Text("As scanned").tag("as_captured")
-                    Text("Longest wall horizontal").tag("longest_horizontal")
+                    Text("Straightened").tag("longest_horizontal")
                 }
                 .accessibilityIdentifier("exportStyle.orientation")
                 .labelsHidden()
