@@ -372,6 +372,8 @@ private struct RoomCaptureFlowStep: View {
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
     @State private var didStart = false
     @State private var showCorrectionDialog = false
+    @State private var showRoomNamePrompt = false
+    @State private var customRoomName = ""
     @State private var captureFloor: String = ""
     @State private var captureFloorBeforePrompt: String = ""
     @State private var showFloorPrompt = false
@@ -626,7 +628,7 @@ private struct RoomCaptureFlowStep: View {
             Spacer(minLength: 20)
 
             if coordinator.isApproachingSizeLimit {
-                Text("This room looks larger than RoomPlan's practical scanning range (~9m) — accuracy may degrade beyond this size.")
+                Text("This room is getting large. Walk slowly along the walls, or save here and scan the rest as a separate room.")
                     .font(.system(size: 12))
                     .foregroundStyle(.orange)
                     .multilineTextAlignment(.center)
@@ -717,6 +719,11 @@ private struct RoomCaptureFlowStep: View {
                 }
                 .accessibilityIdentifier("capture.roomType.\(type)")
             }
+            Button("Type a name…") {
+                customRoomName = ""
+                showRoomNamePrompt = true
+            }
+            .accessibilityIdentifier("capture.roomType.customName")
             Button("Other") {
                 coordinator.rejectRoomTypeGuess(correctedTo: "other")
             }
@@ -725,6 +732,18 @@ private struct RoomCaptureFlowStep: View {
                 coordinator.rejectRoomTypeGuess(correctedTo: nil)
             }
             .accessibilityIdentifier("capture.roomType.notSure")
+        }
+        .alert("Name this room", isPresented: $showRoomNamePrompt) {
+            TextField("e.g. Study, Utility room", text: $customRoomName)
+                .accessibilityIdentifier("capture.roomNameField")
+                .textInputAutocapitalization(.words)
+            Button("Save") {
+                coordinator.nameRoom(customRoomName)
+            }
+            .accessibilityIdentifier("capture.roomNameSave")
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The name is used for this room in the plan and the PDF.")
         }
     }
 

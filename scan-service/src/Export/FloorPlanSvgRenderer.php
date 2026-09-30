@@ -67,7 +67,7 @@ final class FloorPlanSvgRenderer
     private function roomFill(array $room, int $fallbackIndex): string
     {
         if ($this->planStyle->isFunda) {
-            return FloorPlanPalette::fundaFillFor(self::roomTypeValue($room));
+            return FloorPlanPalette::fundaFillFor(self::roomTypeValue($room), (string) ($room['room_id'] ?? ''));
         }
         if ($this->planStyle->roomFill === 'white') {
             return '#ffffff';
@@ -210,8 +210,7 @@ final class FloorPlanSvgRenderer
 
     private function fundaRoomLabelSvg(array $room, float $x, float $y): string
     {
-        $confirmed = is_array($room['room_type'] ?? null) ? ($room['room_type']['confirmed'] ?? null) : null;
-        $name = is_string($confirmed) && trim($confirmed) !== '' ? RoomType::labelFor(trim($confirmed)) : (string) ($room['label'] ?? '');
+        $name = RoomType::planName($room);
         $size = ((float) ($room['floor_area_m2'] ?? 0)) < 4.0 ? 11 : 16;
         return '<text x="' . $this->num($x) . '" y="' . $this->num($y + $size * 0.35) . '" font-size="' . $size . '" font-weight="700" fill="' . self::FUNDA_INK . '" text-anchor="middle">' . $this->esc($name) . '</text>';
     }

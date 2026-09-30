@@ -1009,9 +1009,9 @@ private struct HistoryCard: View {
 
     private var metaLine: String {
         if let floor = entry.floor, !floor.isEmpty {
-            return "\(floor) · \(entry.purpose.displayName) · \(Self.metaFormatter().string(from: entry.createdAt))"
+            return "\(floor) · \(entry.purpose.displayName) · \(Self.metaFormatter().string(from: entry.lastActivityAt))"
         }
-        return "\(entry.purpose.displayName) · \(Self.metaFormatter().string(from: entry.createdAt))"
+        return "\(entry.purpose.displayName) · \(Self.metaFormatter().string(from: entry.lastActivityAt))"
     }
 
     private var pills: ([String], Int) {
@@ -1245,7 +1245,7 @@ private struct ImportScanView: View {
 
     private func importSummary(for entry: ScanHistoryEntry) -> String {
         let place = [entry.propertyId, entry.unitId].filter { !$0.isEmpty }.joined(separator: " / ")
-        let date = entry.createdAt.formatted(date: .abbreviated, time: .omitted)
+        let date = entry.lastActivityAt.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted).locale(AppLanguageSettings.effectiveLocale))
         return "\(place)\n\(vuuroLocalized(entry.purpose.displayName)) · \(date)"
     }
 

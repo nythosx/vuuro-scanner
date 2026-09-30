@@ -1592,6 +1592,70 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)/lab
     return;
 }
 
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)/floor$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'update_room_floor');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+    if (rateLimited($repo, $sessionId . ':update_room_floor', 60, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    if (!array_key_exists('floor', $body) || ($body['floor'] !== null && !is_string($body['floor']))) {
+        respondError(422, 'missing_required_fields', "Please include a 'floor' field: a floor name, or null to clear it.", ['fields' => ['floor']]);
+        return;
+    }
+    $floor = $body['floor'] === null ? null : trim($body['floor']);
+    if ($floor === '') {
+        $floor = null;
+    }
+    if ($floor !== null && (mb_strlen($floor, 'UTF-8') > 60 || preg_match('/[\x00-\x1f\x7f]/', $floor) === 1)) {
+        respondError(422, 'invalid_floor', 'floor must be at most 60 characters with no control characters.');
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->updateRoomFloor($sessionId, $m[2], $floor);
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unknown_room_id', $e->getMessage());
+        return;
+    }
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'delete_room');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+    if (rateLimited($repo, $sessionId . ':delete_room', 30, 300)) {
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->deleteRoom($sessionId, $m[2]);
+    } catch (\LengthException $e) {
+        respondError(409, 'last_room', $e->getMessage());
+        return;
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unknown_room_id', $e->getMessage());
+        return;
+    }
+    $repo->logAccess($sessionId, 'delete_room', 'deleted');
+    respond(200, $floorPlan);
+    return;
+}
+
 function split_point(mixed $value): ?array
 {
     if (!is_array($value) || !array_is_list($value) || count($value) !== 2) {

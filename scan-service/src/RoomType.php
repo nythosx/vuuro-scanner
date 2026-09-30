@@ -60,9 +60,19 @@ final class RoomType
         return self::displayLabel($label, $confirmed ?? $roomType['guess'] ?? null);
     }
 
+    public static function planName(array $room): string
+    {
+        $roomType = is_array($room['room_type'] ?? null) ? $room['room_type'] : [];
+        $confirmed = is_string($roomType['confirmed'] ?? null) ? trim($roomType['confirmed']) : '';
+        if ($confirmed !== '' && $confirmed !== 'other') {
+            return self::labelFor($confirmed);
+        }
+        return (string) ($room['label'] ?? '');
+    }
+
     public static function displayLabel(string $label, ?string $roomTypeValue): string
     {
-        if ($roomTypeValue === null) {
+        if ($roomTypeValue === null || $roomTypeValue === 'other') {
             return $label;
         }
         $typeName = self::labelFor($roomTypeValue);

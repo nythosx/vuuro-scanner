@@ -30,6 +30,8 @@ struct MultiRoomCaptureFlowView: View {
     @State private var didStart = false
     @State private var cameraDenied = CameraAccess.isDenied
     @State private var showCorrectionDialog = false
+    @State private var showRoomNamePrompt = false
+    @State private var customRoomName = ""
     @State private var capturedFloor: String = ""
     @State private var floorBeforePrompt: String = ""
     @State private var resumeOffer: WalkthroughState?
@@ -466,7 +468,7 @@ struct MultiRoomCaptureFlowView: View {
             }
 
             if coordinator.isApproachingSizeLimit {
-                Text("This room looks larger than RoomPlan's practical scanning range (~9m) — accuracy may degrade beyond this size.")
+                Text("This room is getting large. Walk slowly along the walls, or save here and scan the rest as a separate room.")
                     .font(.system(size: 12))
                     .foregroundStyle(.orange)
                     .multilineTextAlignment(.center)
@@ -495,6 +497,11 @@ struct MultiRoomCaptureFlowView: View {
                 }
                 .accessibilityIdentifier("multiCapture.roomType.\(type)")
             }
+            Button("Type a name…") {
+                customRoomName = ""
+                showRoomNamePrompt = true
+            }
+            .accessibilityIdentifier("multiCapture.roomType.customName")
             Button("Other") {
                 coordinator.rejectRoomTypeGuess(correctedTo: "other")
             }
@@ -503,6 +510,18 @@ struct MultiRoomCaptureFlowView: View {
                 coordinator.rejectRoomTypeGuess(correctedTo: nil)
             }
             .accessibilityIdentifier("multiCapture.roomType.notSure")
+        }
+        .alert("Name this room", isPresented: $showRoomNamePrompt) {
+            TextField("e.g. Study, Utility room", text: $customRoomName)
+                .accessibilityIdentifier("multiCapture.roomNameField")
+                .textInputAutocapitalization(.words)
+            Button("Save") {
+                coordinator.nameRoom(customRoomName)
+            }
+            .accessibilityIdentifier("multiCapture.roomNameSave")
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The name is used for this room in the plan and the PDF.")
         }
     }
 
@@ -517,8 +536,8 @@ struct MultiRoomCaptureFlowView: View {
 
     private func roomLabel(at index: Int) -> String {
         if coordinator.roomTypeConfirmations.indices.contains(index),
-           let value = coordinator.roomTypeConfirmations[index]?.value {
-            return RoomTypeClassifier.displayName(for: value)
+           let confirmation = coordinator.roomTypeConfirmations[index] {
+            return confirmation.displayName
         }
         return "Room \(index + 1)"
     }

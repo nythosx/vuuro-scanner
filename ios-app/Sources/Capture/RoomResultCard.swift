@@ -105,6 +105,8 @@ struct RoomResultCard: View {
     var isUpdatingRoomType: Bool = false
     var onSplitRoom: (() -> Void)? = nil
     var onUndoSplit: (() -> Void)? = nil
+    var onSetFloor: (() -> Void)? = nil
+    var onDeleteRoom: (() -> Void)? = nil
 
     @State private var showCustomRoomType = false
     @State private var customRoomTypeDraft: String = ""
@@ -133,6 +135,9 @@ struct RoomResultCard: View {
             }
             if onSplitRoom != nil || onUndoSplit != nil {
                 splitRow
+            }
+            if onSetFloor != nil || onDeleteRoom != nil {
+                manageRow
             }
             disclaimer
         }
@@ -277,7 +282,7 @@ struct RoomResultCard: View {
     }
 
     private var confirmedTypeName: String? {
-        guard let confirmed = room.roomType?.confirmed, !confirmed.isEmpty else { return nil }
+        guard let confirmed = room.roomType?.confirmed, !confirmed.isEmpty, confirmed != "other" else { return nil }
         return RoomTypeClassifier.displayName(for: confirmed)
     }
 
@@ -292,7 +297,7 @@ struct RoomResultCard: View {
         }
         if confirmedTypeName != nil {
             parts.append(room.label)
-        } else if let guess = room.roomType?.guess, !guess.isEmpty {
+        } else if room.roomType?.confirmed != "other", let guess = room.roomType?.guess, !guess.isEmpty {
             parts.append("\(RoomTypeClassifier.displayName(for: guess)) (suggested)")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
@@ -537,6 +542,41 @@ struct RoomResultCard: View {
                         .foregroundStyle(VuuroColor.textSecondary)
                     }
                     .accessibilityIdentifier("roomCard.undoSplit")
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var manageRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider().background(VuuroColor.borderSoft)
+            HStack(spacing: 16) {
+                if let onSetFloor {
+                    Button(action: onSetFloor) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "building.2")
+                                .font(.system(size: 14, weight: .semibold))
+                            Text("Move to another floor")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundStyle(VuuroColor.accent)
+                    }
+                    .accessibilityIdentifier("roomCard.setFloor")
+                    .buttonStyle(.plain)
+                }
+                Spacer(minLength: 0)
+                if let onDeleteRoom {
+                    Button(action: onDeleteRoom) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 14, weight: .semibold))
+                            Text("Delete this room")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundStyle(VuuroColor.danger)
+                    }
+                    .accessibilityIdentifier("roomCard.deleteRoom")
                     .buttonStyle(.plain)
                 }
             }

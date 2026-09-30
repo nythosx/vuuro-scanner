@@ -42,12 +42,25 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     @Published private(set) var hasAnsweredRoomType: Bool = false
     private(set) var roomTypeConfirmation: String?
     private(set) var roomTypeConfirmedForGuessType: String?
+    private(set) var roomCustomName: String?
 
     var roomTypeConfirmationForExport: RoomTypeConfirmation? {
-        roomTypeConfirmation.map { RoomTypeConfirmation(value: $0, answeredForGuessType: roomTypeConfirmedForGuessType) }
+        roomTypeConfirmation.map { RoomTypeConfirmation(value: $0, answeredForGuessType: roomTypeConfirmedForGuessType, customName: roomCustomName) }
+    }
+
+    func nameRoom(_ name: String) {
+        let trimmed = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        guard !trimmed.isEmpty else { return }
+        roomTypeConfirmation = "other"
+        roomCustomName = trimmed
+        roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
+        liveUpdateThrottle.markRoomTypeAnswered()
+        hasAnsweredRoomType = true
+        DiagnosticsLog.shared.record("Room named (multi-room): \(trimmed)", category: .info)
     }
 
     func confirmRoomTypeGuess() {
+        roomCustomName = nil
         roomTypeConfirmation = liveRoomTypeGuess?.type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
         liveUpdateThrottle.markRoomTypeAnswered()
@@ -56,6 +69,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     }
 
     func rejectRoomTypeGuess(correctedTo type: String?) {
+        roomCustomName = nil
         roomTypeConfirmation = type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
         liveUpdateThrottle.markRoomTypeAnswered()
@@ -145,6 +159,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         liveRoomTypeGuess = nil
         roomTypeConfirmation = nil
         roomTypeConfirmedForGuessType = nil
+        roomCustomName = nil
         hasAnsweredRoomType = false
         isApproachingSizeLimit = false
         liveStats = .empty
@@ -408,14 +423,7 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
                     let hasUsableGeometry = !room.walls.isEmpty || !room.floors.isEmpty
                     self.pendingPartialRoom = hasUsableGeometry ? room : nil
                     self.pendingPartialRoomWalkPath = hasUsableGeometry ? self.currentRoomWalkPath : []
-                    let message: String
-                    if case RoomCaptureSession.CaptureError.exceedSceneSizeLimit = error {
-                        message = hasUsableGeometry
-                            ? "This unit has grown too large for ARKit to track reliably in one session. Save what's captured so far, then start a new unit scan to continue with the remaining rooms."
-                            : "This unit has grown too large for ARKit to track reliably in one session. Start a new unit scan to continue with the remaining rooms."
-                    } else {
-                        message = error.localizedDescription
-                    }
+                    let message = CaptureErrorText.message(for: error, partialAvailable: hasUsableGeometry, isUnitScan: true)
                     self.state = .failed(message, partialRoomAvailable: hasUsableGeometry)
                 } else {
                     if CapturedRoomExporter.export(room).hasUsableFloorOutline {

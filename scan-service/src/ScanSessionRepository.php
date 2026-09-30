@@ -872,6 +872,56 @@ final class ScanSessionRepository
         });
     }
 
+    public function updateRoomFloor(string $sessionId, string $roomId, ?string $floor): array
+    {
+        return $this->withWriteLock(function () use ($sessionId, $roomId, $floor) {
+            $floorPlan = $this->findFloorPlan($sessionId);
+            if ($floorPlan === null) {
+                throw new \RuntimeException("Cannot move a room to another floor on scan session $sessionId before it has a captured FloorPlan.");
+            }
+            $index = self::roomIndex($floorPlan['rooms'], $roomId);
+            if ($index === null) {
+                throw new \InvalidArgumentException("room_id '{$roomId}' does not match any room captured in this session.");
+            }
+            $floorPlan['rooms'][$index]['floor'] = $floor;
+            $this->saveFloorPlan($sessionId, $floorPlan);
+            return $floorPlan;
+        });
+    }
+
+    public function deleteRoom(string $sessionId, string $roomId): array
+    {
+        return $this->withWriteLock(function () use ($sessionId, $roomId) {
+            $floorPlan = $this->findFloorPlan($sessionId);
+            if ($floorPlan === null) {
+                throw new \RuntimeException("Cannot delete a room on scan session $sessionId before it has a captured FloorPlan.");
+            }
+            $index = self::roomIndex($floorPlan['rooms'], $roomId);
+            if ($index === null) {
+                throw new \InvalidArgumentException("room_id '{$roomId}' does not match any room captured in this session.");
+            }
+            if (count($floorPlan['rooms']) === 1) {
+                throw new \LengthException('This is the only room in the scan. Delete the whole scan instead.');
+            }
+            array_splice($floorPlan['rooms'], $index, 1);
+            foreach (['notes', 'photos'] as $kind) {
+                foreach ($floorPlan[$kind] ?? [] as $i => $item) {
+                    if (($item['room_id'] ?? null) === $roomId) {
+                        $floorPlan[$kind][$i]['room_id'] = null;
+                    }
+                }
+            }
+            if (isset($floorPlan['room_splits'])) {
+                $floorPlan['room_splits'] = array_values(array_filter(
+                    $floorPlan['room_splits'],
+                    static fn (array $split) => ($split['room_id'] ?? null) !== $roomId && ($split['new_room_id'] ?? null) !== $roomId
+                ));
+            }
+            $this->saveFloorPlan($sessionId, $floorPlan);
+            return $floorPlan;
+        });
+    }
+
     public function batchUpdateObjects(string $sessionId, array $changes): array
     {
         return $this->withWriteLock(function () use ($sessionId, $changes) {

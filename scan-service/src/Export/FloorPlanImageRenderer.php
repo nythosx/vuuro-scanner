@@ -179,7 +179,7 @@ final class FloorPlanImageRenderer
     {
         if ($this->planStyle->isFunda) {
             $type = self::roomTypeValue($room);
-            return imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::fundaFillFor(is_string($type) ? $type : null)));
+            return imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::fundaFillFor(is_string($type) ? $type : null, (string) ($room['room_id'] ?? ''))));
         }
         if ($this->planStyle->roomFill === 'white') {
             return imagecolorallocate($image, 255, 255, 255);
@@ -478,8 +478,7 @@ final class FloorPlanImageRenderer
 
     private function drawFundaRoomLabel($image, int $x, int $y, array $room, string $unit, int $text, int $subtext): void
     {
-        $confirmed = is_array($room['room_type'] ?? null) ? ($room['room_type']['confirmed'] ?? null) : null;
-        $name = $this->printable(is_string($confirmed) && trim($confirmed) !== '' ? RoomType::labelFor(trim($confirmed)) : (string) ($room['label'] ?? ''));
+        $name = $this->printable(RoomType::planName($room));
         $sizeKey = ((float) ($room['floor_area_m2'] ?? 0)) < 4.0 ? 2 : 4;
         $this->drawBoldText($image, $sizeKey, $x - (int) ($this->textWidth($sizeKey, $name) / 2), $y - 9, $name, $text);
     }

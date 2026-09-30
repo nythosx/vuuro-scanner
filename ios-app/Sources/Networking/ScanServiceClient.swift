@@ -285,6 +285,7 @@ struct ScanServiceClient {
         guard let floorPlan = response.floorPlan else {
             throw ScanServiceError.noFloorPlanYet
         }
+        ScanHistoryStore.shared.noteServerCapture(sessionId: sessionId, capturedAt: floorPlan.capturedAt)
         return floorPlan
     }
 
@@ -368,6 +369,26 @@ struct ScanServiceClient {
             }
         }
         return try await post(path: "/scan-sessions/\(sessionId)/rooms/\(roomId)/room-type", body: Body(roomType: roomType), accessToken: accessToken)
+    }
+
+    func updateRoomFloor(sessionId: String, accessToken: String, roomId: String, floor: String?) async throws -> FloorPlan {
+        struct Body: Encodable {
+            let floor: String?
+
+            enum CodingKeys: String, CodingKey {
+                case floor
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(floor, forKey: .floor)
+            }
+        }
+        return try await post(path: "/scan-sessions/\(sessionId)/rooms/\(roomId)/floor", body: Body(floor: floor), accessToken: accessToken)
+    }
+
+    func deleteRoom(sessionId: String, accessToken: String, roomId: String) async throws -> FloorPlan {
+        try await delete(path: "/scan-sessions/\(sessionId)/rooms/\(roomId)", accessToken: accessToken)
     }
 
     func updateRoomLabel(sessionId: String, accessToken: String, roomId: String, label: String) async throws -> FloorPlan {

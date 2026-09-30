@@ -12,21 +12,30 @@ final class FloorPlanPalette
     public const FUNDA_INTERIOR_WALL_THICKNESS_M = 0.10;
 
     public const FUNDA_FILLS = [
-        'living' => '#fce4d6',
-        'wet' => '#d4e8f4',
-        'utility' => '#d4d4d4',
+        'living' => '#f2d3a8',
+        'bed' => '#f7c98f',
+        'wet' => '#c8dcef',
+        'circ' => '#fbe3c7',
+        'utility' => '#cfcfcf',
     ];
     public const FUNDA_TYPE_GROUPS = [
+        'living_room' => 'living',
+        'dining_room' => 'living',
+        'office' => 'living',
+        'bedroom' => 'bed',
+        'guest_room' => 'bed',
         'kitchen' => 'wet',
         'bathroom' => 'wet',
-        'hallway' => 'wet',
         'laundry_room' => 'wet',
-        'walk_in_closet' => 'wet',
+        'hallway' => 'circ',
+        'walk_in_closet' => 'circ',
         'garage' => 'utility',
         'storage_room' => 'utility',
         'basement' => 'utility',
+        'attic' => 'utility',
         'balcony' => 'utility',
     ];
+    public const FUNDA_UNTYPED_FILLS = ['#fbe3c7', '#dcd6cc', '#e6dcef', '#dfe8d2'];
 
 
 
@@ -84,10 +93,16 @@ final class FloorPlanPalette
     public const HEARTH_FILL = '#5c5c5c';
     public const BED_FRAME_FILL = '#8f9bb3';
 
-    public static function fundaFillFor(?string $roomType): string
+    public static function fundaFillFor(?string $roomType, ?string $roomKey = null): string
     {
-        $group = is_string($roomType) ? (self::FUNDA_TYPE_GROUPS[$roomType] ?? 'living') : 'living';
-        return self::FUNDA_FILLS[$group];
+        $group = is_string($roomType) ? (self::FUNDA_TYPE_GROUPS[$roomType] ?? null) : null;
+        if ($group !== null) {
+            return self::FUNDA_FILLS[$group];
+        }
+        if ($roomKey === null || $roomKey === '') {
+            return self::FUNDA_FILLS['circ'];
+        }
+        return self::FUNDA_UNTYPED_FILLS[crc32($roomKey) % count(self::FUNDA_UNTYPED_FILLS)];
     }
 
     public const OPEN_EDGE = 'open';

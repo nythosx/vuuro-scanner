@@ -31,7 +31,7 @@ enum RoomSummary {
 
     private static func displayLabel(for room: FloorPlan.Room) -> String {
         if let confirmed = room.roomType?.confirmed, !confirmed.isEmpty {
-            return RoomTypeClassifier.displayName(for: confirmed)
+            return confirmed == "other" ? room.label : RoomTypeClassifier.displayName(for: confirmed)
         }
         if let guess = room.roomType?.guess, !guess.isEmpty {
             return RoomTypeClassifier.displayName(for: guess)

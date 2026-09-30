@@ -71,7 +71,7 @@ final class RoomPlanSimulatorAdapter
             $globalIndex = $roomIndexOffset + $index;
             $rooms[] = [
                 'room_id' => sprintf('room-%02d-%s', $globalIndex + 1, (string) ($floor['identifier'] ?? ('floor-' . $index))),
-                'label' => 'Room ' . ($globalIndex + 1),
+                'label' => self::roomLabel($rawCapture) ?? 'Room ' . ($globalIndex + 1),
                 'floor_area_m2' => round($area, 2),
                 'perimeter_m' => round($perimeter, 2),
                 'bounding_dimensions_m' => [
@@ -176,14 +176,18 @@ final class RoomPlanSimulatorAdapter
                     continue;
                 }
                 $corners = $item['polygonCorners'] ?? null;
-                if (!is_array($corners) || empty($corners)) {
-                    continue;
-                }
                 $points2d = [];
-                foreach ($corners as $corner) {
+                foreach (is_array($corners) ? $corners : [] as $corner) {
                     if (is_array($corner)) {
                         $points2d[] = [(float) ($corner[0] ?? 0), (float) ($corner[2] ?? 0)];
                     }
+                }
+                if (empty($points2d)) {
+                    $position = $item['position'] ?? null;
+                    if (!is_array($position) || count($position) < 3 || !is_numeric($position[0]) || !is_numeric($position[2])) {
+                        continue;
+                    }
+                    $points2d[] = [(float) $position[0], (float) $position[2]];
                 }
                 if (empty($points2d)) {
                     continue;
@@ -335,6 +339,19 @@ final class RoomPlanSimulatorAdapter
         ];
     }
 
+    private static function roomLabel(array $rawCapture): ?string
+    {
+        $label = $rawCapture['room_label'] ?? null;
+        if (!is_string($label)) {
+            return null;
+        }
+        $label = trim(preg_replace('/[\x00-\x1f\x7f]/', '', $label) ?? '');
+        if ($label === '') {
+            return null;
+        }
+        return mb_substr($label, 0, 60, 'UTF-8');
+    }
+
     private static function captureGroupId(array $rawCapture): ?string
     {
         $group = $rawCapture['capture_group_id'] ?? null;
@@ -456,6 +473,10 @@ final class RoomPlanSimulatorAdapter
             foreach ($items as $itemIndex => $item) {
                 if (!is_array($item)) {
                     continue;
+                }
+                $position = $item['position'] ?? null;
+                if (is_array($position)) {
+                    self::validatePoints("$group\[$itemIndex].position", [$position]);
                 }
                 $corners = $item['polygonCorners'] ?? null;
                 if (!is_array($corners)) {

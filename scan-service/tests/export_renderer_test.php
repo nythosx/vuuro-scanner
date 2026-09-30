@@ -767,6 +767,21 @@ x_check('Funda SVG has a white canvas with the grid over it', str_contains($fund
 x_check('Funda SVG has no Vuuro Scan header', !str_contains($fundaSvg, 'Vuuro Scan'));
 x_check('Funda SVG shows the total floor area title', str_contains($fundaSvg, 'Total floor area'));
 
+echo "\n== Listing plan room colors ==\n";
+$fill = static fn (?string $type, string $key = 'room-x') => \VuuroScan\Export\FloorPlanPalette::fundaFillFor($type, $key);
+x_check('living room, bedroom, bathroom and hallway each get their own color', count(array_unique([$fill('living_room'), $fill('bedroom'), $fill('bathroom'), $fill('hallway')])) === 4);
+x_check('kitchen and bathroom share the wet-room color', $fill('kitchen') === $fill('bathroom'));
+x_check('an untyped room keeps the same color every time it is drawn', $fill(null, 'room-07-abc') === $fill(null, 'room-07-abc'));
+$untypedFills = array_unique(array_map(static fn (int $i) => $fill(null, "room-$i"), range(1, 40)));
+x_check('untyped rooms are spread over more than one color', count($untypedFills) > 1, json_encode(array_values($untypedFills)));
+x_check('an untyped room never looks like a wet room', !in_array($fill('bathroom'), $untypedFills, true));
+x_check('a room confirmed as other is treated as untyped', $fill('other', 'room-3') === $fill(null, 'room-3'));
+$untypedRoom = build_room_with_outline('Loft', [[0, 0], [4, 0], [4, 3], [0, 3]], null, [], null, 'room-loft-1');
+$untypedPng = $imageRenderer->render(build_floor_plan([$untypedRoom]), 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, \VuuroScan\Export\FloorPlanStyle::from('funda'));
+x_check('the PNG draws an untyped room in its own color, same as the SVG', png_contains_color($untypedPng, ...\VuuroScan\Export\FloorPlanPalette::hexToRgb($fill(null, 'room-loft-1'))));
+$untypedSvg = (new FloorPlanSvgRenderer())->render(build_floor_plan([$untypedRoom]), 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, \VuuroScan\Export\FloorPlanStyle::from('funda'));
+x_check('the SVG uses the same color for that room', str_contains(strtolower($untypedSvg), $fill(null, 'room-loft-1')));
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

@@ -1,0 +1,149 @@
+{
+  "_fixture_note": "Device-shaped RoomPlan capture: rectangular doors and windows come with an empty polygonCorners list, only dimensions and a position taken from the surface transform. Before the fallback, the adapter dropped every one of these, so real scans showed no doors or windows.",
+  "story": 0,
+  "floors": [
+    {
+      "identifier": "floor-dev-1",
+      "category": "floor",
+      "confidence": "high",
+      "dimensions": [
+        5.0,
+        4.0,
+        0.0
+      ],
+      "polygonCorners": [
+        [
+          1.2,
+          -0.02,
+          0.8
+        ],
+        [
+          6.2,
+          -0.02,
+          0.8
+        ],
+        [
+          6.2,
+          -0.02,
+          4.8
+        ],
+        [
+          1.2,
+          -0.02,
+          4.8
+        ]
+      ]
+    }
+  ],
+  "walls": [
+    {
+      "identifier": "wall-dev-1",
+      "category": "wall",
+      "confidence": "high",
+      "dimensions": [
+        5.0,
+        2.6,
+        0.0
+      ],
+      "polygonCorners": [],
+      "position": [
+        3.7,
+        1.28,
+        0.8
+      ],
+      "yawDeg": 0.0
+    },
+    {
+      "identifier": "wall-dev-2",
+      "category": "wall",
+      "confidence": "high",
+      "dimensions": [
+        4.0,
+        2.6,
+        0.0
+      ],
+      "polygonCorners": [],
+      "position": [
+        6.2,
+        1.28,
+        2.8
+      ],
+      "yawDeg": 90.0
+    }
+  ],
+  "doors": [
+    {
+      "identifier": "door-dev-1",
+      "category": "door",
+      "confidence": "high",
+      "dimensions": [
+        0.85,
+        2.05,
+        0.0
+      ],
+      "polygonCorners": [],
+      "position": [
+        2.4,
+        1.0,
+        4.8
+      ],
+      "yawDeg": 180.0
+    }
+  ],
+  "windows": [
+    {
+      "identifier": "window-dev-1",
+      "category": "window",
+      "confidence": "medium",
+      "dimensions": [
+        1.4,
+        1.3,
+        0.0
+      ],
+      "polygonCorners": [],
+      "position": [
+        3.5,
+        1.55,
+        0.8
+      ],
+      "yawDeg": 0.0
+    },
+    {
+      "identifier": "window-dev-2",
+      "category": "window",
+      "confidence": "high",
+      "dimensions": [
+        1.1,
+        1.2,
+        0.0
+      ],
+      "polygonCorners": [],
+      "position": [
+        6.2,
+        1.5,
+        2.6
+      ],
+      "yawDeg": 90.0
+    }
+  ],
+  "openings": [
+    {
+      "identifier": "opening-dev-1",
+      "category": "opening",
+      "confidence": "low",
+      "dimensions": [
+        1.2,
+        2.1,
+        0.0
+      ],
+      "polygonCorners": [],
+      "position": [
+        1.2,
+        1.05,
+        3.0
+      ],
+      "yawDeg": 90.0
+    }
+  ],
+  "objects": []
+}

@@ -112,8 +112,8 @@ struct CapturedRoomsListView: View {
 
     private func label(for index: Int) -> String {
         if coordinator.roomTypeConfirmations.indices.contains(index),
-           let value = coordinator.roomTypeConfirmations[index]?.value {
-            return RoomTypeClassifier.displayName(for: value)
+           let confirmation = coordinator.roomTypeConfirmations[index] {
+            return confirmation.displayName
         }
         return "Room \(index + 1)"
     }

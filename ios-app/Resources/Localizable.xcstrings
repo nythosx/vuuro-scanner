@@ -2945,6 +2945,358 @@
                 }
             }
         },
+        "This room is getting large. Walk slowly along the walls, or save here and scan the rest as a separate room.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This room is getting large. Walk slowly along the walls, or save here and scan the rest as a separate room."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze ruimte wordt groot. Loop langzaam langs de muren, of sla hier op en scan de rest als aparte ruimte."
+                    }
+                }
+            }
+        },
+        "Large rooms: walk the walls slowly": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Large rooms: walk the walls slowly"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Grote ruimtes: loop langzaam langs de muren"
+                    }
+                }
+            }
+        },
+        "For a big open space, follow the walls and keep the phone pointed at them. If the app says the space is too large, save what you have and scan the rest as a separate room.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "For a big open space, follow the walls and keep the phone pointed at them. If the app says the space is too large, save what you have and scan the rest as a separate room."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Volg bij een grote open ruimte de muren en richt de telefoon erop. Zegt de app dat de ruimte te groot is, sla dan op wat je hebt en scan de rest als aparte ruimte."
+                    }
+                }
+            }
+        },
+        "Switching apps, a call or locking the screen stops the scan. Rooms already captured are kept and can be uploaded.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Switching apps, a call or locking the screen stops the scan. Rooms already captured are kept and can be uploaded."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Wisselen van app, een oproep of het scherm vergrendelen stopt de scan. Al gescande ruimtes blijven bewaard en kunnen worden geüpload."
+                    }
+                }
+            }
+        },
+        "The scan stopped because the phone lost track of the room. This happens when the app goes to the background, a call comes in, the screen locks, or the camera is covered or in the dark. Keep Vuuro Scan open and on screen while you scan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The scan stopped because the phone lost track of the room. This happens when the app goes to the background, a call comes in, the screen locks, or the camera is covered or in the dark. Keep Vuuro Scan open and on screen while you scan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De scan is gestopt omdat de telefoon de ruimte niet meer kon volgen. Dat gebeurt als de app naar de achtergrond gaat, er een oproep binnenkomt, het scherm vergrendelt of de camera is afgedekt of in het donker is. Houd Vuuro Scan open en op het scherm tijdens het scannen."
+                    }
+                }
+            }
+        },
+        "You can save what was captured and scan the rest as a new room.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "You can save what was captured and scan the rest as a new room."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Je kunt opslaan wat is gescand en de rest als nieuwe ruimte scannen."
+                    }
+                }
+            }
+        },
+        "This unit has grown too large to track in one scan. Save what's captured so far, then start a new unit scan for the remaining rooms.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This unit has grown too large to track in one scan. Save what's captured so far, then start a new unit scan for the remaining rooms."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze woning is te groot geworden om in één scan te volgen. Sla op wat er is gescand en start een nieuwe woningscan voor de overige ruimtes."
+                    }
+                }
+            }
+        },
+        "This unit has grown too large to track in one scan. Start a new unit scan for the remaining rooms.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This unit has grown too large to track in one scan. Start a new unit scan for the remaining rooms."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze woning is te groot geworden om in één scan te volgen. Start een nieuwe woningscan voor de overige ruimtes."
+                    }
+                }
+            }
+        },
+        "This space is too large to scan in one go. Save what's captured, then scan the rest as a separate room.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This space is too large to scan in one go. Save what's captured, then scan the rest as a separate room."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze ruimte is te groot om in één keer te scannen. Sla op wat is gescand en scan de rest als aparte ruimte."
+                    }
+                }
+            }
+        },
+        "This space is too large to scan in one go. Try scanning it as two smaller parts.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This space is too large to scan in one go. Try scanning it as two smaller parts."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze ruimte is te groot om in één keer te scannen. Probeer hem in twee kleinere delen te scannen."
+                    }
+                }
+            }
+        },
+        "Change": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Change"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Wijzigen"
+                    }
+                }
+            }
+        },
+        "Type a name…": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Type a name…"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Naam typen…"
+                    }
+                }
+            }
+        },
+        "Name this room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Name this room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Geef deze ruimte een naam"
+                    }
+                }
+            }
+        },
+        "e.g. Study, Utility room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "e.g. Study, Utility room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "bijv. Studeerkamer, Bijkeuken"
+                    }
+                }
+            }
+        },
+        "The name is used for this room in the plan and the PDF.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The name is used for this room in the plan and the PDF."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De naam wordt voor deze ruimte gebruikt in de plattegrond en de PDF."
+                    }
+                }
+            }
+        },
+        "Move to another floor": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Move to another floor"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Naar andere verdieping"
+                    }
+                }
+            }
+        },
+        "Delete this room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Delete this room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze ruimte verwijderen"
+                    }
+                }
+            }
+        },
+        "Which floor is this room on?": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Which floor is this room on?"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Op welke verdieping is deze ruimte?"
+                    }
+                }
+            }
+        },
+        "Delete this room?": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Delete this room?"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze ruimte verwijderen?"
+                    }
+                }
+            }
+        },
+        "The room is removed from this report and its plan. Notes and photos for this room move to the whole unit.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The room is removed from this report and its plan. Notes and photos for this room move to the whole unit."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De ruimte wordt verwijderd uit dit rapport en de plattegrond. Notities en foto's van deze ruimte gaan naar de hele woning."
+                    }
+                }
+            }
+        },
+        "Delete room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Delete room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ruimte verwijderen"
+                    }
+                }
+            }
+        },
+        "Leave it empty to clear the floor.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Leave it empty to clear the floor."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Laat leeg om de verdieping te wissen."
+                    }
+                }
+            }
+        },
         "Clear search": {
             "localizations": {
                 "en": {

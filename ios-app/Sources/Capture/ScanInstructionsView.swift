@@ -67,7 +67,8 @@ struct ScanInstructionsView: View {
         let shared = [
             ScanInstructionItem(icon: "lightbulb", title: "Turn on the lights", detail: "Dim rooms, mirrors and glass walls reduce accuracy."),
             ScanInstructionItem(icon: "tortoise", title: "Move slower than feels natural", detail: "Fast pans lose corners and door frames."),
-            ScanInstructionItem(icon: "ruler", title: "Keep rooms under about 9 m across", detail: "A warning appears on screen when a room gets too big."),
+            ScanInstructionItem(icon: "ruler", title: "Large rooms: walk the walls slowly", detail: "For a big open space, follow the walls and keep the phone pointed at them. If the app says the space is too large, save what you have and scan the rest as a separate room."),
+            ScanInstructionItem(icon: "iphone", title: "Keep the app open while scanning", detail: "Switching apps, a call or locking the screen stops the scan. Rooms already captured are kept and can be uploaded."),
         ]
         switch type {
         case .single:

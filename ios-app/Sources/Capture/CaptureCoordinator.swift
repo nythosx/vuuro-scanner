@@ -51,12 +51,25 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     @Published private(set) var hasAnsweredRoomType: Bool = false
     private(set) var roomTypeConfirmation: String?
     private(set) var roomTypeConfirmedForGuessType: String?
+    private(set) var roomCustomName: String?
 
     var roomTypeConfirmationForExport: RoomTypeConfirmation? {
-        roomTypeConfirmation.map { RoomTypeConfirmation(value: $0, answeredForGuessType: roomTypeConfirmedForGuessType) }
+        roomTypeConfirmation.map { RoomTypeConfirmation(value: $0, answeredForGuessType: roomTypeConfirmedForGuessType, customName: roomCustomName) }
+    }
+
+    func nameRoom(_ name: String) {
+        let trimmed = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        guard !trimmed.isEmpty else { return }
+        roomTypeConfirmation = "other"
+        roomCustomName = trimmed
+        roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
+        liveUpdateThrottle.markRoomTypeAnswered()
+        hasAnsweredRoomType = true
+        DiagnosticsLog.shared.record("Room named: \(trimmed)", category: .info)
     }
 
     func confirmRoomTypeGuess() {
+        roomCustomName = nil
         roomTypeConfirmation = liveRoomTypeGuess?.type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
         liveUpdateThrottle.markRoomTypeAnswered()
@@ -65,6 +78,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     }
 
     func rejectRoomTypeGuess(correctedTo type: String?) {
+        roomCustomName = nil
         roomTypeConfirmation = type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
         liveUpdateThrottle.markRoomTypeAnswered()
@@ -132,6 +146,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
         liveRoomTypeGuess = nil
         roomTypeConfirmation = nil
         roomTypeConfirmedForGuessType = nil
+        roomCustomName = nil
         hasAnsweredRoomType = false
         isApproachingSizeLimit = false
         liveStats = .empty
@@ -300,7 +315,7 @@ extension CaptureCoordinator: RoomCaptureSessionDelegate {
                 self.capturedRoom = room
                 let hasUsableGeometry = !room.walls.isEmpty || !room.floors.isEmpty
                 if let error {
-                    self.state = .failed(error.localizedDescription, partialRoomAvailable: hasUsableGeometry)
+                    self.state = .failed(CaptureErrorText.message(for: error, partialAvailable: hasUsableGeometry, isUnitScan: false), partialRoomAvailable: hasUsableGeometry)
                 } else {
                     self.state = .finished(roomAvailable: hasUsableGeometry)
                 }

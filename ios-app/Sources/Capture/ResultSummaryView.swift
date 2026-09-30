@@ -25,6 +25,9 @@ struct ResultSummaryView: View {
     @State private var updatingRoomTypeIds: Set<String> = []
     @State private var splitTarget: SplitTarget?
     @State private var isUndoingSplit = false
+    @State private var floorTargetRoom: FloorPlan.Room?
+    @State private var deleteTargetRoom: FloorPlan.Room?
+    @State private var roomFloorDraft = ""
     @State private var loadingPlanTarget: PlanTarget?
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
     @State private var exportStyle: ExportStyleSettings = ExportStyleSettings.load()
@@ -181,6 +184,13 @@ struct ResultSummaryView: View {
             )
             .presentationDetents([.large])
         }
+        .modifier(RoomActionAlerts(
+            floorTarget: $floorTargetRoom,
+            deleteTarget: $deleteTargetRoom,
+            floorDraft: $roomFloorDraft,
+            onSaveFloor: { room, floor in Task { await moveRoom(room, toFloor: floor) } },
+            onDelete: { room in Task { await deleteRoom(room) } }
+        ))
         .alert("Forget this scan?", isPresented: $showForgetConfirmation) {
             Button("Forget", role: .destructive) {
                 ScanHistoryStore.shared.remove(sessionId: session.id)
@@ -229,6 +239,10 @@ struct ResultSummaryView: View {
 
     @MainActor
     private func roomCard(_ room: FloorPlan.Room) -> RoomResultCard {
+        var delete: (() -> Void)? = nil
+        if canDeleteRooms {
+            delete = { deleteTargetRoom = room }
+        }
         var undo: (() -> Void)? = nil
         if currentFloorPlan.lastSplitRoomIds.contains(room.roomId) {
             undo = { startUndoSplit() }
@@ -255,7 +269,12 @@ struct ResultSummaryView: View {
             },
             isUpdatingRoomType: updatingRoomTypeIds.contains(room.roomId),
             onSplitRoom: { beginSplit(room) },
-            onUndoSplit: undo
+            onUndoSplit: undo,
+            onSetFloor: {
+                roomFloorDraft = room.floor ?? ""
+                floorTargetRoom = room
+            },
+            onDeleteRoom: delete
         )
     }
 
@@ -327,6 +346,33 @@ struct ResultSummaryView: View {
     }
 
     @MainActor
+    private var canDeleteRooms: Bool {
+        currentFloorPlan.rooms.count > 1
+    }
+
+    @MainActor
+    private func moveRoom(_ room: FloorPlan.Room, toFloor floor: String?) async {
+        do {
+            let updated = try await client.updateRoomFloor(sessionId: session.id, accessToken: session.accessToken, roomId: room.roomId, floor: floor)
+            applyRoomChange(updated)
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .roomFloorUpdate, underlying: error)
+        }
+    }
+
+    @MainActor
+    private func deleteRoom(_ room: FloorPlan.Room) async {
+        do {
+            let updated = try await client.deleteRoom(sessionId: session.id, accessToken: session.accessToken, roomId: room.roomId)
+            applyRoomChange(updated)
+            VuuroToast.shared.show(vuuroLocalized("Room deleted"))
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .roomDelete, underlying: error)
+        }
+    }
+
     private func applyRoomChange(_ updated: FloorPlan) {
         currentFloorPlan = updated
         ScanHistoryStore.shared.updateRoomSummary(

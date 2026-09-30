@@ -159,12 +159,16 @@ struct VuuroCaptureGuessPill: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text("\(typeName)?")
-                .font(.system(size: 14, weight: .bold))
-                .tracking(-0.2)
-                .foregroundStyle(Color(red: 24 / 255, green: 24 / 255, blue: 27 / 255))
-                .padding(.leading, 16)
-                .padding(.trailing, 6)
+            Button(action: onReject) {
+                Text("\(typeName)?")
+                    .font(.system(size: 14, weight: .bold))
+                    .tracking(-0.2)
+                    .foregroundStyle(Color(red: 24 / 255, green: 24 / 255, blue: 27 / 255))
+                    .padding(.leading, 16)
+                    .padding(.trailing, 6)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Choose another room type or type a name")
 
             Button(action: onConfirm) {
                 Text("✓")
@@ -177,14 +181,19 @@ struct VuuroCaptureGuessPill: View {
             .accessibilityLabel("Confirm room type")
 
             Button(action: onReject) {
-                Text("✕")
-                    .font(.system(size: 15, weight: .heavy))
-                    .foregroundStyle(Color(red: 229 / 255, green: 57 / 255, blue: 53 / 255))
-                    .frame(width: 34, height: 34)
-                    .background(Color(red: 229 / 255, green: 57 / 255, blue: 53 / 255).opacity(0.15), in: Circle())
+                HStack(spacing: 4) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("Change")
+                        .font(.system(size: 13, weight: .bold))
+                }
+                .foregroundStyle(Color(red: 24 / 255, green: 24 / 255, blue: 27 / 255))
+                .padding(.horizontal, 12)
+                .frame(height: 34)
+                .background(Color(red: 24 / 255, green: 24 / 255, blue: 27 / 255).opacity(0.08), in: Capsule())
             }
             .buttonStyle(VuuroCapturePressStyle())
-            .accessibilityLabel("Correct room type")
+            .accessibilityLabel("Change room type")
         }
         .padding(8)
         .background(.ultraThinMaterial, in: Capsule())

@@ -86,8 +86,22 @@ final class ScanHistoryStore {
         defer { lock.unlock() }
         var entries = readRedacted()
         guard let index = entries.firstIndex(where: { $0.sessionId == sessionId }) else { return }
+        if let existing = entries[index].lastCapturedAt, existing >= date { return }
         entries[index].lastCapturedAt = date
         save(entries)
+    }
+
+    func noteServerCapture(sessionId: String, capturedAt: String) {
+        guard let date = Self.parseServerDate(capturedAt) else { return }
+        markCaptured(sessionId: sessionId, at: date)
+    }
+
+    static func parseServerDate(_ value: String) -> Date? {
+        let plain = ISO8601DateFormatter()
+        if let date = plain.date(from: value) { return date }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value)
     }
 
     func updateRoomsByFloor(sessionId: String, roomsByFloor: [String: CachedFloorSummary]?) {

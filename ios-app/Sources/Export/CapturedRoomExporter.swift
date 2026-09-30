@@ -16,10 +16,12 @@ struct RoomPlanCaptureExport: Codable {
     var walkPathM: [[Double]]? = nil
     var headingDeg: Double? = nil
     var captureGroupId: String? = nil
+    var roomLabel: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case story, floors, walls, doors, windows, openings, objects
         case captureGroupId = "capture_group_id"
+        case roomLabel = "room_label"
         case roomType = "room_type"
         case structureOriginM = "structure_origin_m"
         case walkPathM = "walk_path"
@@ -53,6 +55,12 @@ struct RoomPlanCaptureExport: Codable {
 struct RoomTypeConfirmation {
     let value: String
     let answeredForGuessType: String?
+    var customName: String? = nil
+
+    var displayName: String {
+        if let customName, !customName.isEmpty { return customName }
+        return RoomTypeClassifier.displayName(for: value)
+    }
 }
 
 enum CapturedRoomExporter {
@@ -68,6 +76,7 @@ enum CapturedRoomExporter {
         )
         export.walkPathM = (walkPath?.isEmpty ?? true) ? nil : walkPath
         export.headingDeg = headingDeg
+        export.roomLabel = roomTypeConfirmation?.customName
         if RoomTypeGuessSettings.isEnabled, let guess = RoomTypeClassifier.guess(for: room) {
             let confirmedValue = roomTypeConfirmation?.answeredForGuessType == guess.type ? roomTypeConfirmation?.value : nil
             export.roomType = RoomPlanCaptureExport.RoomTypeExport(
@@ -79,11 +88,28 @@ enum CapturedRoomExporter {
         return export
     }
 
-    private static func worldPolygonCorners(_ surface: CapturedRoom.Surface) -> [[Double]] {
-        surface.polygonCorners.map { corner in
-            let world = surface.transform * simd_float4(corner, 1)
+    static func worldCorners(transform: simd_float4x4, dimensions: simd_float3, polygonCorners: [simd_float3]) -> [[Double]] {
+        let halfWidth = dimensions.x / 2
+        let halfHeight = dimensions.y / 2
+        let local: [simd_float3] = polygonCorners.isEmpty
+            ? [
+                simd_float3(-halfWidth, -halfHeight, 0),
+                simd_float3(halfWidth, -halfHeight, 0),
+                simd_float3(halfWidth, halfHeight, 0),
+                simd_float3(-halfWidth, halfHeight, 0),
+            ]
+            : polygonCorners
+        return local.map { corner in
+            let world = transform * simd_float4(corner, 1)
             return [Double(world.x), Double(world.y), Double(world.z)]
         }
+    }
+
+    static func yawDegrees(_ transform: simd_float4x4) -> Double? {
+        let axis = transform.columns.0
+        let yaw = atan2(Double(axis.z), Double(axis.x)) * 180 / Double.pi
+        guard yaw.isFinite else { return nil }
+        return (yaw.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
     }
 
     private static func mapSurface(_ surface: CapturedRoom.Surface, category: String) -> RoomPlanCaptureExport.SurfaceExport {
@@ -93,7 +119,10 @@ enum CapturedRoomExporter {
             confidence: mapConfidence(surface.confidence),
             dimensions: [Double(surface.dimensions.x), Double(surface.dimensions.y), Double(surface.dimensions.z)]
         )
-        export.polygonCorners = worldPolygonCorners(surface)
+        export.polygonCorners = worldCorners(transform: surface.transform, dimensions: surface.dimensions, polygonCorners: surface.polygonCorners)
+        let translation = surface.transform.columns.3
+        export.position = [Double(translation.x), Double(translation.y), Double(translation.z)]
+        export.yawDeg = yawDegrees(surface.transform)
         return export
     }
 
@@ -106,11 +135,7 @@ enum CapturedRoomExporter {
         )
         let translation = object.transform.columns.3
         export.position = [Double(translation.x), Double(translation.y), Double(translation.z)]
-        let axis = object.transform.columns.0
-        let yaw = atan2(Double(axis.z), Double(axis.x)) * 180 / Double.pi
-        if yaw.isFinite {
-            export.yawDeg = (yaw.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
-        }
+        export.yawDeg = yawDegrees(object.transform)
         return export
     }
 

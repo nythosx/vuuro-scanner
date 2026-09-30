@@ -151,6 +151,6 @@ struct HomeView: View {
     }
 
     private func metaLine(for entry: ScanHistoryEntry) -> String {
-        "\(entry.purpose.displayName) · \(Self.metaDateFormatter().string(from: entry.createdAt))"
+        "\(entry.purpose.displayName) · \(Self.metaDateFormatter().string(from: entry.lastActivityAt))"
     }
 }
