@@ -10,6 +10,7 @@ final class FloorPlanImageRenderer
 {
     private const WALL_GAP_MERGE_M = 0.35;
     private const TILE_BREAKPOINT_MERGE_M = 0.15;
+    private const SEAM_OVERLAP_M = 0.015;
     private const PIXELS_PER_METER = 60;
     private const TILE_PADDING = 34;
     private const LABEL_HEIGHT = 80;
@@ -87,6 +88,13 @@ final class FloorPlanImageRenderer
     {
         $n = count($outlineM);
         $sets = [];
+        $twiceArea = 0.0;
+        for ($i = 0; $i < $n; $i++) {
+            [$ax, $az] = $outlineM[$i];
+            [$bx, $bz] = $outlineM[($i + 1) % $n];
+            $twiceArea += $ax * $bz - $bx * $az;
+        }
+        $inward = $twiceArea >= 0 ? 1.0 : -1.0;
         for ($i = 0; $i < $n; $i++) {
             [$ax, $az] = $outlineM[$i];
             [$bx, $bz] = $outlineM[($i + 1) % $n];
@@ -98,17 +106,19 @@ final class FloorPlanImageRenderer
             }
             $ux = $dx / $len;
             $uz = $dz / $len;
-            $nx = -$uz;
-            $nz = $ux;
+            $nx = -$uz * $inward;
+            $nz = $ux * $inward;
             $half = $this->edgeThicknessM($roomEdgeTiers, $i) / 2;
+            $seamGap = $roomEdgeTiers[$i] ?? null;
+            $outer = is_float($seamGap) ? max($half, $seamGap / 2 + self::SEAM_OVERLAP_M) : $half;
 
             $eax = $ax - $ux * $half;
             $eaz = $az - $uz * $half;
             $ebx = $bx + $ux * $half;
             $ebz = $bz + $uz * $half;
             $corners = [
-                [$eax - $nx * $half, $eaz - $nz * $half],
-                [$ebx - $nx * $half, $ebz - $nz * $half],
+                [$eax - $nx * $outer, $eaz - $nz * $outer],
+                [$ebx - $nx * $outer, $ebz - $nz * $outer],
                 [$ebx + $nx * $half, $ebz + $nz * $half],
                 [$eax + $nx * $half, $eaz + $nz * $half],
             ];
@@ -128,6 +138,7 @@ final class FloorPlanImageRenderer
     {
         foreach ($this->roomWallPointSets($outlineM, $pose, $toPx, $roomEdgeTiers) as $points) {
             imagefilledpolygon($image, $points, $wallColor);
+            imagepolygon($image, $points, $wallColor);
         }
         $n = count($outlineM);
         $openColor = null;
@@ -262,6 +273,8 @@ final class FloorPlanImageRenderer
         }
 
         $image = imagecreatetruecolor(max($canvasWidth, 400), $canvasHeight + 72);
+
+        imageantialias($image, true);
         $surface = $this->planStyle->isFunda ? imagecolorallocate($image, 255, 255, 255) : imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_SURFACE));
         $defaultFill = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::ROOM_BUCKET_FILL['neutral']));
         $wallColor = imagecolorallocate($image, ...self::WALL_COLOR);
@@ -576,6 +589,8 @@ final class FloorPlanImageRenderer
         }
 
         $image = imagecreatetruecolor($width, $height);
+
+        imageantialias($image, true);
         $surface = $this->planStyle->isFunda ? imagecolorallocate($image, 255, 255, 255) : imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_SURFACE));
         $text = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK));
         $rule = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK_MUTED));
@@ -663,6 +678,8 @@ final class FloorPlanImageRenderer
         }
 
         $image = imagecreatetruecolor(max($canvasWidth, 400), $canvasHeight + 72);
+
+        imageantialias($image, true);
         $surface = $this->planStyle->isFunda ? imagecolorallocate($image, 255, 255, 255) : imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_SURFACE));
         $text = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK));
         $subtext = imagecolorallocate($image, ...FloorPlanPalette::hexToRgb(FloorPlanPalette::BRAND_INK_MUTED));
@@ -894,8 +911,6 @@ final class FloorPlanImageRenderer
 
         foreach ($room['openings'] ?? [] as $opening) {
             [$mx, $mz] = $opening['position_m'];
-            [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $mx, $mz);
-            [$px, $py] = $toPx($wx, $wz);
             $category = $opening['category'];
             $color = match ($category) {
                 'door' => $doorColor,
@@ -903,15 +918,25 @@ final class FloorPlanImageRenderer
                 default => $otherOpeningColor,
             };
             [$wallDx, $wallDz, $normalDx, $normalDz, $edgeIndex] = $this->nearestWallOrientation($outline, $mx, $mz, $centroidX, $centroidZ);
+            if (isset($outline[$edgeIndex])) {
+                [$edgeAx, $edgeAz] = $outline[$edgeIndex];
+                $along = ($mx - $edgeAx) * $wallDx + ($mz - $edgeAz) * $wallDz;
+                $mx = $edgeAx + $wallDx * $along;
+                $mz = $edgeAz + $wallDz * $along;
+            }
+            [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $mx, $mz);
+            [$px, $py] = $toPx($wx, $wz);
             $wallHalfM = $this->edgeThicknessM($roomEdgeTiers, $edgeIndex) / 2;
+            $seamGap = $roomEdgeTiers[$edgeIndex] ?? null;
+            $outerHalfM = is_float($seamGap) ? $wallHalfM + $seamGap + self::SEAM_OVERLAP_M : $wallHalfM;
             $widthM = self::openingWidthM($opening);
             $half = $widthM / 2;
             [$wallDx, $wallDz] = $this->pixelDirection($pose, $toPx, $mx, $mz, $px, $py, $wallDx, $wallDz);
             [$normalDx, $normalDz] = $this->pixelDirection($pose, $toPx, $mx, $mz, $px, $py, $normalDx, $normalDz);
 
             $punchCorner = fn (float $alongSign, float $acrossSign): array => [
-                $px + $wallDx * $alongSign * $half * self::PIXELS_PER_METER + $normalDx * $acrossSign * $wallHalfM * self::PIXELS_PER_METER,
-                $py + $wallDz * $alongSign * $half * self::PIXELS_PER_METER + $normalDz * $acrossSign * $wallHalfM * self::PIXELS_PER_METER,
+                $px + $wallDx * $alongSign * $half * self::PIXELS_PER_METER + $normalDx * $acrossSign * ($acrossSign > 0 ? $wallHalfM : $outerHalfM) * self::PIXELS_PER_METER,
+                $py + $wallDz * $alongSign * $half * self::PIXELS_PER_METER + $normalDz * $acrossSign * ($acrossSign > 0 ? $wallHalfM : $outerHalfM) * self::PIXELS_PER_METER,
             ];
             $punchPoints = [];
             foreach ([$punchCorner(-1, -1), $punchCorner(1, -1), $punchCorner(1, 1), $punchCorner(-1, 1)] as [$cx, $cy]) {

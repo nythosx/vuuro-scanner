@@ -37,8 +37,8 @@ final class RoomFusionSolver
         $seams = self::findSeamConstraints($rooms, $overlapping);
         $constraints = $seams['constraints'];
         foreach ($seams['interiorEdges'] as $roomIndex => $edgeIndices) {
-            foreach ($edgeIndices as $edgeIndex => $_) {
-                $edgeTiers[$roomIndex][$edgeIndex] = true;
+            foreach ($edgeIndices as $edgeIndex => $gap) {
+                $edgeTiers[$roomIndex][$edgeIndex] = $gap;
             }
         }
         if ($constraints === []) {
@@ -114,6 +114,24 @@ final class RoomFusionSolver
                 'originZ' => $originZ + $tz[$i],
                 'rotationRad' => $theta[$i],
             ];
+        }
+
+        $solvedGaps = [];
+        foreach ($constraints as [$roomA, $roomB, $rawPoints, , $edgeA, $edgeB]) {
+            $originA = $rooms[$roomA]['structure_origin_m'];
+            $originB = $rooms[$roomB]['structure_origin_m'];
+            foreach ($rawPoints as [$pAx, $pAz, $pBx, $pBz]) {
+                [$ax, $az] = self::applyPose($pAx - $originA[0], $pAz - $originA[1], $originA, $theta[$roomA], $tx[$roomA], $tz[$roomA]);
+                [$bx, $bz] = self::applyPose($pBx - $originB[0], $pBz - $originB[1], $originB, $theta[$roomB], $tx[$roomB], $tz[$roomB]);
+                $distance = hypot($bx - $ax, $bz - $az);
+                $solvedGaps[$roomA][$edgeA] = max($solvedGaps[$roomA][$edgeA] ?? 0.0, $distance);
+                $solvedGaps[$roomB][$edgeB] = max($solvedGaps[$roomB][$edgeB] ?? 0.0, $distance);
+            }
+        }
+        foreach ($solvedGaps as $roomIndex => $edges) {
+            foreach ($edges as $edgeIndex => $gap) {
+                $edgeTiers[$roomIndex][$edgeIndex] = $gap;
+            }
         }
 
         return ['overlapping' => $overlapping, 'poses' => $poses, 'edgeTiers' => $edgeTiers];
@@ -320,9 +338,9 @@ final class RoomFusionSolver
                 $pB2z = $b1z + (($pA2x - $b1x) * $vx + ($pA2z - $b1z) * $vz) * $vz;
 
                 $weight = min($overlapLen, self::SEAM_WEIGHT_CAP_M);
-                $constraints[] = [$roomA, $roomB, [[$pA1x, $pA1z, $pB1x, $pB1z], [$pA2x, $pA2z, $pB2x, $pB2z]], $weight];
-                $interiorEdges[$roomA][$edgeA] = true;
-                $interiorEdges[$roomB][$edgeB] = true;
+                $constraints[] = [$roomA, $roomB, [[$pA1x, $pA1z, $pB1x, $pB1z], [$pA2x, $pA2z, $pB2x, $pB2z]], $weight, $edgeA, $edgeB];
+                $interiorEdges[$roomA][$edgeA] = max($interiorEdges[$roomA][$edgeA] ?? 0.0, abs($gap));
+                $interiorEdges[$roomB][$edgeB] = max($interiorEdges[$roomB][$edgeB] ?? 0.0, abs($gap));
             }
         }
         return ['constraints' => $constraints, 'interiorEdges' => $interiorEdges];

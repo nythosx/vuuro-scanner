@@ -10,6 +10,7 @@ final class FloorPlanSvgRenderer
 {
     private const WALL_GAP_MERGE_M = 0.35;
     private const TILE_BREAKPOINT_MERGE_M = 0.15;
+    private const SEAM_OVERLAP_M = 0.015;
     private const PX_PER_M = 60.0;
     private const MAX_CANVAS_DIMENSION_PX = 4000;
     private const DOOR_LEAF_M = 0.8;
@@ -505,6 +506,13 @@ SVG;
     {
         $n = count($outlineM);
         $out = '';
+        $twiceArea = 0.0;
+        for ($i = 0; $i < $n; $i++) {
+            [$ax, $az] = $outlineM[$i];
+            [$bx, $bz] = $outlineM[($i + 1) % $n];
+            $twiceArea += $ax * $bz - $bx * $az;
+        }
+        $inward = $twiceArea >= 0 ? 1.0 : -1.0;
         for ($i = 0; $i < $n; $i++) {
             [$ax, $az] = $outlineM[$i];
             [$bx, $bz] = $outlineM[($i + 1) % $n];
@@ -524,17 +532,19 @@ SVG;
             }
             $ux = $dx / $len;
             $uz = $dz / $len;
-            $nx = -$uz;
-            $nz = $ux;
+            $nx = -$uz * $inward;
+            $nz = $ux * $inward;
             $half = $this->edgeThicknessM($roomEdgeTiers, $i) / 2;
+            $seamGap = $roomEdgeTiers[$i] ?? null;
+            $outer = is_float($seamGap) ? max($half, $seamGap / 2 + self::SEAM_OVERLAP_M) : $half;
 
             $eax = $ax - $ux * $half;
             $eaz = $az - $uz * $half;
             $ebx = $bx + $ux * $half;
             $ebz = $bz + $uz * $half;
             $corners = [
-                [$eax - $nx * $half, $eaz - $nz * $half],
-                [$ebx - $nx * $half, $ebz - $nz * $half],
+                [$eax - $nx * $outer, $eaz - $nz * $outer],
+                [$ebx - $nx * $outer, $ebz - $nz * $outer],
                 [$ebx + $nx * $half, $ebz + $nz * $half],
                 [$eax + $nx * $half, $eaz + $nz * $half],
             ];
@@ -620,13 +630,21 @@ SVG;
             [$mx, $mz] = $opening['position_m'];
             $category = $opening['category'];
             [$wallDx, $wallDz, $normalDx, $normalDz, $edgeIndex] = $this->nearestWallOrientation($outline, $mx, $mz, $centroidX, $centroidZ);
+            if (isset($outline[$edgeIndex])) {
+                [$edgeAx, $edgeAz] = $outline[$edgeIndex];
+                $along = ($mx - $edgeAx) * $wallDx + ($mz - $edgeAz) * $wallDz;
+                $mx = $edgeAx + $wallDx * $along;
+                $mz = $edgeAz + $wallDz * $along;
+            }
             $wallHalfM = $this->edgeThicknessM($roomEdgeTiers, $edgeIndex) / 2;
+            $seamGap = $roomEdgeTiers[$edgeIndex] ?? null;
+            $outerHalfM = is_float($seamGap) ? $wallHalfM + $seamGap + self::SEAM_OVERLAP_M : $wallHalfM;
 
             $widthM = self::openingWidthM($opening);
             $half = $widthM / 2;
             $corner = static fn (float $alongSign, float $acrossSign): array => [
-                $mx + $wallDx * $alongSign * $half + $normalDx * $acrossSign * $wallHalfM,
-                $mz + $wallDz * $alongSign * $half + $normalDz * $acrossSign * $wallHalfM,
+                $mx + $wallDx * $alongSign * $half + $normalDx * $acrossSign * ($acrossSign > 0 ? $wallHalfM : $outerHalfM),
+                $mz + $wallDz * $alongSign * $half + $normalDz * $acrossSign * ($acrossSign > 0 ? $wallHalfM : $outerHalfM),
             ];
             $corners = [$corner(-1, -1), $corner(1, -1), $corner(1, 1), $corner(-1, 1)];
             $pts = [];
