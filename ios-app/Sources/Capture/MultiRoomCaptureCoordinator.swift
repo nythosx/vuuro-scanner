@@ -161,7 +161,16 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
             return
         }
         do {
-            let map = try await arSession.getCurrentWorldMap()
+            let session = arSession
+            let map: ARWorldMap = try await withCheckedThrowingContinuation { continuation in
+                session.getCurrentWorldMap { map, error in
+                    if let map {
+                        continuation.resume(returning: map)
+                    } else {
+                        continuation.resume(throwing: error ?? PlainError(message: "ARKit returned no world map"))
+                    }
+                }
+            }
             _ = WorldMapStore.shared.save(map, sessionId: sessionId, groupId: groupId)
         } catch {
             DiagnosticsLog.shared.record("World map save failed: \(error.localizedDescription)", category: .error)
