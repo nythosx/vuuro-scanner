@@ -6656,6 +6656,118 @@
                     }
                 }
             }
+        },
+        "Rooms scanned one by one": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Rooms scanned one by one"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ruimtes los gescand"
+                    }
+                }
+            }
+        },
+        "Scan %lld": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan %lld"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan %lld"
+                    }
+                }
+            }
+        },
+        "%lld rooms in this plan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%lld rooms in this plan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%lld ruimtes in deze plattegrond"
+                    }
+                }
+            }
+        },
+        "Previous plan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Previous plan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Vorige plattegrond"
+                    }
+                }
+            }
+        },
+        "Next plan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Next plan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Volgende plattegrond"
+                    }
+                }
+            }
+        },
+        "Place the rooms you added": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Place the rooms you added"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Plaats de toegevoegde ruimtes"
+                    }
+                }
+            }
+        },
+        "Adjust the rooms you added": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Adjust the rooms you added"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Pas de toegevoegde ruimtes aan"
+                    }
+                }
+            }
         }
     },
     "version": "1.0"

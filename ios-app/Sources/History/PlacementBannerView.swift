@@ -54,7 +54,7 @@ struct PlacementBannerView: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(VuuroColor.textPrimary)
                     ForEach(unjoined) { target in
-                        Button(String(format: vuuroLocalized("Place rooms on %@"), target.floor ?? vuuroLocalized("Whole unit"))) {
+                        Button(target.floor.map { String(format: vuuroLocalized("Place rooms on %@"), $0) } ?? vuuroLocalized("Place the rooms you added")) {
                             onPlace(target)
                         }
                         .accessibilityIdentifier("placementBanner.place.\(target.id)")
@@ -66,7 +66,7 @@ struct PlacementBannerView: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(VuuroColor.textPrimary)
                     ForEach(joined) { target in
-                        Button(String(format: vuuroLocalized("Adjust rooms on %@"), target.floor ?? vuuroLocalized("Whole unit"))) {
+                        Button(target.floor.map { String(format: vuuroLocalized("Adjust rooms on %@"), $0) } ?? vuuroLocalized("Adjust the rooms you added")) {
                             onPlace(target)
                         }
                         .accessibilityIdentifier("placementBanner.adjust.\(target.id)")

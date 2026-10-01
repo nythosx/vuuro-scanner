@@ -435,43 +435,55 @@ struct ScanResultsReportView: View {
                 )
             }
 
-            ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(VuuroColor.bgInset)
+            if PlanBlock.blocks(for: floorPlan.rooms).count >= 2 {
+                PlanBlocksCarousel(
+                    blocks: PlanBlock.blocks(for: floorPlan.rooms),
+                    sessionId: entry.sessionId,
+                    accessToken: entry.accessToken,
+                    unit: exportUnit,
+                    refreshKey: "\(planRevision)",
+                    identifierPrefix: "report",
+                    onOpen: { image in previewImage = PreviewImage(image: image) }
+                )
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(VuuroColor.bgInset)
 
-                if isLoadingImage {
-                    ProgressView().tint(VuuroColor.accent)
-                } else if let floorPlanImage {
-                    Image(uiImage: floorPlanImage)
-                        .resizable()
-                        .scaledToFit()
-                        .padding(12)
-                } else if imageFailed {
-                    imageFailedPlaceholder
-                } else {
-                    ProgressView().tint(VuuroColor.accent)
+                    if isLoadingImage {
+                        ProgressView().tint(VuuroColor.accent)
+                    } else if let floorPlanImage {
+                        Image(uiImage: floorPlanImage)
+                            .resizable()
+                            .scaledToFit()
+                            .padding(12)
+                    } else if imageFailed {
+                        imageFailedPlaceholder
+                    } else {
+                        ProgressView().tint(VuuroColor.accent)
+                    }
                 }
-            }
-            .frame(height: 220)
-            .overlay(alignment: .topTrailing) {
-                if floorPlanImage != nil {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(VuuroColor.textSecondary)
-                        .padding(8)
-                        .background(VuuroColor.bgCard.opacity(0.9), in: Circle())
-                        .padding(10)
+                .frame(height: 220)
+                .overlay(alignment: .topTrailing) {
+                    if floorPlanImage != nil {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(VuuroColor.textSecondary)
+                            .padding(8)
+                            .background(VuuroColor.bgCard.opacity(0.9), in: Circle())
+                            .padding(10)
+                    }
                 }
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                if let floorPlanImage {
-                    previewImage = PreviewImage(image: floorPlanImage)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if let floorPlanImage {
+                        previewImage = PreviewImage(image: floorPlanImage)
+                    }
                 }
+                .accessibilityIdentifier("report.floorPlanPreview")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Open floor plan full screen")
             }
-            .accessibilityIdentifier("report.floorPlanPreview")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel("Open floor plan full screen")
 
             if floorPlan.rooms.count > 1 {
                 RoomPlanStrip(
@@ -1087,7 +1099,7 @@ struct ScanResultsReportView: View {
 
     @ViewBuilder
     private func separatePlans(_ floorPlan: FloorPlan) -> some View {
-        if SeparatePlansSection.hasSeveralFloors(floorPlan.rooms) {
+        if SeparatePlansSection.hasSeveralFloors(floorPlan.rooms) && PlanBlock.blocks(for: floorPlan.rooms).count < 2 {
             SeparatePlansSection(
                 rooms: floorPlan.rooms,
                 loadingTarget: loadingPlanTarget,

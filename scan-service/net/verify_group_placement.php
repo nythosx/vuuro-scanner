@@ -43,6 +43,16 @@ $groupB['structure_origin_m'] = [20.0, 10.0];
 [$captureStatus, $afterB] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $groupB], $token);
 check('two whole-unit groups captured', $captureStatus === 200 && count($afterB['rooms']) === 2, 'rooms=' . count($afterB['rooms'] ?? []));
 
+echo "\n== One plan image per group ==\n";
+[$groupPngStatus, $groupPngType, $groupPng] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png?group=walk-A", null, $token);
+check('the PNG for one group is returned', $groupPngStatus === 200 && str_starts_with($groupPng, "\x89PNG"), "got $groupPngStatus");
+[$wholePngStatus, , $wholePng] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png", null, $token);
+check('the group image differs from the whole-session image', $wholePngStatus === 200 && $groupPng !== $wholePng);
+[$noGroupStatus] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png?group=none", null, $token);
+check('group=none with no ungrouped rooms is 404', $noGroupStatus === 404, "got $noGroupStatus");
+[$unknownGroupStatus] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png?group=walk-zzz", null, $token);
+check('an unknown group is 404', $unknownGroupStatus === 404, "got $unknownGroupStatus");
+
 echo "\n== Placement with join ==\n";
 [$placeStatus, $placed] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/groups/walk-B/placement", [
     'join_to_group_id' => 'walk-A',

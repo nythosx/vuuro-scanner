@@ -101,6 +101,7 @@ struct ResultSummaryView: View {
                         } else {
                             floorPlanCard
                         }
+                        placementBanner
                         separatePlans
                         ExportStyleSection(style: $exportStyle)
                     }
@@ -113,7 +114,6 @@ struct ResultSummaryView: View {
                         }
                     }
 
-                    placementBanner
                     if !currentFloorPlan.photos.filter({ $0.roomId == nil }).isEmpty
                         || !currentFloorPlan.notes.filter({ $0.roomId == nil }).isEmpty {
                         unitAttachmentsCard
@@ -518,30 +518,42 @@ struct ResultSummaryView: View {
                 VuuroBadge("\(currentFloorPlan.rooms.count) room\(currentFloorPlan.rooms.count == 1 ? "" : "s")", style: .info)
             }
 
-            ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(VuuroColor.bgInset)
+            if PlanBlock.blocks(for: currentFloorPlan.rooms).count >= 2 {
+                PlanBlocksCarousel(
+                    blocks: PlanBlock.blocks(for: currentFloorPlan.rooms),
+                    sessionId: session.id,
+                    accessToken: session.accessToken,
+                    unit: exportUnit,
+                    refreshKey: "\(planRevision)",
+                    identifierPrefix: "result",
+                    onOpen: { image in previewImage = PreviewImage(image: image) }
+                )
+            } else {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(VuuroColor.bgInset)
 
-                if isLoadingImage {
-                    ProgressView().tint(VuuroColor.accent)
-                } else if let floorPlanImage {
-                    Image(uiImage: floorPlanImage)
-                        .resizable()
-                        .scaledToFit()
-                        .padding(12)
-                } else if imageFailed {
-                    schematicPlaceholder
-                } else {
-                    ProgressView().tint(VuuroColor.accent)
+                    if isLoadingImage {
+                        ProgressView().tint(VuuroColor.accent)
+                    } else if let floorPlanImage {
+                        Image(uiImage: floorPlanImage)
+                            .resizable()
+                            .scaledToFit()
+                            .padding(12)
+                    } else if imageFailed {
+                        schematicPlaceholder
+                    } else {
+                        ProgressView().tint(VuuroColor.accent)
+                    }
                 }
+                .frame(height: 220)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard floorPlanImage != nil else { return }
+                    Task { await fetchAndPreviewImage() }
+                }
+                .accessibilityIdentifier("result.floorPlanPreview")
             }
-            .frame(height: 220)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                guard floorPlanImage != nil else { return }
-                Task { await fetchAndPreviewImage() }
-            }
-            .accessibilityIdentifier("result.floorPlanPreview")
 
             if currentFloorPlan.rooms.count > 1 {
                 RoomPlanStrip(
@@ -818,7 +830,7 @@ struct ResultSummaryView: View {
 
     @ViewBuilder
     private var separatePlans: some View {
-        if SeparatePlansSection.hasSeveralFloors(currentFloorPlan.rooms) {
+        if SeparatePlansSection.hasSeveralFloors(currentFloorPlan.rooms) && PlanBlock.blocks(for: currentFloorPlan.rooms).count < 2 {
             SeparatePlansSection(
                 rooms: currentFloorPlan.rooms,
                 loadingTarget: loadingPlanTarget,

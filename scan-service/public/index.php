@@ -1884,6 +1884,21 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         }
         $floorPlan = [...$floorPlan, 'rooms' => $floorRooms];
     }
+    if (isset($_GET['group'])) {
+        $wantedGroup = (string) $_GET['group'];
+        $groupRooms = array_values(array_filter(
+            $floorPlan['rooms'],
+            static function (array $room) use ($wantedGroup): bool {
+                $block = $room['joined_to_group_id'] ?? $room['capture_group_id'] ?? null;
+                return $wantedGroup === 'none' ? $block === null : $block === $wantedGroup;
+            }
+        ));
+        if ($groupRooms === []) {
+            respondError(404, 'no_rooms_in_group', 'This scan has no rooms in that group.');
+            return;
+        }
+        $floorPlan = [...$floorPlan, 'rooms' => $groupRooms];
+    }
     $planStyle = parseFloorPlanStyleFromQuery($settings->planStyleFor((string) $session['purpose']) === 'full' ? 'default' : 'funda');
 
     try {
