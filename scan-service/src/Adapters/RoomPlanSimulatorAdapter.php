@@ -87,6 +87,7 @@ final class RoomPlanSimulatorAdapter
                 'objects' => self::mapObjects($rawCapture, $minX, $minZ),
                 'structure_origin_m' => self::structureOriginM($rawCapture),
                 'capture_group_id' => self::captureGroupId($rawCapture),
+                'joined_to_group_id' => self::joinedToGroupId($rawCapture),
                 'story' => self::story($rawCapture),
                 'floor' => self::normalizeFloor($identity['floor'] ?? null),
                 'heading_deg' => self::headingDeg($rawCapture),
@@ -162,6 +163,24 @@ final class RoomPlanSimulatorAdapter
         return [min(array_column($points, 0)), min(array_column($points, 1))];
     }
 
+
+    public static function openingWarning(array $rawCapture, array $capturedFloorPlan): ?string
+    {
+        $count = static fn (string $group): int => is_array($rawCapture[$group] ?? null) ? count($rawCapture[$group]) : 0;
+        $walls = $count('walls');
+        $raw = $count('doors') + $count('windows') + $count('openings');
+        $kept = 0;
+        foreach ($capturedFloorPlan['rooms'] ?? [] as $room) {
+            $kept += count($room['openings'] ?? []);
+        }
+        if ($raw > $kept) {
+            return sprintf('%d of %d doors, windows and openings from the capture were dropped (%d walls)', $raw - $kept, $raw, $walls);
+        }
+        if ($walls > 0 && $raw === 0) {
+            return sprintf('capture has %d walls but no doors, windows or openings', $walls);
+        }
+        return null;
+    }
 
     private static function mapOpenings(array $rawCapture, float $minX, float $minZ): array
     {
@@ -358,6 +377,12 @@ final class RoomPlanSimulatorAdapter
         return is_string($group) && $group !== '' ? $group : null;
     }
 
+
+    private static function joinedToGroupId(array $rawCapture): ?string
+    {
+        $group = $rawCapture['joined_to_group_id'] ?? null;
+        return is_string($group) && $group !== '' ? $group : null;
+    }
     private static function story(array $rawCapture): ?int
     {
         $story = $rawCapture['story'] ?? null;
@@ -541,6 +566,12 @@ final class RoomPlanSimulatorAdapter
         if ($captureGroup !== null && (!is_string($captureGroup) || preg_match('/^[A-Za-z0-9-]{1,64}$/', $captureGroup) !== 1)) {
             throw new \InvalidArgumentException('capture_group_id must be 1-64 letters, digits or dashes.');
         }
+
+        $joinedGroup = $rawCapture['joined_to_group_id'] ?? null;
+        if ($joinedGroup !== null && (!is_string($joinedGroup) || preg_match('/^[A-Za-z0-9-]{1,64}$/', $joinedGroup) !== 1)) {
+            throw new \InvalidArgumentException('joined_to_group_id must be 1-64 letters, digits or dashes.');
+        }
+
 
         $story = $rawCapture['story'] ?? null;
         if ($story !== null && (!is_int($story) || $story < -20 || $story > 200)) {

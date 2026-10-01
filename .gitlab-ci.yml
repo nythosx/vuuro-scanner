@@ -17,6 +17,9 @@ scan-service-net:
     - php tests/service_settings_test.php
     - php tests/opening_dedup_test.php
     - php tests/device_openings_test.php
+    - php tests/group_placement_test.php
+    - php tests/group_placement_repository_test.php
+    - php tests/floor_groups_join_test.php
     - php net/run_all.php
   after_script:
     - Get-Process | Where-Object { $_.ProcessName -eq 'php' } | ForEach-Object { Stop-Process -Id $_.Id -Force }

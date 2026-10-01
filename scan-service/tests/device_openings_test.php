@@ -39,6 +39,29 @@ unset($noPosition['doors'][0]['position']);
 $planWithout = (new RoomPlanSimulatorAdapter())->adapt($noPosition, $identity);
 do_check('a door with neither corners nor a position is skipped, not placed at 0,0', !in_array('door-dev-1', array_column($planWithout['rooms'][0]['openings'], 'opening_id'), true));
 
+echo "\n== Server warning when doors and windows are missing ==\n";
+do_check('a capture whose openings all made it gives no warning', RoomPlanSimulatorAdapter::openingWarning($raw, $plan) === null);
+$wallsOnly = $raw;
+$wallsOnly['doors'] = [];
+$wallsOnly['windows'] = [];
+$wallsOnly['openings'] = [];
+$wallsOnly['walls'] = [['identifier' => 'w1'], ['identifier' => 'w2']];
+$wallsOnlyWarning = RoomPlanSimulatorAdapter::openingWarning($wallsOnly, (new RoomPlanSimulatorAdapter())->adapt($wallsOnly, $identity));
+do_check('walls but no doors or windows is logged', is_string($wallsOnlyWarning) && str_contains($wallsOnlyWarning, '2 walls but no doors'), (string) $wallsOnlyWarning);
+$droppedWarning = RoomPlanSimulatorAdapter::openingWarning($noPosition, $planWithout);
+do_check('a door the server could not place is logged as dropped', is_string($droppedWarning) && str_starts_with($droppedWarning, '1 of 4'), (string) $droppedWarning);
+
+echo "\n== Doors and windows far from every wall ==\n";
+$farPlan = $plan;
+$farPlan['rooms'][0]['openings'][] = ['opening_id' => 'door-mid-room', 'category' => 'door', 'position_m' => [2.5, 2.0], 'width_m' => 0.85, 'confidence' => 'high'];
+$nearPlan = $plan;
+$nearPlan['rooms'][0]['openings'][] = ['opening_id' => 'door-near-wall', 'category' => 'door', 'position_m' => [3.6, 3.75], 'width_m' => 0.85, 'confidence' => 'high'];
+foreach (['svg' => new \VuuroScan\Export\FloorPlanSvgRenderer(), 'png' => new \VuuroScan\Export\FloorPlanImageRenderer()] as $format => $renderer) {
+    $base = $renderer->render($plan);
+    do_check("$format: a door in the middle of the room is not drawn onto a wall", $renderer->render($farPlan) === $base);
+    do_check("$format: a door a little off the wall is still drawn", $renderer->render($nearPlan) !== $base);
+}
+
 echo "\n== A room named during the scan ==\n";
 $named = $raw;
 $named['room_label'] = "  Study\n";

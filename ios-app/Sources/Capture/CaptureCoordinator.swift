@@ -8,8 +8,56 @@ struct CaptureLiveStats: Equatable {
     var walls: Int
     var areaM2: Double
     var heightM: Double?
+    var doors: Int = 0
+    var windows: Int = 0
+    var openings: Int = 0
 
     static let empty = CaptureLiveStats(walls: 0, areaM2: 0, heightM: nil)
+
+    enum MissingOpenings: Equatable {
+        case doorsAndWindows
+        case doors
+        case windows
+
+        var alertTitle: String {
+            switch self {
+            case .doorsAndWindows: return vuuroLocalized("No doors or windows found")
+            case .doors: return vuuroLocalized("No door found")
+            case .windows: return vuuroLocalized("No window found")
+            }
+        }
+
+        var alertMessage: String {
+            switch self {
+            case .doorsAndWindows:
+                return vuuroLocalized("The plan will show this room without doors or windows. Slowly pan across door frames and windows first. If this room really has none, you can go ahead.")
+            case .doors:
+                return vuuroLocalized("Almost every room has a door. Slowly pan across the door frame first. If this room only has an open passage, you can go ahead.")
+            case .windows:
+                return vuuroLocalized("If this room has a window, slowly pan across it first. Bathrooms and hallways often have none, then you can go ahead.")
+            }
+        }
+
+        var finishNote: String {
+            switch self {
+            case .doorsAndWindows: return vuuroLocalized("No doors or windows were found in this room yet.")
+            case .doors: return vuuroLocalized("No door was found in this room yet.")
+            case .windows: return vuuroLocalized("No window was found in this room yet.")
+            }
+        }
+    }
+
+    var missingOpenings: MissingOpenings? {
+        guard walls > 0 else { return nil }
+        let hasDoor = doors + openings > 0
+        let hasWindow = windows > 0
+        switch (hasDoor, hasWindow) {
+        case (false, false): return .doorsAndWindows
+        case (false, true): return .doors
+        case (true, false): return .windows
+        case (true, true): return nil
+        }
+    }
 }
 
 @MainActor
@@ -192,7 +240,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
         let floorsArea = computeLiveAreaFromFloors(room)
         let area = floorsArea > 0 ? floorsArea : computeLiveAreaFromWalls(room)
         let height = room.walls.map { Double($0.dimensions.y) }.max()
-        return CaptureLiveStats(walls: walls, areaM2: area, heightM: height)
+        return CaptureLiveStats(walls: walls, areaM2: area, heightM: height, doors: room.doors.count, windows: room.windows.count, openings: room.openings.count)
     }
 
     nonisolated private static func computeLiveAreaFromFloors(_ room: CapturedRoom) -> Double {

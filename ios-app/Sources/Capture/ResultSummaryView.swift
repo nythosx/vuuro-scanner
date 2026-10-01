@@ -17,9 +17,11 @@ struct ResultSummaryView: View {
     @State private var previewImage: PreviewImage?
     @State private var showPDFPreview = false
     @State private var isFetchingPDF = false
+    @State private var planRevision = 0
     @State private var showForgetConfirmation = false
     @State private var showUnsavedChangesAlert = false
     @State private var appError: AppError?
+    @State private var placementTarget: PlacementTarget?
     @State private var saveSuccessVisible = false
     @State private var missingItemTarget: MissingItemTarget?
     @State private var updatingRoomTypeIds: Set<String> = []
@@ -81,7 +83,24 @@ struct ResultSummaryView: View {
                         splitWarningBanner(warnings)
                     }
                     if !currentFloorPlan.rooms.isEmpty {
-                        floorPlanCard
+                        if RoomGridSection.shows(for: currentFloorPlan.rooms) {
+                            RoomGridSection(
+                                rooms: currentFloorPlan.rooms,
+                                sessionId: session.id,
+                                accessToken: session.accessToken,
+                                unit: exportUnit,
+                                refreshKey: "\(planRevision)",
+                                identifierPrefix: "result",
+                                imageActionLabel: "View image",
+                                imageActionIdentifier: "result.viewImage",
+                                isFetchingPDF: isFetchingPDF,
+                                onOpen: { image in previewImage = PreviewImage(image: image) },
+                                onImageAction: { Task { await fetchAndPreviewImage() } },
+                                onViewPDF: { Task { await fetchAndPreviewPDF() } }
+                            )
+                        } else {
+                            floorPlanCard
+                        }
                         separatePlans
                         ExportStyleSection(style: $exportStyle)
                     }
@@ -94,6 +113,7 @@ struct ResultSummaryView: View {
                         }
                     }
 
+                    placementBanner
                     if !currentFloorPlan.photos.filter({ $0.roomId == nil }).isEmpty
                         || !currentFloorPlan.notes.filter({ $0.roomId == nil }).isEmpty {
                         unitAttachmentsCard
@@ -225,6 +245,19 @@ struct ResultSummaryView: View {
             Text("You have unsaved edits on this scan.")
         }
         .dynamicTypeSize(...DynamicTypeSize.accessibility3)
+        .sheet(item: $placementTarget) { target in
+            GroupPlacementView(
+                session: session,
+                floorPlan: currentFloorPlan,
+                groupId: target.movingGroupId,
+                floor: target.floor,
+                onFinished: { updated in
+                    placementTarget = nil
+                    applyRoomChange(updated)
+                },
+                onCancel: { placementTarget = nil }
+            )
+        }
     }
 
     private struct PreviewImage: Identifiable {
@@ -628,6 +661,13 @@ struct ResultSummaryView: View {
         .padding(.bottom, 12)
     }
 
+    @ViewBuilder
+    private var placementBanner: some View {
+        PlacementBannerView(rooms: currentFloorPlan.rooms) { target in
+            placementTarget = target
+        }
+    }
+
     private var actionButtons: some View {
         VStack(spacing: 10) {
             Button("Save & return home") {
@@ -770,6 +810,7 @@ struct ResultSummaryView: View {
     private func discardRenderedExports() {
         FloorPlanImageCache.shared.invalidate(sessionId: session.id)
         ExportNaming.removeExports(sessionId: session.id)
+        planRevision += 1
         floorPlanImage = nil
         imageFailed = false
         pdfURL = nil

@@ -143,11 +143,35 @@ struct VuuroLiveStatsRow: View {
         stats.areaM2 <= 0.01 ? nil : "m²"
     }
 
+    private var openingsText: String {
+        var text = String(format: vuuroLocalized("Doors %lld · Windows %lld"), stats.doors, stats.windows)
+        if stats.openings > 0 {
+            text += " · " + String(format: vuuroLocalized("Openings %lld"), stats.openings)
+        }
+        return text
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
-            VuuroLiveStat(value: "\(stats.walls)", unit: nil, label: "Walls")
-            VuuroLiveStat(value: areaText, unit: areaUnit, label: "Area (est.)")
-            VuuroLiveStat(value: heightText, unit: (stats.heightM ?? 0) > 0 ? "m" : nil, label: "Height")
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                VuuroLiveStat(value: "\(stats.walls)", unit: nil, label: "Walls")
+                VuuroLiveStat(value: areaText, unit: areaUnit, label: "Area (est.)")
+                VuuroLiveStat(value: heightText, unit: (stats.heightM ?? 0) > 0 ? "m" : nil, label: "Height")
+            }
+            if stats.walls > 0 {
+                Text(verbatim: openingsText)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.75))
+                    .accessibilityIdentifier("capture.openingCounts")
+            }
+            if stats.walls >= 3 && stats.missingOpenings == .doorsAndWindows {
+                Text("No doors or windows found yet. Slowly pan across door frames and windows.")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color(red: 1, green: 0.82, blue: 0.45))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("capture.noOpeningsTip")
+            }
         }
     }
 }

@@ -167,6 +167,8 @@ struct FloorPlan: Codable {
         let roomType: RoomType?
         let floor: String?
         let openEdges: [Int]
+        let captureGroupId: String?
+        let joinedToGroupId: String?
 
         enum CodingKeys: String, CodingKey {
             case roomId = "room_id"
@@ -185,6 +187,8 @@ struct FloorPlan: Codable {
             case roomType = "room_type"
             case floor
             case openEdges = "open_edges"
+            case captureGroupId = "capture_group_id"
+            case joinedToGroupId = "joined_to_group_id"
         }
 
         init(from decoder: Decoder) throws {
@@ -205,6 +209,8 @@ struct FloorPlan: Codable {
             roomType = try c.decodeIfPresent(RoomType.self, forKey: .roomType)
             floor = try c.decodeIfPresent(String.self, forKey: .floor)
             openEdges = try c.decodeIfPresent([Int].self, forKey: .openEdges) ?? []
+            captureGroupId = try c.decodeIfPresent(String.self, forKey: .captureGroupId)
+            joinedToGroupId = try c.decodeIfPresent(String.self, forKey: .joinedToGroupId)
         }
     }
 

@@ -5968,6 +5968,694 @@
                     }
                 }
             }
+        },
+        "Doors %lld · Windows %lld": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Doors %lld · Windows %lld"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deuren %lld · Ramen %lld"
+                    }
+                }
+            }
+        },
+        "Openings %lld": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Openings %lld"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Openingen %lld"
+                    }
+                }
+            }
+        },
+        "No doors or windows found yet. Slowly pan across door frames and windows.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "No doors or windows found yet. Slowly pan across door frames and windows."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Nog geen deuren of ramen gevonden. Beweeg langzaam langs deurkozijnen en ramen."
+                    }
+                }
+            }
+        },
+        "No doors or windows found": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "No doors or windows found"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Geen deuren of ramen gevonden"
+                    }
+                }
+            }
+        },
+        "Scan more": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan more"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Verder scannen"
+                    }
+                }
+            }
+        },
+        "Finish anyway": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Finish anyway"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Toch afronden"
+                    }
+                }
+            }
+        },
+        "Save anyway": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Save anyway"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Toch opslaan"
+                    }
+                }
+            }
+        },
+        "No doors or windows were found in this room yet.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "No doors or windows were found in this room yet."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "In deze ruimte zijn nog geen deuren of ramen gevonden."
+                    }
+                }
+            }
+        },
+        "No door found": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "No door found"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Geen deur gevonden"
+                    }
+                }
+            }
+        },
+        "No window found": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "No window found"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Geen raam gevonden"
+                    }
+                }
+            }
+        },
+        "The plan will show this room without doors or windows. Slowly pan across door frames and windows first. If this room really has none, you can go ahead.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The plan will show this room without doors or windows. Slowly pan across door frames and windows first. If this room really has none, you can go ahead."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De plattegrond toont deze ruimte dan zonder deuren of ramen. Beweeg eerst langzaam langs deurkozijnen en ramen. Heeft deze ruimte er echt geen, dan kun je doorgaan."
+                    }
+                }
+            }
+        },
+        "Almost every room has a door. Slowly pan across the door frame first. If this room only has an open passage, you can go ahead.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Almost every room has a door. Slowly pan across the door frame first. If this room only has an open passage, you can go ahead."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Bijna elke ruimte heeft een deur. Beweeg eerst langzaam langs het deurkozijn. Heeft deze ruimte alleen een open doorgang, dan kun je doorgaan."
+                    }
+                }
+            }
+        },
+        "If this room has a window, slowly pan across it first. Bathrooms and hallways often have none, then you can go ahead.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "If this room has a window, slowly pan across it first. Bathrooms and hallways often have none, then you can go ahead."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Heeft deze ruimte een raam, beweeg er dan eerst langzaam langs. Badkamers en gangen hebben vaak geen raam, dan kun je doorgaan."
+                    }
+                }
+            }
+        },
+        "No door was found in this room yet.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "No door was found in this room yet."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "In deze ruimte is nog geen deur gevonden."
+                    }
+                }
+            }
+        },
+        "No window was found in this room yet.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "No window was found in this room yet."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "In deze ruimte is nog geen raam gevonden."
+                    }
+                }
+            }
+        },
+        "Tap to retry": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tap to retry"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tik om opnieuw te proberen"
+                    }
+                }
+            }
+        },
+        "The scan stopped unexpectedly. Keep Vuuro Scan open and on screen, make sure the room is well lit, and try again.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The scan stopped unexpectedly. Keep Vuuro Scan open and on screen, make sure the room is well lit, and try again."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De scan is onverwacht gestopt. Houd Vuuro Scan open en op het scherm, zorg dat de ruimte goed verlicht is en probeer het opnieuw."
+                    }
+                }
+            }
+        },
+        "New rooms are added to this report as their own section. They are not joined to the rooms you already scanned, so only scan rooms that are not in the plan yet.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "New rooms are added to this report as their own section. They are not joined to the rooms you already scanned, so only scan rooms that are not in the plan yet."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Nieuwe ruimtes worden als eigen deel aan dit rapport toegevoegd. Ze worden niet aan de al gescande ruimtes vastgemaakt, dus scan alleen ruimtes die nog niet in de plattegrond staan."
+                    }
+                }
+            }
+        },
+        "Looking for the scanned rooms…": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Looking for the scanned rooms…"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De gescande ruimtes worden gezocht…"
+                    }
+                }
+            }
+        },
+        "Recognised ✓": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Recognised ✓"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Herkend ✓"
+                    }
+                }
+            }
+        },
+        "Couldn't recognise the rooms": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Couldn't recognise the rooms"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De ruimtes konden niet worden herkend"
+                    }
+                }
+            }
+        },
+        "Recognition not available": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Recognition not available"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Herkenning niet beschikbaar"
+                    }
+                }
+            }
+        },
+        "Start in a room you already scanned. Move slowly along the walls. Use the same lights as the first scan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Start in a room you already scanned. Move slowly along the walls. Use the same lights as the first scan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Begin in een ruimte die je al hebt gescand. Beweeg langzaam langs de muren. Gebruik dezelfde verlichting als bij de eerste scan."
+                    }
+                }
+            }
+        },
+        "Starting the scan now.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Starting the scan now."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De scan start nu."
+                    }
+                }
+            }
+        },
+        "You can try again, or scan anyway and place the new rooms by hand.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "You can try again, or scan anyway and place the new rooms by hand."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Je kunt het opnieuw proberen, of toch scannen en de nieuwe ruimtes daarna handmatig plaatsen."
+                    }
+                }
+            }
+        },
+        "This phone can't recognise the earlier scan. New rooms will be added as their own section and you can place them by hand.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This phone can't recognise the earlier scan. New rooms will be added as their own section and you can place them by hand."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze telefoon kan de eerdere scan niet herkennen. Nieuwe ruimtes worden als apart deel toegevoegd en kun je daarna handmatig plaatsen."
+                    }
+                }
+            }
+        },
+        "Skip and place by hand later": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Skip and place by hand later"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Overslaan en later handmatig plaatsen"
+                    }
+                }
+            }
+        },
+        "Looking… %llds": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Looking… %llds"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Zoeken… %llds"
+                    }
+                }
+            }
+        },
+        "Place rooms": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Place rooms"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ruimtes plaatsen"
+                    }
+                }
+            }
+        },
+        "Drag to move. Use the buttons to rotate precisely.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Drag to move. Use the buttons to rotate precisely."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Sleep om te verplaatsen. Gebruik de knoppen om nauwkeurig te draaien."
+                    }
+                }
+            }
+        },
+        "Keep as separate section": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Keep as separate section"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Als apart deel behouden"
+                    }
+                }
+            }
+        },
+        "Save placement": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Save placement"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Plaatsing opslaan"
+                    }
+                }
+            }
+        },
+        "These rooms aren't joined to the plan yet": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "These rooms aren't joined to the plan yet"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze ruimtes zijn nog niet aan de plattegrond gekoppeld"
+                    }
+                }
+            }
+        },
+        "Open the scan report to place them by hand.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Open the scan report to place them by hand."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Open het scanrapport om ze handmatig te plaatsen."
+                    }
+                }
+            }
+        },
+        "Place %@": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Place %@"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%@ plaatsen"
+                    }
+                }
+            }
+        },
+        "This phone doesn't have the map of the first scan (it was scanned on another phone, or the app was reinstalled). New rooms will be added as their own section and you can place them by hand afterwards.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This phone doesn't have the map of the first scan (it was scanned on another phone, or the app was reinstalled). New rooms will be added as their own section and you can place them by hand afterwards."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze telefoon heeft de kaart van de eerste scan niet (die is op een andere telefoon gemaakt, of de app is opnieuw geïnstalleerd). Nieuwe ruimtes worden als apart deel toegevoegd en kun je daarna handmatig plaatsen."
+                    }
+                }
+            }
+        },
+        "Place rooms on %@": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Place rooms on %@"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ruimtes plaatsen op %@"
+                    }
+                }
+            }
+        },
+        "Adjust placement": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Adjust placement"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Plaatsing aanpassen"
+                    }
+                }
+            }
+        },
+        "Adjust rooms on %@": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Adjust rooms on %@"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ruimtes aanpassen op %@"
+                    }
+                }
+            }
+        },
+        "If this phone recognises the rooms you already scanned, the new rooms are joined to this plan. Otherwise they are added as their own section and you can place them by hand. Only scan rooms that are not in the plan yet.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "If this phone recognises the rooms you already scanned, the new rooms are joined to this plan. Otherwise they are added as their own section and you can place them by hand. Only scan rooms that are not in the plan yet."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Herkent deze telefoon de ruimtes die je al hebt gescand, dan worden de nieuwe ruimtes aan deze plattegrond gekoppeld. Anders worden ze als eigen deel toegevoegd en kun je ze daarna met de hand plaatsen. Scan alleen ruimtes die nog niet in de plattegrond staan."
+                    }
+                }
+            }
+        },
+        "This phone doesn't have the map of the first scan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This phone doesn't have the map of the first scan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze telefoon heeft de kaart van de eerste scan niet"
+                    }
+                }
+            }
+        },
+        "It was scanned on another phone, or the app was reinstalled. New rooms will be added as their own section and you can place them by hand afterwards.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "It was scanned on another phone, or the app was reinstalled. New rooms will be added as their own section and you can place them by hand afterwards."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Er is gescand met een andere telefoon, of de app is opnieuw geïnstalleerd. Nieuwe ruimtes worden als eigen deel toegevoegd en je kunt ze daarna met de hand plaatsen."
+                    }
+                }
+            }
+        },
+        "Start scanning": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Start scanning"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Start met scannen"
+                    }
+                }
+            }
         }
     },
     "version": "1.0"

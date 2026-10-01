@@ -308,13 +308,21 @@ struct ScanFlowView: View {
         }
         .navigationDestination(isPresented: $showHistory) {
             ScanHistoryView(
-                onResumeToAddRoom: { entry in
+                onResumeToAddRoom: { entry, continueAsUnit in
                     showHistory = false
-                    stage = .capturing(
-                        identity: entry.asResumableIdentity(),
-                        session: entry.asResumableSession(),
-                        attempt: UUID()
-                    )
+                    if continueAsUnit {
+                        stage = .multiRoomCapturing(
+                            identity: entry.asResumableIdentity(),
+                            session: entry.asResumableSession(),
+                            attempt: UUID()
+                        )
+                    } else {
+                        stage = .capturing(
+                            identity: entry.asResumableIdentity(),
+                            session: entry.asResumableSession(),
+                            attempt: UUID()
+                        )
+                    }
                 },
                 onAttachToSession: { entry, floorPlan in
                     showHistory = false
@@ -361,6 +369,8 @@ private struct RoomCaptureFlowStep: View {
     @State private var uploadTask: Task<Void, Never>?
     @State private var justCaptured: (session: ScanSessionResponse, floorPlan: FloorPlan)?
     @State private var didRequestStop = false
+    @State private var showMissingOpeningsPrompt = false
+    @State private var missingOpenings: CaptureLiveStats.MissingOpenings = .doorsAndWindows
     @State private var partialCaptureFailureMessage: String?
     @State private var isUploadingPartialCapture = false
     @State private var showDiscardConfirmation = false
@@ -545,6 +555,11 @@ private struct RoomCaptureFlowStep: View {
         }
     }
 
+    private func finishSingleRoom() {
+        didRequestStop = true
+        coordinator.stop()
+    }
+
     private var showsSingleCaptureChrome: Bool {
         coordinator.state == .scanning && !isUploading && !didRequestStop
     }
@@ -553,8 +568,12 @@ private struct RoomCaptureFlowStep: View {
         VStack(spacing: 12) {
             VuuroLiveStatsRow(stats: coordinator.liveStats)
             VuuroFinishRoomButton(label: "Finish room") {
-                didRequestStop = true
-                coordinator.stop()
+                if let missing = coordinator.liveStats.missingOpenings {
+                    missingOpenings = missing
+                    showMissingOpeningsPrompt = true
+                } else {
+                    finishSingleRoom()
+                }
             }
             .accessibilityIdentifier("capture.finishRoom")
         }
@@ -646,6 +665,16 @@ private struct RoomCaptureFlowStep: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.hidden)
             .presentationCornerRadius(VuuroMetrics.sheetRadius)
+        }
+        .alert(missingOpenings.alertTitle, isPresented: $showMissingOpeningsPrompt) {
+            Button("Scan more", role: .cancel) {}
+                .accessibilityIdentifier("capture.missingOpenings.scanMore")
+            Button("Finish anyway") {
+                finishSingleRoom()
+            }
+            .accessibilityIdentifier("capture.missingOpenings.finishAnyway")
+        } message: {
+            Text(verbatim: missingOpenings.alertMessage)
         }
         .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
             Button("Discard", role: .destructive) {

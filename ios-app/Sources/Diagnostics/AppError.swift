@@ -42,6 +42,7 @@ struct AppError {
         case historyTokenMissing = "HISTORY_TOKEN_MISSING"
         case historyFloorUpdate = "HISTORY_FLOOR_UPDATE"
         case uploadCancelled = "UPLOAD_CANCELLED"
+        case groupPlacement = "GROUP_PLACEMENT"
 
         var defaultMessage: String {
             switch self {

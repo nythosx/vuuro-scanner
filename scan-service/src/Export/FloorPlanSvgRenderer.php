@@ -11,6 +11,7 @@ final class FloorPlanSvgRenderer
     private const WALL_GAP_MERGE_M = 0.35;
     private const TILE_BREAKPOINT_MERGE_M = 0.15;
     private const SEAM_OVERLAP_M = 0.015;
+    private const MAX_OPENING_WALL_DISTANCE_M = 0.6;
     private const PX_PER_M = 60.0;
     private const MAX_CANVAS_DIMENSION_PX = 4000;
     private const DOOR_LEAF_M = 0.8;
@@ -465,7 +466,7 @@ SVG;
             $normalDx = -$normalDx;
             $normalDz = -$normalDz;
         }
-        return [$wallDx, $wallDz, $normalDx, $normalDz, $bestEdgeIndex];
+        return [$wallDx, $wallDz, $normalDx, $normalDz, $bestEdgeIndex, $bestDist];
     }
 
     private function edgeThicknessM(array $roomEdgeTiers, int $edgeIndex): float
@@ -628,7 +629,10 @@ SVG;
         foreach ($room['openings'] ?? [] as $opening) {
             [$mx, $mz] = $opening['position_m'];
             $category = $opening['category'];
-            [$wallDx, $wallDz, $normalDx, $normalDz, $edgeIndex] = $this->nearestWallOrientation($outline, $mx, $mz, $centroidX, $centroidZ);
+            [$wallDx, $wallDz, $normalDx, $normalDz, $edgeIndex, $wallDistance] = $this->nearestWallOrientation($outline, $mx, $mz, $centroidX, $centroidZ);
+            if ($n >= 3 && $wallDistance > self::MAX_OPENING_WALL_DISTANCE_M) {
+                continue;
+            }
             if (isset($outline[$edgeIndex])) {
                 [$edgeAx, $edgeAz] = $outline[$edgeIndex];
                 $along = ($mx - $edgeAx) * $wallDx + ($mz - $edgeAz) * $wallDz;

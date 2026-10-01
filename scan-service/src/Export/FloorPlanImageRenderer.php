@@ -11,6 +11,7 @@ final class FloorPlanImageRenderer
     private const WALL_GAP_MERGE_M = 0.35;
     private const TILE_BREAKPOINT_MERGE_M = 0.15;
     private const SEAM_OVERLAP_M = 0.015;
+    private const MAX_OPENING_WALL_DISTANCE_M = 0.6;
     private const PIXELS_PER_METER = 60;
     private const TILE_PADDING = 34;
     private const LABEL_HEIGHT = 80;
@@ -916,7 +917,10 @@ final class FloorPlanImageRenderer
                 'window' => $windowColor,
                 default => $otherOpeningColor,
             };
-            [$wallDx, $wallDz, $normalDx, $normalDz, $edgeIndex] = $this->nearestWallOrientation($outline, $mx, $mz, $centroidX, $centroidZ);
+            [$wallDx, $wallDz, $normalDx, $normalDz, $edgeIndex, $wallDistance] = $this->nearestWallOrientation($outline, $mx, $mz, $centroidX, $centroidZ);
+            if ($n >= 3 && $wallDistance > self::MAX_OPENING_WALL_DISTANCE_M) {
+                continue;
+            }
             if (isset($outline[$edgeIndex])) {
                 [$edgeAx, $edgeAz] = $outline[$edgeIndex];
                 $along = ($mx - $edgeAx) * $wallDx + ($mz - $edgeAz) * $wallDz;
@@ -1237,7 +1241,7 @@ final class FloorPlanImageRenderer
             $normalDx = -$normalDx;
             $normalDz = -$normalDz;
         }
-        return [$wallDx, $wallDz, $normalDx, $normalDz, $bestEdgeIndex];
+        return [$wallDx, $wallDz, $normalDx, $normalDz, $bestEdgeIndex, $bestDist];
     }
 
     private function insetTowardCentroid(float $x, float $z, float $centroidX, float $centroidZ, float $insetM): array

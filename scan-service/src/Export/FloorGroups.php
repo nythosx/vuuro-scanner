@@ -103,8 +103,12 @@ final class FloorGroups
         return $trimmed === '' ? null : $trimmed;
     }
 
-    private static function batchToken(array $room): string
+private static function batchToken(array $room): string
     {
+        $joined = $room['joined_to_group_id'] ?? null;
+        if (is_string($joined) && $joined !== '') {
+            return 'group:' . $joined;
+        }
         $group = $room['capture_group_id'] ?? null;
         if (is_string($group) && $group !== '') {
             return 'group:' . $group;

@@ -45,6 +45,7 @@ final class ScanHistoryStore {
     }
 
     func remove(sessionId: String) {
+        Task { @MainActor in WorldMapStore.shared.deleteAll(sessionId: sessionId) }
         lock.lock()
         defer { lock.unlock() }
         KeychainTokenStore.deleteToken(forSessionId: sessionId)

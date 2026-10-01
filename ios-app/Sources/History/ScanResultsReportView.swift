@@ -24,6 +24,7 @@ struct ScanResultsReportView: View {
     @State private var showPDFShare = false
     @State private var showPDFPreview = false
     @State private var isFetchingPDF = false
+    @State private var planRevision = 0
 
     @State private var showForgetConfirmation = false
     @State private var showServerDeleteConfirmation = false
@@ -46,6 +47,7 @@ struct ScanResultsReportView: View {
     @State private var showContinueChoices = false
     @State private var showContinueNewFloor = false
     @State private var continueNewFloorName = ""
+    @State private var placementTarget: PlacementTarget?
     @State private var showUnsavedChangesAlert = false
 
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
@@ -82,8 +84,26 @@ struct ScanResultsReportView: View {
                         loadingState
                     } else if let floorPlan {
                         if !floorPlan.rooms.isEmpty {
-                            floorPlanCard(floorPlan: floorPlan)
+                            if RoomGridSection.shows(for: floorPlan.rooms) {
+                                RoomGridSection(
+                                    rooms: floorPlan.rooms,
+                                    sessionId: entry.sessionId,
+                                    accessToken: entry.accessToken,
+                                    unit: exportUnit,
+                                    refreshKey: "\(planRevision)",
+                                    identifierPrefix: "report",
+                                    imageActionLabel: "Save image",
+                                    imageActionIdentifier: "report.saveImage",
+                                    isFetchingPDF: isFetchingPDF,
+                                    onOpen: { image in previewImage = PreviewImage(image: image) },
+                                    onImageAction: { Task { await shareImage() } },
+                                    onViewPDF: { Task { await openPDF() } }
+                                )
+                            } else {
+                                floorPlanCard(floorPlan: floorPlan)
+                            }
                         }
+                        placementBanner
                         if onContinueScan != nil && DeviceCapability.canCaptureRooms {
                             continueScanButton
                         }
@@ -130,7 +150,7 @@ struct ScanResultsReportView: View {
             Button("Cancel", role: .cancel) {}
                 .accessibilityIdentifier("report.continueCancel")
         } message: {
-            Text("New rooms are added to this same report, shown as their own section next to the existing plan.")
+            Text(verbatim: continueScanMessage)
         }
         .alert("Which floor?", isPresented: $showContinueNewFloor) {
             TextField("e.g. Attic, 1st floor", text: $continueNewFloorName)
@@ -210,6 +230,21 @@ struct ScanResultsReportView: View {
                 onCancel: { splitTarget = nil }
             )
             .presentationDetents([.large])
+        }
+        .sheet(item: $placementTarget) { target in
+            if let plan = floorPlan {
+                GroupPlacementView(
+                    session: entry.asResumableSession(),
+                    floorPlan: plan,
+                    groupId: target.movingGroupId,
+                    floor: target.floor,
+                    onFinished: { updated in
+                        placementTarget = nil
+                        applyRoomChange(updated)
+                    },
+                    onCancel: { placementTarget = nil }
+                )
+            }
         }
         .modifier(RoomActionAlerts(
             floorTarget: $floorTargetRoom,
@@ -783,6 +818,7 @@ struct ScanResultsReportView: View {
     private func discardRenderedExports() {
         FloorPlanImageCache.shared.invalidate(sessionId: entry.sessionId)
         ExportNaming.removeExports(sessionId: entry.sessionId)
+        planRevision += 1
         floorPlanImage = nil
         imageFailed = false
         shareImageURL = nil
@@ -842,6 +878,14 @@ struct ScanResultsReportView: View {
         return floors.sorted { HomeAggregator.floorRank($0) > HomeAggregator.floorRank($1) }
     }
 
+    private var continueScanMessage: String {
+        let isUnitScan = floorPlan?.rooms.contains { $0.captureGroupId != nil && $0.structureOriginM != nil } ?? false
+        if isUnitScan {
+            return vuuroLocalized("If this phone recognises the rooms you already scanned, the new rooms are joined to this plan. Otherwise they are added as their own section and you can place them by hand. Only scan rooms that are not in the plan yet.")
+        }
+        return vuuroLocalized("New rooms are added to this report as their own section. They are not joined to the rooms you already scanned, so only scan rooms that are not in the plan yet.")
+    }
+
     private var continueScanButton: some View {
         Button {
             showContinueChoices = true
@@ -854,6 +898,15 @@ struct ScanResultsReportView: View {
         .accessibilityHint("Scan more rooms or another floor into this report")
         .padding(.horizontal, 20)
         .padding(.top, 8)
+    }
+
+    @ViewBuilder
+    private var placementBanner: some View {
+        if let plan = floorPlan {
+            PlacementBannerView(rooms: plan.rooms) { target in
+                placementTarget = target
+            }
+        }
     }
 
     private var actionButtons: some View {

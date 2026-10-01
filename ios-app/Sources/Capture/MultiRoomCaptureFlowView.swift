@@ -1,3 +1,4 @@
+import ARKit
 import RoomPlan
 import SwiftUI
 
@@ -16,6 +17,8 @@ struct MultiRoomCaptureFlowView: View {
     @State private var isFinishingUnit = false
     @State private var isDegenerateCapture = false
     @State private var showFinishConfirmation = false
+    @State private var showMissingOpeningsPrompt = false
+    @State private var missingOpenings: CaptureLiveStats.MissingOpenings = .doorsAndWindows
     @State private var pendingFinishUnit = false
     @State private var partialRoomFailureMessage: String?
     @State private var showCapturedRoomsList = false
@@ -28,6 +31,9 @@ struct MultiRoomCaptureFlowView: View {
     @State private var preUploadedSession: (session: ScanSessionResponse, floorPlan: FloorPlan)?
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
     @State private var didStart = false
+    @State private var relocalizationOffered = false
+    @State private var targetJoinGroupId: String?
+    @State private var targetJoinFloor: String?
     @State private var cameraDenied = CameraAccess.isDenied
     @State private var showCorrectionDialog = false
     @State private var showRoomNamePrompt = false
@@ -36,11 +42,132 @@ struct MultiRoomCaptureFlowView: View {
     @State private var floorBeforePrompt: String = ""
     @State private var resumeOffer: WalkthroughState?
     @State private var showResumePrompt = false
+    @State private var showRelocalize = false
+    @State private var didRelocalize = false
+    @State private var showNoMapNotice = false
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
     private let locationProvider = LocationProvider()
     private let headingProvider = HeadingProvider()
+
+    @MainActor
+    private func deriveContinueTargetGroupId() async -> String? {
+        guard let session = existingSession else { return nil }
+        do {
+            let plan = try await client.fetchSession(sessionId: session.id, accessToken: session.accessToken)
+            let wanted = Self.floorKey(session.defaultFloor)
+            let fused = plan.rooms.filter { room in
+                guard room.captureGroupId != nil, room.structureOriginM != nil else { return false }
+                return Self.floorKey(room.floor) == wanted
+            }
+            let joinedRoots = Set(fused.compactMap { $0.joinedToGroupId })
+            if let root = joinedRoots.first {
+                return root
+            }
+            return fused.last?.captureGroupId
+        } catch {
+            DiagnosticsLog.shared.record("Could not derive continue target group: \(error.localizedDescription)", category: .error)
+            return nil
+        }
+    }
+
+    @MainActor
+    private func attemptContinueOrStart() async {
+        targetJoinGroupId = await deriveContinueTargetGroupId()
+        targetJoinFloor = (existingSession?.defaultFloor ?? identity.floor ?? "")
+        if let targetId = targetJoinGroupId {
+            await attemptRelocalization(for: targetId)
+        } else {
+            coordinator.start()
+        }
+    }
+
+    @MainActor
+    private func attemptRelocalization(for targetGroupId: String) async {
+        guard !relocalizationOffered else { return }
+        relocalizationOffered = true
+        guard let session = existingSession else {
+            coordinator.start()
+            return
+        }
+        let groupIds = await allGroupIdsOnFloor(fallback: targetGroupId)
+        if let map = WorldMapStore.shared.latestMap(sessionId: session.id, groupIds: groupIds) {
+            showRelocalize = true
+            coordinator.startRelocalizing(with: map)
+        } else {
+            showRelocalize = false
+            didRelocalize = false
+            showNoMapNotice = true
+        }
+    }
+
+    @MainActor
+    private func allGroupIdsOnFloor(fallback: String) async -> [String] {
+        guard let session = existingSession else { return [fallback] }
+        do {
+            let plan = try await client.fetchSession(sessionId: session.id, accessToken: session.accessToken)
+            let wanted = Self.floorKey(session.defaultFloor)
+            var ids = Set<String>()
+            for room in plan.rooms {
+                guard let captureId = room.captureGroupId, room.structureOriginM != nil else { continue }
+                if Self.floorKey(room.floor) != wanted {
+                    continue
+                }
+                ids.insert(captureId)
+                if let joinedId = room.joinedToGroupId { ids.insert(joinedId) }
+            }
+            return ids.isEmpty ? [fallback] : Array(ids)
+        } catch {
+            return [fallback]
+        }
+    }
+
+    @MainActor
+    private func handleRelocalizationState() {
+        switch coordinator.relocalizationState {
+        case .idle:
+            break
+        case .relocalizing:
+            showRelocalize = true
+        case .recognised:
+            showRelocalize = false
+            didRelocalize = true
+            coordinator.start(afterRelocalization: true)
+        case .timedOut, .unavailable, .relocalizedButCaptureFailed:
+            didRelocalize = false
+            showRelocalize = true
+        }
+    }
+
+    static func floorKey(_ floor: String?) -> String {
+        (floor ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var relocalizeStatus: RelocalizeStepView.Status {
+        switch coordinator.relocalizationState {
+        case .idle, .relocalizing: return .looking
+        case .recognised: return .recognised
+        case .timedOut: return .timedOut
+        case .unavailable, .relocalizedButCaptureFailed: return .unavailable
+        }
+    }
+
+    @MainActor
+    private func skipRelocalization() {
+        showRelocalize = false
+        didRelocalize = false
+        coordinator.cancelRelocalization()
+        coordinator.start()
+    }
+
+    @MainActor
+    private func retryRelocalization() {
+        guard let targetId = targetJoinGroupId else { return }
+        relocalizationOffered = false
+        coordinator.cancelRelocalization()
+        Task { await attemptRelocalization(for: targetId) }
+    }
 
     private var debugFakeCaptureActive: Bool {
         #if DEBUG
@@ -158,7 +285,7 @@ struct MultiRoomCaptureFlowView: View {
                         resumeOffer = stored
                         showResumePrompt = true
                     } else {
-                        coordinator.start()
+                        Task { await attemptContinueOrStart() }
                     }
                 }
                 .onChange(of: coordinator.cameraFeedMissing) { _, missing in
@@ -191,6 +318,9 @@ struct MultiRoomCaptureFlowView: View {
         }
         .onChange(of: coordinator.capturedRooms.count) { _, _ in
             persistWalkthroughProgress()
+        }
+        .onChange(of: coordinator.relocalizationState) { _, _ in
+            handleRelocalizationState()
         }
         .alert("Resume your walkthrough?", isPresented: $showResumePrompt, presenting: resumeOffer) { offer in
             Button("Upload \(offer.rooms.count) saved room\(offer.rooms.count == 1 ? "" : "s")") {
@@ -238,7 +368,17 @@ struct MultiRoomCaptureFlowView: View {
             Button("Keep scanning", role: .cancel) {}
                 .accessibilityIdentifier("multiCapture.finishKeepScanning")
         } message: {
-            Text("The room you are scanning now is included. Then all rooms are merged into one plan and uploaded.")
+            Text(verbatim: finishUnitMessage)
+        }
+        .alert(missingOpenings.alertTitle, isPresented: $showMissingOpeningsPrompt) {
+            Button("Scan more", role: .cancel) {}
+                .accessibilityIdentifier("multiCapture.missingOpenings.scanMore")
+            Button("Save anyway") {
+                saveCurrentRoom()
+            }
+            .accessibilityIdentifier("multiCapture.missingOpenings.saveAnyway")
+        } message: {
+            Text(verbatim: missingOpenings.alertMessage)
         }
         .sheet(isPresented: $showCapturedRoomsList) {
             CapturedRoomsListView(coordinator: coordinator)
@@ -263,6 +403,24 @@ struct MultiRoomCaptureFlowView: View {
             .accessibilityIdentifier("multiCapture.floorCancel")
         } message: {
             Text("Applies to this room and to the next rooms you scan in this session, until you change it.")
+        }
+        .overlay {
+            if showRelocalize {
+                RelocalizeCountdownView(
+                    status: relocalizeStatus,
+                    totalSeconds: 45,
+                    onSkip: { skipRelocalization() },
+                    onRetry: { retryRelocalization() }
+                )
+            }
+        }
+        .alert("This phone doesn't have the map of the first scan", isPresented: $showNoMapNotice) {
+            Button("Start scanning") {
+                coordinator.start()
+            }
+            .accessibilityIdentifier("multiCapture.noMapStart")
+        } message: {
+            Text("It was scanned on another phone, or the app was reinstalled. New rooms will be added as their own section and you can place them by hand afterwards.")
         }
         .portraitLocked()
     }
@@ -300,12 +458,16 @@ struct MultiRoomCaptureFlowView: View {
         for (index, room) in coordinator.capturedRooms.enumerated() {
             let confirmation = coordinator.roomTypeConfirmations.indices.contains(index) ? coordinator.roomTypeConfirmations[index] : nil
             let walkPath = coordinator.roomWalkPaths.indices.contains(index) ? coordinator.roomWalkPaths[index] : nil
-            let export = CapturedRoomExporter.export(
+            var export = CapturedRoomExporter.export(
                 room,
                 roomTypeConfirmation: confirmation,
                 walkPath: walkPath,
                 headingDeg: capturedHeadingDeg
             )
+            export.structureOriginM = CapturedStructureExporter.structureOriginM(for: export)
+            if didRelocalize, let joinId = targetJoinGroupId {
+                export.joinedToGroupId = joinId
+            }
             guard let data = try? JSONEncoder().encode(export) else { continue }
             let roomFloor = coordinator.floor(forRoomAt: index)
             storedRooms.append(WalkthroughState.StoredRoom(
@@ -362,6 +524,17 @@ struct MultiRoomCaptureFlowView: View {
         return String(format: vuuroLocalized("Scanning room %lld"), number)
     }
 
+    private func saveCurrentRoom() {
+        didRequestStopRoom = true
+        coordinator.stopCurrentRoom()
+    }
+
+    private var finishUnitMessage: String {
+        let base = vuuroLocalized("The room you are scanning now is included. Then all rooms are merged into one plan and uploaded.")
+        guard let missing = coordinator.liveStats.missingOpenings else { return base }
+        return base + " " + missing.finishNote
+    }
+
     private var showsMultiCaptureChrome: Bool {
         coordinator.state == .scanning && !isDegenerateCapture && partialRoomFailureMessage == nil && !didRequestStopRoom
     }
@@ -371,8 +544,12 @@ struct MultiRoomCaptureFlowView: View {
             VuuroLiveStatsRow(stats: coordinator.liveStats)
             HStack(spacing: 10) {
                 VuuroFinishRoomButton(label: "Save & next") {
-                    didRequestStopRoom = true
-                    coordinator.stopCurrentRoom()
+                    if let missing = coordinator.liveStats.missingOpenings {
+                        missingOpenings = missing
+                        showMissingOpeningsPrompt = true
+                    } else {
+                        saveCurrentRoom()
+                    }
                 }
                 .accessibilityIdentifier("multiCapture.saveAndNext")
 
@@ -636,6 +813,7 @@ struct MultiRoomCaptureFlowView: View {
             return
         }
         preUploadedSession = result
+        await coordinator.saveWorldMap(sessionId: result.session.id, groupId: captureGroupId)
         coordinator.finishUnit()
     }
 
@@ -665,6 +843,9 @@ struct MultiRoomCaptureFlowView: View {
         ).map { export -> RoomPlanCaptureExport in
             var tagged = export
             tagged.captureGroupId = captureGroupId
+            if didRelocalize, let joinId = targetJoinGroupId {
+                tagged.joinedToGroupId = joinId
+            }
             return tagged
         }
         let floorsByRoom = coordinator.floorsForStructure(structure)
@@ -761,6 +942,9 @@ struct MultiRoomCaptureFlowView: View {
         for (index, export) in exports.enumerated() {
             var tagged = export
             tagged.captureGroupId = captureGroupId
+            if didRelocalize, let joinId = targetJoinGroupId {
+                tagged.joinedToGroupId = joinId
+            }
             let roomFloor: String? = {
                 guard let floors, floors.indices.contains(index) else { return floorForCaptures }
                 return floors[index] ?? ""

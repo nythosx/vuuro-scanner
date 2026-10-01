@@ -233,7 +233,7 @@ final class HomeAggregatorTests: XCTestCase {
         XCTAssertEqual(buckets["1st floor"]?.areaM2, 25.0)
     }
 
-    func testRoomsWithoutAFloorCountTowardTheSessionFloor() {
+    func testRoomsWithoutAFloorStayUnassignedLikeOnThePlan() {
         var e = entry("mixed", floor: "Attic")
         e.cachedRoomsByFloor = [
             "Attic": CachedFloorSummary(roomCount: 1, areaM2: 20),
@@ -242,11 +242,25 @@ final class HomeAggregatorTests: XCTestCase {
         ]
         let homes = HomeAggregator.aggregate([e])
         let attic = homes[0].floors.first { $0.displayName == "Attic" }
-        XCTAssertEqual(attic?.roomCount, 3)
-        XCTAssertEqual(attic?.totalAreaM2, 50)
-        XCTAssertEqual(attic?.sessions.count, 1)
+        let unassigned = homes[0].floors.first { $0.displayName == nil }
+        XCTAssertEqual(attic?.roomCount, 1)
+        XCTAssertEqual(attic?.totalAreaM2, 20)
+        XCTAssertEqual(unassigned?.roomCount, 2)
+        XCTAssertEqual(unassigned?.totalAreaM2, 30)
         XCTAssertEqual(homes[0].totalRooms, 4)
-        XCTAssertNil(homes[0].floors.first { $0.displayName == nil })
+    }
+
+    func testContinuingOnAnotherFloorDoesNotMoveRoomsWithoutAFloor() {
+        var e = entry("continued", floor: "Attic")
+        e.cachedRoomsByFloor = [
+            "": CachedFloorSummary(roomCount: 3, areaM2: 74),
+            "Attic": CachedFloorSummary(roomCount: 3, areaM2: 74),
+        ]
+        let homes = HomeAggregator.aggregate([e])
+        let attic = homes[0].floors.first { $0.displayName == "Attic" }
+        XCTAssertEqual(attic?.roomCount, 3)
+        XCTAssertEqual(attic?.totalAreaM2, 74)
+        XCTAssertEqual(homes[0].floors.count, 2)
     }
 
     func testFloorlessRoomsOnAScanWithoutADefaultFloorAreUnassigned() {

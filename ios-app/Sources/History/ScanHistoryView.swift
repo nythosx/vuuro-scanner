@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ScanHistoryView: View {
-    var onResumeToAddRoom: ((ScanHistoryEntry) -> Void)?
+    var onResumeToAddRoom: ((ScanHistoryEntry, Bool) -> Void)?
     var onAttachToSession: ((ScanHistoryEntry, FloorPlan) -> Void)?
     var onStartScan: (() -> Void)?
     var onAddRoomsToHome: ((ScanIdentity) -> Void)?
@@ -484,7 +484,8 @@ struct ScanHistoryView: View {
                 guard let refreshed = await rotateTokenIfNeeded(entry) else { return }
                 cleanUpTempFiles()
                 dismiss()
-                onResumeToAddRoom?(refreshed)
+                let continueAsUnit = await hasFusedRoomsOnFloor(entry: refreshed, floor: refreshed.floor)
+                onResumeToAddRoom?(refreshed, continueAsUnit)
             }
         case .attachPhoto:
             Task {
@@ -611,7 +612,23 @@ struct ScanHistoryView: View {
         }
         cleanUpTempFiles()
         dismiss()
-        onResumeToAddRoom?(resumed)
+        let continueAsUnit = await hasFusedRoomsOnFloor(entry: resumed, floor: resumed.floor)
+        onResumeToAddRoom?(resumed, continueAsUnit)
+    }
+
+    @MainActor
+    private func hasFusedRoomsOnFloor(entry: ScanHistoryEntry, floor: String?) async -> Bool {
+        do {
+            let plan = try await client.fetchSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
+            let wanted = MultiRoomCaptureFlowView.floorKey(floor)
+            return plan.rooms.contains { room in
+                guard room.captureGroupId != nil, room.structureOriginM != nil else { return false }
+                return MultiRoomCaptureFlowView.floorKey(room.floor) == wanted
+            }
+        } catch {
+            DiagnosticsLog.shared.record("hasFusedRoomsOnFloor check failed: \(error.localizedDescription)", category: .error)
+            return false
+        }
     }
 
     @MainActor

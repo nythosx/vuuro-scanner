@@ -136,9 +136,36 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         guard pendingRun, captureView.window != nil, let captureSession else { return }
         pendingRun = false
         isRunning = true
+        logTrackingAndMapping(label: "before captureSession.run")
         DiagnosticsLog.shared.record("Multi-room capture session running (view is on screen)", category: .state)
         captureSession.run(configuration: RoomCaptureSession.Configuration())
+        logTrackingAndMapping(label: "after captureSession.run")
         startCameraWatchdog()
+    }
+
+    private func logTrackingAndMapping(label: String) {
+        let tracking = arSession.currentFrame.map { String(describing: $0.camera.trackingState) } ?? "no current frame"
+        let mapping = arSession.currentFrame.map { String(describing: $0.worldMappingStatus) } ?? "no current frame"
+        DiagnosticsLog.shared.record("AR state \(label): tracking=\(tracking), mapping=\(mapping)", category: .state)
+    }
+
+    func saveWorldMap(sessionId: String, groupId: String) async {
+        guard arSession.currentFrame != nil else {
+            DiagnosticsLog.shared.record("World map save skipped: no current AR frame", category: .info)
+            return
+        }
+        let status = arSession.currentFrame?.worldMappingStatus
+        DiagnosticsLog.shared.record("World mapping status before save: \(String(describing: status))", category: .state)
+        guard status == .mapped || status == .extending else {
+            DiagnosticsLog.shared.record("World map save skipped: mapping status is \(String(describing: status))", category: .info)
+            return
+        }
+        do {
+            let map = try await arSession.getCurrentWorldMap()
+            _ = WorldMapStore.shared.save(map, sessionId: sessionId, groupId: groupId)
+        } catch {
+            DiagnosticsLog.shared.record("World map save failed: \(error.localizedDescription)", category: .error)
+        }
     }
 
     private func startCameraWatchdog() {
@@ -153,8 +180,76 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         }
     }
 
-    func start() {
+    enum RelocalizationState: Equatable {
+        case idle
+        case relocalizing
+        case recognised
+        case timedOut
+        case unavailable
+        case relocalizedButCaptureFailed
+    }
+
+    private var wasRelocalized = false
+
+    @Published private(set) var relocalizationState: RelocalizationState = .idle
+    nonisolated(unsafe) private var relocalizationPollTask: Task<Void, Never>?
+    private static let relocalizationTimeoutSeconds: Double = 45
+    private static let relocalizationPollIntervalNanoseconds: UInt64 = 250_000_000
+
+    func startRelocalizing(with map: ARWorldMap) {
+        guard ARWorldTrackingConfiguration.isSupported else {
+            relocalizationState = .unavailable
+            return
+        }
+        #if DEBUG
+        if FakeLidarMode.isEnabled {
+            relocalizationState = .unavailable
+            return
+        }
+        #endif
+        relocalizationState = .relocalizing
+        wasRelocalized = true
+        let configuration = ARWorldTrackingConfiguration()
+        configuration.initialWorldMap = map
+        arSession.run(configuration, options: [])
+        startRelocalizationPolling()
+    }
+
+    private func startRelocalizationPolling() {
+        relocalizationPollTask?.cancel()
+        let start = Date()
+        relocalizationPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.relocalizationPollIntervalNanoseconds)
+                guard !Task.isCancelled, let self else { return }
+                let elapsed = Date().timeIntervalSince(start)
+                if elapsed >= Self.relocalizationTimeoutSeconds {
+                    self.relocalizationState = .timedOut
+                    return
+                }
+                guard let frame = self.arSession.currentFrame else { continue }
+                switch frame.camera.trackingState {
+                case .normal:
+                    self.relocalizationState = .recognised
+                    return
+                case .limited(.relocalizing):
+                    continue
+                case .limited, .notAvailable:
+                    continue
+                }
+            }
+        }
+    }
+
+    func cancelRelocalization() {
+        relocalizationPollTask?.cancel()
+        relocalizationPollTask = nil
+        relocalizationState = .idle
+    }
+
+    func start(afterRelocalization: Bool = false) {
         _ = captureView
+        wasRelocalized = afterRelocalization
         state = .scanning
         liveRoomTypeGuess = nil
         roomTypeConfirmation = nil
@@ -417,9 +512,18 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
     nonisolated func captureSession(_ session: RoomCaptureSession, didEndWith data: CapturedRoomData, error: Error?) {
         Task { @MainActor in
             self.isRunning = false
+            let wasReloc = self.wasRelocalized
+            self.wasRelocalized = false
             do {
                 let room = try await RoomBuilder(options: [.beautifyObjects]).capturedRoom(from: data)
                 if let error {
+                    if wasReloc, case RoomCaptureSession.CaptureError.exceedSceneSizeLimit = error {
+                        DiagnosticsLog.shared.record("exceedSceneSizeLimit after relocalization — routing to manual placement", category: .error)
+                        self.relocalizationState = .relocalizedButCaptureFailed
+                        self.pendingPartialRoom = nil
+                        self.pendingPartialRoomWalkPath = []
+                        return
+                    }
                     let hasUsableGeometry = !room.walls.isEmpty || !room.floors.isEmpty
                     self.pendingPartialRoom = hasUsableGeometry ? room : nil
                     self.pendingPartialRoomWalkPath = hasUsableGeometry ? self.currentRoomWalkPath : []

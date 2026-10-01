@@ -84,10 +84,8 @@ enum HomeAggregator {
 
     private static func floorBuckets(for entry: ScanHistoryEntry) -> [FloorBucket] {
         if let perFloor = entry.cachedRoomsByFloor, !perFloor.isEmpty {
-            let sessionFloor = (entry.floor ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return perFloor.map { name, summary in
-                let named = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                let trimmed = named.isEmpty ? sessionFloor : named
+                let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
                 return FloorBucket(
                     normalizedKey: trimmed.isEmpty ? nil : trimmed.lowercased(),
                     displayName: trimmed,

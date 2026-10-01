@@ -1005,6 +1005,10 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
             'capture_location' => $body['capture_location'] ?? null,
             'floor' => $floorForThisCapture,
         ], $roomIndexOffset);
+        $openingWarning = RoomPlanSimulatorAdapter::openingWarning($body['raw_capture'], $capturedFloorPlan);
+        if ($openingWarning !== null) {
+            error_log("VuuroScan WARNING session {$session['id']}: $openingWarning");
+        }
     } catch (\InvalidArgumentException $e) {
         if ($holdsIdempotencyClaim) {
             $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
@@ -1588,6 +1592,82 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)/lab
         return;
     }
 
+    respond(200, $floorPlan);
+    return;
+}
+
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/groups/([^/]+)/placement$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'place_group');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+    $groupId = $m[2];
+    if (rateLimited($repo, $sessionId . ':place_group', 30, 300)) {
+        return;
+    }
+    $body = json_body($rawRequestBody);
+    $rotationDeg = $body['rotation_deg'] ?? 0.0;
+    $translationM = $body['translation_m'] ?? [0.0, 0.0];
+    $joinToGroupId = array_key_exists('join_to_group_id', $body) ? $body['join_to_group_id'] : null;
+    $floorForPlacement = null;
+    $limitToFloor = array_key_exists('floor', $body);
+    if ($limitToFloor && $body['floor'] !== null) {
+        if (!is_string($body['floor'])) {
+            respondError(422, 'invalid_floor', 'floor must be a string or null.');
+            return;
+        }
+        $trimmedFloor = trim($body['floor']);
+        $floorForPlacement = $trimmedFloor === '' ? null : $trimmedFloor;
+    }
+    if (!is_int($rotationDeg) && !is_float($rotationDeg)) {
+        respondError(422, 'invalid_rotation', 'rotation_deg must be a number.');
+        return;
+    }
+    if (!is_array($translationM) || !array_is_list($translationM) || count($translationM) !== 2) {
+        respondError(422, 'invalid_translation', 'translation_m must be a two-element array.');
+        return;
+    }
+    foreach ($translationM as $tElement) {
+        if (!is_int($tElement) && !is_float($tElement)) {
+            respondError(422, 'invalid_translation', 'translation_m elements must be numbers.');
+            return;
+        }
+    }
+    if ($joinToGroupId !== null && !is_string($joinToGroupId)) {
+        respondError(422, 'invalid_join_target', 'join_to_group_id must be a string or null.');
+        return;
+    }
+    try {
+        $floorPlan = $repo->placeGroup($sessionId, $groupId, $joinToGroupId, (float) $rotationDeg, [(float) $translationM[0], (float) $translationM[1]], $floorForPlacement, $limitToFloor);
+    } catch (\VuuroScan\UnknownRoomException $e) {
+        $code = $e->getMessage() === 'join_target_not_found' ? 'group_not_found' : 'group_not_found';
+        respondError(404, $code, 'That group does not exist on this session.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        $msg = $e->getMessage();
+        $map = [
+            'group_has_splits' => [409, 'group_has_splits', 'This group has room splits. Undo the splits before placing it.'],
+            'group_missing_origin' => [409, 'group_missing_origin', 'This group has no structure origin and cannot be placed.'],
+            'floor_mismatch' => [409, 'floor_mismatch', 'The group and its join target are on different floors.'],
+            'floor_required' => [409, 'floor_required', 'This group spans several floors. Send the floor to place one floor at a time.'],
+            'cannot_join_to_self' => [409, 'cannot_join_to_self', 'A group cannot join itself.'],
+            'group_too_far' => [409, 'group_too_far', 'The group is too far from the join target.'],
+            'invalid_rotation' => [422, 'invalid_rotation', 'rotation_deg is out of range.'],
+            'invalid_translation' => [422, 'invalid_translation', 'translation_m is out of range.'],
+        ];
+        if (isset($map[$msg])) {
+            [$status, $code, $text] = $map[$msg];
+            respondError($status, $code, $text);
+        } else {
+            respondError(422, 'invalid_placement', 'The placement request was rejected.');
+        }
+        return;
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured FloorPlan yet.');
+        return;
+    }
     respond(200, $floorPlan);
     return;
 }

@@ -18,6 +18,7 @@ final class ScanSessionRepository
 
     public const MAX_ROOMS_PER_SESSION = 500;
     public const MAX_ROOM_SPLITS = 200;
+    public const MAX_JOIN_DISTANCE_M = 100.0;
 
     public const RATE_LIMIT_EVENT_RETENTION_SECONDS = 3600;
 
@@ -423,6 +424,124 @@ final class ScanSessionRepository
                 $merged['room_split_warnings'] = $splitWarnings;
             }
             return $merged;
+        });
+    }
+
+
+    public function placeGroup(string $sessionId, string $groupId, ?string $joinToGroupId, float $rotationDeg, array $translationM, ?string $floor = null, bool $limitToFloor = false): array
+    {
+        return $this->withWriteLock(function () use ($sessionId, $groupId, $joinToGroupId, $rotationDeg, $translationM, $floor, $limitToFloor) {
+            $floorPlan = $this->findFloorPlan($sessionId);
+            if ($floorPlan === null) {
+                throw new \RuntimeException("Cannot place a group on scan session $sessionId before it has a captured FloorPlan.");
+            }
+            $tx = (float) ($translationM[0] ?? 0.0);
+            $tz = (float) ($translationM[1] ?? 0.0);
+            \VuuroScan\GroupPlacement::validateRotation($rotationDeg);
+            \VuuroScan\GroupPlacement::validateTranslation($tx, $tz);
+
+            $floorKey = static function (mixed $value): string {
+                return is_string($value) ? mb_strtolower(trim($value), 'UTF-8') : '';
+            };
+            $wantedFloor = $floorKey($floor);
+            $inBlock = static function (array $room, string $block): bool {
+                return ($room['capture_group_id'] ?? null) === $block || ($room['joined_to_group_id'] ?? null) === $block;
+            };
+
+            $movingIndices = [];
+            $movingFloors = [];
+            foreach ($floorPlan['rooms'] as $i => $room) {
+                if (!$inBlock($room, $groupId)) {
+                    continue;
+                }
+                if ($limitToFloor && $floorKey($room['floor'] ?? null) !== $wantedFloor) {
+                    continue;
+                }
+                $movingIndices[] = $i;
+                $movingFloors[$floorKey($room['floor'] ?? null)] = true;
+            }
+            if ($movingIndices === []) {
+                throw new \VuuroScan\UnknownRoomException('group_not_found');
+            }
+            if (count($movingFloors) > 1) {
+                throw new \InvalidArgumentException('floor_required');
+            }
+            $movingFloor = (string) array_key_first($movingFloors);
+
+            foreach ($movingIndices as $i) {
+                if (!isset($floorPlan['rooms'][$i]['structure_origin_m'])) {
+                    throw new \InvalidArgumentException('group_missing_origin');
+                }
+            }
+            $movingRoomIds = array_map(
+                static fn (int $i) => $floorPlan['rooms'][$i]['room_id'],
+                $movingIndices
+            );
+            foreach ($floorPlan['room_splits'] ?? [] as $split) {
+                $splitRoomId = $split['room_id'] ?? null;
+                $splitNewRoomId = $split['new_room_id'] ?? null;
+                if (($splitRoomId !== null && in_array($splitRoomId, $movingRoomIds, true))
+                    || ($splitNewRoomId !== null && in_array($splitNewRoomId, $movingRoomIds, true))) {
+                    throw new \InvalidArgumentException('group_has_splits');
+                }
+            }
+
+            $targetRoot = null;
+            if ($joinToGroupId !== null) {
+                if ($joinToGroupId === $groupId) {
+                    throw new \InvalidArgumentException('cannot_join_to_self');
+                }
+                $targetExists = false;
+                foreach ($floorPlan['rooms'] as $room) {
+                    if (!$inBlock($room, $joinToGroupId)) {
+                        continue;
+                    }
+                    $targetExists = true;
+                    if ($floorKey($room['floor'] ?? null) === $movingFloor) {
+                        $targetRoot = $room['joined_to_group_id'] ?? $room['capture_group_id'] ?? $joinToGroupId;
+                        break;
+                    }
+                }
+                if (!$targetExists) {
+                    throw new \VuuroScan\UnknownRoomException('join_target_not_found');
+                }
+                if ($targetRoot === null) {
+                    throw new \InvalidArgumentException('floor_mismatch');
+                }
+            }
+
+            foreach ($movingIndices as $i) {
+                $transformed = \VuuroScan\GroupPlacement::transformRoom(
+                    $floorPlan['rooms'][$i],
+                    $rotationDeg,
+                    $tx,
+                    $tz
+                );
+                if ($targetRoot !== null) {
+                    $transformed['joined_to_group_id'] = $targetRoot;
+                } elseif (($floorPlan['rooms'][$i]['capture_group_id'] ?? null) === $groupId) {
+                    $transformed['joined_to_group_id'] = null;
+                }
+                $floorPlan['rooms'][$i] = $transformed;
+            }
+
+            if ($targetRoot !== null) {
+                $targetRooms = [];
+                foreach ($floorPlan['rooms'] as $i => $room) {
+                    if (!in_array($i, $movingIndices, true)
+                        && $inBlock($room, $targetRoot)
+                        && $floorKey($room['floor'] ?? null) === $movingFloor) {
+                        $targetRooms[] = $room;
+                    }
+                }
+                $movingAfter = array_map(static fn (int $i) => $floorPlan['rooms'][$i], $movingIndices);
+                if ($targetRooms !== [] && \VuuroScan\GroupPlacement::distanceBetweenCentroids($movingAfter, $targetRooms) > self::MAX_JOIN_DISTANCE_M) {
+                    throw new \InvalidArgumentException('group_too_far');
+                }
+            }
+
+            $this->saveFloorPlan($sessionId, $floorPlan);
+            return $floorPlan;
         });
     }
 

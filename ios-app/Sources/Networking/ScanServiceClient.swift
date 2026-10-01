@@ -423,6 +423,43 @@ struct ScanServiceClient {
         return try await post(path: "/scan-sessions/\(sessionId)/room-splits/undo", body: Body(), accessToken: accessToken)
     }
 
+
+    func placeGroup(
+        sessionId: String,
+        accessToken: String,
+        groupId: String,
+        joinTo: String?,
+        rotationDeg: Double,
+        translationM: [Double],
+        floor: String?
+    ) async throws -> FloorPlan {
+        struct Body: Encodable {
+            let joinToGroupId: String?
+            let rotationDeg: Double
+            let translationM: [Double]
+            let floor: String?
+            enum CodingKeys: String, CodingKey {
+                case joinToGroupId = "join_to_group_id"
+                case rotationDeg = "rotation_deg"
+                case translationM = "translation_m"
+                case floor
+            }
+
+            func encode(to encoder: Encoder) throws {
+                var container = encoder.container(keyedBy: CodingKeys.self)
+                try container.encode(joinToGroupId, forKey: .joinToGroupId)
+                try container.encode(rotationDeg, forKey: .rotationDeg)
+                try container.encode(translationM, forKey: .translationM)
+                try container.encode(floor, forKey: .floor)
+            }
+        }
+        return try await post(
+            path: "/scan-sessions/\(sessionId)/groups/\(groupId)/placement",
+            body: Body(joinToGroupId: joinTo, rotationDeg: rotationDeg, translationM: translationM, floor: floor),
+            accessToken: accessToken
+        )
+    }
+
     func fetchAccessLog(sessionId: String, accessToken: String) async throws -> AccessLogResponse {
         try await get(path: "/scan-sessions/\(sessionId)/access-log", accessToken: accessToken)
     }
