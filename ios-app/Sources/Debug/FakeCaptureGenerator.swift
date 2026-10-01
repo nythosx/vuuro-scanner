@@ -452,9 +452,9 @@ enum FakeCaptureGenerator {
         var result = RoomPlanCaptureExport(
             story: 0,
             floors: [floor],
-            walls: walls,
-            doors: move(room.doors),
-            windows: move(room.windows),
+            walls: withDevicePose(walls),
+            doors: withDevicePose(move(room.doors)),
+            windows: withDevicePose(move(room.windows)),
             openings: [],
             objects: move(room.objects)
         )
@@ -465,6 +465,22 @@ enum FakeCaptureGenerator {
             result.structureOriginM = [minX, minZ]
         }
         return result
+    }
+
+    private static func withDevicePose(_ surfaces: [Surface]) -> [Surface] {
+        surfaces.map { surface in
+            guard let corners = surface.polygonCorners, corners.count >= 2 else { return surface }
+            var copy = surface
+            let count = Double(corners.count)
+            copy.position = [
+                corners.map { $0[0] }.reduce(0, +) / count,
+                corners.map { $0[1] }.reduce(0, +) / count,
+                corners.map { $0[2] }.reduce(0, +) / count,
+            ]
+            let yaw = atan2(corners[1][2] - corners[0][2], corners[1][0] - corners[0][0]) * 180 / Double.pi
+            copy.yawDeg = (yaw.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
+            return copy
+        }
     }
 
     private static func randomConfidence() -> String {

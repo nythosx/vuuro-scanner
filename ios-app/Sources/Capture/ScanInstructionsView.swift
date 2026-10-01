@@ -137,16 +137,6 @@ struct ScanInstructionsView: View {
                     }
                     .padding(.horizontal, 20)
 
-                    ScanInstructionsDiagram(type: type)
-                        .frame(height: 110)
-                        .padding(12)
-                        .frame(maxWidth: .infinity)
-                        .background(VuuroColor.bgCard, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .shadow(color: VuuroMetrics.cardShadowColor, radius: VuuroMetrics.cardShadowRadius, x: 0, y: 4)
-                        .padding(.horizontal, 20)
-                        .padding(.top, 16)
-                        .accessibilityHidden(true)
-
                     sectionLabel("How it works")
                     card {
                         ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
@@ -274,104 +264,6 @@ struct ScanInstructionsView: View {
                 .lineSpacing(2)
                 .foregroundStyle(VuuroColor.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-}
-
-private struct ScanInstructionsDiagram: View {
-    let type: ScanStartType
-
-    var body: some View {
-        Canvas { context, size in
-            switch type {
-            case .single:
-                drawSingle(context: context, size: size)
-            case .multi:
-                drawUnit(context: context, size: size)
-            }
-        }
-    }
-
-    private func arrowHead(at tip: CGPoint, pointingRight: Bool) -> Path {
-        let direction: CGFloat = pointingRight ? 1 : -1
-        var path = Path()
-        path.move(to: tip)
-        path.addLine(to: CGPoint(x: tip.x - 7 * direction, y: tip.y - 4))
-        path.addLine(to: CGPoint(x: tip.x - 7 * direction, y: tip.y + 4))
-        path.closeSubpath()
-        return path
-    }
-
-    private func drawSingle(context: GraphicsContext, size: CGSize) {
-        let roomWidth = min(size.width * 0.62, 220)
-        let roomHeight = size.height * 0.72
-        let room = CGRect(
-            x: (size.width - roomWidth) / 2,
-            y: (size.height - roomHeight) / 2,
-            width: roomWidth,
-            height: roomHeight
-        )
-        context.fill(Path(room), with: .color(VuuroColor.accentSoft))
-        context.stroke(Path(room), with: .color(VuuroColor.textPrimary), lineWidth: 1.4)
-
-        let loop = room.insetBy(dx: 12, dy: 12)
-        let loopPath = Path(roundedRect: loop, cornerRadius: 10)
-        context.stroke(
-            loopPath,
-            with: .color(VuuroColor.accent),
-            style: StrokeStyle(lineWidth: 1.6, lineCap: .round, dash: [4, 3])
-        )
-        let tip = CGPoint(x: loop.midX + 6, y: loop.minY)
-        context.fill(arrowHead(at: tip, pointingRight: true), with: .color(VuuroColor.accent))
-
-        let you = CGRect(x: room.midX - 5, y: room.midY - 5, width: 10, height: 10)
-        context.fill(Path(ellipseIn: you), with: .color(VuuroColor.lime))
-    }
-
-    private func drawUnit(context: GraphicsContext, size: CGSize) {
-        let count = 4
-        let margin: CGFloat = 20
-        let roomWidth = (size.width - margin * 2) / CGFloat(count)
-        let roomHeight = size.height * 0.68
-        let top = (size.height - roomHeight) / 2
-        let fills: [Color] = [
-            VuuroColor.accentSoft,
-            VuuroColor.goodTint,
-            VuuroColor.infoTint,
-            VuuroColor.accentSoft,
-        ]
-        for index in 0..<count {
-            let rect = CGRect(x: margin + CGFloat(index) * roomWidth, y: top, width: roomWidth, height: roomHeight)
-            context.fill(Path(rect), with: .color(fills[index]))
-            context.stroke(Path(rect), with: .color(VuuroColor.textPrimary), lineWidth: 1.2)
-        }
-        let midY = top + roomHeight * 0.55
-        for index in 1..<count {
-            let x = margin + CGFloat(index) * roomWidth
-            let door = CGRect(x: x - 3, y: midY - 7, width: 6, height: 14)
-            context.fill(Path(door), with: .color(VuuroColor.bgCard))
-        }
-
-        var walk = Path()
-        walk.move(to: CGPoint(x: 4, y: midY))
-        walk.addLine(to: CGPoint(x: size.width - 6, y: midY))
-        context.stroke(
-            walk,
-            with: .color(VuuroColor.accent),
-            style: StrokeStyle(lineWidth: 1.8, lineCap: .round, dash: [4, 3])
-        )
-        context.fill(arrowHead(at: CGPoint(x: size.width - 2, y: midY), pointingRight: true), with: .color(VuuroColor.accent))
-
-        for index in 0..<count {
-            let center = CGPoint(x: margin + (CGFloat(index) + 0.5) * roomWidth, y: top + roomHeight * 0.28)
-            let badge = CGRect(x: center.x - 9, y: center.y - 9, width: 18, height: 18)
-            context.fill(Path(ellipseIn: badge), with: .color(VuuroColor.lime))
-            context.draw(
-                Text("\(index + 1)")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(VuuroColor.overlayInk),
-                at: center
-            )
         }
     }
 }

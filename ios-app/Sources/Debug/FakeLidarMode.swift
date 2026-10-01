@@ -11,6 +11,10 @@ enum FakeLidarMode {
         return fallback
     }
 
+    #if targetEnvironment(simulator)
+    private static let fallback = true
+    #else
     private static let fallback = false
+    #endif
 }
 #endif
