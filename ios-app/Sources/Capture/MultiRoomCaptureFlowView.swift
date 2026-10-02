@@ -957,6 +957,9 @@ struct MultiRoomCaptureFlowView: View {
             return nil
         }
 
+        if !FloorValidation.isValid(capturedFloor) {
+            capturedFloor = [existingSession?.defaultFloor, identity.floor].compactMap { $0 }.map(FloorValidation.sanitized).first { !$0.isEmpty } ?? ""
+        }
         let floorForCaptures: String? = {
             let trimmed = (capturedFloor).trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed

@@ -15,6 +15,10 @@ struct VuuroScanApp: App {
             UserDefaults.standard.removeObject(forKey: OnboardingKeys.hasCompleted)
             UserDefaults.standard.removeObject(forKey: OnboardingKeys.version)
         }
+        if ProcessInfo.processInfo.arguments.contains("-uiTestResetState") {
+            PendingUploadStore.clear()
+            WalkthroughStore.clear()
+        }
         #endif
         DispatchQueue.global(qos: .utility).async {
             KeychainTokenStore.resetIfReinstalled()
@@ -832,6 +836,9 @@ private struct RoomCaptureFlowStep: View {
     @MainActor
     private func submit(_ export: RoomPlanCaptureExport, rescanDecided: Bool = false) async {
         defer { isUploadingPartialCapture = false }
+        if !FloorValidation.isValid(captureFloor) {
+            captureFloor = [existingSession?.defaultFloor, identity.floor].compactMap { $0 }.map(FloorValidation.sanitized).first { !$0.isEmpty } ?? ""
+        }
 
         guard export.hasUsableFloorOutline else {
             DiagnosticsLog.shared.record("Local reject: floor outline too small/degenerate, upload skipped", category: .error)
