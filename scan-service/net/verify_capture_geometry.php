@@ -96,6 +96,7 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
 
     [$captureStatus, $floorPlan] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", [
         'raw_capture' => $fixture,
+        'floor' => 'Ground',
     ], $accessToken);
     check('capture accepted (HTTP 200)', $captureStatus === 200, "got HTTP $captureStatus");
 

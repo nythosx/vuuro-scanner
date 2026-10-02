@@ -373,6 +373,17 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         return mapping
     }
 
+    func replacementsForStructure(_ structure: CapturedStructure, replacements: [Int: String]) -> [UUID: String] {
+        guard !replacements.isEmpty else { return [:] }
+        var result: [UUID: String] = [:]
+        for (mergedId, originalIndices) in mapMergedRoomsToOriginals(structure) {
+            if let roomId = originalIndices.sorted().compactMap({ replacements[$0] }).first {
+                result[mergedId] = roomId
+            }
+        }
+        return result
+    }
+
     func roomTypeConfirmationsForStructure(_ structure: CapturedStructure) -> [UUID: RoomTypeConfirmation] {
         let mapping = mapMergedRoomsToOriginals(structure)
         var result: [UUID: RoomTypeConfirmation] = [:]

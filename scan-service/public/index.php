@@ -726,6 +726,50 @@ if ($method === 'POST' && $path === '/scan-sessions') {
     return;
 }
 
+if ($method === 'POST' && $path === '/scan-sessions/activity') {
+    if (rateLimited($repo, clientIp() . ':activity', 30, 60)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    $entries = $body['sessions'] ?? null;
+    if (!is_array($entries) || !array_is_list($entries)) {
+        respondError(422, 'missing_sessions', "Please include a 'sessions' array of {id, token} entries.");
+        return;
+    }
+    if (count($entries) > 100) {
+        respondError(422, 'too_many_sessions', 'At most 100 sessions can be checked at once.');
+        return;
+    }
+
+    $results = [];
+    foreach ($entries as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $id = $entry['id'] ?? null;
+        $token = $entry['token'] ?? null;
+        if (!is_string($id) || $id === '' || !is_string($token) || $token === '') {
+            continue;
+        }
+        $session = $repo->find($id);
+        if ($session === null || !$repo->tokenMatches($session, $token) || $repo->isTokenExpired($session)) {
+            continue;
+        }
+        $floorPlan = $repo->findFloorPlan($id);
+        if ($floorPlan === null || !is_string($floorPlan['captured_at'] ?? null)) {
+            continue;
+        }
+        $results[] = [
+            'id' => $id,
+            'captured_at' => $floorPlan['captured_at'],
+        ];
+    }
+
+    respond(200, ['sessions' => $results]);
+    return;
+}
+
 if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/note-only$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'mark_note_only');
     if ($session === null) {
@@ -992,6 +1036,14 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         $floorForThisCapture = $sessionDefault === '' ? null : $sessionDefault;
     }
 
+    if ($floorForThisCapture === null) {
+        if ($holdsIdempotencyClaim) {
+            $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+        }
+        respondError(422, 'floor_required', "Every room needs a floor. Set a default floor for this session first, or include a non-empty 'floor' on this capture.");
+        return;
+    }
+
     $adapter = new RoomPlanSimulatorAdapter();
     try {
         $roomIndexOffset = $repo->roomCount($session['id']);
@@ -1024,8 +1076,27 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         return;
     }
     try {
-        $floorPlan = $repo->appendCapture($session['id'], $capturedFloorPlan);
+        if (RoomPlanSimulatorAdapter::replacesRoomId($body['raw_capture']) !== null) {
+            $floorPlan = $repo->replaceRoomInPlace($session['id'], $capturedFloorPlan['rooms'][0], (string) $capturedFloorPlan['captured_at']);
+        } else {
+            $floorPlan = $repo->appendCapture($session['id'], $capturedFloorPlan);
+        }
         $repo->markCaptured($session['id']);
+    } catch (\VuuroScan\UnknownRoomException $e) {
+        if ($holdsIdempotencyClaim) {
+            $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+        }
+        respondError(422, 'unknown_room_id', 'The room this scan should replace no longer exists on this session.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        if ($holdsIdempotencyClaim) {
+            $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+        }
+        if ($e->getMessage() !== 'replace_floor_mismatch') {
+            throw $e;
+        }
+        respondError(409, 'replace_floor_mismatch', 'A room can only be replaced by a scan on the same floor.');
+        return;
     } catch (\OverflowException $e) {
         if ($holdsIdempotencyClaim) {
             $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
@@ -1073,16 +1144,41 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms$#', $path, 
         return;
     }
 
+    $replaceGroups = [];
+    foreach ($body['captures'] as $index => $capture) {
+        if (!is_array($capture) || empty($capture['raw_capture']) || !is_array($capture['raw_capture'])) {
+            respondError(422, 'missing_raw_capture', "captures[$index] must include a 'raw_capture' field with the RoomPlan capture data for this room.");
+            return;
+        }
+        $group = $capture['raw_capture']['capture_group_id'] ?? null;
+        if (!is_string($group) || $group === '') {
+            respondError(422, 'missing_capture_group', "captures[$index].raw_capture must include the 'capture_group_id' of the walkthrough it replaces, so rooms from other scans are kept.");
+            return;
+        }
+        $replaceGroups[$group] = true;
+    }
+    $replaceGroups = array_keys($replaceGroups);
+    $replacedRoomIds = [];
+    foreach ($body['captures'] as $capture) {
+        $replacedId = RoomPlanSimulatorAdapter::replacesRoomId($capture['raw_capture']);
+        if ($replacedId !== null) {
+            $replacedRoomIds[] = $replacedId;
+        }
+    }
+    $existingPlan = $repo->findFloorPlan($session['id']);
+    $keptRoomCount = 0;
+    foreach ($existingPlan['rooms'] ?? [] as $existingRoom) {
+        if (!in_array($existingRoom['capture_group_id'] ?? null, $replaceGroups, true) && !in_array($existingRoom['room_id'] ?? null, $replacedRoomIds, true)) {
+            $keptRoomCount++;
+        }
+    }
+
     $adapter = new RoomPlanSimulatorAdapter();
     $rooms = [];
     $captureProvider = 'roomplan';
     $capturedAt = gmdate('c');
     $sessionDefault = trim((string) ($session['default_floor'] ?? ''));
     foreach ($body['captures'] as $index => $capture) {
-        if (!is_array($capture) || empty($capture['raw_capture']) || !is_array($capture['raw_capture'])) {
-            respondError(422, 'missing_raw_capture', "captures[$index] must include a 'raw_capture' field with the RoomPlan capture data for this room.");
-            return;
-        }
         if (isset($capture['capture_provider']) && !is_string($capture['capture_provider'])) {
             respondError(422, 'field_must_be_string', "captures[$index].capture_provider must be a plain string.");
             return;
@@ -1102,6 +1198,10 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms$#', $path, 
         } else {
             $floorForCapture = $sessionDefault === '' ? null : $sessionDefault;
         }
+        if ($floorForCapture === null) {
+            respondError(422, 'floor_required', "captures[$index] needs a floor. Set a default floor for this session first, or include a non-empty 'floor' on each capture.");
+            return;
+        }
         try {
             $adapted = $adapter->adapt($capture['raw_capture'], [
                 'scan_session_id' => $session['id'],
@@ -1112,7 +1212,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms$#', $path, 
                 'capture_provider' => $capture['capture_provider'] ?? 'roomplan',
                 'capture_location' => $capture['capture_location'] ?? null,
                 'floor' => $floorForCapture,
-            ], count($rooms));
+            ], $keptRoomCount + count($rooms));
         } catch (\InvalidArgumentException $e) {
             respondError(422, 'unprocessable_capture', "captures[$index] couldn't be processed: " . $e->getMessage());
             return;
@@ -1127,9 +1227,12 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms$#', $path, 
     }
 
     try {
-        $floorPlan = $repo->replaceRooms($session['id'], $rooms, $captureProvider, $capturedAt);
+        $floorPlan = $repo->replaceRooms($session['id'], $rooms, $captureProvider, $capturedAt, $replaceGroups, $replacedRoomIds);
     } catch (\OverflowException $e) {
         respondError(422, 'too_many_rooms', $e->getMessage());
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(409, 'room_id_conflict', $e->getMessage());
         return;
     } catch (\RuntimeException $e) {
         respondError(409, 'no_floor_plan_yet', $e->getMessage());

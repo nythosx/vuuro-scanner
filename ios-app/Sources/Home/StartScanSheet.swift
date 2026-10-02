@@ -35,7 +35,8 @@ struct StartScanSheet: View {
         !trimmedPropertyId.isEmpty && !trimmedUnitId.isEmpty && !trimmedOrganisationId.isEmpty
     }
 
-    private var canStart: Bool { identityFieldsFilled && (!occupied || consentObtained) }
+    private var canStartNoteOnly: Bool { identityFieldsFilled && (!occupied || consentObtained) }
+    private var canStart: Bool { canStartNoteOnly && FloorValidation.isValid(floor) }
 
     private var trimmedFloor: String {
         floor.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -147,6 +148,11 @@ struct StartScanSheet: View {
                         VuuroInputRow(leadingIcon: "building.2", showsDivider: false) {
                             TextField("e.g. Attic, 1st floor, Basement", text: $floor)
                                 .accessibilityIdentifier("startScan.floor")
+                                .onChange(of: floor) { _, newValue in
+                                    if newValue.unicodeScalars.count > FloorValidation.maxLength {
+                                        floor = FloorValidation.sanitized(newValue)
+                                    }
+                                }
                                 .font(.system(size: 15))
                                 .tracking(-0.2)
                                 .foregroundStyle(VuuroColor.textPrimary)
@@ -282,7 +288,7 @@ struct StartScanSheet: View {
                     }
                     .accessibilityIdentifier("startScan.noteOnly")
                     .buttonStyle(.vuuroPrimary)
-                    .disabled(!canStart || isCheckingHealth)
+                    .disabled(!canStartNoteOnly || isCheckingHealth)
                 }
             }
             .padding(.horizontal, 20)

@@ -48,6 +48,7 @@ function base_payload(): array
         'organisation_id' => 'org-net-errmsg',
         'purpose' => 'listing',
         'occupied' => false,
+        'floor' => 'Ground',
     ];
 }
 

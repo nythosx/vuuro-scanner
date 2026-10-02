@@ -16,12 +16,14 @@ struct RoomPlanCaptureExport: Codable {
     var walkPathM: [[Double]]? = nil
     var headingDeg: Double? = nil
     var captureGroupId: String? = nil
+    var replacesRoomId: String? = nil
     var joinedToGroupId: String? = nil
     var roomLabel: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case story, floors, walls, doors, windows, openings, objects
         case captureGroupId = "capture_group_id"
+        case replacesRoomId = "replaces_room_id"
         case joinedToGroupId = "joined_to_group_id"
         case roomLabel = "room_label"
         case roomType = "room_type"

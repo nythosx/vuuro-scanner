@@ -41,6 +41,9 @@ jobs:
           php tests/device_openings_test.php
           php tests/group_placement_test.php
           php tests/group_placement_repository_test.php
+          php tests/replace_rooms_merge_test.php
+          php tests/render_scenarios_test.php
+          php tests/joined_openings_test.php
           php tests/floor_groups_join_test.php
 
       - name: The independent net (every suite, fresh servers and DBs)

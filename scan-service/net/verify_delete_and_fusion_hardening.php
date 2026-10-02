@@ -28,6 +28,7 @@ echo "== Deleting a note/photo from one room of a fused session leaves the other
 [$createStatus, $session] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-fusion-delete', 'unit_id' => 'unit-net-fusion-delete', 'organisation_id' => 'org-net-fusion-delete',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 check('session created (HTTP 201)', $createStatus === 201, "got HTTP $createStatus");
 $sessionId = $session['id'] ?? null;
@@ -105,6 +106,7 @@ echo "\n== The update_note rate limit boundary is exactly where the fix set it (
 [, $rateLimitSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-notelimit', 'unit_id' => 'unit-net-notelimit', 'organisation_id' => 'org-net-notelimit',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $rateLimitSessionId = $rateLimitSession['id'] ?? null;
 $rateLimitToken = $rateLimitSession['access_token'] ?? null;

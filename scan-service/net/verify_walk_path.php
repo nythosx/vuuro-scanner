@@ -27,6 +27,7 @@ echo "== A capture with a walk_path carries walk_path_m through to the session, 
 [, $session] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-walkpath', 'unit_id' => 'unit-net-walkpath', 'organisation_id' => 'org-net-walkpath',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $sessionId = $session['id'];
 $accessToken = $session['access_token'];
@@ -52,6 +53,7 @@ echo "\n== Adjacent case: a room with no walk_path renders a visibly different P
 [, $noPathSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-walkpath-none', 'unit_id' => 'unit-net-walkpath-none', 'organisation_id' => 'org-net-walkpath',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 net_http_json('POST', "$baseUrl/scan-sessions/{$noPathSession['id']}/capture", ['raw_capture' => $fixture], $noPathSession['access_token']);
 [, , $pngNoPath] = net_http_raw('GET', "$baseUrl/scan-sessions/{$noPathSession['id']}/export/floorplan.png?walk_path=1", null, $noPathSession['access_token']);
@@ -65,6 +67,7 @@ echo "\n== Adjacent case: a fused (2-room) session with per-room walk paths rend
 [, $fusedSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-walkpath-fused', 'unit_id' => 'unit-net-walkpath-fused', 'organisation_id' => 'org-net-walkpath',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $fusedId = $fusedSession['id'];
 $fusedToken = $fusedSession['access_token'];

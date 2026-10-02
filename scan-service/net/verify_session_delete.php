@@ -28,6 +28,7 @@ function base_payload(): array
         'organisation_id' => 'org-net-delete',
         'purpose' => 'listing',
         'occupied' => false,
+        'floor' => 'Ground',
     ];
 }
 

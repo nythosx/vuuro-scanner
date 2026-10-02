@@ -28,6 +28,7 @@ function base_payload(): array
         'organisation_id' => 'org-net-enterprise',
         'purpose' => 'listing',
         'occupied' => false,
+        'floor' => 'Ground',
     ];
 }
 
@@ -201,7 +202,7 @@ if ($collisionId !== null && $collisionToken !== null) {
 
 echo "\n== A failed capture releases its Idempotency-Key claim instead of poisoning it ==\n";
 
-$degenerateCapture = ['raw_capture' => ['floors' => [['identifier' => 'f', 'polygonCorners' => [[0, 0, 0], [0.001, 0, 0], [0.001, 0, 0.001], [0, 0, 0.001]]]]]];
+$degenerateCapture = ['raw_capture' => ['floors' => [['identifier' => 'f', 'polygonCorners' => [[0, 0, 0], [0.001, 0, 0], [0.001, 0, 0.001], [0, 0, 0.001]]]]], 'floor' => 'Ground'];
 
 [, $releaseSameBodySession] = net_http_json('POST', "$baseUrl/scan-sessions", base_payload());
 $releaseSameBodyId = $releaseSameBodySession['id'] ?? null;

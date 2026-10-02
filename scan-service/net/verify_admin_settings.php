@@ -48,6 +48,7 @@ echo "\n== Tenant deletion switch ==\n";
 [, $session] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-settings', 'unit_id' => 'unit-net-settings', 'organisation_id' => 'org-net-settings',
     'purpose' => 'check_out', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $sessionId = $session['id'];
 $token = $session['access_token'];

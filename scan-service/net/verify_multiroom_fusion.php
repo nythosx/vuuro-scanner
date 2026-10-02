@@ -43,6 +43,7 @@ echo "== Multi-room fusion: two rooms each carrying structure_origin_m ==\n";
     'organisation_id' => 'org-net-fusion',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 check('session created (HTTP 201)', $createStatus === 201, "got HTTP $createStatus");
 $sessionId = $session['id'] ?? null;
@@ -129,6 +130,7 @@ echo "\n== A fully-fused session with a mispositioned room is flagged, not silen
 [, $overlapSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-fusion-overlap', 'unit_id' => 'unit-net-fusion-overlap', 'organisation_id' => 'org-net-fusion',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $overlapSessionId = $overlapSession['id'];
 $overlapToken = $overlapSession['access_token'];

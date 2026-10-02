@@ -446,7 +446,7 @@ echo "\n== FloorPlanSvgRenderer: fusion collides rooms to close small real-world
 function svg_room_fill_polygons(string $svg): array
 {
     preg_match('/<g id="room-fills">(.*?)<\/g>/s', $svg, $group);
-    preg_match_all('/<polygon points="([^"]+)" fill="#[0-9a-f]{6}"\/>/', $group[1] ?? '', $m);
+    preg_match_all('/<polygon[^>]*points="([^"]+)"[^>]*fill="#[0-9a-f]{6}"[^>]*\/>/', $group[1] ?? '', $m);
     $polys = [];
     foreach ($m[1] as $pointsStr) {
         $pts = [];

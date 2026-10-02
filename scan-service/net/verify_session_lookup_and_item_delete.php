@@ -29,6 +29,7 @@ $suffix = substr(md5((string) microtime(true)), 0, 8);
 [, $session] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => "prop-net-tier4-$suffix", 'unit_id' => "unit-net-tier4-$suffix", 'organisation_id' => "org-net-tier4-$suffix",
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $sessionId = $session['id'];
 $accessToken = $session['access_token'];
@@ -138,6 +139,7 @@ echo "\n== Adjacent case: deleting a photo/note on a session with no floor plan 
 [, $emptySession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-tier4-empty', 'unit_id' => 'unit-net-tier4-empty', 'organisation_id' => 'org-net-tier4-empty',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 [$emptyDeletePhotoStatus, ] = net_http_json('DELETE', "$baseUrl/scan-sessions/{$emptySession['id']}/photos/whatever", null, $emptySession['access_token']);
 check('deleting a photo before any capture is a clean 409', $emptyDeletePhotoStatus === 409, "got HTTP $emptyDeletePhotoStatus");
@@ -155,6 +157,7 @@ check('PDF text mentions the detected object category', str_contains($pdfBytes, 
 [, $noObjectSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-tier4-noobj', 'unit_id' => 'unit-net-tier4-noobj', 'organisation_id' => 'org-net-tier4-noobj',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $noObjectFixture = $fixture;
 $noObjectFixture['objects'] = [];
@@ -172,6 +175,7 @@ check('run-retention reports how many sessions it purged', is_int($retentionBody
 $freshSession = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => "prop-net-retention-$suffix", 'unit_id' => 'unit-1', 'organisation_id' => 'org-1',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ])[1];
 net_http_json_ex('POST', "$baseUrl/admin/run-retention", null, null, ['X-Admin-Api-Key' => $adminApiKey]);
 [$freshStatus, ] = net_http_json('GET', "$baseUrl/scan-sessions/{$freshSession['id']}", null, $freshSession['access_token']);

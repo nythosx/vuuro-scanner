@@ -70,7 +70,7 @@ final class RoomPlanSimulatorAdapter
 
             $globalIndex = $roomIndexOffset + $index;
             $rooms[] = [
-                'room_id' => sprintf('room-%02d-%s', $globalIndex + 1, (string) ($floor['identifier'] ?? ('floor-' . $index))),
+                'room_id' => self::replacesRoomId($rawCapture) ?? sprintf('room-%02d-%s', $globalIndex + 1, (string) ($floor['identifier'] ?? ('floor-' . $index))),
                 'label' => self::roomLabel($rawCapture) ?? 'Room ' . ($globalIndex + 1),
                 'floor_area_m2' => round($area, 2),
                 'perimeter_m' => round($perimeter, 2),
@@ -378,6 +378,12 @@ final class RoomPlanSimulatorAdapter
     }
 
 
+    public static function replacesRoomId(array $rawCapture): ?string
+    {
+        $roomId = $rawCapture['replaces_room_id'] ?? null;
+        return is_string($roomId) && $roomId !== '' ? $roomId : null;
+    }
+
     private static function joinedToGroupId(array $rawCapture): ?string
     {
         $group = $rawCapture['joined_to_group_id'] ?? null;
@@ -570,6 +576,11 @@ final class RoomPlanSimulatorAdapter
         $joinedGroup = $rawCapture['joined_to_group_id'] ?? null;
         if ($joinedGroup !== null && (!is_string($joinedGroup) || preg_match('/^[A-Za-z0-9-]{1,64}$/', $joinedGroup) !== 1)) {
             throw new \InvalidArgumentException('joined_to_group_id must be 1-64 letters, digits or dashes.');
+        }
+
+        $replacesRoom = $rawCapture['replaces_room_id'] ?? null;
+        if ($replacesRoom !== null && (!is_string($replacesRoom) || preg_match('/^[A-Za-z0-9._:-]{1,128}$/', $replacesRoom) !== 1)) {
+            throw new \InvalidArgumentException('replaces_room_id must be an existing room id.');
         }
 
 

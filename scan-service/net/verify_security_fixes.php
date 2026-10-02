@@ -26,6 +26,7 @@ function check(string $label, bool $pass, string $detail = ''): void
     'organisation_id' => 'org-net-security',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $sessionId = $session['id'] ?? null;
 $accessToken = $session['access_token'] ?? null;
@@ -118,6 +119,7 @@ $hugePropertyId = str_repeat('a', 201);
     'organisation_id' => 'o',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 check('a 201-character property_id is rejected with 422', $hugeFieldStatus === 422, "got HTTP $hugeFieldStatus");
 
@@ -145,6 +147,7 @@ check('the PDF export after a 200-char capture_provider still succeeds (HTTP 200
 [, $shortProviderSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-security-short', 'unit_id' => 'unit-net-security-short', 'organisation_id' => 'org-net-security-short',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $shortProviderSessionId = $shortProviderSession['id'] ?? null;
 $shortProviderToken = $shortProviderSession['access_token'] ?? null;

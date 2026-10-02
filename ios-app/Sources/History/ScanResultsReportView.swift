@@ -158,7 +158,7 @@ struct ScanResultsReportView: View {
                 .textInputAutocapitalization(.words)
                 .autocorrectionDisabled()
             Button("Continue") {
-                let trimmed = continueNewFloorName.trimmingCharacters(in: .whitespacesAndNewlines)
+                let trimmed = FloorValidation.sanitized(continueNewFloorName)
                 guard !trimmed.isEmpty else { return }
                 onContinueScan?(trimmed)
             }
@@ -563,6 +563,20 @@ struct ScanResultsReportView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 12)
         } else {
+            if floorPlan.rooms.contains(where: { ($0.floor ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+                Text(vuuroLocalized("Some rooms have no floor yet — set it so areas add up"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(VuuroColor.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(VuuroColor.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(VuuroColor.accent.opacity(0.30), lineWidth: 1)
+                    )
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+            }
             separatePlans(floorPlan)
             ForEach(RoomFloorSection.sections(for: floorPlan.rooms)) { section in
                 if let title = section.title {
@@ -884,9 +898,7 @@ struct ScanResultsReportView: View {
                 floors.append(trimmed)
             }
         }
-        if floors.count > 1 {
-            floors.removeAll { $0.isEmpty }
-        }
+        floors.removeAll { $0.isEmpty }
         return floors.sorted { HomeAggregator.floorRank($0) > HomeAggregator.floorRank($1) }
     }
 

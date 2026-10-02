@@ -77,6 +77,7 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
 
     [$captureStatus, $floorPlan] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", [
         'raw_capture' => $fixture,
+        'floor' => 'Ground',
     ], $accessToken);
     check('capture accepted (HTTP 200)', $captureStatus === 200, "got HTTP $captureStatus");
 
@@ -163,7 +164,7 @@ $roomTypeToken = $roomTypeSession['access_token'] ?? null;
 check('session created for the room-type test', $roomTypeSessionId !== null && $roomTypeToken !== null);
 
 if ($roomTypeSessionId !== null && $roomTypeToken !== null) {
-    [, $withGuess] = net_http_json('POST', "$baseUrl/scan-sessions/$roomTypeSessionId/capture", ['raw_capture' => $roomTypeFixture], $roomTypeToken);
+    [, $withGuess] = net_http_json('POST', "$baseUrl/scan-sessions/$roomTypeSessionId/capture", ['raw_capture' => $roomTypeFixture, 'floor' => 'Ground'], $roomTypeToken);
     check('room_type round-trips the fixture\'s guess/guess_source/confirmed exactly',
         ($withGuess['rooms'][0]['room_type'] ?? null) === $roomTypeFixture['room_type']);
 
@@ -172,7 +173,7 @@ if ($roomTypeSessionId !== null && $roomTypeToken !== null) {
     [, $noGuessSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
         'property_id' => 'prop-net-room-type-none', 'unit_id' => 'u', 'organisation_id' => 'o', 'purpose' => 'listing', 'occupied' => false,
     ]);
-    [, $noGuess] = net_http_json('POST', "$baseUrl/scan-sessions/{$noGuessSession['id']}/capture", ['raw_capture' => $noGuessFixture], $noGuessSession['access_token']);
+    [, $noGuess] = net_http_json('POST', "$baseUrl/scan-sessions/{$noGuessSession['id']}/capture", ['raw_capture' => $noGuessFixture, 'floor' => 'Ground'], $noGuessSession['access_token']);
     check('room_type is null when the capture reported none',
         array_key_exists('room_type', $noGuess['rooms'][0] ?? []) && $noGuess['rooms'][0]['room_type'] === null);
 
@@ -181,7 +182,7 @@ if ($roomTypeSessionId !== null && $roomTypeToken !== null) {
     [, $invalidSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
         'property_id' => 'prop-net-room-type-invalid', 'unit_id' => 'u', 'organisation_id' => 'o', 'purpose' => 'listing', 'occupied' => false,
     ]);
-    [, $invalidResult] = net_http_json('POST', "$baseUrl/scan-sessions/{$invalidSession['id']}/capture", ['raw_capture' => $invalidFixture], $invalidSession['access_token']);
+    [, $invalidResult] = net_http_json('POST', "$baseUrl/scan-sessions/{$invalidSession['id']}/capture", ['raw_capture' => $invalidFixture, 'floor' => 'Ground'], $invalidSession['access_token']);
     check('an unrecognized guess value is dropped to null, never stored as-is',
         array_key_exists('room_type', $invalidResult['rooms'][0] ?? []) && $invalidResult['rooms'][0]['room_type'] === null);
 }

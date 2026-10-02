@@ -63,6 +63,7 @@ final class VuuroScanUITests: XCTestCase {
         type(app, "startScan.propertyId", property)
         type(app, "startScan.unitId", unit)
         type(app, "startScan.organisationId", "org-ui-tests")
+        type(app, "startScan.floor", "Ground floor")
         tap(app, "startScan.start")
         let agree = element(app, "reagree.agree")
         if agree.waitForExistence(timeout: 5) {

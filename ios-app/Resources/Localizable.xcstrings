@@ -49,6 +49,22 @@
                 }
             }
         },
+        "Some rooms have no floor yet — set it so areas add up": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Some rooms have no floor yet — set it so areas add up"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Sommige kamers hebben nog geen verdieping — stel die in zodat de oppervlaktes kloppen"
+                    }
+                }
+            }
+        },
         "Trim": {
             "localizations": {
                 "en": {
@@ -6765,6 +6781,70 @@
                     "stringUnit": {
                         "state": "translated",
                         "value": "Pas de toegevoegde ruimtes aan"
+                    }
+                }
+            }
+        },
+        "This looks like a room you already scanned": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This looks like a room you already scanned"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Dit lijkt op een ruimte die je al hebt gescand"
+                    }
+                }
+            }
+        },
+        "Replace it to keep one copy with its notes and photos, or add this scan as a new room. Nothing is removed unless you choose Replace.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Replace it to keep one copy with its notes and photos, or add this scan as a new room. Nothing is removed unless you choose Replace."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Vervang hem om één versie te houden met de notities en foto's, of voeg deze scan toe als nieuwe ruimte. Er wordt niets verwijderd tenzij je Vervangen kiest."
+                    }
+                }
+            }
+        },
+        "Replace %@ (%.1f m²)": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Replace %@ (%.1f m²)"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%@ vervangen (%.1f m²)"
+                    }
+                }
+            }
+        },
+        "Add as a new room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Add as a new room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Toevoegen als nieuwe ruimte"
                     }
                 }
             }

@@ -75,6 +75,16 @@ struct RotateTokenResponse: Decodable {
     }
 }
 
+struct SessionActivityEntry: Decodable {
+    let id: String
+    let capturedAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case capturedAt = "captured_at"
+    }
+}
+
 private struct EmptyBody: Encodable {}
 
 struct ScanServiceClient {
@@ -287,6 +297,40 @@ struct ScanServiceClient {
         }
         ScanHistoryStore.shared.noteServerCapture(sessionId: sessionId, capturedAt: floorPlan.capturedAt)
         return floorPlan
+    }
+
+    func fetchActivity(entries: [(id: String, token: String)]) async throws -> [SessionActivityEntry] {
+        struct Body: Encodable {
+            struct Entry: Encodable {
+                let id: String
+                let token: String
+            }
+
+            let sessions: [Entry]
+        }
+        struct Response: Decodable {
+            let sessions: [SessionActivityEntry]
+        }
+        let response: Response = try await post(
+            path: "/scan-sessions/activity",
+            body: Body(sessions: entries.map { Body.Entry(id: $0.id, token: $0.token) }),
+            accessToken: nil
+        )
+        return response.sessions
+    }
+
+    func noteActivity(_ entries: [ScanHistoryEntry]) async {
+        let pairs = entries.filter { !$0.accessToken.isEmpty }.map { (id: $0.sessionId, token: $0.accessToken) }
+        guard !pairs.isEmpty else { return }
+        do {
+            let results = try await fetchActivity(entries: pairs)
+            for result in results {
+                ScanHistoryStore.shared.noteServerCapture(sessionId: result.id, capturedAt: result.capturedAt)
+            }
+        } catch is CancellationError {
+        } catch {
+            DiagnosticsLog.shared.record("Activity refresh failed: \(error.localizedDescription)", category: .error)
+        }
     }
 
     func fetchPhotoData(url: String, accessToken: String) async throws -> Data {

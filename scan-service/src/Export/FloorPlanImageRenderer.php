@@ -469,8 +469,12 @@ final class FloorPlanImageRenderer
         $heading = $this->printable($this->fundaFloorName ?? $this->resolvedTitle ?? 'Floor plan');
         $this->drawBoldText($image, 5, (int) ((imagesx($image) - $this->textWidth(5, $heading)) / 2), imagesy($image) - 66, $heading, $color);
         $parts = [];
-        if ($this->fundaFloorName !== null && $this->fundaPlaceLine !== '') {
-            $parts[] = $this->printable($this->fundaPlaceLine);
+        if ($this->fundaFloorName !== null) {
+            $explicitTitle = trim((string) $this->planStyle->titleLine);
+            $placeLine = $explicitTitle !== '' ? $explicitTitle : $this->fundaPlaceLine;
+            if ($placeLine !== '') {
+                $parts[] = $this->printable($placeLine);
+            }
         }
         $parts[] = 'Total floor area ' . $this->fundaArea($this->fundaTotalAreaM2, $this->fundaUnit) . ' (indicative)';
         $sub = implode("  \u{00B7}  ", $parts);

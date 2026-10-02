@@ -377,6 +377,8 @@ private struct RoomCaptureFlowStep: View {
     @State private var isDegenerateCapture = false
     @State private var uploadRejection: (error: AppError, export: RoomPlanCaptureExport, session: ScanSessionResponse, idempotencyKey: String, bodyJSON: Data)?
     @State private var isRetryingUpload = false
+    @State private var pendingRescan: PendingRescanChoice?
+    @State private var rescanExport: RoomPlanCaptureExport?
     @State private var capturedLocation: CaptureLocation?
     @State private var capturedHeadingDeg: Double?
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
@@ -556,6 +558,11 @@ private struct RoomCaptureFlowStep: View {
     }
 
     private func finishSingleRoom() {
+        if !FloorValidation.isValid(captureFloor) {
+            captureFloorBeforePrompt = captureFloor
+            showFloorPrompt = true
+            return
+        }
         didRequestStop = true
         coordinator.stop()
     }
@@ -676,6 +683,13 @@ private struct RoomCaptureFlowStep: View {
         } message: {
             Text(verbatim: missingOpenings.alertMessage)
         }
+        .sheet(item: $pendingRescan) { choice in
+            RescanChoiceSheet(
+                choice: choice,
+                onReplace: { roomId in resolveRescan(replacing: roomId) },
+                onAddNew: { resolveRescan(replacing: nil) }
+            )
+        }
         .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
             Button("Discard", role: .destructive) {
                 coordinator.stop()
@@ -693,14 +707,10 @@ private struct RoomCaptureFlowStep: View {
                 .textInputAutocapitalization(.words)
                 .autocorrectionDisabled()
             Button("Save") {
+                guard FloorValidation.isValid(captureFloor) else { return }
                 Task { await persistCaptureFloor() }
             }
             .accessibilityIdentifier("capture.floorSave")
-            Button("Clear", role: .destructive) {
-                captureFloor = ""
-                Task { await persistCaptureFloor() }
-            }
-            .accessibilityIdentifier("capture.floorClear")
             Button("Cancel", role: .cancel) {
                 captureFloor = captureFloorBeforePrompt
             }
@@ -797,13 +807,46 @@ private struct RoomCaptureFlowStep: View {
     }
 
     @MainActor
-    private func submit(_ export: RoomPlanCaptureExport) async {
+    private func rescanCandidates(for export: RoomPlanCaptureExport, session: ScanSessionResponse) async -> [RescanCandidate] {
+        do {
+            let plan = try await client.fetchSession(sessionId: session.id, accessToken: session.accessToken)
+            return RescanMatcher.candidates(for: export, floor: captureFloor, existing: plan.rooms)
+        } catch is CancellationError {
+            return []
+        } catch {
+            DiagnosticsLog.shared.record("Rescan check skipped: \(error.localizedDescription)", category: .error)
+            return []
+        }
+    }
+
+    @MainActor
+    private func resolveRescan(replacing roomId: String?) {
+        guard var export = rescanExport else { return }
+        pendingRescan = nil
+        rescanExport = nil
+        export.replacesRoomId = roomId
+        DiagnosticsLog.shared.record(roomId.map { "Rescan: replacing \($0)" } ?? "Rescan: added as a new room", category: .info)
+        uploadTask = Task { await submit(export, rescanDecided: true) }
+    }
+
+    @MainActor
+    private func submit(_ export: RoomPlanCaptureExport, rescanDecided: Bool = false) async {
         defer { isUploadingPartialCapture = false }
 
         guard export.hasUsableFloorOutline else {
             DiagnosticsLog.shared.record("Local reject: floor outline too small/degenerate, upload skipped", category: .error)
             isDegenerateCapture = true
             return
+        }
+        if !rescanDecided, let existingSession {
+            isUploading = true
+            let candidates = await rescanCandidates(for: export, session: existingSession)
+            isUploading = false
+            if !candidates.isEmpty {
+                rescanExport = export
+                pendingRescan = PendingRescanChoice(candidates: candidates)
+                return
+            }
         }
         isUploading = true
         defer { isUploading = false }

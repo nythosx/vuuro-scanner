@@ -81,16 +81,20 @@ check('POST .../default-floor without a token is rejected with 401', $unauthStat
 check('POST .../default-floor without a floor field is rejected with 422', $missingStatus === 422, "got HTTP $missingStatus");
 [$clearStatus, $clearBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/default-floor", ['floor' => ''], $token);
 check('an empty floor clears the default', $clearStatus === 200 && ($clearBody['default_floor'] ?? null) === '', json_encode($clearBody));
-[$cap4Status, $plan4] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $fixture], $token);
-check('after clearing, a new room has floor null (never fabricated)', $cap4Status === 200 && array_key_exists(3, room_floors($plan4)) && room_floors($plan4)[3] === null, json_encode(room_floors($plan4)));
+[$cap4Status, $cap4Body] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $fixture], $token);
+check('after clearing the default, a capture without a floor is rejected (422 floor_required)', $cap4Status === 422 && ($cap4Body['error'] ?? null) === 'floor_required', "got HTTP $cap4Status " . json_encode($cap4Body));
+[$cap4Status, $plan4] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $fixture, 'floor' => 'Attic'], $token);
+check('with an explicit floor the capture succeeds again', $cap4Status === 200, "got HTTP $cap4Status");
 
 echo "\n== Fused replace applies per-capture floors ==\n";
 [, $fusedSession] = create_session($baseUrl, ['floor' => '2nd floor']);
-net_http_json('POST', "$baseUrl/scan-sessions/{$fusedSession['id']}/capture", ['raw_capture' => $fixture], $fusedSession['access_token']);
+$walkFixture = $fixture;
+$walkFixture['capture_group_id'] = 'walk-fused';
+net_http_json('POST', "$baseUrl/scan-sessions/{$fusedSession['id']}/capture", ['raw_capture' => $walkFixture], $fusedSession['access_token']);
 [$fusedStatus, $fusedPlan] = net_http_json('POST', "$baseUrl/scan-sessions/{$fusedSession['id']}/rooms", [
     'captures' => [
-        ['raw_capture' => $fixture],
-        ['raw_capture' => $fixture, 'floor' => 'Attic'],
+        ['raw_capture' => $walkFixture],
+        ['raw_capture' => $walkFixture, 'floor' => 'Attic'],
     ],
 ], $fusedSession['access_token']);
 check('POST .../rooms succeeds', $fusedStatus === 200, "got HTTP $fusedStatus");
@@ -120,7 +124,8 @@ foreach (['walk_path=yes', 'orientation=diagonal', 'room_fill=pink'] as $badQuer
     check("an invalid $badQuery is rejected with 422", $badStatus === 422, "got HTTP $badStatus");
 }
 [, , $titledSvg] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.svg?style=funda&title=" . rawurlencode('Main St 5'), null, $token);
-check('an explicit title is printed on the funda sheet', str_contains($titledSvg, '>Main St 5</text>'));
+check('an explicit title is printed on the funda sheet', str_contains($titledSvg, 'Main St 5'));
+check('the floor name stays the heading when a title is given', str_contains($titledSvg, '>Attic</text>') || str_contains($titledSvg, '>1st floor</text>'));
 check('the default sheet gets no auto title', !str_contains($defaultSvg, 'prop-net-floor'));
 check('the auto title uses a real middle dot, not an escape sequence', !str_contains($fundaSvg, '\u{00B7}') && str_contains($fundaSvg, "prop-net-floor \u{00B7} unit-net-floor"));
 [$pngStatus, $pngType] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png?style=funda", null, $token);

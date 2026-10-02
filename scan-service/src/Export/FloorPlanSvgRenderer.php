@@ -178,10 +178,14 @@ final class FloorPlanSvgRenderer
     private function fundaTitleBlockSvg(int $width, int $y, float $totalAreaM2, string $unit): string
     {
         $title = $this->resolvedTitle;
+        $explicitTitle = trim((string) $this->planStyle->titleLine);
         $heading = $this->fundaFloorName ?? (($title === null || $title === '') ? 'Floor plan' : $title);
         $parts = [];
-        if ($this->fundaFloorName !== null && $this->fundaPlaceLine !== '') {
-            $parts[] = $this->fundaPlaceLine;
+        if ($this->fundaFloorName !== null) {
+            $placeLine = $explicitTitle !== '' ? $explicitTitle : $this->fundaPlaceLine;
+            if ($placeLine !== '') {
+                $parts[] = $placeLine;
+            }
         }
         $parts[] = 'Total floor area ' . self::fundaArea($totalAreaM2, $unit) . ' (indicative)';
         $x = (int) ($width / 2);
@@ -496,10 +500,11 @@ SVG;
         return implode(' ', $pts);
     }
 
-    private function roomFillSvg(array $outlineM, array $pose, callable $toPx, string $fill): string
+    private function roomFillSvg(array $outlineM, array $pose, callable $toPx, string $fill, ?string $roomId = null): string
     {
         $points = $this->polygonPointsSvg($outlineM, $pose, $toPx);
-        return '<polygon points="' . $points . '" fill="' . $fill . '"/>';
+        $id = $roomId === null ? '' : ' data-room-id="' . $this->esc($roomId) . '"';
+        return '<polygon class="room-fill" points="' . $points . '" fill="' . $fill . '"' . $id . '/>';
     }
 
     private function roomWallsSvg(array $outlineM, array $pose, callable $toPx, array $roomEdgeTiers): string
@@ -656,7 +661,7 @@ SVG;
                 [$px, $py] = $toPx($wx, $wz);
                 $pts[] = $this->num($px) . ',' . $this->num($py);
             }
-            $out .= '<polygon points="' . implode(' ', $pts) . '" fill="' . self::OPENING_FILL . '"/>';
+            $out .= '<polygon class="opening-punch" data-opening-id="' . $this->esc((string) ($opening['opening_id'] ?? '')) . '" data-category="' . $this->esc($category) . '" points="' . implode(' ', $pts) . '" fill="' . self::OPENING_FILL . '"/>';
 
             if ($category === 'door') {
                 $hingeX = $mx - $wallDx * $half;
@@ -1108,7 +1113,7 @@ SVG;
 
         $labels = '';
         $out = $this->planStyle->isFunda ? '' : '<rect x="0" y="0" width="' . $tile['width'] . '" height="' . ($tile['height'] - self::LABEL_HEIGHT) . '" fill="url(#grid)"/>';
-        $out .= $this->roomFillSvg($room['outline_m'], $identityPose, $toPx, $fill);
+        $out .= $this->roomFillSvg($room['outline_m'], $identityPose, $toPx, $fill, $room['room_id'] ?? null);
         $out .= $this->objectsSvg($room, $identityPose, $toPx, $labels);
         $walls = $this->roomWallsSvg($room['outline_m'], $identityPose, $toPx, FloorPlanPalette::withOpenEdges([], $room));
         $out .= $this->planStyle->isFunda && $walls !== '' ? '<g filter="url(#wall-shadow)">' . $walls . '</g>' : $walls;
@@ -1232,7 +1237,7 @@ SVG;
         foreach ($rooms as $i => $room) {
             $pose = $poses[$i];
             $fill = in_array($i, $overlapping, true) ? self::WARN_FILL : $this->roomFill($room, $i);
-            $body .= $this->roomFillSvg($room['outline_m'], $pose, $toPx, $fill);
+            $body .= $this->roomFillSvg($room['outline_m'], $pose, $toPx, $fill, $room['room_id'] ?? null);
         }
         $body .= '</g>';
 

@@ -29,6 +29,7 @@ echo "== Session CRUD ==\n";
 [$createStatus, $session] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => "prop-crud-$suffix", 'unit_id' => "unit-crud-$suffix", 'organisation_id' => "org-crud-$suffix",
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 check('CREATE session succeeds (HTTP 200/201)', in_array($createStatus, [200, 201], true), "got HTTP $createStatus");
 check('CREATE session returns an id', !empty($session['id']));
@@ -63,13 +64,17 @@ echo "\n";
 [, $s] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => "prop-crud2-$suffix", 'unit_id' => "unit-crud2-$suffix", 'organisation_id' => "org-crud2-$suffix",
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $sessionId = $s['id'];
 $accessToken = $s['access_token'];
 
 echo "== Room CRUD (Create/Read/Update — no per-room Delete endpoint exists; see note) ==\n";
 
-[$captureStatus, $afterCapture] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $fixture], $accessToken);
+$crudFixture = $fixture;
+$crudFixture['capture_group_id'] = 'walk-crud';
+$replacementFixture['capture_group_id'] = 'walk-crud';
+[$captureStatus, $afterCapture] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $crudFixture], $accessToken);
 check('CREATE room via capture succeeds (HTTP 200/201)', in_array($captureStatus, [200, 201], true), "got HTTP $captureStatus");
 check('CREATE room via capture returns one room', count($afterCapture['rooms'] ?? []) === 1, 'got ' . count($afterCapture['rooms'] ?? []));
 $roomId = $afterCapture['rooms'][0]['room_id'];
@@ -195,6 +200,7 @@ echo "\n== Rotate token (share-revoke path) ==\n";
 [, $revokeSeed] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => "prop-revoke-$suffix", 'unit_id' => "unit-revoke-$suffix", 'organisation_id' => "org-revoke-$suffix",
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $revokeId = $revokeSeed['id'];
 $oldRevokeToken = $revokeSeed['access_token'];
@@ -211,6 +217,7 @@ echo "\n== Notes-only session ==\n";
 [, $noteOnlySession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => "prop-no-$suffix", 'unit_id' => "unit-no-$suffix", 'organisation_id' => "org-no-$suffix",
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $noteOnlyId = $noteOnlySession['id'];
 $noteOnlyToken = $noteOnlySession['access_token'];
@@ -238,6 +245,7 @@ echo "\n== Tenant self-service deletion request ==\n";
 [, $delReqSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => "prop-del-$suffix", 'unit_id' => "unit-del-$suffix", 'organisation_id' => "org-del-$suffix",
     'purpose' => 'check_out', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $delReqId = $delReqSession['id'];
 $delReqToken = $delReqSession['access_token'];

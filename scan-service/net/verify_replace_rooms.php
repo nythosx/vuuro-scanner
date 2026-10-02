@@ -27,6 +27,7 @@ echo "== Tiles uploaded first, then superseded by a fused pair via PUT /rooms ==
 [$createStatus, $session] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-replace', 'unit_id' => 'unit-net-replace', 'organisation_id' => 'org-net-replace',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 check('session created (HTTP 201)', $createStatus === 201, "got HTTP $createStatus");
 $sessionId = $session['id'] ?? null;
@@ -35,6 +36,8 @@ if ($sessionId === null || $accessToken === null) {
     fwrite(STDERR, "Cannot continue without a session id/access_token.\n");
     exit(1);
 }
+
+$fixture['capture_group_id'] = 'walk-1';
 
 [$tileAStatus, $afterTileA] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $fixture], $accessToken);
 check('first tile capture accepted (HTTP 200)', $tileAStatus === 200, "got HTTP $tileAStatus");
@@ -70,6 +73,7 @@ echo "\n== Adjacent case: replace-rooms on a session with no floor plan yet is r
 [, $emptySession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-replace-empty', 'unit_id' => 'unit-net-replace-empty', 'organisation_id' => 'org-net-replace',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 [$emptyReplaceStatus, $emptyReplaceBody] = net_http_json('POST', "$baseUrl/scan-sessions/{$emptySession['id']}/rooms", [
     'captures' => [['raw_capture' => $fixture]],
@@ -95,11 +99,46 @@ echo "\n== Adjacent case: wrong token is rejected, not allowed to replace anothe
 [, $otherSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-replace-other', 'unit_id' => 'unit-net-replace-other', 'organisation_id' => 'org-net-replace',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 [$wrongTokenStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms", [
     'captures' => [['raw_capture' => $fixture]],
 ], $otherSession['access_token']);
 check('a different session\'s token cannot replace this session\'s rooms (HTTP 401)', $wrongTokenStatus === 401, "got HTTP $wrongTokenStatus");
+
+echo "\n== A capture without its walkthrough group is refused ==\n";
+$noGroup = $fixture;
+unset($noGroup['capture_group_id']);
+[$noGroupStatus, $noGroupBody] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/rooms", ['captures' => [['raw_capture' => $noGroup]]], $accessToken);
+check('replace-rooms without capture_group_id is 422 missing_capture_group', $noGroupStatus === 422 && ($noGroupBody['error'] ?? null) === 'missing_capture_group', "got HTTP $noGroupStatus " . json_encode($noGroupBody));
+
+echo "\n== Continuing a whole-unit scan keeps the earlier rooms ==\n";
+[, $continued] = net_http_json('POST', "$baseUrl/scan-sessions", [
+    'property_id' => 'prop-net-replace-continue', 'unit_id' => 'unit-net-replace-continue', 'organisation_id' => 'org-net-replace',
+    'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
+]);
+$continuedId = $continued['id'];
+$continuedToken = $continued['access_token'];
+$firstWalk = $fixture;
+$firstWalk['capture_group_id'] = 'walk-first';
+$firstWalk['structure_origin_m'] = [0.0, 0.0];
+net_http_json('POST', "$baseUrl/scan-sessions/$continuedId/capture", ['raw_capture' => $firstWalk], $continuedToken);
+$firstWalk['structure_origin_m'] = [4.0, 0.0];
+[, $afterFirst] = net_http_json('POST', "$baseUrl/scan-sessions/$continuedId/capture", ['raw_capture' => $firstWalk], $continuedToken);
+$earlierIds = array_column($afterFirst['rooms'] ?? [], 'room_id');
+net_http_json('POST', "$baseUrl/scan-sessions/$continuedId/notes", ['text' => 'on an earlier room', 'room_id' => $earlierIds[1] ?? ''], $continuedToken);
+$secondWalk = $fixture;
+$secondWalk['capture_group_id'] = 'walk-second';
+$secondWalk['structure_origin_m'] = [0.0, 5.0];
+net_http_json('POST', "$baseUrl/scan-sessions/$continuedId/capture", ['raw_capture' => $secondWalk], $continuedToken);
+[$finishStatus, $afterFinish] = net_http_json('POST', "$baseUrl/scan-sessions/$continuedId/rooms", ['captures' => [['raw_capture' => $secondWalk]]], $continuedToken);
+check('finishing the continued walkthrough is accepted', $finishStatus === 200, "got HTTP $finishStatus " . json_encode($afterFinish));
+$finishIds = array_column($afterFinish['rooms'] ?? [], 'room_id');
+check('the two earlier rooms are still there, unchanged', array_slice($finishIds, 0, 2) === $earlierIds, json_encode($finishIds));
+check('the continued walkthrough is one fused room, not a tile plus a fused copy', count($finishIds) === 3, json_encode($finishIds));
+check('the note stays on its earlier room', ($afterFinish['notes'][0]['room_id'] ?? null) === ($earlierIds[1] ?? null), json_encode($afterFinish['notes'] ?? []));
+check('the new room ids do not clash with the earlier ones', count(array_unique($finishIds)) === count($finishIds), json_encode($finishIds));
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {

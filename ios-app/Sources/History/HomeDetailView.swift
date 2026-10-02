@@ -10,6 +10,8 @@ struct HomeDetailView: View {
     @State private var addTarget: AddRoomsTarget?
     @State private var showNewFloorPrompt = false
     @State private var newFloorName = ""
+    @State private var activityThrottle = ActivityRefreshThrottle()
+    private let client = ScanServiceClient()
 
     private struct AddRoomsTarget: Identifiable {
         let floor: String
@@ -96,7 +98,7 @@ struct HomeDetailView: View {
                 .textInputAutocapitalization(.words)
                 .autocorrectionDisabled()
             Button("Continue") {
-                let trimmed = newFloorName.trimmingCharacters(in: .whitespacesAndNewlines)
+                let trimmed = FloorValidation.sanitized(newFloorName)
                 guard !trimmed.isEmpty else { return }
                 Task {
                     try? await Task.sleep(nanoseconds: 350_000_000)
@@ -161,22 +163,24 @@ struct HomeDetailView: View {
                 ForEach(floor.sessions) { session in
                     sessionRow(session)
                 }
-                Button {
-                    addTarget = AddRoomsTarget(floor: floor.displayName ?? "")
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("Add rooms on this floor")
-                            .font(.system(size: 13, weight: .semibold))
+                if let floorName = floor.displayName, !floorName.isEmpty {
+                    Button {
+                        addTarget = AddRoomsTarget(floor: floorName)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "plus.circle.fill")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text("Add rooms on this floor")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .foregroundStyle(VuuroColor.accent)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(VuuroColor.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
-                    .foregroundStyle(VuuroColor.accent)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 11)
-                    .background(VuuroColor.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .accessibilityIdentifier("homeDetail.addRooms.\(floor.id)")
+                    .buttonStyle(.plain)
                 }
-                .accessibilityIdentifier("homeDetail.addRooms.\(floor.id)")
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
@@ -284,6 +288,12 @@ struct HomeDetailView: View {
                 ScanHistoryStore.shared.all()
             }.value
             entries = loaded
+            guard activityThrottle.shouldRefresh(now: Date()) else { return }
+            await client.noteActivity(loaded)
+            let refreshed = await Task.detached(priority: .userInitiated) {
+                ScanHistoryStore.shared.all()
+            }.value
+            entries = refreshed
         }
     }
 

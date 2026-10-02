@@ -25,6 +25,7 @@ $fixture = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roompl
 [, $session] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-split', 'unit_id' => 'unit-net-split', 'organisation_id' => 'org-net-split',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $sessionId = $session['id'];
 $token = $session['access_token'];

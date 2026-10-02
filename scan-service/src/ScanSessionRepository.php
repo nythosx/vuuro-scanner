@@ -393,25 +393,88 @@ final class ScanSessionRepository
         });
     }
 
-    public function replaceRooms(string $sessionId, array $rooms, string $captureProvider, string $capturedAt): array
+    public function replaceRoomInPlace(string $sessionId, array $newRoom, string $capturedAt): array
     {
-        return $this->withWriteLock(function () use ($sessionId, $rooms, $captureProvider, $capturedAt) {
+        return $this->withWriteLock(function () use ($sessionId, $newRoom, $capturedAt) {
+            $floorPlan = $this->findFloorPlan($sessionId);
+            if ($floorPlan === null) {
+                throw new \RuntimeException("Cannot replace a room on scan session $sessionId before it has a captured FloorPlan.");
+            }
+            $roomId = (string) ($newRoom['room_id'] ?? '');
+            $index = self::roomIndex($floorPlan['rooms'], $roomId);
+            if ($index === null) {
+                throw new UnknownRoomException('replaced_room_not_found');
+            }
+            $oldRoom = $floorPlan['rooms'][$index];
+            $floorKey = static fn (mixed $floor): string => is_string($floor) ? mb_strtolower(trim($floor), 'UTF-8') : '';
+            if ($floorKey($oldRoom['floor'] ?? null) !== $floorKey($newRoom['floor'] ?? null)) {
+                throw new \InvalidArgumentException('replace_floor_mismatch');
+            }
+            if (preg_match('/^Room \d+$/', (string) ($newRoom['label'] ?? '')) === 1 && isset($oldRoom['label'])) {
+                $newRoom['label'] = $oldRoom['label'];
+            }
+            $floorPlan['rooms'][$index] = $newRoom;
+            if (isset($floorPlan['room_splits'])) {
+                $floorPlan['room_splits'] = array_values(array_filter(
+                    $floorPlan['room_splits'],
+                    static fn (array $split) => ($split['room_id'] ?? null) !== $roomId && ($split['new_room_id'] ?? null) !== $roomId
+                ));
+            }
+            $floorPlan['captured_at'] = $capturedAt;
+            $this->saveFloorPlan($sessionId, $floorPlan);
+            return $floorPlan;
+        });
+    }
+
+    public function replaceRooms(string $sessionId, array $rooms, string $captureProvider, string $capturedAt, ?array $replaceGroups = null, array $replacedRoomIds = []): array
+    {
+        return $this->withWriteLock(function () use ($sessionId, $rooms, $captureProvider, $capturedAt, $replaceGroups, $replacedRoomIds) {
             $existing = $this->findFloorPlan($sessionId);
             if ($existing === null) {
                 throw new \RuntimeException(
                     "Cannot replace rooms on scan session $sessionId before it has a captured FloorPlan."
                 );
             }
-            if (count($rooms) > self::MAX_ROOMS_PER_SESSION) {
+
+            $combined = $rooms;
+            if ($replaceGroups !== null) {
+                $kept = [];
+                $insertAt = null;
+                foreach ($existing['rooms'] as $room) {
+                    if (in_array($room['capture_group_id'] ?? null, $replaceGroups, true) || in_array($room['room_id'] ?? null, $replacedRoomIds, true)) {
+                        $insertAt ??= count($kept);
+                        continue;
+                    }
+                    $kept[] = $room;
+                }
+                $insertAt ??= count($kept);
+                $keptIds = array_column($kept, 'room_id');
+                foreach ($rooms as $room) {
+                    if (in_array($room['room_id'] ?? null, $keptIds, true)) {
+                        throw new \InvalidArgumentException(
+                            "room_id '{$room['room_id']}' is already used by a room outside this walkthrough."
+                        );
+                    }
+                }
+                $combined = array_merge(array_slice($kept, 0, $insertAt), $rooms, array_slice($kept, $insertAt));
+            }
+
+            if (count($combined) > self::MAX_ROOMS_PER_SESSION) {
                 throw new \OverflowException(
-                    'Replacement room set has ' . count($rooms) . ' rooms, exceeding the ' . self::MAX_ROOMS_PER_SESSION . '-room limit.'
+                    'Replacement room set has ' . count($combined) . ' rooms, exceeding the ' . self::MAX_ROOMS_PER_SESSION . '-room limit.'
                 );
             }
 
             $merged = $existing;
-            $merged['rooms'] = $rooms;
+            $merged['rooms'] = $combined;
             $merged['captured_at'] = $capturedAt;
             $merged['capture_provider'] = $captureProvider;
+            if ($replacedRoomIds !== [] && isset($merged['room_splits'])) {
+                $merged['room_splits'] = array_values(array_filter(
+                    $merged['room_splits'],
+                    static fn (array $split) => !in_array($split['room_id'] ?? null, $replacedRoomIds, true) && !in_array($split['new_room_id'] ?? null, $replacedRoomIds, true)
+                ));
+            }
             [$merged, $splitWarnings] = self::reapplySplits($merged);
             if (count($merged['rooms']) > self::MAX_ROOMS_PER_SESSION) {
                 throw new \OverflowException(

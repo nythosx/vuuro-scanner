@@ -24,7 +24,7 @@ struct RoomActionAlerts: ViewModifier {
                     .autocorrectionDisabled()
                 Button("Save") {
                     if let room = floorTarget {
-                        let trimmed = floorDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let trimmed = FloorValidation.sanitized(floorDraft)
                         onSaveFloor(room, trimmed.isEmpty ? nil : trimmed)
                     }
                     floorTarget = nil

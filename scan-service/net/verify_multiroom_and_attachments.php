@@ -61,6 +61,7 @@ $wantAreaB = shoelace_area(to_xz($fixtureB['floors'][0]['polygonCorners']));
     'organisation_id' => 'org-net-p2',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 check('session created (HTTP 201)', $createStatus === 201, "got HTTP $createStatus");
 $sessionId = $session['id'] ?? null;
@@ -286,6 +287,7 @@ check('the rejection names the specific error', ($badLocBody['error'] ?? null) =
 [, $freshLocSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-noloc', 'unit_id' => 'unit-net-noloc', 'organisation_id' => 'org-net-noloc',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 [, $freshLocAfter] = net_http_json('POST', "$baseUrl/scan-sessions/{$freshLocSession['id']}/capture", ['raw_capture' => $fixtureA], $freshLocSession['access_token']);
 check('a session that never sent a location gets capture_location: null, never fabricated',
@@ -299,6 +301,7 @@ echo "\n== Adversarial: photos/notes must not attach before any capture exists =
     'organisation_id' => 'org-net-p2-empty',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 check('empty session created for the negative case', $emptyCreateStatus === 201);
 $emptySessionId = $emptySession['id'] ?? null;

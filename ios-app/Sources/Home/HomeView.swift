@@ -10,6 +10,8 @@ struct HomeView: View {
 
     @State private var recentScan: ScanHistoryEntry?
     @State private var hasPendingUpload = false
+    @State private var activityThrottle = ActivityRefreshThrottle()
+    private let client = ScanServiceClient()
 
     private static func metaDateFormatter() -> DateFormatter {
         let formatter = DateFormatter()
@@ -141,6 +143,12 @@ struct HomeView: View {
         }.value
         recentScan = all.first
         hasPendingUpload = pending != nil && pending?.skippedAt != nil
+        guard activityThrottle.shouldRefresh(now: Date()) else { return }
+        await client.noteActivity(all)
+        let refreshed = await Task.detached(priority: .userInitiated) {
+            ScanHistoryStore.shared.all()
+        }.value
+        recentScan = refreshed.first
     }
 
     private func displayName(for entry: ScanHistoryEntry) -> String {

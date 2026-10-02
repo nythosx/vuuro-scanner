@@ -39,6 +39,7 @@ struct ScanHistoryView: View {
 
     @State private var appError: AppError?
     @State private var errorMessage: String?
+    @State private var activityThrottle = ActivityRefreshThrottle()
 
     @Environment(\.dismiss) private var dismiss
 
@@ -567,7 +568,17 @@ struct ScanHistoryView: View {
             guard reloadToken == token else { return }
             entries = loaded
             isLoadingEntries = false
+            await refreshActivity(for: loaded)
         }
+    }
+
+    private func refreshActivity(for loaded: [ScanHistoryEntry]) async {
+        guard activityThrottle.shouldRefresh(now: Date()) else { return }
+        await client.noteActivity(loaded)
+        let refreshed = await Task.detached(priority: .userInitiated) {
+            ScanHistoryStore.shared.all()
+        }.value
+        entries = refreshed
     }
 
     @MainActor
@@ -620,11 +631,7 @@ struct ScanHistoryView: View {
     private func hasFusedRoomsOnFloor(entry: ScanHistoryEntry, floor: String?) async -> Bool {
         do {
             let plan = try await client.fetchSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
-            let wanted = MultiRoomCaptureFlowView.floorKey(floor)
-            return plan.rooms.contains { room in
-                guard room.captureGroupId != nil, room.structureOriginM != nil else { return false }
-                return MultiRoomCaptureFlowView.floorKey(room.floor) == wanted
-            }
+            return ContinueRoute.continuesAsUnit(rooms: plan.rooms, floor: floor)
         } catch {
             DiagnosticsLog.shared.record("hasFusedRoomsOnFloor check failed: \(error.localizedDescription)", category: .error)
             return false

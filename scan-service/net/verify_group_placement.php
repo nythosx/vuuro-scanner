@@ -28,6 +28,7 @@ $fixture = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roompl
     'organisation_id' => 'org-net-placement',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $sessionId = $session['id'];
 $token = $session['access_token'];
@@ -75,6 +76,7 @@ echo "\n== Wrong floor is rejected ==\n";
     'organisation_id' => 'org-net-placement',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $s2 = $session2['id'];
 $t2 = $session2['access_token'];
@@ -140,6 +142,7 @@ echo "\n== Raw capture with joined_to_group_id is stored ==\n";
     'organisation_id' => 'org-net-placement',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $s3 = $session3['id'];
 $t3 = $session3['access_token'];
@@ -162,6 +165,7 @@ echo "\n== A group split across two floors moves one floor at a time ==\n";
 [, $s4] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-placement-4', 'unit_id' => 'unit-net-placement-4', 'organisation_id' => 'org-net-placement',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $s4Id = $s4['id']; $s4Tok = $s4['access_token'];
 $multi = $fixture; $multi['capture_group_id'] = 'walk-multi'; $multi['structure_origin_m'] = [0.0, 0.0];

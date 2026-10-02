@@ -65,7 +65,7 @@ function run_case(string $baseUrl, string $fixturePath, string $label): void
         return;
     }
 
-    [, $floorPlan] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $fixture], $accessToken);
+    [, $floorPlan] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $fixture, 'floor' => 'Ground'], $accessToken);
     $coverage = $floorPlan['rooms'][0]['coverage'] ?? null;
     check("$label: coverage object present", $coverage !== null);
     if ($coverage === null) {

@@ -36,6 +36,7 @@ $fixtureB = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomp
     'organisation_id' => 'org-net-exports',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $sessionId = $session['id'] ?? null;
 $accessToken = $session['access_token'] ?? null;
@@ -149,6 +150,7 @@ echo "\n== Adversarial: a fused layout spread far beyond the render-size sanity 
     'organisation_id' => 'org-net-exports-huge-fused',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $hugeFusedSessionId = $hugeFusedSession['id'] ?? null;
 $hugeFusedToken = $hugeFusedSession['access_token'] ?? null;
@@ -179,6 +181,7 @@ echo "\n== Adversarial: an attached real photo must embed as a valid image XObje
     'organisation_id' => 'org-net-exports-photo',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $photoSessionId = $photoSession['id'] ?? null;
 $photoSessionToken = $photoSession['access_token'] ?? null;
@@ -216,6 +219,7 @@ echo "\n== Adversarial: many rooms must not go missing off a fixed-size PDF page
     'organisation_id' => 'org-net-exports-many',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $manyRoomsSessionId = $manyRoomsSession['id'] ?? null;
 $manyRoomsToken = $manyRoomsSession['access_token'] ?? null;
@@ -292,6 +296,7 @@ echo "\n== Adversarial: non-ASCII property/unit/org identity through the real PD
     'organisation_id' => 'org-Müller',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $unicodeSessionId = $unicodeSession['id'] ?? null;
 $unicodeSessionToken = $unicodeSession['access_token'] ?? null;
@@ -404,6 +409,7 @@ echo "\n== Adversarial: exports before any capture must not silently return an e
     'organisation_id' => 'org-net-exports-empty',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $emptySessionId = $emptySession['id'] ?? null;
 $emptySessionToken = $emptySession['access_token'] ?? null;
