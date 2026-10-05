@@ -40,6 +40,7 @@ $groups = [
             ['verify_room_floor_and_delete.php'],
             ['verify_group_placement.php'],
             ['verify_rescan_replace.php'],
+            ['verify_continue_edges.php'],
             ['verify_enterprise_hardening.php'],
         ],
     ],

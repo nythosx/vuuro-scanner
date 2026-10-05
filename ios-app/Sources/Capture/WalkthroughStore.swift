@@ -5,6 +5,7 @@ struct WalkthroughState: Codable {
     var session: ScanSessionResponse?
     var rooms: [StoredRoom]
     var startedAt: Date
+    var pendingRescan: StoredRescanChoice? = nil
 
     struct StoredRoom: Codable {
         let exportJSON: Data

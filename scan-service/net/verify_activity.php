@@ -69,6 +69,20 @@ check(
     'captured_at=' . ($entryA['captured_at'] ?? 'null') . ' created_at=' . ($sessionA['created_at'] ?? 'null')
 );
 
+$roomsA = $entryA['rooms'] ?? null;
+check('the returned entry lists its rooms', is_array($roomsA) && count($roomsA) === count($planA['rooms'] ?? []), json_encode($roomsA));
+check(
+    'each listed room carries label, floor and area',
+    is_array($roomsA) && $roomsA !== [] && is_string($roomsA[0]['label'] ?? null) && ($roomsA[0]['floor'] ?? null) === 'Ground' && abs((float) ($roomsA[0]['floor_area_m2'] ?? 0) - (float) ($planA['rooms'][0]['floor_area_m2'] ?? -1)) < 0.001,
+    json_encode($roomsA[0] ?? null)
+);
+
+[, $planA2] = net_http_json('POST', "$baseUrl/scan-sessions/$idA/capture", ['raw_capture' => $fixture, 'floor' => 'First'], $tokenA);
+[, $body2] = net_http_json('POST', "$baseUrl/scan-sessions/activity", ['sessions' => [['id' => $idA, 'token' => $tokenA]]]);
+$roomsA2 = $body2['sessions'][0]['rooms'] ?? [];
+check('a later capture shows up in the room list', count($roomsA2) === count($planA2['rooms'] ?? []) && count($roomsA2) === count($roomsA ?? []) + 1, json_encode(array_column($roomsA2, 'floor')));
+check('the new room keeps its own floor', in_array('First', array_column($roomsA2, 'floor'), true), json_encode(array_column($roomsA2, 'floor')));
+
 echo "\n== /scan-sessions/activity is a real route, never treated as a session id ==\n";
 [$getStatus] = net_http_json('GET', "$baseUrl/scan-sessions/activity", null, $tokenA);
 check('GET on the activity path is not a session lookup (no such session id)', $getStatus !== 200, "got HTTP $getStatus");

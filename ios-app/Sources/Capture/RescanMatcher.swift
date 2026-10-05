@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct RescanCandidate: Identifiable, Equatable {
+struct RescanCandidate: Identifiable, Equatable, Codable {
     let roomId: String
     let name: String
     let floorAreaM2: Double
@@ -10,6 +10,69 @@ struct RescanCandidate: Identifiable, Equatable {
 struct PendingRescanChoice: Identifiable {
     let id = UUID()
     let candidates: [RescanCandidate]
+}
+
+struct StoredRescanChoice: Codable, Equatable {
+    let roomIndex: Int
+    let candidates: [RescanCandidate]
+}
+
+enum RescanResume {
+    static let staleReplaceCodes: Set<String> = ["unknown_room_id", "replace_floor_mismatch"]
+    static let addedAsNewNotice = "The room this scan was replacing has changed, so it was added as a new room."
+
+    static func isStaleReplace(_ error: Error) -> Bool {
+        guard let code = (error as? ScanServiceError)?.serverCode else { return false }
+        return staleReplaceCodes.contains(code)
+    }
+
+    static func replacesRoomId(in bodyJSON: Data) -> String? {
+        guard let body = (try? JSONSerialization.jsonObject(with: bodyJSON)) as? [String: Any],
+              let rawCapture = body["raw_capture"] as? [String: Any] else { return nil }
+        return rawCapture["replaces_room_id"] as? String
+    }
+
+    static func captureBody(_ bodyJSON: Data, replacing roomId: String?) -> Data? {
+        guard var body = (try? JSONSerialization.jsonObject(with: bodyJSON)) as? [String: Any],
+              var rawCapture = body["raw_capture"] as? [String: Any] else { return nil }
+        if let roomId {
+            rawCapture["replaces_room_id"] = roomId
+        } else {
+            rawCapture.removeValue(forKey: "replaces_room_id")
+        }
+        body["raw_capture"] = rawCapture
+        return try? JSONSerialization.data(withJSONObject: body)
+    }
+
+    static func exportJSON(_ exportJSON: Data, replacing roomId: String?) -> Data? {
+        guard var export = try? JSONDecoder().decode(RoomPlanCaptureExport.self, from: exportJSON) else { return nil }
+        export.replacesRoomId = roomId
+        return try? JSONEncoder().encode(export)
+    }
+}
+
+extension PendingUploadState {
+    func resolvingRescan(replacing roomId: String?) -> PendingUploadState {
+        var state = self
+        state.pendingRescan = nil
+        guard let choice = pendingRescan, captures.indices.contains(choice.roomIndex) else { return state }
+        let capture = captures[choice.roomIndex]
+        guard let body = RescanResume.captureBody(capture.bodyJSON, replacing: roomId) else { return state }
+        state.captures[choice.roomIndex] = PendingCapture(idempotencyKey: UUID().uuidString, bodyJSON: body)
+        return state
+    }
+}
+
+extension WalkthroughState {
+    func resolvingRescan(replacing roomId: String?) -> WalkthroughState {
+        var state = self
+        state.pendingRescan = nil
+        guard let choice = pendingRescan, rooms.indices.contains(choice.roomIndex) else { return state }
+        let room = rooms[choice.roomIndex]
+        guard let data = RescanResume.exportJSON(room.exportJSON, replacing: roomId) else { return state }
+        state.rooms[choice.roomIndex] = StoredRoom(exportJSON: data, floor: room.floor, label: room.label)
+        return state
+    }
 }
 
 enum RescanMatcher {

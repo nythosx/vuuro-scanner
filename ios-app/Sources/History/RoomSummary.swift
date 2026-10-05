@@ -1,9 +1,18 @@
 import Foundation
 
+protocol RoomSummarySource {
+    var label: String { get }
+    var floor: String? { get }
+    var floorAreaM2: Double { get }
+    var roomType: FloorPlan.RoomType? { get }
+}
+
+extension FloorPlan.Room: RoomSummarySource {}
+
 enum RoomSummary {
-    static func text(for rooms: [FloorPlan.Room]) -> String? {
+    static func text<Room: RoomSummarySource>(for rooms: [Room]) -> String? {
         guard !rooms.isEmpty else { return nil }
-        let labels = rooms.map(displayLabel)
+        let labels = rooms.map { displayLabel(for: $0) }
         if labels.count == 1 {
             return labels[0]
         }
@@ -29,7 +38,7 @@ enum RoomSummary {
         return (labels, more)
     }
 
-    private static func displayLabel(for room: FloorPlan.Room) -> String {
+    private static func displayLabel(for room: some RoomSummarySource) -> String {
         if let confirmed = room.roomType?.confirmed, !confirmed.isEmpty {
             return confirmed == "other" ? room.label : RoomTypeClassifier.displayName(for: confirmed)
         }

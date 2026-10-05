@@ -7,7 +7,7 @@ struct CachedFloorSummary: Codable, Equatable {
 }
 
 extension CachedFloorSummary {
-    static func buckets(from rooms: [FloorPlan.Room]) -> [String: CachedFloorSummary] {
+    static func buckets<Room: RoomSummarySource>(from rooms: [Room]) -> [String: CachedFloorSummary] {
         var result: [String: CachedFloorSummary] = [:]
         for room in rooms {
             let key = (room.floor ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

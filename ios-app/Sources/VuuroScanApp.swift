@@ -850,6 +850,12 @@ private struct RoomCaptureFlowStep: View {
             let candidates = await rescanCandidates(for: export, session: existingSession)
             isUploading = false
             if !candidates.isEmpty {
+                let floor = captureFloor.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let bodyJSON = try? client.encodeCaptureBody(capture: export, location: capturedLocation, floor: floor.isEmpty ? nil : floor) {
+                    var pending = PendingUploadState(session: existingSession, identity: identity, captures: [.init(idempotencyKey: UUID().uuidString, bodyJSON: bodyJSON)])
+                    pending.pendingRescan = StoredRescanChoice(roomIndex: 0, candidates: candidates)
+                    PendingUploadStore.save(pending)
+                }
                 rescanExport = export
                 pendingRescan = PendingRescanChoice(candidates: candidates)
                 return
@@ -897,7 +903,11 @@ private struct RoomCaptureFlowStep: View {
 
         PendingUploadStore.save(PendingUploadState(session: session, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)]))
         do {
-            let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
+            let result = try await client.uploadCaptureKeepingRoom(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
+            let floorPlan = result.floorPlan
+            if result.addedAsNew {
+                VuuroToast.shared.show(vuuroLocalized(RescanResume.addedAsNewNotice))
+            }
             PendingUploadStore.clear()
             ScanHistoryStore.shared.updateRoomSummary(
                 sessionId: session.id,
@@ -919,7 +929,11 @@ private struct RoomCaptureFlowStep: View {
         defer { isRetryingUpload = false }
         PendingUploadStore.save(PendingUploadState(session: session, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)]))
         do {
-            let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
+            let result = try await client.uploadCaptureKeepingRoom(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
+            let floorPlan = result.floorPlan
+            if result.addedAsNew {
+                VuuroToast.shared.show(vuuroLocalized(RescanResume.addedAsNewNotice))
+            }
             PendingUploadStore.clear()
             ScanHistoryStore.shared.updateRoomSummary(
                 sessionId: session.id,

@@ -49,6 +49,13 @@ private struct ScanServiceErrorBody: Decodable {
     let message: String
 }
 
+extension ScanServiceError {
+    var serverCode: String? {
+        guard case .unexpectedStatus(_, let body) = self, let data = body.data(using: .utf8) else { return nil }
+        return (try? JSONDecoder().decode(ScanServiceErrorBody.self, from: data))?.error
+    }
+}
+
 struct PhotoUploadResponse: Decodable {
     let url: String
     let photoUploadId: String
@@ -78,10 +85,41 @@ struct RotateTokenResponse: Decodable {
 struct SessionActivityEntry: Decodable {
     let id: String
     let capturedAt: String
+    let rooms: [Room]?
+
+    struct Room: Decodable, RoomSummarySource {
+        let label: String
+        let floor: String?
+        let floorAreaM2: Double
+        let roomType: FloorPlan.RoomType?
+
+        enum CodingKeys: String, CodingKey {
+            case label
+            case floor
+            case floorAreaM2 = "floor_area_m2"
+            case roomType = "room_type"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            label = try c.decode(String.self, forKey: .label)
+            floor = try c.decodeIfPresent(String.self, forKey: .floor)
+            floorAreaM2 = try c.decode(Double.self, forKey: .floorAreaM2)
+            roomType = try? c.decodeIfPresent(FloorPlan.RoomType.self, forKey: .roomType)
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case id
         case capturedAt = "captured_at"
+        case rooms
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        capturedAt = try c.decode(String.self, forKey: .capturedAt)
+        rooms = try? c.decodeIfPresent([Room].self, forKey: .rooms)
     }
 }
 
@@ -231,6 +269,20 @@ struct ScanServiceClient {
         return try await send(request, timeoutSeconds: 90)
     }
 
+    func uploadCaptureKeepingRoom(sessionId: String, accessToken: String, idempotencyKey: String, bodyJSON: Data) async throws -> (floorPlan: FloorPlan, addedAsNew: Bool) {
+        do {
+            let floorPlan = try await uploadCapture(sessionId: sessionId, accessToken: accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
+            return (floorPlan, false)
+        } catch {
+            guard RescanResume.isStaleReplace(error),
+                  let target = RescanResume.replacesRoomId(in: bodyJSON),
+                  let plainBody = RescanResume.captureBody(bodyJSON, replacing: nil) else { throw error }
+            DiagnosticsLog.shared.record("Rescan: room \(target) can no longer be replaced (\((error as? ScanServiceError)?.serverCode ?? "unknown")), uploading as a new room", category: .info)
+            let floorPlan = try await uploadCapture(sessionId: sessionId, accessToken: accessToken, idempotencyKey: UUID().uuidString, bodyJSON: plainBody)
+            return (floorPlan, true)
+        }
+    }
+
     struct ReplaceRoomsBody: Encodable {
         let captures: [CaptureBody]
     }
@@ -324,9 +376,7 @@ struct ScanServiceClient {
         guard !pairs.isEmpty else { return }
         do {
             let results = try await fetchActivity(entries: pairs)
-            for result in results {
-                ScanHistoryStore.shared.noteServerCapture(sessionId: result.id, capturedAt: result.capturedAt)
-            }
+            ScanHistoryStore.shared.applyServerActivity(results)
         } catch is CancellationError {
         } catch {
             DiagnosticsLog.shared.record("Activity refresh failed: \(error.localizedDescription)", category: .error)

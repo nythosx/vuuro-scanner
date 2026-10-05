@@ -89,6 +89,63 @@ try {
 rm_check('the clash is refused', $clashError !== null, 'no exception');
 rm_check('nothing was saved', array_column($repo->findFloorPlan($clash['id'])['rooms'], 'room_id') === ['g-1', 'h-tile'], json_encode(array_column($repo->findFloorPlan($clash['id'])['rooms'], 'room_id')));
 
+function rm_rescan(string $replacesId, string $group, string $floor, string $label): array
+{
+    $room = rm_room($replacesId, $group);
+    $room['floor'] = $floor;
+    $room['label'] = $label;
+    return $room;
+}
+
+function rm_by_id(array $plan, string $id): ?array
+{
+    foreach ($plan['rooms'] as $room) {
+        if ($room['room_id'] === $id) {
+            return $room;
+        }
+    }
+    return null;
+}
+
+echo "\n== Replacing a room from a whole-unit continue keeps its name ==\n";
+$named = $repo->create('prop-rm-named', 'unit-rm-named', 'org-rm', 'listing', false, false);
+rm_capture($repo, $named['id'], [rm_room('k-1', 'walk-K'), rm_room('k-2', 'walk-K', [4.0, 0.0])]);
+$repo->updateRoomLabel($named['id'], 'k-1', 'Master bedroom');
+$repo->appendNote($named['id'], ['note_id' => 'note-k1', 'text' => 'damp corner', 'room_id' => 'k-1', 'created_at' => gmdate('c')]);
+$namedAfter = $repo->replaceRooms($named['id'], [rm_rescan('k-1', 'walk-L', 'Ground', 'Room 1')], 'roomplan', gmdate('c'), ['walk-L'], ['k-1']);
+rm_check('the room count stays the same', count($namedAfter['rooms']) === 2, json_encode(array_column($namedAfter['rooms'], 'room_id')));
+rm_check('the replaced room keeps the name the user gave it', (rm_by_id($namedAfter, 'k-1')['label'] ?? null) === 'Master bedroom', json_encode(rm_by_id($namedAfter, 'k-1')));
+rm_check('the replaced room has the new scan group', (rm_by_id($namedAfter, 'k-1')['capture_group_id'] ?? null) === 'walk-L');
+rm_check('its note stays on it', ($namedAfter['notes'][0]['room_id'] ?? null) === 'k-1');
+$renamedAfter = $repo->replaceRooms($named['id'], [rm_rescan('k-2', 'walk-M', 'Ground', 'Hallway')], 'roomplan', gmdate('c'), ['walk-M'], ['k-2']);
+rm_check('a name chosen during the new scan wins', (rm_by_id($renamedAfter, 'k-2')['label'] ?? null) === 'Hallway');
+
+echo "\n== A replace onto a room that is now on another floor becomes a new room ==\n";
+$moved = $repo->create('prop-rm-moved', 'unit-rm-moved', 'org-rm', 'listing', false, false);
+$attic = rm_room('m-1', 'walk-N');
+$attic['floor'] = 'Attic';
+$attic['label'] = 'Room 1';
+rm_capture($repo, $moved['id'], [$attic]);
+$repo->appendNote($moved['id'], ['note_id' => 'note-m1', 'text' => 'roof window', 'room_id' => 'm-1', 'created_at' => gmdate('c')]);
+$movedAfter = $repo->replaceRooms($moved['id'], [rm_rescan('m-1', 'walk-O', 'Ground', 'Room 1')], 'roomplan', gmdate('c'), ['walk-O'], ['m-1']);
+$movedIds = array_column($movedAfter['rooms'], 'room_id');
+rm_check('the Attic room is kept', (rm_by_id($movedAfter, 'm-1')['floor'] ?? null) === 'Attic', json_encode($movedIds));
+rm_check('the scan is added as a second room', count($movedAfter['rooms']) === 2, json_encode($movedIds));
+$newRoom = array_values(array_filter($movedAfter['rooms'], static fn ($room) => $room['room_id'] !== 'm-1'))[0] ?? [];
+rm_check('the new room gets an id from the server', str_starts_with((string) ($newRoom['room_id'] ?? ''), 'room-rescan-'), (string) ($newRoom['room_id'] ?? ''));
+rm_check('the new room is on Ground', ($newRoom['floor'] ?? null) === 'Ground');
+rm_check('the new room does not reuse the Attic name', ($newRoom['label'] ?? null) !== 'Room 1', (string) ($newRoom['label'] ?? ''));
+rm_check('the Attic note stays on the Attic room', ($movedAfter['notes'][0]['room_id'] ?? null) === 'm-1');
+rm_check('the floor check ignores case and spaces', count($repo->replaceRooms($moved['id'], [rm_rescan('m-1', 'walk-P', ' attic ', 'Room 3')], 'roomplan', gmdate('c'), ['walk-P'], ['m-1'])['rooms']) === 2);
+
+echo "\n== A replace onto a room that was deleted becomes a new room ==\n";
+$gone = $repo->create('prop-rm-gone', 'unit-rm-gone', 'org-rm', 'listing', false, false);
+rm_capture($repo, $gone['id'], [rm_room('q-1', 'walk-Q')]);
+$goneAfter = $repo->replaceRooms($gone['id'], [rm_rescan('q-deleted', 'walk-R', 'Ground', 'Room 2')], 'roomplan', gmdate('c'), ['walk-R'], ['q-deleted']);
+$goneIds = array_column($goneAfter['rooms'], 'room_id');
+rm_check('the existing room is kept and the scan is added', count($goneIds) === 2 && $goneIds[0] === 'q-1', json_encode($goneIds));
+rm_check('the deleted id is not brought back', !in_array('q-deleted', $goneIds, true), json_encode($goneIds));
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

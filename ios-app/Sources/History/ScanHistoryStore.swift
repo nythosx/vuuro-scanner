@@ -92,6 +92,41 @@ final class ScanHistoryStore {
         save(entries)
     }
 
+    @discardableResult
+    func applyServerActivity(_ results: [SessionActivityEntry]) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        var entries = readRedacted()
+        var changed = false
+        for result in results {
+            guard let index = entries.firstIndex(where: { $0.sessionId == result.id }) else { continue }
+            if let date = Self.parseServerDate(result.capturedAt), entries[index].lastCapturedAt.map({ $0 < date }) ?? true {
+                entries[index].lastCapturedAt = date
+                changed = true
+            }
+            guard let rooms = result.rooms else { continue }
+            let summary = RoomSummary.text(for: rooms)
+            let area = rooms.reduce(0.0) { $0 + $1.floorAreaM2 }
+            let byFloor = CachedFloorSummary.buckets(from: rooms)
+            if entries[index].cachedRoomSummary != summary {
+                entries[index].cachedRoomSummary = summary
+                changed = true
+            }
+            if entries[index].cachedFloorAreaM2 != area {
+                entries[index].cachedFloorAreaM2 = area
+                changed = true
+            }
+            if entries[index].cachedRoomsByFloor != byFloor {
+                entries[index].cachedRoomsByFloor = byFloor
+                changed = true
+            }
+        }
+        if changed {
+            save(entries)
+        }
+        return changed
+    }
+
     func noteServerCapture(sessionId: String, capturedAt: String) {
         guard let date = Self.parseServerDate(capturedAt) else { return }
         markCaptured(sessionId: sessionId, at: date)

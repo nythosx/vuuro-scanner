@@ -763,6 +763,12 @@ if ($method === 'POST' && $path === '/scan-sessions/activity') {
         $results[] = [
             'id' => $id,
             'captured_at' => $floorPlan['captured_at'],
+            'rooms' => array_map(static fn (array $room): array => [
+                'label' => (string) ($room['label'] ?? ''),
+                'floor' => $room['floor'] ?? null,
+                'floor_area_m2' => (float) ($room['floor_area_m2'] ?? 0),
+                'room_type' => $room['room_type'] ?? null,
+            ], array_values(array_filter($floorPlan['rooms'] ?? [], 'is_array'))),
         ];
     }
 

@@ -10,6 +10,7 @@ struct PendingUploadRecoveryView: View {
     @State private var lastError: AppError?
     @State private var retryTask: Task<Void, Never>?
     @State private var showRetryConfirmation = false
+    @State private var rescanQuestion: PendingRescanChoice?
 
     private static let largeUnitRoomCount = 8
     private let client = ScanServiceClient()
@@ -66,7 +67,11 @@ struct PendingUploadRecoveryView: View {
                 } else {
                     VStack(spacing: 10) {
                         Button("Retry upload") {
-                            showRetryConfirmation = true
+                            if let choice = currentState.pendingRescan {
+                                rescanQuestion = PendingRescanChoice(candidates: choice.candidates)
+                            } else {
+                                showRetryConfirmation = true
+                            }
                         }
                         .accessibilityIdentifier("pendingUpload.retry")
                         .buttonStyle(.vuuroPrimary)
@@ -103,6 +108,13 @@ struct PendingUploadRecoveryView: View {
         } message: {
             Text(retryConfirmationMessage)
         }
+        .sheet(item: $rescanQuestion) { choice in
+            RescanChoiceSheet(
+                choice: choice,
+                onReplace: { roomId in resolveRescan(replacing: roomId) },
+                onAddNew: { resolveRescan(replacing: nil) }
+            )
+        }
         .onAppear {
             DiagnosticsLog.shared.record(
                 "Pending upload recovery shown: \(currentState.captures.count) capture(s), session \(currentState.session?.id ?? "not yet created")",
@@ -115,6 +127,9 @@ struct PendingUploadRecoveryView: View {
     }
 
     private var subtitle: String {
+        if currentState.pendingRescan != nil {
+            return "A room is saved on this device. It looks like a room you already scanned, so you'll be asked to replace it or add it before it uploads."
+        }
         let count = currentState.captures.count
         let roomText = "\(count) room\(count == 1 ? "" : "s")"
         let verb = count == 1 ? "is" : "are"
@@ -127,6 +142,16 @@ struct PendingUploadRecoveryView: View {
             return "This will re-upload all \(count) rooms, which may take a while for a unit this size. Make sure you meant to tap this."
         }
         return "This will re-upload \(count) room\(count == 1 ? "" : "s") captured earlier."
+    }
+
+    @MainActor
+    private func resolveRescan(replacing roomId: String?) {
+        rescanQuestion = nil
+        currentState = currentState.resolvingRescan(replacing: roomId)
+        PendingUploadStore.save(currentState)
+        DiagnosticsLog.shared.record(roomId.map { "Rescan after restart: replacing \($0)" } ?? "Rescan after restart: added as a new room", category: .info)
+        retryTask?.cancel()
+        retryTask = Task { await retry() }
     }
 
     @MainActor
@@ -174,12 +199,16 @@ struct PendingUploadRecoveryView: View {
             if Task.isCancelled { return }
             let floorPlan: FloorPlan
             do {
-                floorPlan = try await client.uploadCapture(
+                let result = try await client.uploadCaptureKeepingRoom(
                     sessionId: session.id,
                     accessToken: session.accessToken,
                     idempotencyKey: capture.idempotencyKey,
                     bodyJSON: capture.bodyJSON
                 )
+                floorPlan = result.floorPlan
+                if result.addedAsNew {
+                    VuuroToast.shared.show(vuuroLocalized(RescanResume.addedAsNewNotice))
+                }
             } catch is CancellationError {
                 return
             } catch {

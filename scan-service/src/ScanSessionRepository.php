@@ -436,6 +436,7 @@ final class ScanSessionRepository
                 );
             }
 
+            [$rooms, $replacedRoomIds] = self::resolveReplacements($existing['rooms'], $rooms, $replacedRoomIds);
             $combined = $rooms;
             if ($replaceGroups !== null) {
                 $kept = [];
@@ -830,6 +831,47 @@ final class ScanSessionRepository
         }
         $floorPlan['room_splits'] = $kept;
         return [$floorPlan, $warnings];
+    }
+
+    private static function resolveReplacements(array $existingRooms, array $newRooms, array $replacedRoomIds): array
+    {
+        if ($replacedRoomIds === []) {
+            return [$newRooms, []];
+        }
+        $existingById = [];
+        foreach ($existingRooms as $room) {
+            $existingById[(string) ($room['room_id'] ?? '')] = $room;
+        }
+        $floorKey = static fn (mixed $floor): string => is_string($floor) ? mb_strtolower(trim($floor), 'UTF-8') : '';
+        $usedIds = array_flip(array_merge(array_keys($existingById), array_map(static fn (array $room) => (string) ($room['room_id'] ?? ''), $newRooms)));
+        $valid = [];
+        foreach ($newRooms as $i => $room) {
+            $roomId = (string) ($room['room_id'] ?? '');
+            if (!in_array($roomId, $replacedRoomIds, true)) {
+                continue;
+            }
+            $target = $existingById[$roomId] ?? null;
+            if ($target !== null && $floorKey($target['floor'] ?? null) === $floorKey($room['floor'] ?? null)) {
+                if (preg_match('/^Room \d+$/', (string) ($room['label'] ?? '')) === 1 && isset($target['label'])) {
+                    $newRooms[$i]['label'] = $target['label'];
+                }
+                $valid[] = $roomId;
+                continue;
+            }
+            do {
+                $freshId = 'room-rescan-' . bin2hex(random_bytes(4));
+            } while (isset($usedIds[$freshId]));
+            $usedIds[$freshId] = true;
+            $newRooms[$i]['room_id'] = $freshId;
+            if (preg_match('/^Room \d+$/', (string) ($room['label'] ?? '')) === 1) {
+                $others = array_merge($existingRooms, array_values(array_filter($newRooms, static fn (array $other, int $j) => $j !== $i, ARRAY_FILTER_USE_BOTH)));
+                $taken = array_map(static fn ($label) => mb_strtolower((string) $label, 'UTF-8'), array_column($others, 'label'));
+                if (in_array(mb_strtolower((string) $room['label'], 'UTF-8'), $taken, true)) {
+                    $newRooms[$i]['label'] = self::unusedRoomLabel($others);
+                }
+            }
+        }
+        return [$newRooms, $valid];
     }
 
     private static function roomIndexBySource(array $rooms, string $roomId): ?int

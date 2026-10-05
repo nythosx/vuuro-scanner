@@ -6848,6 +6848,22 @@
                     }
                 }
             }
+        },
+        "The room this scan was replacing has changed, so it was added as a new room.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The room this scan was replacing has changed, so it was added as a new room."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De ruimte die deze scan zou vervangen is gewijzigd, dus de scan is als nieuwe ruimte toegevoegd."
+                    }
+                }
+            }
         }
     },
     "version": "1.0"

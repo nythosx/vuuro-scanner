@@ -22,6 +22,7 @@ struct MultiRoomCaptureFlowView: View {
     @State private var existingRoomsForRescan: [FloorPlan.Room]?
     @State private var pendingRescan: PendingRescanChoice?
     @State private var rescanRoomIndex: Int?
+    @State private var storedRescanResume: WalkthroughState?
     @State private var missingOpenings: CaptureLiveStats.MissingOpenings = .doorsAndWindows
     @State private var pendingFinishUnit = false
     @State private var partialRoomFailureMessage: String?
@@ -275,6 +276,17 @@ struct MultiRoomCaptureFlowView: View {
                 }
             }
         }
+        .overlay {
+            if let storedChoice = storedRescanResume?.pendingRescan {
+                resolutionOverlay {
+                    RescanChoiceSheet(
+                        choice: PendingRescanChoice(candidates: storedChoice.candidates),
+                        onReplace: { roomId in resolveRescan(replacing: roomId) },
+                        onAddNew: { resolveRescan(replacing: nil) }
+                    )
+                }
+            }
+        }
         .onChange(of: coordinator.state) { _, state in
             handle(state)
         }
@@ -426,6 +438,7 @@ struct MultiRoomCaptureFlowView: View {
             return
         }
         var storedRooms: [WalkthroughState.StoredRoom] = []
+        var storedRescan: StoredRescanChoice?
         for (index, room) in coordinator.capturedRooms.enumerated() {
             let confirmation = coordinator.roomTypeConfirmations.indices.contains(index) ? coordinator.roomTypeConfirmations[index] : nil
             let walkPath = coordinator.roomWalkPaths.indices.contains(index) ? coordinator.roomWalkPaths[index] : nil
@@ -441,6 +454,9 @@ struct MultiRoomCaptureFlowView: View {
             }
             export.replacesRoomId = roomReplacements[index]
             guard let data = try? JSONEncoder().encode(export) else { continue }
+            if index == rescanRoomIndex, let pendingRescan {
+                storedRescan = StoredRescanChoice(roomIndex: storedRooms.count, candidates: pendingRescan.candidates)
+            }
             let roomFloor = coordinator.floor(forRoomAt: index)
             storedRooms.append(WalkthroughState.StoredRoom(
                 exportJSON: data,
@@ -453,7 +469,8 @@ struct MultiRoomCaptureFlowView: View {
             identity: identity,
             session: existingSession ?? preUploadedSession?.session,
             rooms: storedRooms,
-            startedAt: Date()
+            startedAt: Date(),
+            pendingRescan: storedRescan
         )
         WalkthroughStore.save(state)
     }
@@ -461,6 +478,11 @@ struct MultiRoomCaptureFlowView: View {
     @MainActor
     private func resumeFromStoredState(_ state: WalkthroughState) {
         resumeOffer = nil
+        if let choice = state.pendingRescan, state.rooms.indices.contains(choice.roomIndex) {
+            storedRescanResume = state
+            DiagnosticsLog.shared.record("Resumed walkthrough asks again whether room \(choice.roomIndex + 1) replaces an earlier room", category: .info)
+            return
+        }
         let storedPairs: [(export: RoomPlanCaptureExport, floor: String?)] = state.rooms.compactMap { stored in
             guard let export = try? JSONDecoder().decode(RoomPlanCaptureExport.self, from: stored.exportJSON) else { return nil }
             return (export, stored.floor)
@@ -782,16 +804,26 @@ struct MultiRoomCaptureFlowView: View {
         }
         rescanRoomIndex = index
         pendingRescan = PendingRescanChoice(candidates: candidates)
+        persistWalkthroughProgress()
     }
 
     @MainActor
     private func resolveRescan(replacing roomId: String?) {
+        if let stored = storedRescanResume {
+            storedRescanResume = nil
+            let resolved = stored.resolvingRescan(replacing: roomId)
+            WalkthroughStore.save(resolved)
+            DiagnosticsLog.shared.record(roomId.map { "Rescan after restart: room will replace \($0)" } ?? "Rescan after restart: added as a new room", category: .info)
+            resumeFromStoredState(resolved)
+            return
+        }
         if let roomId, let index = rescanRoomIndex {
             roomReplacements[index] = roomId
         }
         DiagnosticsLog.shared.record(roomId.map { "Rescan: room will replace \($0)" } ?? "Rescan: added as a new room", category: .info)
         pendingRescan = nil
         rescanRoomIndex = nil
+        persistWalkthroughProgress()
         continueAfterRoomResolved()
     }
 
@@ -1030,12 +1062,16 @@ struct MultiRoomCaptureFlowView: View {
         for (index, capture) in pending.captures.enumerated() {
             uploadProgress.markUploading(index: index)
             do {
-                floorPlan = try await client.uploadCapture(
+                let result = try await client.uploadCaptureKeepingRoom(
                     sessionId: session.id,
                     accessToken: session.accessToken,
                     idempotencyKey: capture.idempotencyKey,
                     bodyJSON: capture.bodyJSON
                 )
+                floorPlan = result.floorPlan
+                if result.addedAsNew {
+                    VuuroToast.shared.show(vuuroLocalized(RescanResume.addedAsNewNotice))
+                }
                 uploadProgress.markDone(index: index, areaM2: exports.indices.contains(index) ? exports[index].floorAreaM2 : nil)
             } catch is CancellationError {
                 onError(AppError(site: .uploadCancelled, underlying: nil), session)
