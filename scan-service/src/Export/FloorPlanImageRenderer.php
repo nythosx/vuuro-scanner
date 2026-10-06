@@ -426,8 +426,7 @@ final class FloorPlanImageRenderer
     private function drawableChar(string $char): string
     {
         if (!array_key_exists($char, self::$glyphCache)) {
-            $box = @imagettfbbox(self::TTF_SIZE[3], 0, $this->fontPath(), $char);
-            $hasGlyph = $box !== false && $box[2] - $box[0] > 0;
+            $hasGlyph = FontCoverage::has($this->fontPath(), mb_ord($char, 'UTF-8'));
             self::$glyphCache[$char] = $hasGlyph ? $char : (preg_match('/\p{So}/u', $char) === 1 ? '' : '?');
         }
         return self::$glyphCache[$char];
