@@ -94,6 +94,26 @@ ss_check('an unknown plan is refused', ss_rejects(fn () => $settings->update(['p
 ss_check('the plan change is in the log', $settings->history()[0]['after']['plan_style']['check_in'] === 'full' && $settings->history()[0]['before']['plan_style']['check_in'] === 'listing');
 ss_check('the limits are sent so the admin page does not hard-code them', $settings->all()['limits']['tenant_grace_days'] === ['min' => 1, 'max' => 90]);
 
+echo "\n== Check-in vs check-out thresholds ==\n";
+ss_check('a room counts as changed from 0.5 m2 or 5% by default', $settings->areaChangeThresholds() === [0.5, 5.0], json_encode($settings->areaChangeThresholds()));
+$settings->update(['comparison' => ['area_change_m2' => 1]]);
+ss_check('the m2 threshold can be changed on its own', $settings->areaChangeThresholds() === [1.0, 5.0], json_encode($settings->areaChangeThresholds()));
+$settings->update(['comparison' => ['area_change_percent' => 7.5]]);
+ss_check('the percent threshold keeps the m2 value', $settings->areaChangeThresholds() === [1.0, 7.5], json_encode($settings->areaChangeThresholds()));
+ss_check('a zero m2 threshold is refused', ss_rejects(fn () => $settings->update(['comparison' => ['area_change_m2' => 0]])));
+ss_check('a percent over 100 is refused', ss_rejects(fn () => $settings->update(['comparison' => ['area_change_percent' => 101]])));
+ss_check('a threshold as text is refused', ss_rejects(fn () => $settings->update(['comparison' => ['area_change_m2' => '1']])));
+ss_check('comparison must be an object', ss_rejects(fn () => $settings->update(['comparison' => 2])));
+ss_check('a refused threshold leaves the old values', $settings->areaChangeThresholds() === [1.0, 7.5]);
+ss_check('the threshold change is in the log', $settings->history()[0]['after']['comparison']['area_change_percent'] == 7.5 && $settings->history()[0]['before']['comparison']['area_change_percent'] == 5);
+ss_check('exports default to English', $settings->exportLanguage() === 'en');
+$settings->update(['export_language' => 'nl']);
+ss_check('the default export language can be Dutch', $settings->exportLanguage() === 'nl');
+ss_check('an unknown export language is refused', ss_rejects(fn () => $settings->update(['export_language' => 'de'])));
+ss_check('a refused language keeps Dutch', $settings->exportLanguage() === 'nl');
+ss_check('the language change is in the log', $settings->history()[0]['after']['export_language'] === 'nl' && $settings->history()[0]['before']['export_language'] === 'en');
+ss_check('the threshold limits are sent to the admin page', $settings->all()['limits']['area_change_m2'] === ['min' => 0.05, 'max' => 20.0] && $settings->all()['limits']['area_change_percent'] === ['min' => 0.5, 'max' => 100.0]);
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

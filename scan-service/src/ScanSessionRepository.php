@@ -159,6 +159,35 @@ final class ScanSessionRepository
         );
     }
 
+    public function findLatestForUnit(string $propertyId, string $unitId, string $organisationId, string $purpose, string $excludeId): ?array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT * FROM scan_sessions
+             WHERE property_id = :property_id AND unit_id = :unit_id AND organisation_id = :organisation_id AND purpose = :purpose AND id != :exclude_id
+             ORDER BY created_at DESC, rowid DESC LIMIT 1'
+        );
+        $stmt->execute([
+            'property_id' => $propertyId,
+            'unit_id' => $unitId,
+            'organisation_id' => $organisationId,
+            'purpose' => $purpose,
+            'exclude_id' => $excludeId,
+        ]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row ?: null;
+    }
+
+    public function createdBefore(array $first, array $second): bool
+    {
+        $byTime = strcmp((string) $first['created_at'], (string) $second['created_at']);
+        if ($byTime !== 0) {
+            return $byTime < 0;
+        }
+        $stmt = $this->db->prepare('SELECT id FROM scan_sessions WHERE id IN (:first, :second) ORDER BY rowid ASC LIMIT 1');
+        $stmt->execute(['first' => $first['id'], 'second' => $second['id']]);
+        return $stmt->fetchColumn() === $first['id'];
+    }
+
     public function deleteSession(string $id): void
     {
         $this->withWriteLock(function () use ($id) {

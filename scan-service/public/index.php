@@ -5,10 +5,12 @@ declare(strict_types=1);
 require __DIR__ . '/../src/autoload.php';
 
 use VuuroScan\Adapters\RoomPlanSimulatorAdapter;
+use VuuroScan\Export\ExportLanguage;
 use VuuroScan\Export\FloorPlanImageRenderer;
 use VuuroScan\Export\FloorPlanStyle;
 use VuuroScan\Export\FloorPlanPdfRenderer;
 use VuuroScan\Export\FloorPlanSvgRenderer;
+use VuuroScan\ScanComparison;
 use VuuroScan\ScanSessionRepository;
 use VuuroScan\Storage\Database;
 
@@ -26,6 +28,7 @@ set_exception_handler(static function (\Throwable $e): void {
 
 const DEFAULT_ADMIN_API_KEY = 'change-me-local-dev';
 const DEFAULT_EXPORT_SECRET = 'change-me-local-dev-signing';
+const MIN_PRODUCTION_APP_KEY_LENGTH = 24;
 
 $scanServiceEnv = getenv('SCAN_SERVICE_ENV') ?: 'development';
 if ($scanServiceEnv === 'production') {
@@ -37,6 +40,10 @@ if ($scanServiceEnv === 'production') {
     if ($exportSecret === false || $exportSecret === '' || $exportSecret === DEFAULT_EXPORT_SECRET) {
         throw new \RuntimeException('SCAN_SERVICE_ENV=production requires SCAN_SERVICE_EXPORT_SECRET to be set to a real, non-default value.');
     }
+    $appKey = getenv('SCAN_SERVICE_APP_KEY');
+    if (!is_string($appKey) || strlen(trim($appKey)) < MIN_PRODUCTION_APP_KEY_LENGTH) {
+        throw new \RuntimeException('SCAN_SERVICE_ENV=production requires SCAN_SERVICE_APP_KEY to be set to a random value of at least ' . MIN_PRODUCTION_APP_KEY_LENGTH . ' characters.');
+    }
 }
 
 header('X-Content-Type-Options: nosniff');
@@ -45,7 +52,7 @@ $corsOrigin = getenv('SCAN_SERVICE_CORS_ORIGIN') ?: 'http://127.0.0.1:8090';
 if (($_SERVER['HTTP_ORIGIN'] ?? null) === $corsOrigin) {
     header("Access-Control-Allow-Origin: $corsOrigin");
     header('Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, X-Scan-Access-Token, Idempotency-Key, X-Admin-Api-Key');
+    header('Access-Control-Allow-Headers: Content-Type, X-Scan-Access-Token, Idempotency-Key, X-Admin-Api-Key, X-Scan-App-Key, X-Scan-Compare-Token');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -160,56 +167,9 @@ function deleteSessionPhotoDir(string $sessionId): void
     rmdir($photoDir);
 }
 
-const BACKUP_MIN_INTERVAL_SECONDS = 24 * 60 * 60;
-const BACKUP_MAX_KEPT = 14;
-
 function backupDatabaseIfDue(PDO $db): void
 {
-    $dbPath = \VuuroScan\Storage\Database::resolvePath();
-    if (!is_file($dbPath)) {
-        return;
-    }
-    $backupDir = dirname($dbPath) . '/backups';
-    if (!is_dir($backupDir) && !mkdir($backupDir, 0750, true) && !is_dir($backupDir)) {
-        error_log("backupDatabaseIfDue: could not create backup directory $backupDir");
-        return;
-    }
-
-    $lockPath = $backupDir . '/.backup.lock';
-    $lockHandle = fopen($lockPath, 'c');
-    if ($lockHandle === false || !flock($lockHandle, LOCK_EX | LOCK_NB)) {
-        if ($lockHandle !== false) {
-            fclose($lockHandle);
-        }
-        return;
-    }
-
-    try {
-        $lastBackupMarker = $backupDir . '/.last_backup_at';
-        $lastBackupAt = is_file($lastBackupMarker) ? (int) filemtime($lastBackupMarker) : 0;
-        if ($lastBackupAt !== 0 && time() - $lastBackupAt < BACKUP_MIN_INTERVAL_SECONDS) {
-            return;
-        }
-
-        $backupPath = $backupDir . '/' . gmdate('Ymd\THis\Z') . '.sqlite';
-        try {
-            $db->exec('VACUUM INTO ' . $db->quote($backupPath));
-        } catch (\PDOException $e) {
-            error_log('backupDatabaseIfDue: VACUUM INTO failed: ' . $e->getMessage());
-            return;
-        }
-        touch($lastBackupMarker);
-
-        $all = glob($backupDir . '/*.sqlite') ?: [];
-        sort($all);
-        $excess = count($all) - BACKUP_MAX_KEPT;
-        for ($i = 0; $i < $excess; $i++) {
-            unlink($all[$i]);
-        }
-    } finally {
-        flock($lockHandle, LOCK_UN);
-        fclose($lockHandle);
-    }
+    \VuuroScan\Storage\DatabaseBackup::create($db, \VuuroScan\Storage\Database::resolvePath());
 }
 
 function ownedPhotoFilePath(string $sessionId, ?string $url): ?string
@@ -339,16 +299,24 @@ function isTrustedProxy(string $ip): bool
 function clientIp(): string
 {
     $remote = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
-    if ($remote !== 'unknown' && isTrustedProxy($remote)) {
-        $forwarded = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '';
-        if (is_string($forwarded) && $forwarded !== '') {
-            $ips = array_map('trim', explode(',', $forwarded));
-            if ($ips[0] !== '') {
-                return $ips[0];
-            }
+    if ($remote === 'unknown' || !isTrustedProxy($remote)) {
+        return $remote;
+    }
+    $forwarded = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '';
+    if (!is_string($forwarded) || $forwarded === '') {
+        return $remote;
+    }
+    $client = $remote;
+    foreach (array_reverse(array_map('trim', explode(',', $forwarded))) as $hop) {
+        if (filter_var($hop, FILTER_VALIDATE_IP) === false) {
+            break;
+        }
+        $client = $hop;
+        if (!isTrustedProxy($hop)) {
+            break;
         }
     }
-    return $remote;
+    return $client;
 }
 
 function respond(int $status, array $body): void
@@ -438,6 +406,29 @@ function adminAuthorized(): bool
     return is_string($presentedKey) && $presentedKey !== '' && hash_equals($configuredKey, $presentedKey);
 }
 
+function appKeyAuthorized(): bool
+{
+    $configuredKey = getenv('SCAN_SERVICE_APP_KEY');
+    if (!is_string($configuredKey) || trim($configuredKey) === '') {
+        return true;
+    }
+    $presentedKey = $_SERVER['HTTP_X_SCAN_APP_KEY'] ?? '';
+    return is_string($presentedKey) && $presentedKey !== '' && hash_equals(trim($configuredKey), $presentedKey);
+}
+
+function exportLanguageFromQuery(\VuuroScan\ServiceSettings $settings): string
+{
+    if (!isset($_GET['lang'])) {
+        return $settings->exportLanguage();
+    }
+    $lang = $_GET['lang'];
+    if (!ExportLanguage::isSupported($lang)) {
+        respondError(422, 'invalid_lang', "'lang' must be 'en' or 'nl' if given.");
+        exit;
+    }
+    return $lang;
+}
+
 function parseFloorPlanStyleFromQuery(string $automaticStyle = 'default'): FloorPlanStyle
 {
     $style = $_GET['style'] ?? 'default';
@@ -519,8 +510,84 @@ function purgeExpiredSessions(ScanSessionRepository $repo, \VuuroScan\ServiceSet
     return $purged;
 }
 
-const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload'];
+const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload', 'compare'];
 const ADMIN_WRITE_ACTIONS = ['publish_to_platform'];
+
+function compareRequested(): bool
+{
+    $token = $_SERVER['HTTP_X_SCAN_COMPARE_TOKEN'] ?? '';
+    return (is_string($token) && $token !== '') || trim((string) ($_GET['with'] ?? '')) !== '';
+}
+
+function resolveComparison(ScanSessionRepository $repo, array $session): ?array
+{
+    $withId = trim((string) ($_GET['with'] ?? ''));
+    if ($withId !== '') {
+        if ($withId === $session['id']) {
+            respondError(422, 'compare_with_itself', 'Pick a different scan of the same unit to compare with.');
+            return null;
+        }
+        $other = $repo->find($withId);
+    } else {
+        $counterpartPurpose = match ((string) $session['purpose']) {
+            'check_out' => 'check_in',
+            'check_in' => 'check_out',
+            default => null,
+        };
+        if ($counterpartPurpose === null) {
+            respondError(422, 'compare_needs_with', 'Only check-in and check-out scans have a default comparison. Add ?with=<scan id> to compare this scan with another scan of the same unit.');
+            return null;
+        }
+        $other = $repo->findLatestForUnit((string) $session['property_id'], (string) $session['unit_id'], (string) $session['organisation_id'], $counterpartPurpose, (string) $session['id']);
+        if ($other === null) {
+            $purposeLabel = $counterpartPurpose === 'check_in' ? 'check-in' : 'check-out';
+            respondError(404, 'no_scan_to_compare', "There is no {$purposeLabel} scan of this unit to compare with yet.");
+            return null;
+        }
+    }
+
+    $compareToken = $_SERVER['HTTP_X_SCAN_COMPARE_TOKEN'] ?? '';
+    $isAdmin = adminAuthorized();
+    $granted = $other !== null && ($isAdmin || (is_string($compareToken) && $repo->tokenMatches($other, $compareToken) && !$repo->isTokenExpired($other)));
+    if (!$granted) {
+        if ($other !== null) {
+            if (rateLimited($repo, $other['id'] . ':denied_auth', 20, 300)) {
+                return null;
+            }
+            $repo->logAccess($other['id'], 'compare', 'denied');
+        } elseif (rateLimited($repo, clientIp() . ':session_not_found', 30, 300)) {
+            return null;
+        }
+        respondError(401, 'invalid_or_missing_compare_token', "Comparing two scans needs a valid access token for both. Send the other scan's token in the X-Scan-Compare-Token header.");
+        return null;
+    }
+    foreach (['property_id', 'unit_id', 'organisation_id'] as $identityField) {
+        if ((string) $other[$identityField] !== (string) $session[$identityField]) {
+            respondError(403, 'not_same_unit', 'Only scans of the same property, unit and organisation can be compared.');
+            return null;
+        }
+    }
+    $repo->logAccess($other['id'], 'compare', $isAdmin ? 'granted_admin_read' : 'granted');
+
+    [$earlier, $later] = $repo->createdBefore($other, $session) ? [$other, $session] : [$session, $other];
+    $earlierPlan = $repo->findFloorPlan($earlier['id']);
+    $laterPlan = $repo->findFloorPlan($later['id']);
+    if ($earlierPlan === null || $laterPlan === null) {
+        respondError(404, 'no_floor_plan_yet', 'Both scans need at least one captured room before they can be compared.');
+        return null;
+    }
+    return [$earlier, $later, $earlierPlan, $laterPlan];
+}
+
+function comparisonScanSummary(array $session, array $floorPlan): array
+{
+    return [
+        'id' => $session['id'],
+        'purpose' => $session['purpose'],
+        'created_at' => $session['created_at'],
+        'captured_at' => $floorPlan['captured_at'] ?? null,
+    ];
+}
 
 function authorizeSession(ScanSessionRepository $repo, string $sessionId, string $action): ?array
 {
@@ -624,6 +691,13 @@ if ($method === 'POST') {
 }
 
 if ($method === 'POST' && $path === '/scan-sessions') {
+    if (!appKeyAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_app_key', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_app_key', "This app isn't allowed to start scans on this Scan Service. Update Vuuro Scan to the latest version, or check that the app points at the right server.");
+        return;
+    }
     $createSessionMax = (int) (getenv('SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX') ?: 60);
     $createSessionWindowSeconds = (int) (getenv('SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_WINDOW_SECONDS') ?: 600);
     if (rateLimited($repo, clientIp() . ':create_session', $createSessionMax, $createSessionWindowSeconds)) {
@@ -2009,9 +2083,10 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         $floorPlan = [...$floorPlan, 'rooms' => $groupRooms];
     }
     $planStyle = parseFloorPlanStyleFromQuery($settings->planStyleFor((string) $session['purpose']) === 'full' ? 'default' : 'funda');
+    $exportLanguage = exportLanguageFromQuery($settings);
 
     try {
-        $png =(new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $planStyle);
+        $png = ExportLanguage::run($exportLanguage, static fn () => (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $planStyle));
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;
@@ -2062,9 +2137,10 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         return;
     }
     $planStyle = parseFloorPlanStyleFromQuery($settings->planStyleFor((string) $session['purpose']) === 'full' ? 'default' : 'funda');
+    $exportLanguage = exportLanguageFromQuery($settings);
 
     try {
-        $svg = (new FloorPlanSvgRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $planStyle);
+        $svg = ExportLanguage::run($exportLanguage, static fn () => (new FloorPlanSvgRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $planStyle));
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;
@@ -2113,14 +2189,31 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         return;
     }
     $planStyle = parseFloorPlanStyleFromQuery($settings->planStyleFor((string) $session['purpose']) === 'full' ? 'default' : 'funda');
+    $exportLanguage = exportLanguageFromQuery($settings);
 
     $photoLoader = static function (string $url) use ($session): ?string {
         $filePath = ownedPhotoFilePath($session['id'], $url);
         return $filePath !== null ? file_get_contents($filePath) : null;
     };
 
+    $changes = null;
+    if (compareRequested()) {
+        $pair = resolveComparison($repo, $session);
+        if ($pair === null) {
+            return;
+        }
+        [$earlier, $later, $earlierPlan, $laterPlan] = $pair;
+        if ($later['id'] === $session['id'] && !$planStyle->isFunda && $roomId === null) {
+            [$areaChangeM2, $areaChangePercent] = $settings->areaChangeThresholds();
+            $changes = [
+                'earlier' => comparisonScanSummary($earlier, $earlierPlan),
+                ...ScanComparison::compare($earlierPlan, $laterPlan, $areaChangeM2, $areaChangePercent),
+            ];
+        }
+    }
+
     try {
-        $pdf = (new FloorPlanPdfRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $photoLoader, $planStyle);
+        $pdf = ExportLanguage::run($exportLanguage, static fn () => (new FloorPlanPdfRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $photoLoader, $planStyle, $changes));
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;
@@ -2131,6 +2224,31 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     }
     header('Content-Type: application/pdf');
     echo $pdf;
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/compare$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'compare');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':compare', 60, 300)) {
+        return;
+    }
+    $pair = resolveComparison($repo, $session);
+    if ($pair === null) {
+        return;
+    }
+    [$earlier, $later, $earlierPlan, $laterPlan] = $pair;
+    [$areaChangeM2, $areaChangePercent] = $settings->areaChangeThresholds();
+    respond(200, [
+        'property_id' => $session['property_id'],
+        'unit_id' => $session['unit_id'],
+        'organisation_id' => $session['organisation_id'],
+        'earlier' => comparisonScanSummary($earlier, $earlierPlan),
+        'later' => comparisonScanSummary($later, $laterPlan),
+        ...ScanComparison::compare($earlierPlan, $laterPlan, $areaChangeM2, $areaChangePercent),
+    ]);
     return;
 }
 
@@ -2372,7 +2490,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/vuuroscan$#
     $bundleStyle = FloorPlanStyle::from($settings->planStyleFor((string) $session['purpose']) === 'full' ? 'default' : 'funda');
     $pngBytes = null;
     try {
-        $pngBytes = (new FloorPlanImageRenderer())->render($floorPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, $bundleStyle);
+        $pngBytes = ExportLanguage::run($settings->exportLanguage(), static fn () => (new FloorPlanImageRenderer())->render($floorPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, $bundleStyle));
     } catch (\Throwable $e) {
         $pngBytes = null;
     }
@@ -2383,7 +2501,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/vuuroscan$#
             $filePath = ownedPhotoFilePath($session['id'], $url);
             return $filePath !== null ? file_get_contents($filePath) : null;
         };
-        $pdfBytes = (new FloorPlanPdfRenderer())->render($floorPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, $photoLoader, $bundleStyle);
+        $pdfBytes = ExportLanguage::run($settings->exportLanguage(), static fn () => (new FloorPlanPdfRenderer())->render($floorPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, $photoLoader, $bundleStyle));
     } catch (\Throwable $e) {
         $pdfBytes = null;
     }

@@ -283,7 +283,7 @@ async function loadSettings() {
   }
 }
 
-let settingsLimits = { retention_days: { min: 1, max: 3650 }, tenant_grace_days: { min: 1, max: 90 } };
+let settingsLimits = { retention_days: { min: 1, max: 3650 }, tenant_grace_days: { min: 1, max: 90 }, area_change_m2: { min: 0.05, max: 20 }, area_change_percent: { min: 0.5, max: 100 } };
 
 function settingsSourceNote(rule) {
   if (rule.source === 'env') return 'Set by the server config';
@@ -299,6 +299,9 @@ function renderSettings(data) {
   if (data.limits) settingsLimits = data.limits;
   const dayLimits = settingsLimits.retention_days;
   const graceLimits = settingsLimits.tenant_grace_days;
+  const comparison = data.comparison || { area_change_m2: 0.5, area_change_percent: 5 };
+  const m2Limits = settingsLimits.area_change_m2 || { min: 0.05, max: 20 };
+  const percentLimits = settingsLimits.area_change_percent || { min: 0.5, max: 100 };
   const rows = RETENTION_PURPOSES.map((p) => {
     const rule = data.retention[p.value];
     const reset = rule.source === 'admin'
@@ -332,6 +335,16 @@ function renderSettings(data) {
     '<h2>Tenant deletion requests</h2>' +
     '<div class="settings-row"><label class="switch"><input type="checkbox" id="tenantDeletionEnabled"' + (tenant.enabled ? ' checked' : '') + '> <span>Tenants can ask for a scan to be deleted from the app</span></label></div>' +
     '<div class="settings-row"><label>Delete after <input type="number" min="' + graceLimits.min + '" max="' + graceLimits.max + '" step="1" class="days-input" id="tenantGraceDays" value="' + escapeHtml(String(tenant.grace_days)) + '"> days, unless the request is cancelled first</label></div>' +
+    '<h2>Export language</h2>' +
+    '<p class="muted">Used for PNG, SVG and PDF exports when the app does not say which language it uses, for example older app builds.</p>' +
+    '<div class="settings-row"><label>Language <select id="exportLanguage">' +
+      '<option value="en"' + ((data.export_language || 'en') === 'en' ? ' selected' : '') + '>English</option>' +
+      '<option value="nl"' + (data.export_language === 'nl' ? ' selected' : '') + '>Nederlands</option>' +
+    '</select></label></div>' +
+    '<h2>Check-in vs check-out</h2>' +
+    '<p class="muted">A room counts as changed when its indicative floor area differs by more than either value.</p>' +
+    '<div class="settings-row"><label>More than <input type="number" min="' + m2Limits.min + '" max="' + m2Limits.max + '" step="0.05" class="days-input" id="areaChangeM2" value="' + escapeHtml(String(comparison.area_change_m2)) + '"> m&sup2;</label></div>' +
+    '<div class="settings-row"><label>or more than <input type="number" min="' + percentLimits.min + '" max="' + percentLimits.max + '" step="0.5" class="days-input" id="areaChangePercent" value="' + escapeHtml(String(comparison.area_change_percent)) + '"> %</label></div>' +
     '<div class="actions">' +
       '<button id="saveSettingsBtn" class="primary" type="button">Save settings</button>' +
       '<button id="runRetentionBtn" class="ghost" type="button">Run clean-up now</button>' +
@@ -355,6 +368,15 @@ function settingsMessage(text, isError) {
   if (!el) return;
   el.textContent = text;
   el.className = isError ? 'error' : 'muted';
+}
+
+function readNumber(input, min, max, label) {
+  const value = Number(input.value);
+  if (input.value.trim() === '' || !Number.isFinite(value) || value < min || value > max) {
+    input.focus();
+    throw new Error(label + ' must be a number from ' + min + ' to ' + max + '.');
+  }
+  return value;
 }
 
 function readWholeNumber(input, min, max, label) {
@@ -407,6 +429,14 @@ async function saveSettings() {
     if (Object.keys(retention).length) payload.retention = retention;
     if (Object.keys(planStyle).length) payload.plan_style = planStyle;
     if (tenant.enabled !== loadedSettings.tenant_deletion.enabled || tenant.grace_days !== loadedSettings.tenant_deletion.grace_days) payload.tenant_deletion = tenant;
+    const loadedComparison = loadedSettings.comparison || {};
+    const comparison = {
+      area_change_m2: readNumber($('#areaChangeM2'), settingsLimits.area_change_m2.min, settingsLimits.area_change_m2.max, 'Changed room area (m2)'),
+      area_change_percent: readNumber($('#areaChangePercent'), settingsLimits.area_change_percent.min, settingsLimits.area_change_percent.max, 'Changed room area (%)'),
+    };
+    if (comparison.area_change_m2 !== loadedComparison.area_change_m2 || comparison.area_change_percent !== loadedComparison.area_change_percent) payload.comparison = comparison;
+    const exportLanguage = $('#exportLanguage').value;
+    if (exportLanguage !== (loadedSettings.export_language || 'en')) payload.export_language = exportLanguage;
   } catch (err) {
     settingsMessage(err.message, true);
     return;

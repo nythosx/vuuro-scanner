@@ -40,6 +40,6 @@ final class InspectionTag
 
     public static function labelFor(string $value): string
     {
-        return self::LABELS[$value] ?? $value;
+        return isset(self::LABELS[$value]) ? Export\ExportLanguage::t(self::LABELS[$value]) : $value;
     }
 }

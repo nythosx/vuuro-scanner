@@ -35,6 +35,21 @@ enum AppLanguageSettings {
     static var effectiveLocale: Locale {
         current.locale ?? Locale.autoupdatingCurrent
     }
+
+    static var exportLanguageCode: String {
+        exportLanguageCode(for: current, preferredLocalizations: Bundle.main.preferredLocalizations)
+    }
+
+    static func exportLanguageCode(for language: AppLanguage, preferredLocalizations: [String]) -> String {
+        switch language {
+        case .english:
+            return "en"
+        case .dutch:
+            return "nl"
+        case .system:
+            return preferredLocalizations.first?.lowercased().hasPrefix("nl") == true ? "nl" : "en"
+        }
+    }
 }
 
 func vuuroLocalized(_ key: String) -> String {

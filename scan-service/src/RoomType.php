@@ -46,7 +46,7 @@ final class RoomType
 
     public static function labelFor(string $value): string
     {
-        return self::LABELS[$value] ?? $value;
+        return isset(self::LABELS[$value]) ? Export\ExportLanguage::t(self::LABELS[$value]) : $value;
     }
 
     public static function displayLabelForRoom(array $room): string
@@ -55,9 +55,9 @@ final class RoomType
         $confirmed = $roomType['confirmed'] ?? null;
         $label = (string) ($room['label'] ?? '');
         if (is_string($confirmed) && trim($confirmed) !== '' && preg_match('/^Room \d+$/', trim($label)) === 1) {
-            return sprintf('%s (%s)', self::labelFor($confirmed), trim($label));
+            return sprintf('%s (%s)', self::labelFor($confirmed), self::localizedLabel(trim($label)));
         }
-        return self::displayLabel($label, $confirmed ?? $roomType['guess'] ?? null);
+        return self::displayLabel(self::localizedLabel($label), $confirmed ?? $roomType['guess'] ?? null);
     }
 
     public static function planName(array $room): string
@@ -67,7 +67,12 @@ final class RoomType
         if ($confirmed !== '' && $confirmed !== 'other') {
             return self::labelFor($confirmed);
         }
-        return (string) ($room['label'] ?? '');
+        return self::localizedLabel((string) ($room['label'] ?? ''));
+    }
+
+    public static function localizedLabel(string $label): string
+    {
+        return preg_match('/^\s*Room (\d+)\s*$/', $label, $match) === 1 ? Export\ExportLanguage::t('Room %d', (int) $match[1]) : $label;
     }
 
     public static function displayLabel(string $label, ?string $roomTypeValue): string

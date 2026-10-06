@@ -6,12 +6,13 @@ log() {
 }
 
 fail() {
-    log "ERROR: $*"
+    log "ERROR: $1"
     exit "${2:-1}"
 }
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 backup_dir="${SCAN_SERVICE_BACKUP_DIR:-$script_dir/../data/backups}"
+photos_dir="${SCAN_SERVICE_PHOTOS_DIR:-$script_dir/../data/photos}"
 remote="${SCAN_SERVICE_BACKUP_REMOTE:-}"
 keep_daily="${SCAN_SERVICE_BACKUP_KEEP_DAILY:-14}"
 keep_weekly="${SCAN_SERVICE_BACKUP_KEEP_WEEKLY:-8}"
@@ -40,6 +41,22 @@ week="$(date -u +%G-W%V)"
 
 "$rclone_bin" lsf --max-depth 1 "$remote/" >/dev/null 2>&1 || "$rclone_bin" mkdir "$remote" >/dev/null 2>&1 || fail "remote $remote is unreachable or not writable" 4
 
+remote_listing_rc=0
+remote_listing="$("$rclone_bin" lsf -R --files-only "$remote/photos/" 2>/dev/null)" || remote_listing_rc=$?
+case "$remote_listing_rc" in
+    0) remote_photos="$(printf '%s' "$remote_listing" | grep -c . || true)" ;;
+    3) remote_photos=0 ;;
+    *) remote_photos=unknown ;;
+esac
+if [ -d "$photos_dir" ]; then
+    local_photos="$(find "$photos_dir" -type f | wc -l | tr -d ' ')"
+else
+    local_photos=0
+fi
+if [ "$local_photos" -eq 0 ] && [ "$remote_photos" != "0" ] && [ "${SCAN_SERVICE_BACKUP_ALLOW_EMPTY_PHOTOS:-}" != "1" ]; then
+    fail "no photos in $photos_dir but $remote_photos on $remote/photos/; refusing to empty the remote copy (restore first, or set SCAN_SERVICE_BACKUP_ALLOW_EMPTY_PHOTOS=1 if every photo really was deleted)" 5
+fi
+
 log "uploading $name to $remote/daily/"
 "$rclone_bin" copyto "$newest" "$remote/daily/$name" || fail "upload of $name to $remote/daily/ failed" 4
 log "uploading $name to $remote/weekly/$week.sqlite"
@@ -63,4 +80,11 @@ prune() {
 prune daily "$keep_daily"
 prune weekly "$keep_weekly"
 
-log "done: $name (daily keep=$keep_daily, weekly keep=$keep_weekly)"
+if [ -d "$photos_dir" ]; then
+    log "syncing $local_photos photo file(s) to $remote/photos/"
+    "$rclone_bin" sync "$photos_dir" "$remote/photos" || fail "photo sync to $remote/photos/ failed" 4
+else
+    log "no photo folder at $photos_dir yet, nothing to sync"
+fi
+
+log "done: $name and $local_photos photo file(s) (daily keep=$keep_daily, weekly keep=$keep_weekly)"

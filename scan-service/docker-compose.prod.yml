@@ -5,8 +5,10 @@
 services:
   scan-service:
     ports: !reset []
+    env_file: .env
     environment:
       SCAN_SERVICE_ENV: production
+      SCAN_SERVICE_APP_KEY: ${SCAN_SERVICE_APP_KEY:?set SCAN_SERVICE_APP_KEY to a random value of at least 24 characters before running}
 
   caddy:
     image: caddy:2-alpine

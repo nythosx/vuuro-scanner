@@ -17,11 +17,18 @@ final class ServiceSettings
         'other' => 180,
     ];
     public const PLAN_STYLES = ['listing', 'full'];
+    public const EXPORT_LANGUAGES = ['en', 'nl'];
     public const MIN_RETENTION_DAYS = 1;
     public const MAX_RETENTION_DAYS = 3650;
     public const DEFAULT_TENANT_GRACE_DAYS = 7;
     public const MIN_TENANT_GRACE_DAYS = 1;
     public const MAX_TENANT_GRACE_DAYS = 90;
+    public const DEFAULT_AREA_CHANGE_M2 = 0.5;
+    public const MIN_AREA_CHANGE_M2 = 0.05;
+    public const MAX_AREA_CHANGE_M2 = 20.0;
+    public const DEFAULT_AREA_CHANGE_PERCENT = 5.0;
+    public const MIN_AREA_CHANGE_PERCENT = 0.5;
+    public const MAX_AREA_CHANGE_PERCENT = 100.0;
 
     public function __construct(private PDO $db)
     {
@@ -56,18 +63,38 @@ final class ServiceSettings
             $planStyle[$purpose] = in_array($saved, self::PLAN_STYLES, true) ? $saved : 'listing';
         }
         $tenant = $stored['tenant_deletion'] ?? null;
+        $comparison = $stored['comparison'] ?? null;
+        $exportLanguage = $stored['export_language']['language'] ?? null;
         return [
+            'export_language' => in_array($exportLanguage, self::EXPORT_LANGUAGES, true) ? $exportLanguage : 'en',
             'plan_style' => $planStyle,
             'limits' => [
                 'retention_days' => ['min' => self::MIN_RETENTION_DAYS, 'max' => self::MAX_RETENTION_DAYS],
                 'tenant_grace_days' => ['min' => self::MIN_TENANT_GRACE_DAYS, 'max' => self::MAX_TENANT_GRACE_DAYS],
+                'area_change_m2' => ['min' => self::MIN_AREA_CHANGE_M2, 'max' => self::MAX_AREA_CHANGE_M2],
+                'area_change_percent' => ['min' => self::MIN_AREA_CHANGE_PERCENT, 'max' => self::MAX_AREA_CHANGE_PERCENT],
             ],
             'retention' => $retention,
             'tenant_deletion' => [
                 'enabled' => is_array($tenant) ? (bool) ($tenant['enabled'] ?? true) : true,
                 'grace_days' => is_array($tenant) ? (int) ($tenant['grace_days'] ?? self::DEFAULT_TENANT_GRACE_DAYS) : self::DEFAULT_TENANT_GRACE_DAYS,
             ],
+            'comparison' => [
+                'area_change_m2' => is_array($comparison) ? (float) ($comparison['area_change_m2'] ?? self::DEFAULT_AREA_CHANGE_M2) : self::DEFAULT_AREA_CHANGE_M2,
+                'area_change_percent' => is_array($comparison) ? (float) ($comparison['area_change_percent'] ?? self::DEFAULT_AREA_CHANGE_PERCENT) : self::DEFAULT_AREA_CHANGE_PERCENT,
+            ],
         ];
+    }
+
+    public function exportLanguage(): string
+    {
+        return $this->all()['export_language'];
+    }
+
+    public function areaChangeThresholds(): array
+    {
+        $comparison = $this->all()['comparison'];
+        return [$comparison['area_change_m2'], $comparison['area_change_percent']];
     }
 
     public function activeRetentionDays(): array
@@ -156,8 +183,29 @@ final class ServiceSettings
             }
             $writes['tenant_deletion'] = ['enabled' => $enabled, 'grace_days' => $graceDays];
         }
+        if (array_key_exists('comparison', $changes)) {
+            $rule = $changes['comparison'];
+            if (!is_array($rule)) {
+                throw new \InvalidArgumentException("'comparison' must be an object with 'area_change_m2' and/or 'area_change_percent'.");
+            }
+            $areaM2 = $rule['area_change_m2'] ?? $current['comparison']['area_change_m2'];
+            $areaPercent = $rule['area_change_percent'] ?? $current['comparison']['area_change_percent'];
+            if ((!is_int($areaM2) && !is_float($areaM2)) || $areaM2 < self::MIN_AREA_CHANGE_M2 || $areaM2 > self::MAX_AREA_CHANGE_M2) {
+                throw new \InvalidArgumentException('comparison.area_change_m2 must be a number from ' . self::MIN_AREA_CHANGE_M2 . ' to ' . self::MAX_AREA_CHANGE_M2 . '.');
+            }
+            if ((!is_int($areaPercent) && !is_float($areaPercent)) || $areaPercent < self::MIN_AREA_CHANGE_PERCENT || $areaPercent > self::MAX_AREA_CHANGE_PERCENT) {
+                throw new \InvalidArgumentException('comparison.area_change_percent must be a number from ' . self::MIN_AREA_CHANGE_PERCENT . ' to ' . self::MAX_AREA_CHANGE_PERCENT . '.');
+            }
+            $writes['comparison'] = ['area_change_m2' => (float) $areaM2, 'area_change_percent' => (float) $areaPercent];
+        }
+        if (array_key_exists('export_language', $changes)) {
+            if (!in_array($changes['export_language'], self::EXPORT_LANGUAGES, true)) {
+                throw new \InvalidArgumentException("export_language must be 'en' or 'nl'.");
+            }
+            $writes['export_language'] = ['language' => $changes['export_language']];
+        }
         if ($writes === [] && $resets === []) {
-            throw new \InvalidArgumentException("Nothing to change. Send 'retention', 'plan_style' and/or 'tenant_deletion'.");
+            throw new \InvalidArgumentException("Nothing to change. Send 'retention', 'plan_style', 'tenant_deletion', 'comparison' and/or 'export_language'.");
         }
 
         $stmt = $this->db->prepare(
@@ -206,7 +254,7 @@ final class ServiceSettings
 
     private static function policyOnly(array $settings): array
     {
-        $policy = ['plan_style' => $settings['plan_style'], 'retention' => [], 'tenant_deletion' => $settings['tenant_deletion']];
+        $policy = ['plan_style' => $settings['plan_style'], 'retention' => [], 'tenant_deletion' => $settings['tenant_deletion'], 'comparison' => $settings['comparison'], 'export_language' => $settings['export_language']];
         foreach ($settings['retention'] as $purpose => $rule) {
             $policy['retention'][$purpose] = ['enabled' => $rule['enabled'], 'days' => $rule['days'], 'source' => $rule['source']];
         }

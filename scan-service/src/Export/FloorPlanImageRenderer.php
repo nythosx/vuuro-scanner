@@ -250,12 +250,12 @@ final class FloorPlanImageRenderer
         $tilesWidth = self::MARGIN * 2 + array_sum(array_column($tiles, 'width'))
             + self::TILE_GAP * (count($tiles) - 1) + 40;
         $totalAreaM2 = array_sum(array_column($rooms, 'floor_area_m2'));
-        $headerTextWidth = self::MARGIN * 2 + $this->textWidth(5, 'Vuuro Scan - indicative per-room floor plan sheet');
-        $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(2, 'Room shapes accurate individually; rooms are not laid out relative to each other.'));
+        $headerTextWidth = self::MARGIN * 2 + $this->textWidth(5, ExportLanguage::t('Vuuro Scan - indicative per-room floor plan sheet'));
+        $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(2, ExportLanguage::t('Room shapes accurate individually; rooms are not laid out relative to each other.')));
         if ($label !== null && $label !== '') {
             $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(2, $label));
         }
-        $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(2, sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms))));
+        $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(2, ExportLanguage::t('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms))));
         foreach ($notesLines as $line) {
             $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(1, $line));
         }
@@ -295,12 +295,12 @@ final class FloorPlanImageRenderer
             $this->fundaTotalAreaM2 = $totalAreaM2;
             $this->fundaUnit = $unit;
         } else {
-            $this->drawText($image, 5, self::MARGIN, 12, 'Vuuro Scan - indicative per-room floor plan sheet', $text);
-            $this->drawText($image, 2, self::MARGIN, 32, 'Room shapes accurate individually; rooms are not laid out relative to each other.', $subtext);
+            $this->drawText($image, 5, self::MARGIN, 12, ExportLanguage::t('Vuuro Scan - indicative per-room floor plan sheet'), $text);
+            $this->drawText($image, 2, self::MARGIN, 32, ExportLanguage::t('Room shapes accurate individually; rooms are not laid out relative to each other.'), $subtext);
             if ($label !== null && $label !== '') {
                 $this->drawText($image, 2, self::MARGIN, 46, $label, $subtext);
             }
-            $this->drawText($image, 2, self::MARGIN, 60, sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms)), $subtext);
+            $this->drawText($image, 2, self::MARGIN, 60, ExportLanguage::t('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms)), $subtext);
         }
 
         $tilesContentWidth = array_sum(array_column($tiles, 'width')) + self::TILE_GAP * (count($tiles) - 1);
@@ -345,11 +345,12 @@ final class FloorPlanImageRenderer
             }
         }
 
-        $lines = ['Notes:'];
+        $lines = [ExportLanguage::t('Notes:')];
         foreach ($rooms as $room) {
             foreach ($byRoom[$room['room_id']] ?? [] as $note) {
-                foreach ($this->wrapTextLines($this->asciiSafe($note['text']), 95) as $i => $wrapped) {
-                    $lines[] = $i === 0 ? "  [{$room['label']}] {$wrapped}" : '        ' . $wrapped;
+                foreach (TextWrap::lines($note['text'], 95) as $i => $wrapped) {
+                    $wrapped = $this->printable($wrapped);
+                    $lines[] = $i === 0 ? '  [' . $this->printable(RoomType::localizedLabel((string) $room['label'])) . "] {$wrapped}" : '        ' . $wrapped;
                 }
                 $tags = is_array($note['tags'] ?? null) ? $note['tags'] : [];
                 if ($tags !== []) {
@@ -357,13 +358,14 @@ final class FloorPlanImageRenderer
                         static fn (string $tagValue) => \VuuroScan\InspectionTag::labelFor($tagValue),
                         $tags
                     );
-                    $lines[] = '        tags: ' . $this->asciiSafe(implode(', ', $labels));
+                    $lines[] = '        ' . ExportLanguage::t('tags:') . ' ' . $this->printable(implode(', ', $labels));
                 }
             }
         }
         foreach ($unitNotes as $note) {
-            foreach ($this->wrapTextLines($this->asciiSafe($note['text']), 95) as $i => $wrapped) {
-                $lines[] = $i === 0 ? "  [Whole unit] {$wrapped}" : '        ' . $wrapped;
+            foreach (TextWrap::lines($note['text'], 95) as $i => $wrapped) {
+                $wrapped = $this->printable($wrapped);
+                $lines[] = $i === 0 ? '  [' . ExportLanguage::t('Whole unit') . "] {$wrapped}" : '        ' . $wrapped;
             }
             $tags = is_array($note['tags'] ?? null) ? $note['tags'] : [];
             if ($tags !== []) {
@@ -371,16 +373,10 @@ final class FloorPlanImageRenderer
                     static fn (string $tagValue) => \VuuroScan\InspectionTag::labelFor($tagValue),
                     $tags
                 );
-                $lines[] = '        tags: ' . $this->asciiSafe(implode(', ', $labels));
+                $lines[] = '        ' . ExportLanguage::t('tags:') . ' ' . $this->printable(implode(', ', $labels));
             }
         }
         return count($lines) > 1 ? $lines : [];
-    }
-
-    private function wrapTextLines(string $text, int $maxChars): array
-    {
-        $wrapped = wordwrap($text, $maxChars, "\n", true);
-        return $wrapped === '' ? [''] : explode("\n", $wrapped);
     }
 
     private function centroidM(array $outlineM): array
@@ -394,18 +390,18 @@ final class FloorPlanImageRenderer
 
     private function roomSummaryLines(array $rooms, string $unit): array
     {
-        $lines = ['Room summary:'];
+        $lines = [ExportLanguage::t('Room summary:')];
         foreach ($rooms as $room) {
-            $parts = [UnitFormatter::area($room['floor_area_m2'], $unit) . ' floor area'];
-            $parts[] = UnitFormatter::length($room['perimeter_m'], $unit) . ' perimeter';
+            $parts = [ExportLanguage::t('%s floor area', UnitFormatter::area($room['floor_area_m2'], $unit))];
+            $parts[] = ExportLanguage::t('%s perimeter', UnitFormatter::length($room['perimeter_m'], $unit));
             if (($room['height_m'] ?? null) !== null) {
-                $parts[] = UnitFormatter::length($room['height_m'], $unit) . ' height';
+                $parts[] = ExportLanguage::t('%s height', UnitFormatter::length($room['height_m'], $unit));
             }
             if (($room['volume_m3_indicative'] ?? null) !== null) {
-                $parts[] = UnitFormatter::volume($room['volume_m3_indicative'], $unit) . ' indicative';
+                $parts[] = ExportLanguage::t('%s indicative', UnitFormatter::volume($room['volume_m3_indicative'], $unit));
             }
-            $parts[] = $room['confidence'] . ' confidence';
-            $lines[] = '  [' . $this->asciiSafe($this->displayLabel($room)) . '] ' . implode(' - ', $parts);
+            $parts[] = ExportLanguage::t('%s confidence', ExportLanguage::t((string) $room['confidence']));
+            $lines[] = '  [' . $this->printable($this->displayLabel($room)) . '] ' . implode(' - ', $parts);
         }
         return $lines;
     }
@@ -418,21 +414,30 @@ final class FloorPlanImageRenderer
         }
     }
 
-    private function asciiSafe(string $s): string
-    {
-        return preg_replace('/[^\x20-\x7E]/', '-', $s) ?? $s;
-    }
+    private static array $glyphCache = [];
 
     private function printable(string $s): string
     {
-        return preg_replace('/[\x00-\x1F\x7F]/u', '', $s) ?? $this->asciiSafe($s);
+        $s = preg_replace('/[\x{10000}-\x{10FFFF}\x{FE00}-\x{FE0F}\p{Cc}\p{Cf}]/u', '', mb_scrub($s, 'UTF-8')) ?? '';
+        $s = preg_replace_callback('/[^\x20-\x7E\p{M}]/u', fn (array $m): string => $this->drawableChar($m[0]), $s) ?? '';
+        return preg_replace('/ {2,}/', ' ', $s) ?? $s;
+    }
+
+    private function drawableChar(string $char): string
+    {
+        if (!array_key_exists($char, self::$glyphCache)) {
+            $box = @imagettfbbox(self::TTF_SIZE[3], 0, $this->fontPath(), $char);
+            $hasGlyph = $box !== false && $box[2] - $box[0] > 0;
+            self::$glyphCache[$char] = $hasGlyph ? $char : (preg_match('/\p{So}/u', $char) === 1 ? '' : '?');
+        }
+        return self::$glyphCache[$char];
     }
 
     private function fundaArea(float $m2, string $unit): string
     {
         return $unit === UnitFormatter::IMPERIAL
-            ? sprintf('%.0f sq ft', $m2 * 10.7639104167)
-            : sprintf("%.1f m\u{00B2}", $m2);
+            ? ExportLanguage::number($m2 * 10.7639104167, 0) . ' sq ft'
+            : ExportLanguage::number($m2, 1) . " m\u{00B2}";
     }
 
     private function singleFloorName(array $rooms): ?string
@@ -466,7 +471,7 @@ final class FloorPlanImageRenderer
 
     private function drawFundaTitleBlock($image, int $color): void
     {
-        $heading = $this->printable($this->fundaFloorName ?? $this->resolvedTitle ?? 'Floor plan');
+        $heading = $this->printable($this->fundaFloorName ?? $this->resolvedTitle ?? ExportLanguage::t('Floor plan'));
         $this->drawBoldText($image, 5, (int) ((imagesx($image) - $this->textWidth(5, $heading)) / 2), imagesy($image) - 66, $heading, $color);
         $parts = [];
         if ($this->fundaFloorName !== null) {
@@ -476,7 +481,7 @@ final class FloorPlanImageRenderer
                 $parts[] = $this->printable($placeLine);
             }
         }
-        $parts[] = 'Total floor area ' . $this->fundaArea($this->fundaTotalAreaM2, $this->fundaUnit) . ' (indicative)';
+        $parts[] = ExportLanguage::t('Total floor area %s (indicative)', $this->fundaArea($this->fundaTotalAreaM2, $this->fundaUnit));
         $sub = implode("  \u{00B7}  ", $parts);
         $this->drawText($image, 2, (int) ((imagesx($image) - $this->textWidth(2, $sub)) / 2), imagesy($image) - 38, $sub, $color);
     }
@@ -546,8 +551,8 @@ final class FloorPlanImageRenderer
 
     private function drawFooter($image, int $color): void
     {
-        $footerWidth = $this->textWidth(self::FONT_SMALL, self::FOOTER_TEXT);
-        $this->drawText($image, self::FONT_SMALL, (int) ((imagesx($image) - $footerWidth) / 2), imagesy($image) - 14, self::FOOTER_TEXT, $color);
+        $footerWidth = $this->textWidth(self::FONT_SMALL, ExportLanguage::t(self::FOOTER_TEXT));
+        $this->drawText($image, self::FONT_SMALL, (int) ((imagesx($image) - $footerWidth) / 2), imagesy($image) - 14, ExportLanguage::t(self::FOOTER_TEXT), $color);
     }
 
     private function drawTitleBlock($image, int $color): void
@@ -654,15 +659,15 @@ final class FloorPlanImageRenderer
         $dimensionLineY = self::MARGIN + $headerHeight;
         $topGutter = $headerHeight + self::DIMENSION_GUTTER;
 
-        $headerTextWidth = self::MARGIN * 2 + $this->textWidth(5, 'Vuuro Scan - fused floor plan (rooms captured together in one visit)');
-        $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(2, 'Room positions relative to each other, not independently verified beyond this capture (see docs/proposals/multi-room-fusion.md).'));
+        $headerTextWidth = self::MARGIN * 2 + $this->textWidth(5, ExportLanguage::t('Vuuro Scan - fused floor plan (rooms captured together in one visit)'));
+        $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(2, ExportLanguage::t('Room positions relative to each other, not independently verified beyond this capture (see docs/proposals/multi-room-fusion.md).')));
         if ($overlapping !== []) {
-            $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(3, 'WARNING: rooms below overlap in captured position - verify against the real layout before use.'));
+            $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(3, ExportLanguage::t('WARNING: rooms below overlap in captured position - verify against the real layout before use.')));
         }
         if ($label !== null && $label !== '') {
             $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(2, $label));
         }
-        $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(2, sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms))));
+        $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(2, ExportLanguage::t('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms))));
         foreach ([...$notesLines, ...$summaryLines] as $line) {
             $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(1, $line));
         }
@@ -711,11 +716,11 @@ final class FloorPlanImageRenderer
             $this->fundaUnit = $unit;
             $headerLineY = 14;
         } else {
-            $this->drawText($image, 5, self::MARGIN, 12, 'Vuuro Scan - fused floor plan (rooms captured together in one visit)', $text);
-            $this->drawText($image, 2, self::MARGIN, 30, 'Room positions relative to each other, not independently verified beyond this capture.', $subtext);
+            $this->drawText($image, 5, self::MARGIN, 12, ExportLanguage::t('Vuuro Scan - fused floor plan (rooms captured together in one visit)'), $text);
+            $this->drawText($image, 2, self::MARGIN, 30, ExportLanguage::t('Room positions relative to each other, not independently verified beyond this capture.'), $subtext);
         }
         if ($overlapping !== []) {
-            $this->drawText($image, 3, self::MARGIN, $headerLineY, 'WARNING: rooms below overlap in captured position - verify against the real layout before use.', $warnBorder);
+            $this->drawText($image, 3, self::MARGIN, $headerLineY, ExportLanguage::t('WARNING: rooms below overlap in captured position - verify against the real layout before use.'), $warnBorder);
             $headerLineY += 16;
         }
         if ($label !== null && $label !== '' && !$this->planStyle->isFunda) {
@@ -723,7 +728,7 @@ final class FloorPlanImageRenderer
             $headerLineY += 16;
         }
         if (!$this->planStyle->isFunda) {
-            $this->drawText($image, 2, self::MARGIN, $headerLineY, sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms)), $subtext);
+            $this->drawText($image, 2, self::MARGIN, $headerLineY, ExportLanguage::t('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms)), $subtext);
         }
 
         $planBlockWidth = self::DIMENSION_GUTTER + (int) round(($maxX - $minX) * self::PIXELS_PER_METER);
@@ -809,7 +814,7 @@ final class FloorPlanImageRenderer
                 $labelDraws[] = fn () => $this->drawFundaRoomLabel($image, $labelX, $labelY, $room, $unit, $text, $subtext);
                 continue;
             }
-            $displayLabel = $this->displayLabel($room);
+            $displayLabel = $this->printable($this->displayLabel($room));
             $labelWidth = $this->textWidth(3, $displayLabel);
             $labelDraws[] = fn () => $this->drawText($image, 3, $labelX - (int) ($labelWidth / 2), $labelY - 6, $displayLabel, $text);
         }
@@ -829,19 +834,19 @@ final class FloorPlanImageRenderer
         $legendX = self::MARGIN;
         if (!$this->planStyle->isFunda) {
             imagefilledellipse($image, $legendX + 4, $legendY, 8, 8, $doorColor);
-            $this->drawText($image, 1, $legendX + 12, $legendY - 6, 'door', $subtext);
-            $legendX += 12 + $this->textWidth(1, 'door') + 20;
+            $this->drawText($image, 1, $legendX + 12, $legendY - 6, ExportLanguage::t('door'), $subtext);
+            $legendX += 12 + $this->textWidth(1, ExportLanguage::t('door')) + 20;
             imagefilledellipse($image, $legendX + 4, $legendY, 8, 8, $windowColor);
-            $this->drawText($image, 1, $legendX + 12, $legendY - 6, 'window', $subtext);
-            $legendX += 12 + $this->textWidth(1, 'window') + 20;
+            $this->drawText($image, 1, $legendX + 12, $legendY - 6, ExportLanguage::t('window'), $subtext);
+            $legendX += 12 + $this->textWidth(1, ExportLanguage::t('window')) + 20;
             imagefilledellipse($image, $legendX + 4, $legendY, 8, 8, $otherOpeningColor);
-            $this->drawText($image, 1, $legendX + 12, $legendY - 6, 'other opening', $subtext);
-            $legendX += 12 + $this->textWidth(1, 'other opening') + 20;
+            $this->drawText($image, 1, $legendX + 12, $legendY - 6, ExportLanguage::t('other opening'), $subtext);
+            $legendX += 12 + $this->textWidth(1, ExportLanguage::t('other opening')) + 20;
             imageline($image, $legendX, $legendY, $legendX + 16, $legendY, $walkPathColor);
-            $this->drawText($image, 1, $legendX + 20, $legendY - 6, 'walk path', $subtext);
-            $legendX += 20 + $this->textWidth(1, 'walk path') + 20;
+            $this->drawText($image, 1, $legendX + 20, $legendY - 6, ExportLanguage::t('walk path'), $subtext);
+            $legendX += 20 + $this->textWidth(1, ExportLanguage::t('walk path')) + 20;
             imagerectangle($image, $legendX, $legendY - 4, $legendX + 8, $legendY + 4, $objectColor);
-            $this->drawText($image, 1, $legendX + 12, $legendY - 6, 'detected object', $subtext);
+            $this->drawText($image, 1, $legendX + 12, $legendY - 6, ExportLanguage::t('detected object'), $subtext);
         }
 
         $this->drawRoomTypeLegend($image, $rooms, $legendY - 14, $subtext);
@@ -1175,8 +1180,8 @@ final class FloorPlanImageRenderer
             imagepolygon($image, $pts, $color);
             $labelText = isset($object['custom_name']) && is_string($object['custom_name']) && $object['custom_name'] !== ''
                 ? $object['custom_name']
-                : (string) $object['category'];
-            $categoryLabel = $this->asciiSafe($labelText);
+                : ExportLanguage::objectName((string) $object['category']);
+            $categoryLabel = $this->printable($labelText);
             [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $mx, $mz);
             [$cx, $cy] = $toPx($wx, $wz);
             $labelDraws[] = fn () => $this->drawText($image, self::FONT_SMALL, $cx - (int) round($halfWidth * self::PIXELS_PER_METER) + 2, $cy - (int) round($halfDepth * self::PIXELS_PER_METER) - 10, $categoryLabel, $textColor);
@@ -1511,19 +1516,19 @@ final class FloorPlanImageRenderer
         $drawnHeightM = $zs === [] ? $room['bounding_dimensions_m']['length_m'] : max($zs) - min($zs);
         $labelY = $originY + self::TILE_PADDING + (int) round($drawnHeightM * self::PIXELS_PER_METER)
             + (int) round(self::WALL_LABEL_INSET_M * self::PIXELS_PER_METER) + 14;
-        $this->drawText($image, 4, $originX + self::TILE_PADDING, $labelY, $this->displayLabel($room), $text);
+        $this->drawText($image, 4, $originX + self::TILE_PADDING, $labelY, $this->printable($this->displayLabel($room)), $text);
         if (!$this->planStyle->showMetrics) {
             return;
         }
-        $metrics = sprintf('%s - %s perimeter - %s confidence', UnitFormatter::area($room['floor_area_m2'], $unit), UnitFormatter::length($room['perimeter_m'], $unit), $room['confidence']);
+        $metrics = ExportLanguage::t('%s - %s perimeter - %s confidence', UnitFormatter::area($room['floor_area_m2'], $unit), UnitFormatter::length($room['perimeter_m'], $unit), ExportLanguage::t((string) $room['confidence']));
         $this->drawText($image, 2, $originX + self::TILE_PADDING, $labelY + 18, $metrics, $subtext);
         $lineY = $labelY + 32;
         if (($room['height_m'] ?? null) !== null) {
-            $this->drawText($image, 2, $originX + self::TILE_PADDING, $lineY, sprintf('%s height', UnitFormatter::length($room['height_m'], $unit)), $subtext);
+            $this->drawText($image, 2, $originX + self::TILE_PADDING, $lineY, ExportLanguage::t('%s height', UnitFormatter::length($room['height_m'], $unit)), $subtext);
             $lineY += 12;
         }
         if (($room['volume_m3_indicative'] ?? null) !== null) {
-            $this->drawText($image, 2, $originX + self::TILE_PADDING, $lineY, sprintf('%s indicative', UnitFormatter::volume($room['volume_m3_indicative'], $unit)), $subtext);
+            $this->drawText($image, 2, $originX + self::TILE_PADDING, $lineY, ExportLanguage::t('%s indicative', UnitFormatter::volume($room['volume_m3_indicative'], $unit)), $subtext);
         }
     }
 }

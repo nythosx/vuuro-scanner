@@ -57,10 +57,10 @@ final class FloorGroups
         $seen = [];
         $headings = [];
         foreach ($groups as $group) {
-            $name = $group['floor'] ?? 'Floor not set';
+            $name = $group['floor'] ?? ExportLanguage::t('Floor not set');
             $key = mb_strtolower($name, 'UTF-8');
             $seen[$key] = ($seen[$key] ?? 0) + 1;
-            $headings[] = $seen[$key] > 1 ? sprintf('%s (separate scan %d)', $name, $seen[$key]) : $name;
+            $headings[] = $seen[$key] > 1 ? ExportLanguage::t('%s (separate scan %d)', $name, $seen[$key]) : $name;
         }
         return $headings;
     }

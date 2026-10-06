@@ -782,6 +782,31 @@ x_check('the PNG draws an untyped room in its own color, same as the SVG', png_c
 $untypedSvg = (new FloorPlanSvgRenderer())->render(build_floor_plan([$untypedRoom]), 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, \VuuroScan\Export\FloorPlanStyle::from('funda'));
 x_check('the SVG uses the same color for that room', str_contains(strtolower($untypedSvg), $fill(null, 'room-loft-1')));
 
+echo "\n== Dutch letters in plan text ==\n";
+$wrapped = \VuuroScan\Export\TextWrap::lines(str_repeat('é', 200), 95);
+x_check('a long accented word wraps into whole characters', count($wrapped) === 3 && array_filter($wrapped, static fn (string $l): bool => !mb_check_encoding($l, 'UTF-8') || mb_strlen($l) > 95) === [], json_encode(array_map('mb_strlen', $wrapped)));
+x_check('wrapping keeps every character', implode('', $wrapped) === str_repeat('é', 200));
+$dutchLine = trim(str_repeat('één ', 23)) . ' é';
+x_check('wrapping counts letters, not bytes', mb_strlen($dutchLine) <= 95 && \VuuroScan\Export\TextWrap::lines($dutchLine, 95) === [$dutchLine], (string) mb_strlen($dutchLine));
+x_check('a line break in a note stays a line break', \VuuroScan\Export\TextWrap::lines("regel één\nregel twee", 95) === ['regel één', 'regel twee']);
+x_check('an empty note still gives one empty line', \VuuroScan\Export\TextWrap::lines('', 95) === ['']);
+
+$dutchRoom = build_room_with_outline('Slaapkamer één', [[0, 0], [4, 0], [4, 3], [0, 3]], null, [], null, 'room-nl-1');
+$dutchNote = ['room_id' => 'room-nl-1', 'text' => 'Slaapkamer één – vochtige hoek, café', 'tags' => []];
+$notesLines = (new ReflectionMethod($imageRenderer, 'buildNotesLines'))->invoke($imageRenderer, [$dutchRoom], [$dutchNote, ['room_id' => null, 'text' => "Lekkage 💧 bij raam ✓ 中\nTweede regel", 'tags' => []]]);
+x_check('a Dutch note keeps its accents in the PNG', ($notesLines[1] ?? null) === '  [Slaapkamer één] Slaapkamer één – vochtige hoek, café', json_encode($notesLines));
+x_check('emoji and symbols the font cannot draw are left out, other missing letters show as ?', ($notesLines[2] ?? null) === '  [Whole unit] Lekkage bij raam ?', json_encode($notesLines));
+x_check('a second line of a unit note is kept', ($notesLines[3] ?? null) === '        Tweede regel', json_encode($notesLines));
+$summaryLines = (new ReflectionMethod($imageRenderer, 'roomSummaryLines'))->invoke($imageRenderer, [$dutchRoom], \VuuroScan\Export\UnitFormatter::METRIC);
+x_check('the room summary keeps the Dutch room name', str_starts_with($summaryLines[1] ?? '', '  [Slaapkamer één] '), json_encode($summaryLines));
+$withDutch = $imageRenderer->render(array_merge(build_floor_plan([$dutchRoom]), ['notes' => [$dutchNote]]));
+$withDashes = $imageRenderer->render(array_merge(build_floor_plan([$dutchRoom]), ['notes' => [array_merge($dutchNote, ['text' => 'Slaapkamer ----n --- vochtige hoek, caf--'])]]));
+x_check('the PNG draws the accented note, not dashes', $withDutch !== $withDashes);
+$pdfRenderer = new FloorPlanPdfRenderer();
+$pdfLines = (new ReflectionMethod($pdfRenderer, 'wrapTextLines'))->invoke($pdfRenderer, str_repeat('é', 120), 85);
+$pdfEncoded = array_map(static fn (string $l): string => (new ReflectionMethod($pdfRenderer, 'toWinAnsi'))->invoke($pdfRenderer, $l), $pdfLines);
+x_check('a long accented word in the PDF is not turned into dashes', !str_contains(implode('', $pdfEncoded), '-') && implode('', $pdfEncoded) === str_repeat("\xE9", 120), json_encode(array_map('bin2hex', $pdfEncoded)));
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

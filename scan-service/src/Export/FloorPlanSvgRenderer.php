@@ -171,15 +171,15 @@ final class FloorPlanSvgRenderer
     private static function fundaArea(float $m2, string $unit): string
     {
         return $unit === UnitFormatter::IMPERIAL
-            ? sprintf('%.0f sq ft', $m2 * 10.7639104167)
-            : sprintf("%.1f m\u{00B2}", $m2);
+            ? ExportLanguage::number($m2 * 10.7639104167, 0) . ' sq ft'
+            : ExportLanguage::number($m2, 1) . " m\u{00B2}";
     }
 
     private function fundaTitleBlockSvg(int $width, int $y, float $totalAreaM2, string $unit): string
     {
         $title = $this->resolvedTitle;
         $explicitTitle = trim((string) $this->planStyle->titleLine);
-        $heading = $this->fundaFloorName ?? (($title === null || $title === '') ? 'Floor plan' : $title);
+        $heading = $this->fundaFloorName ?? (($title === null || $title === '') ? ExportLanguage::t('Floor plan') : $title);
         $parts = [];
         if ($this->fundaFloorName !== null) {
             $placeLine = $explicitTitle !== '' ? $explicitTitle : $this->fundaPlaceLine;
@@ -187,7 +187,7 @@ final class FloorPlanSvgRenderer
                 $parts[] = $placeLine;
             }
         }
-        $parts[] = 'Total floor area ' . self::fundaArea($totalAreaM2, $unit) . ' (indicative)';
+        $parts[] = ExportLanguage::t('Total floor area %s (indicative)', self::fundaArea($totalAreaM2, $unit));
         $x = (int) ($width / 2);
         return '<text x="' . $x . '" y="' . $y . '" font-size="20" font-weight="700" fill="' . self::FUNDA_INK . '" text-anchor="middle">' . $this->esc($heading) . '</text>'
             . '<text x="' . $x . '" y="' . ($y + 20) . '" font-size="11" fill="' . self::FUNDA_INK . '" text-anchor="middle">' . $this->esc(implode("  \u{00B7}  ", $parts)) . '</text>';
@@ -306,7 +306,7 @@ SVG;
     private function footerSvg(int $width, int $y): string
     {
         return '<text x="' . (int) ($width / 2) . '" y="' . $y . '" font-size="9" fill="' . self::SUBTEXT . '" text-anchor="middle">'
-            . $this->esc(self::FOOTER_TEXT) . '</text>';
+            . $this->esc(ExportLanguage::t(self::FOOTER_TEXT)) . '</text>';
     }
 
     private function notesSvg(array $lines, int $x, int $y): string
@@ -339,11 +339,11 @@ SVG;
             }
         }
 
-        $lines = ['Notes:'];
+        $lines = [ExportLanguage::t('Notes:')];
         foreach ($rooms as $room) {
             foreach ($byRoom[$room['room_id']] ?? [] as $note) {
                 foreach ($this->wrapTextLines($note['text'], 100) as $i => $wrapped) {
-                    $lines[] = $i === 0 ? "  [{$room['label']}] {$wrapped}" : '        ' . $wrapped;
+                    $lines[] = $i === 0 ? '  [' . RoomType::localizedLabel((string) $room['label']) . "] {$wrapped}" : '        ' . $wrapped;
                 }
                 $tags = is_array($note['tags'] ?? null) ? $note['tags'] : [];
                 if ($tags !== []) {
@@ -351,13 +351,13 @@ SVG;
                         static fn (string $tagValue) => \VuuroScan\InspectionTag::labelFor($tagValue),
                         $tags
                     );
-                    $lines[] = '        tags: ' . implode(', ', $labels);
+                    $lines[] = '        ' . ExportLanguage::t('tags:') . ' ' . implode(', ', $labels);
                 }
             }
         }
         foreach ($unitNotes as $note) {
             foreach ($this->wrapTextLines($note['text'], 100) as $i => $wrapped) {
-                $lines[] = $i === 0 ? "  [Whole unit] {$wrapped}" : '        ' . $wrapped;
+                $lines[] = $i === 0 ? '  [' . ExportLanguage::t('Whole unit') . "] {$wrapped}" : '        ' . $wrapped;
             }
             $tags = is_array($note['tags'] ?? null) ? $note['tags'] : [];
             if ($tags !== []) {
@@ -365,7 +365,7 @@ SVG;
                     static fn (string $tagValue) => \VuuroScan\InspectionTag::labelFor($tagValue),
                     $tags
                 );
-                $lines[] = '        tags: ' . implode(', ', $labels);
+                $lines[] = '        ' . ExportLanguage::t('tags:') . ' ' . implode(', ', $labels);
             }
         }
         return count($lines) > 1 ? $lines : [];
@@ -382,17 +382,17 @@ SVG;
 
     private function roomSummaryLines(array $rooms, string $unit): array
     {
-        $lines = ['Room summary:'];
+        $lines = [ExportLanguage::t('Room summary:')];
         foreach ($rooms as $room) {
-            $parts = [UnitFormatter::area($room['floor_area_m2'], $unit) . ' floor area'];
-            $parts[] = UnitFormatter::length($room['perimeter_m'], $unit) . ' perimeter';
+            $parts = [ExportLanguage::t('%s floor area', UnitFormatter::area($room['floor_area_m2'], $unit))];
+            $parts[] = ExportLanguage::t('%s perimeter', UnitFormatter::length($room['perimeter_m'], $unit));
             if (($room['height_m'] ?? null) !== null) {
-                $parts[] = UnitFormatter::length($room['height_m'], $unit) . ' height';
+                $parts[] = ExportLanguage::t('%s height', UnitFormatter::length($room['height_m'], $unit));
             }
             if (($room['volume_m3_indicative'] ?? null) !== null) {
-                $parts[] = UnitFormatter::volume($room['volume_m3_indicative'], $unit) . ' indicative';
+                $parts[] = ExportLanguage::t('%s indicative', UnitFormatter::volume($room['volume_m3_indicative'], $unit));
             }
-            $parts[] = $room['confidence'] . ' confidence';
+            $parts[] = ExportLanguage::t('%s confidence', ExportLanguage::t((string) $room['confidence']));
             $lines[] = "  [{$this->displayLabel($room)}] " . implode(' — ', $parts);
         }
         return $lines;
@@ -400,8 +400,7 @@ SVG;
 
     private function wrapTextLines(string $text, int $maxChars): array
     {
-        $wrapped = wordwrap($text, $maxChars, "\n", true);
-        return $wrapped === '' ? [''] : explode("\n", $wrapped);
+        return TextWrap::lines($text, $maxChars);
     }
 
     private function roomTypeLegendSvg(array $rooms, int $x, int $y): string
@@ -906,7 +905,7 @@ SVG;
             $out .= '<polygon points="' . $pts . '" fill="none" stroke="' . self::OBJECT . '" stroke-width="0.9"/>';
             $labelText = isset($object['custom_name']) && is_string($object['custom_name']) && $object['custom_name'] !== ''
                 ? $object['custom_name']
-                : (string) $object['category'];
+                : ExportLanguage::objectName((string) $object['category']);
             [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $mx, $mz);
             [$labelX, $labelY] = $toPx($wx, $wz);
             $labels .= '<text x="' . $this->num($labelX - $halfWidth * self::PX_PER_M) . '" y="' . $this->num($labelY - $halfDepth * self::PX_PER_M - 3) . '" fill="' . self::SUBTEXT . '" stroke="none">' . $this->esc($labelText) . '</text>';
@@ -951,11 +950,11 @@ SVG;
         $tilesHeight = (int) max(array_column($tiles, 'height'));
 
         $totalAreaM2 = array_sum(array_column($rooms, 'floor_area_m2'));
-        $subLines = ['Room shapes accurate individually; rooms are not laid out relative to each other.'];
+        $subLines = [ExportLanguage::t('Room shapes accurate individually; rooms are not laid out relative to each other.')];
         if ($label !== null && $label !== '') {
             $subLines[] = $label;
         }
-        $subLines[] = sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms));
+        $subLines[] = ExportLanguage::t('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms));
 
         $isFunda = $this->planStyle->isFunda;
         $headerHeight = $isFunda ? 24 : self::HEADER_HEIGHT + (count($subLines) - 1) * 15;
@@ -971,7 +970,7 @@ SVG;
             ));
         }
 
-        $body = $isFunda ? '' : $this->headerSvg('Vuuro Scan — indicative per-room floor plan sheet', $subLines, $canvasWidth);
+        $body = $isFunda ? '' : $this->headerSvg(ExportLanguage::t('Vuuro Scan — indicative per-room floor plan sheet'), $subLines, $canvasWidth);
 
         $x = self::MARGIN;
         foreach ($rooms as $i => $room) {
@@ -1142,15 +1141,15 @@ SVG;
         if (!$this->planStyle->showMetrics) {
             return $out;
         }
-        $metrics = sprintf('%s — %s perimeter — %s confidence', UnitFormatter::area($room['floor_area_m2'], $unit), UnitFormatter::length($room['perimeter_m'], $unit), $room['confidence']);
+        $metrics = ExportLanguage::t('%s — %s perimeter — %s confidence', UnitFormatter::area($room['floor_area_m2'], $unit), UnitFormatter::length($room['perimeter_m'], $unit), ExportLanguage::t((string) $room['confidence']));
         $out .= '<text x="0" y="' . ($labelY + 16) . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc($metrics) . '</text>';
         $lineY = $labelY + 32;
         if (($room['height_m'] ?? null) !== null) {
-            $out .= '<text x="0" y="' . $lineY . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc(sprintf('%s height', UnitFormatter::length($room['height_m'], $unit))) . '</text>';
+            $out .= '<text x="0" y="' . $lineY . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc(ExportLanguage::t('%s height', UnitFormatter::length($room['height_m'], $unit))) . '</text>';
             $lineY += 13;
         }
         if (($room['volume_m3_indicative'] ?? null) !== null) {
-            $out .= '<text x="0" y="' . $lineY . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc(sprintf('%s indicative', UnitFormatter::volume($room['volume_m3_indicative'], $unit))) . '</text>';
+            $out .= '<text x="0" y="' . $lineY . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc(ExportLanguage::t('%s indicative', UnitFormatter::volume($room['volume_m3_indicative'], $unit))) . '</text>';
         }
         return $out;
     }
@@ -1179,15 +1178,15 @@ SVG;
         $notesLines = $this->buildNotesLines($rooms, $notes);
         $summaryLines = $this->roomSummaryLines($rooms, $unit);
 
-        $subLines = ['Room positions relative to each other, not independently verified beyond this capture.'];
+        $subLines = [ExportLanguage::t('Room positions relative to each other, not independently verified beyond this capture.')];
         if ($overlapping !== []) {
-            $subLines[] = 'WARNING: rooms below overlap in captured position — verify against the real layout before use.';
+            $subLines[] = ExportLanguage::t('WARNING: rooms below overlap in captured position — verify against the real layout before use.');
         }
         if ($label !== null && $label !== '') {
             $subLines[] = $label;
         }
         $totalAreaM2 = array_sum(array_column($rooms, 'floor_area_m2'));
-        $subLines[] = sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms));
+        $subLines[] = ExportLanguage::t('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms));
 
         $isFunda = $this->planStyle->isFunda;
         $headerHeight = $isFunda ? 20 : self::HEADER_HEIGHT + (count($subLines) - 1) * 15;
@@ -1219,7 +1218,7 @@ SVG;
 
         $body = '';
         if (!$isFunda) {
-            $body .= $this->headerSvg('Vuuro Scan — fused floor plan (rooms captured together)', $subLines, $canvasWidth);
+            $body .= $this->headerSvg(ExportLanguage::t('Vuuro Scan — fused floor plan (rooms captured together)'), $subLines, $canvasWidth);
             $body .= '<rect x="' . $originPxX . '" y="' . $originPxY . '" width="' . $drawingWidth . '" height="' . $drawingHeight . '" fill="url(#grid)"/>';
         }
 
@@ -1311,10 +1310,10 @@ SVG;
         $legendY = $canvasHeight - 30;
         if (!$this->planStyle->isFunda) {
             $body .= '<g font-size="9" fill="' . self::TEXT . '">'
-                . '<circle cx="' . (self::MARGIN + 4) . '" cy="' . $legendY . '" r="4" fill="' . $this->doorColorHex() . '"/><text x="' . (self::MARGIN + 12) . '" y="' . ($legendY + 3) . '">door</text>'
-                . '<rect x="' . (self::MARGIN + 60) . '" y="' . ($legendY - 4) . '" width="10" height="6" fill="' . self::OPENING_FILL . '" stroke="' . self::WINDOW_COLOR . '"/><text x="' . (self::MARGIN + 74) . '" y="' . ($legendY + 3) . '">window</text>'
-                . '<line x1="' . (self::MARGIN + 130) . '" y1="' . $legendY . '" x2="' . (self::MARGIN + 146) . '" y2="' . $legendY . '" stroke="' . self::WALK_PATH . '" stroke-width="1.5" stroke-dasharray="6,5"/><text x="' . (self::MARGIN + 150) . '" y="' . ($legendY + 3) . '">walk path</text>'
-                . '<rect x="' . (self::MARGIN + 220) . '" y="' . ($legendY - 5) . '" width="8" height="8" fill="none" stroke="' . self::OBJECT . '"/><text x="' . (self::MARGIN + 232) . '" y="' . ($legendY + 3) . '">detected object</text>'
+                . '<circle cx="' . (self::MARGIN + 4) . '" cy="' . $legendY . '" r="4" fill="' . $this->doorColorHex() . '"/><text x="' . (self::MARGIN + 12) . '" y="' . ($legendY + 3) . '">' . $this->esc(ExportLanguage::t('door')) . '</text>'
+                . '<rect x="' . (self::MARGIN + 60) . '" y="' . ($legendY - 4) . '" width="10" height="6" fill="' . self::OPENING_FILL . '" stroke="' . self::WINDOW_COLOR . '"/><text x="' . (self::MARGIN + 74) . '" y="' . ($legendY + 3) . '">' . $this->esc(ExportLanguage::t('window')) . '</text>'
+                . '<line x1="' . (self::MARGIN + 130) . '" y1="' . $legendY . '" x2="' . (self::MARGIN + 146) . '" y2="' . $legendY . '" stroke="' . self::WALK_PATH . '" stroke-width="1.5" stroke-dasharray="6,5"/><text x="' . (self::MARGIN + 150) . '" y="' . ($legendY + 3) . '">' . $this->esc(ExportLanguage::t('walk path')) . '</text>'
+                . '<rect x="' . (self::MARGIN + 220) . '" y="' . ($legendY - 5) . '" width="8" height="8" fill="none" stroke="' . self::OBJECT . '"/><text x="' . (self::MARGIN + 232) . '" y="' . ($legendY + 3) . '">' . $this->esc(ExportLanguage::t('detected object')) . '</text>'
                 . '</g>';
             $body .= $this->roomTypeLegendSvg($rooms, self::MARGIN, $legendY - 16);
         }

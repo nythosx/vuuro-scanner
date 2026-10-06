@@ -18,7 +18,7 @@ final class FloorPlanImageCache {
     private init() {}
 
     private func key(sessionId: String, unit: MeasurementUnit) -> String {
-        "\(sessionId)|\(unit.rawValue)"
+        "\(sessionId)|\(unit.rawValue)|\(AppLanguageSettings.exportLanguageCode)"
     }
 
     @discardableResult

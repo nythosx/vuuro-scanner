@@ -5,6 +5,8 @@ declare(strict_types=1);
 $root = dirname(__DIR__);
 $mainPort = (int) ($argv[1] ?? 18089);
 $standalonePort = (int) ($argv[2] ?? 19499);
+$appKeyPort = (int) ($argv[3] ?? 19509);
+$appKeyBootPort = (int) ($argv[4] ?? 19511);
 $adminKey = 'ci-test-admin-key';
 
 $groups = [
@@ -41,7 +43,21 @@ $groups = [
             ['verify_group_placement.php'],
             ['verify_rescan_replace.php'],
             ['verify_continue_edges.php'],
+            ['verify_compare.php'],
+            ['verify_export_language.php'],
             ['verify_enterprise_hardening.php'],
+        ],
+    ],
+    [
+        'name' => 'app key server',
+        'port' => $appKeyPort,
+        'env' => [
+            'SCAN_SERVICE_APP_KEY' => 'ci-test-app-key-0123456789abcdef',
+            'SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX' => '3',
+            'SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_MAX' => '4000',
+        ],
+        'scripts' => [
+            ['verify_app_key.php', (string) $appKeyBootPort],
         ],
     ],
     [

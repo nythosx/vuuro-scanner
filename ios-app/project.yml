@@ -30,6 +30,7 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         ScanServiceBaseURL: $(SCAN_SERVICE_BASE_URL)
+        ScanServiceAppKey: $(SCAN_SERVICE_APP_KEY)
         UILaunchScreen: {}
         UIAppFonts:
           - OpenSans-Variable.ttf
@@ -49,6 +50,7 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SCAN_SERVICE_BASE_URL: http://127.0.0.1:8089
+        SCAN_SERVICE_APP_KEY: ""
         CODE_SIGN_STYLE: Manual
         DEVELOPMENT_TEAM: ""
     scheme:

@@ -128,6 +128,7 @@ private struct EmptyBody: Encodable {}
 struct ScanServiceClient {
     var baseURL: URL
     var isConfigured: Bool
+    var appKey: String? = ScanServiceClient.bundledAppKey()
     var session: URLSession = ScanServiceClient.sharedSession
 
     init() {
@@ -150,6 +151,12 @@ struct ScanServiceClient {
             baseURL = URL(string: "http://127.0.0.1:8089")!
             isConfigured = false
         }
+    }
+
+    private static func bundledAppKey() -> String? {
+        guard let raw = Bundle.main.object(forInfoDictionaryKey: "ScanServiceAppKey") as? String else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func isLoopbackHost(_ host: String) -> Bool {
@@ -195,7 +202,7 @@ struct ScanServiceClient {
     func createSession(identity: ScanIdentity) async throws -> ScanSessionResponse {
 
 
-        try await post(path: "/scan-sessions", body: identity, accessToken: nil)
+        try await post(path: "/scan-sessions", body: identity, accessToken: nil, extraHeaders: appKey.map { ["X-Scan-App-Key": $0] } ?? [:])
     }
 
     func checkHealth() async throws {
@@ -446,6 +453,7 @@ struct ScanServiceClient {
             items.append(URLQueryItem(name: "group", value: group))
         }
         items.append(contentsOf: style.queryItems)
+        items.append(URLQueryItem(name: "lang", value: AppLanguageSettings.exportLanguageCode))
         var components = URLComponents()
         components.queryItems = items
         let query = (components.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B")
@@ -675,12 +683,15 @@ struct ScanServiceClient {
         return components?.url ?? withPath
     }
 
-    private func post<Body: Encodable, Response: Decodable>(path: String, body: Body, accessToken: String?, timeoutSeconds: TimeInterval = ScanServiceClient.requestTimeoutSeconds) async throws -> Response {
+    private func post<Body: Encodable, Response: Decodable>(path: String, body: Body, accessToken: String?, timeoutSeconds: TimeInterval = ScanServiceClient.requestTimeoutSeconds, extraHeaders: [String: String] = [:]) async throws -> Response {
         var request = URLRequest(url: url(for: path))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let accessToken {
             request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
+        }
+        for (name, value) in extraHeaders {
+            request.setValue(value, forHTTPHeaderField: name)
         }
         request.httpBody = try JSONEncoder().encode(body)
         return try await send(request, timeoutSeconds: timeoutSeconds)

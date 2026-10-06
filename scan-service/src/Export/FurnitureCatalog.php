@@ -61,6 +61,6 @@ final class FurnitureCatalog
     public static function labelFor(string $category): string
     {
         $normalized = self::normalize($category);
-        return self::LABELS[$normalized] ?? ucfirst($normalized);
+        return isset(self::LABELS[$normalized]) ? ExportLanguage::t(self::LABELS[$normalized]) : ucfirst($normalized);
     }
 }

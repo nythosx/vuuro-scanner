@@ -87,28 +87,51 @@ Let's Encrypt certificate:
    `https://www.duckdns.org/update?domains=vuuro-scan&token=<your token>&ip=`. The token
    is a secret; keep it out of git.
 3. Open ports 80 and 443 to the host (Let's Encrypt's HTTP challenge needs port 80).
-4. `SCAN_SERVICE_DOMAIN=vuuro-scan.duckdns.org docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`.
-   `Caddyfile` reads `SCAN_SERVICE_DOMAIN` (falling back to `localhost` if unset), and
-   Caddy issues and renews the certificate itself.
+4. On a fresh Ubuntu 24.04 server: `sh scripts/server-setup.sh --domain vuuro-scan.duckdns.org`
+   (steps in `docs/hosting-spec.md`). By hand instead: copy `.env.example` to `.env`, fill
+   in the secrets, `SCAN_SERVICE_DOMAIN` and `SCAN_SERVICE_PUBLIC_BASE_URL`, then
+   `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`. The production
+   overlay passes every value in `.env` into the container (`env_file`) and does not start
+   without `.env`. `Caddyfile` reads `SCAN_SERVICE_DOMAIN`, and Caddy issues and renews
+   the certificate itself.
 5. Point the iOS app's `SCAN_SERVICE_BASE_URL` at `https://vuuro-scan.duckdns.org`.
 
 ## Off-box backups (free tier)
 
-The app already writes local snapshots to `data/backups/*.sqlite` (`VACUUM INTO`), but
-those live on the same disk as the database. `scripts/backup-offbox.sh` copies the
-newest snapshot to object storage with [rclone](https://rclone.org):
+The app writes local snapshots to `data/backups/*.sqlite` (`VACUUM INTO`, at most once a
+day, when a scan starts), and photos are separate files in `data/photos/<session id>/`.
+Both live on the same disk as the database. `scripts/backup-offbox.sh` copies them to
+object storage with [rclone](https://rclone.org):
 
 - `daily/<snapshot name>.sqlite` on every run, keeping the newest
   `SCAN_SERVICE_BACKUP_KEEP_DAILY` (default 14);
 - `weekly/<ISO week>.sqlite`, overwritten within the same week, keeping the newest
-  `SCAN_SERVICE_BACKUP_KEEP_WEEKLY` (default 8).
+  `SCAN_SERVICE_BACKUP_KEEP_WEEKLY` (default 8);
+- `photos/<session id>/...`, a mirror (`rclone sync`) of `data/photos/`. A photo or session
+  deleted on the server (by the user or by retention) is deleted off-box on the next run
+  too, so the privacy deletion also reaches the backup. Only the database copies are kept
+  per day and week; the photos are the current set.
 
-It refuses to upload an empty or non-SQLite file, verifies the upload landed, and exits
-non-zero with a clear log line if the remote is unreachable (exit codes: 2 bad config,
-3 no usable local backup, 4 remote failure). Nightly schedule:
-`scripts/backup-offbox.cron.example` (03:00).
+It refuses to upload an empty or non-SQLite file, verifies the upload landed, refuses to
+empty the remote photos when `data/photos/` is empty or missing (a new or wiped server
+must be restored first; `SCAN_SERVICE_BACKUP_ALLOW_EMPTY_PHOTOS=1` overrides it when every
+photo really was deleted), and exits non-zero with a clear log line (exit codes: 2 bad
+config, 3 no usable local backup, 4 remote failure, 5 refused to empty the photos).
 
-Both free options below give 10 GB, far more than this SQLite database needs. Use one.
+On the server, `scripts/server-setup.sh` installs one nightly cron job (03:00 UTC) that
+runs `scripts/nightly.sh`: retention, then a fresh snapshot (`tools/snapshot-db.php`, so
+the copy is never older than that night even on a day without new scans), then
+`backup-offbox.sh`. Without the setup script: `scripts/backup-offbox.cron.example`.
+
+Restore: `sh scripts/restore-offbox.sh --yes [--db <name>.sqlite]` downloads the newest
+(or the named) database copy from `daily/` and all photos, stops the scan service, moves
+the current `data/scan_service.sqlite` and `data/photos/` aside to
+`data/pre-restore-<time>/`, puts the copies in place, starts the stack, and runs
+`tools/restore-check.php` (integrity check, session and photo counts, and the newest
+session with a photo read back through the API with the admin key).
+
+Both free options below give 10 GB. The database needs very little; photos are what fill
+it, so check the bucket size once the pilot runs. Use one.
 
 **Cloudflare R2** (10 GB free, no egress fees): create a bucket `vuuro-scan-backups`,
 then an R2 API token with Object Read & Write on that bucket only.
@@ -129,9 +152,10 @@ export SCAN_SERVICE_BACKUP_REMOTE=b2:vuuro-scan-backups
 Then `sh scripts/backup-offbox.sh` once by hand before enabling the cron job.
 
 Local test, no cloud account needed (Docker only): `sh scripts/test-offbox-backup.sh`
-starts MinIO and an rclone container on a throwaway network, runs the script against
-it, checks upload, content, daily/weekly retention, and the failure paths, then removes
-everything.
+starts an S3 test server (`rclone serve s3`) and an rclone container on a throwaway
+network, runs the script against it, checks upload, content, daily/weekly retention,
+the photo mirror (copy, deletion, the empty-folder guard), and the failure paths, then
+removes everything.
 
 Snapshots taken before the access-token hashing migration still contain plaintext
 tokens. Delete old local snapshots rather than uploading them.
@@ -155,7 +179,7 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/health` | Unauthenticated liveness check — touches only the DB connection. |
-| POST | `/scan-sessions` | Create a session. Body carries `ScanIdentity` (property/unit/organisation, purpose, `occupied`, `consent_obtained`). Returns the session id and its one-time access token. `occupied: true` requires `consent_obtained: true` or `403 consent_required`. |
+| POST | `/scan-sessions` | Create a session. When `SCAN_SERVICE_APP_KEY` is set (required in production) the request must carry the same value in `X-Scan-App-Key`, otherwise `401 invalid_or_missing_app_key`. Body carries `ScanIdentity` (property/unit/organisation, purpose, `occupied`, `consent_obtained`). Returns the session id and its one-time access token. `occupied: true` requires `consent_obtained: true` or `403 consent_required`. |
 | POST | `/scan-sessions/{id}/rotate-token` | Issue a new token before or within `ROTATE_GRACE_PERIOD_SECONDS` (7 days) after expiry. |
 | POST | `/scan-sessions/{id}/capture` | Submit `raw_capture` (RoomPlan-shaped JSON) + `capture_provider`. Converted via the matching adapter into the `FloorPlan` contract. Supports `Idempotency-Key` for safe retries. |
 | POST | `/scan-sessions/{id}/rooms` | Wholesale-replace this session's rooms with a fused set (body: `captures[]`, one `raw_capture` per room) — used once a multi-room merge succeeds, superseding the individually-uploaded tiles from `capture` above without double-counting them. |
@@ -167,9 +191,10 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
 | POST | `/scan-sessions/{id}/notes/{note_id}` | Edit a note's `text` in place; optionally replace its `tags` too (omit `tags` entirely to leave the existing ones untouched). |
 | DELETE | `/scan-sessions/{id}/notes/{note_id}` | Remove a single attached note. |
 | POST | `/scan-sessions/{id}/rooms/{room_id}/room-type` | Set or clear a room's `room_type.confirmed` after capture — body `{"room_type": "kitchen"}` or `{"room_type": null}` to clear. Independent of the live ✓/✗ capture-time prompt; works even on a room that never had a guess. |
-| GET | `/scan-sessions/{id}/export/floorplan.png` | Rooms are first split into sections by `floor` and by walkthrough (`capture_group_id`); with more than one section, each is drawn separately and stacked, topmost floor first (the PDF gets one drawing page per section). Within a section: fused single layout when every room carries `structure_origin_m` (see `docs/adr/0002-export-coordinate-frame.md`); per-room tiles otherwise, or always with `?layout=tiles`. `?room_id=<id>` isolates one room's own tile. `?unit=metric\|imperial` (default `metric`) controls displayed measurement units. `?label=<text>` (120 chars max) adds an optional branding/caption line. |
+| GET | `/scan-sessions/{id}/export/floorplan.png` | Rooms are first split into sections by `floor` and by walkthrough (`capture_group_id`); with more than one section, each is drawn separately and stacked, topmost floor first (the PDF gets one drawing page per section). Within a section: fused single layout when every room carries `structure_origin_m` (see `docs/adr/0002-export-coordinate-frame.md`); per-room tiles otherwise, or always with `?layout=tiles`. `?room_id=<id>` isolates one room's own tile. `?unit=metric\|imperial` (default `metric`) controls displayed measurement units. `?label=<text>` (120 chars max) adds an optional branding/caption line. `?lang=en\|nl` sets the export language (labels, decimal comma, dates); without it the admin setting "Export language" is used (default `en`). User-entered text (room names, notes) is never translated. |
 | GET | `/scan-sessions/{id}/export/floorplan.svg` | Same layout/room_id/unit/label params and fused-vs-tiles logic as the PNG export, rendered as an SVG floor plan sheet instead (grid background, room fills by type, wall outlines, door-swing/window symbols, dimension labels). |
-| GET | `/scan-sessions/{id}/export/floorplan.pdf` | Per-room metrics-table PDF, all rooms unless narrowed with `?room_id=<id>`. Same `?unit=` and `?label=` params as the PNG export above. |
+| GET | `/scan-sessions/{id}/export/floorplan.pdf` | Per-room metrics-table PDF, all rooms unless narrowed with `?room_id=<id>`. Same `?unit=` and `?label=` params as the PNG export above. With `X-Scan-Compare-Token` (and optional `?with=`) the Full report of the later scan gets a "Changes since check-in" section, same pairing and access rules as `/compare`. |
+| GET | `/scan-sessions/{id}/compare` | Indicative comparison of two scans of the same property/unit/organisation. Needs this session's token plus the other scan's token in `X-Scan-Compare-Token` (or the admin key). `?with=<id>` picks the other scan; without it a check-out pairs with the latest check-in of the unit and a check-in with the latest check-out. Rooms are matched by `room_id`, then by label + floor (case and spaces ignored) and reported as `added`, `changed`, `unchanged` or `not_matched` (never "removed"); `changed` means more than the admin thresholds (default 0.5 m² or 5%). Also lists notes and photos of the later scan (damage first) and objects of matched rooms not found again. |
 | GET | `/scan-sessions/{id}/access-log` | This session's `action`/`outcome`/`occurred_at` audit trail — never the token or caller IP. |
 | GET | `/scan-sessions/{id}` | Fetch the current `FloorPlan` state for the session. |
 | DELETE | `/scan-sessions/{id}` | Delete the session and everything attached to it (floor plan, photos, notes, access log). |

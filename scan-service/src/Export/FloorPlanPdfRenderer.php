@@ -51,7 +51,7 @@ final class FloorPlanPdfRenderer
         'captionRegular' => self::INK_MUTED,
     ];
 
-    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null, ?callable $photoLoader = null, FloorPlanStyle|string|null $style = null): string
+    public function render(array $floorPlan, string $layout = 'auto', ?string $roomId = null, string $unit = UnitFormatter::METRIC, ?string $label = null, ?callable $photoLoader = null, FloorPlanStyle|string|null $style = null, ?array $changes = null): string
     {
         $planStyle = $style instanceof FloorPlanStyle ? $style : FloorPlanStyle::from($style ?? 'default');
         if ($roomId !== null) {
@@ -65,6 +65,9 @@ final class FloorPlanPdfRenderer
         $headerPrinted = $imagePages !== [] && $imagePages[0]['header'] !== [];
 
         $lines = $this->buildTextLines($floorPlan, $layout, $unit, $label, $planStyle, $headerPrinted);
+        if ($changes !== null && !$planStyle->isFunda) {
+            $lines = [...$lines, ...$this->changesLines($changes, $unit)];
+        }
         $textPages = $this->paginate($lines);
 
         if (count($textPages) + count($imagePages) > self::MAX_PAGES) {
@@ -135,12 +138,12 @@ final class FloorPlanPdfRenderer
     {
         $pages = [];
 
-        $drawings = [[$floorPlan, 'Floor plan drawing']];
+        $drawings = [[$floorPlan, ExportLanguage::t('Floor plan drawing')]];
         $planGroups = ($roomId === null && $layout !== 'tiles') ? FloorGroups::split($floorPlan['rooms']) : [];
         if (count($planGroups) > 1) {
             $drawings = [];
             foreach (FloorGroups::headings($planGroups) as $groupIndex => $heading) {
-                $drawings[] = [[...$floorPlan, 'rooms' => $planGroups[$groupIndex]['rooms']], 'Floor plan drawing - ' . $heading];
+                $drawings[] = [[...$floorPlan, 'rooms' => $planGroups[$groupIndex]['rooms']], ExportLanguage::t('Floor plan drawing - %s', $heading)];
             }
         }
         $planStyle = $style instanceof FloorPlanStyle ? $style : FloorPlanStyle::from($style ?? 'default');
@@ -275,16 +278,16 @@ final class FloorPlanPdfRenderer
 
     private function headerLines(array $floorPlan, ?string $label): array
     {
-        $lines = [['text' => 'Vuuro Scan - Floor Plan', 'style' => 'title']];
+        $lines = [['text' => ExportLanguage::t('Vuuro Scan - Floor Plan'), 'style' => 'title']];
         if ($label !== null && $label !== '') {
             $lines[] = ['text' => $label, 'style' => 'label'];
         }
-        $lines[] = ['text' => sprintf('Property: %s   Unit: %s   Organisation: %s', $floorPlan['property_id'], $floorPlan['unit_id'], $floorPlan['organisation_id']), 'style' => 'body'];
-        $lines[] = ['text' => sprintf('Purpose: %s   Captured: %s', self::purposeLabel($floorPlan['purpose']), self::formatCapturedDate($floorPlan['captured_at'])), 'style' => 'body'];
+        $lines[] = ['text' => ExportLanguage::t('Property: %s   Unit: %s   Organisation: %s', $floorPlan['property_id'], $floorPlan['unit_id'], $floorPlan['organisation_id']), 'style' => 'body'];
+        $lines[] = ['text' => ExportLanguage::t('Purpose: %s   Captured: %s', self::purposeLabel($floorPlan['purpose']), self::formatCapturedDate($floorPlan['captured_at'])), 'style' => 'body'];
         $lines[] = [
             'text' => $floorPlan['measurement_basis'] === 'indicative_nen2580_inspired'
-                ? 'Indicative, NEN2580-inspired measurements. This is NOT a certified survey.'
-                : 'Measurement basis: ' . $floorPlan['measurement_basis'],
+                ? ExportLanguage::t('Indicative, NEN2580-inspired measurements. This is NOT a certified survey.')
+                : ExportLanguage::t('Measurement basis: %s', $floorPlan['measurement_basis']),
             'style' => 'italic',
         ];
         return $lines;
@@ -294,7 +297,7 @@ final class FloorPlanPdfRenderer
     {
         $total = array_sum(array_column($rooms, 'floor_area_m2'));
         $lines = [[
-            'text' => sprintf('%d room(s)  -  total indicative area %s', count($rooms), UnitFormatter::area($total, $unit)),
+            'text' => ExportLanguage::t('%d room(s)  -  total indicative area %s', count($rooms), UnitFormatter::area($total, $unit)),
             'style' => 'body',
         ]];
         $shown = array_slice($rooms, 0, 12);
@@ -305,7 +308,7 @@ final class FloorPlanPdfRenderer
             ];
         }
         if (count($rooms) > count($shown)) {
-            $lines[] = ['text' => sprintf($roomPagesFollow ? '+ %d more room(s), each on its own page' : '+ %d more room(s), listed in the metrics table', count($rooms) - count($shown)), 'style' => 'sub'];
+            $lines[] = ['text' => ExportLanguage::t($roomPagesFollow ? '+ %d more room(s), each on its own page' : '+ %d more room(s), listed in the metrics table', count($rooms) - count($shown)), 'style' => 'sub'];
         }
         return $lines;
     }
@@ -315,7 +318,7 @@ final class FloorPlanPdfRenderer
         $lines = [['text' => RoomType::displayLabelForRoom($room), 'style' => 'title']];
         $floor = trim((string) ($room['floor'] ?? ''));
         if ($showFloor && $floor !== '') {
-            $lines[] = ['text' => 'Floor: ' . $floor, 'style' => 'body'];
+            $lines[] = ['text' => ExportLanguage::t('Floor: %s', $floor), 'style' => 'body'];
         }
         return $lines;
     }
@@ -326,54 +329,54 @@ final class FloorPlanPdfRenderer
         $width = $room['bounding_dimensions_m']['width_m'] ?? null;
         $length = $room['bounding_dimensions_m']['length_m'] ?? null;
         $size = ($width !== null && $length !== null)
-            ? sprintf('   Size: %s x %s', UnitFormatter::length((float) $width, $unit), UnitFormatter::length((float) $length, $unit))
+            ? ExportLanguage::t('   Size: %s x %s', UnitFormatter::length((float) $width, $unit), UnitFormatter::length((float) $length, $unit))
             : '';
-        $lines[] = ['text' => sprintf('Area: %s   Perimeter: %s%s', UnitFormatter::area((float) $room['floor_area_m2'], $unit), UnitFormatter::length((float) $room['perimeter_m'], $unit), $size), 'style' => 'body'];
+        $lines[] = ['text' => ExportLanguage::t('Area: %s   Perimeter: %s%s', UnitFormatter::area((float) $room['floor_area_m2'], $unit), UnitFormatter::length((float) $room['perimeter_m'], $unit), $size), 'style' => 'body'];
         $heightM = $room['height_m'] ?? null;
         $volumeM3 = $room['volume_m3_indicative'] ?? null;
         if ($heightM !== null) {
             $lines[] = ['text' => $volumeM3 !== null
-                ? sprintf('Height: %s   Indicative capacity: %s', UnitFormatter::length((float) $heightM, $unit), UnitFormatter::volume((float) $volumeM3, $unit))
-                : sprintf('Height: %s', UnitFormatter::length((float) $heightM, $unit)), 'style' => 'sub'];
+                ? ExportLanguage::t('Height: %s   Indicative capacity: %s', UnitFormatter::length((float) $heightM, $unit), UnitFormatter::volume((float) $volumeM3, $unit))
+                : ExportLanguage::t('Height: %s', UnitFormatter::length((float) $heightM, $unit)), 'style' => 'sub'];
         }
         $openingCounts = [];
         foreach ($room['openings'] ?? [] as $opening) {
             $openingCounts[$opening['category']] = ($openingCounts[$opening['category']] ?? 0) + 1;
         }
         if ($openingCounts !== []) {
-            $lines[] = ['text' => 'Openings: ' . implode(', ', array_map(
-                static fn (string $category, int $count) => "{$count} {$category}" . ($count === 1 ? '' : 's'),
+            $lines[] = ['text' => ExportLanguage::t('Openings: %s', implode(', ', array_map(
+                static fn (string $category, int $count) => ExportLanguage::openingCount($category, $count),
                 array_keys($openingCounts),
                 array_values($openingCounts)
-            )), 'style' => 'sub'];
+            ))), 'style' => 'sub'];
         }
         $objectCounts = [];
         foreach ($room['objects'] ?? [] as $object) {
             $objectCounts[$object['category']] = ($objectCounts[$object['category']] ?? 0) + 1;
         }
         if ($objectCounts !== []) {
-            $lines[] = ['text' => 'Detected objects: ' . implode(', ', array_map(
-                static fn (string $category, int $count) => "{$count} {$category}",
+            $lines[] = ['text' => ExportLanguage::t('Detected objects: %s', implode(', ', array_map(
+                static fn (string $category, int $count) => "{$count} " . ExportLanguage::objectName($category),
                 array_keys($objectCounts),
                 array_values($objectCounts)
-            )), 'style' => 'sub'];
+            ))), 'style' => 'sub'];
         }
-        $lines[] = ['text' => 'Confidence: ' . $room['confidence'], 'style' => 'sub'];
+        $lines[] = ['text' => ExportLanguage::t('Confidence: %s', ExportLanguage::t((string) $room['confidence'])), 'style' => 'sub'];
         if ($planStyle->showNotes) {
             foreach ($floorPlan['notes'] ?? [] as $note) {
                 if (($note['room_id'] ?? null) !== $room['room_id']) {
                     continue;
                 }
                 $tags = is_array($note['tags'] ?? null) ? $note['tags'] : [];
-                $prefix = in_array('missing_item', $tags, true) ? 'Missing item: ' : 'Note: ';
-                foreach ($this->wrapTextLines($prefix . $note['text'], 95) as $wrapped) {
+                $prefix = in_array('missing_item', $tags, true) ? 'Missing item: %s' : 'Note: %s';
+                foreach ($this->wrapTextLines(ExportLanguage::t($prefix, $note['text']), 95) as $wrapped) {
                     $lines[] = ['text' => $wrapped, 'style' => 'sub'];
                 }
             }
         }
         $photoCount = count(array_filter($floorPlan['photos'] ?? [], static fn (array $photo) => ($photo['room_id'] ?? null) === $room['room_id']));
         if ($photoCount > 0) {
-            $lines[] = ['text' => sprintf('Photos: %d (on the photo pages)', $photoCount), 'style' => 'sub'];
+            $lines[] = ['text' => ExportLanguage::t('Photos: %d (on the photo pages)', $photoCount), 'style' => 'sub'];
         }
         return $lines;
     }
@@ -422,18 +425,17 @@ final class FloorPlanPdfRenderer
 
     private static function purposeLabel(string $purpose): string
     {
-        return self::PURPOSE_LABELS[$purpose] ?? ucfirst(str_replace('_', ' ', $purpose));
+        return isset(self::PURPOSE_LABELS[$purpose]) ? ExportLanguage::t(self::PURPOSE_LABELS[$purpose]) : ucfirst(str_replace('_', ' ', $purpose));
     }
 
     private static function formatCapturedDate(string $capturedAt): string
     {
-        $date = date_create($capturedAt);
-        return $date !== false ? $date->format('M j, Y') : $capturedAt;
+        return ExportLanguage::date($capturedAt);
     }
 
     private function buildPageChrome(float $pageWidth, float $pageHeight, string $footerLabel, int $pageIndex, int $totalPages): string
     {
-        $footerText = "{$footerLabel}  -  Page {$pageIndex} of {$totalPages}";
+        $footerText = ExportLanguage::t('%s  -  Page %d of %d', $footerLabel, $pageIndex, $totalPages);
         $ascii = $this->toWinAnsi($footerText);
         $escaped = str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $ascii);
         $stream = "q\n" . $this->rgOp(self::INK_MUTED) . "\nBT\n/F1 8 Tf\n1 0 0 1 24 16 Tm\n({$escaped}) Tj\nET\nQ\n";
@@ -444,7 +446,7 @@ final class FloorPlanPdfRenderer
     private function roomLabelFor(array $floorPlan, ?string $roomId): ?string
     {
         if ($roomId === null) {
-            return 'Whole unit';
+            return ExportLanguage::t('Whole unit');
         }
         foreach ($floorPlan['rooms'] as $room) {
             if ($room['room_id'] === $roomId) {
@@ -491,21 +493,21 @@ final class FloorPlanPdfRenderer
         };
 
         if ($headerPrinted) {
-            $add('Floor Plan Metrics', 'title');
+            $add(ExportLanguage::t('Floor Plan Metrics'), 'title');
             $add('');
         } else {
-            $add('Vuuro Scan - Floor Plan Metrics', 'title');
+            $add(ExportLanguage::t('Vuuro Scan - Floor Plan Metrics'), 'title');
             if ($label !== null && $label !== '') {
                 $add($label, 'label');
             }
             $add('');
-            $add(sprintf('Property: %s   Unit: %s   Organisation: %s', $floorPlan['property_id'], $floorPlan['unit_id'], $floorPlan['organisation_id']));
-            $add(sprintf('Purpose: %s   Captured: %s', self::purposeLabel($floorPlan['purpose']), self::formatCapturedDate($floorPlan['captured_at'])));
+            $add(ExportLanguage::t('Property: %s   Unit: %s   Organisation: %s', $floorPlan['property_id'], $floorPlan['unit_id'], $floorPlan['organisation_id']));
+            $add(ExportLanguage::t('Purpose: %s   Captured: %s', self::purposeLabel($floorPlan['purpose']), self::formatCapturedDate($floorPlan['captured_at'])));
             $add('');
             $add(
                 $floorPlan['measurement_basis'] === 'indicative_nen2580_inspired'
-                    ? 'Indicative, NEN2580-inspired measurements. This is NOT a certified survey.'
-                    : 'Measurement basis: ' . $floorPlan['measurement_basis'],
+                    ? ExportLanguage::t('Indicative, NEN2580-inspired measurements. This is NOT a certified survey.')
+                    : ExportLanguage::t('Measurement basis: %s', $floorPlan['measurement_basis']),
                 'italic'
             );
             $add('');
@@ -533,13 +535,13 @@ final class FloorPlanPdfRenderer
         if ($hasOverlap) {
             $add(
                 count($roomGroups) > 1
-                    ? 'WARNING: some rooms below overlap in captured position (' . implode(', ', $overlapHeadings) . ') - verify against the real layout before use.'
-                    : 'WARNING: some rooms below overlap in captured position - verify against the real layout before use.',
+                    ? ExportLanguage::t('WARNING: some rooms below overlap in captured position (%s) - verify against the real layout before use.', implode(', ', $overlapHeadings))
+                    : ExportLanguage::t('WARNING: some rooms below overlap in captured position - verify against the real layout before use.'),
                 'warning'
             );
             $add('');
         }
-        $add('Rooms', 'section');
+        $add(ExportLanguage::t('Rooms'), 'section');
         $totalArea = 0.0;
         foreach ($orderedRooms as $roomIndex => $room) {
             if (isset($roomHeadings[$roomIndex])) {
@@ -551,12 +553,12 @@ final class FloorPlanPdfRenderer
             $roomLabel = RoomType::displayLabelForRoom($room);
             $bulletHex = FloorPlanPalette::roomAccentFor($roomTypeValue) ?? '#9a958a';
             $add(
-                sprintf(
+                ExportLanguage::t(
                     '%-20s %12s   %14s   confidence: %s',
                     $roomLabel,
                     UnitFormatter::area($room['floor_area_m2'], $unit),
-                    UnitFormatter::length($room['perimeter_m'], $unit) . ' perimeter',
-                    $room['confidence']
+                    ExportLanguage::t('%s perimeter', UnitFormatter::length($room['perimeter_m'], $unit)),
+                    ExportLanguage::t((string) $room['confidence'])
                 ),
                 'room',
                 ['bullet' => FloorPlanPalette::hexToRgb($bulletHex)]
@@ -565,9 +567,9 @@ final class FloorPlanPdfRenderer
             $heightM = $room['height_m'] ?? null;
             $volumeM3 = $room['volume_m3_indicative'] ?? null;
             if ($heightM !== null && $volumeM3 !== null) {
-                $add(sprintf('             %s height   %s indicative capacity', UnitFormatter::length($heightM, $unit), UnitFormatter::volume($volumeM3, $unit)), 'sub');
+                $add(ExportLanguage::t('             %s height   %s indicative capacity', UnitFormatter::length($heightM, $unit), UnitFormatter::volume($volumeM3, $unit)), 'sub');
             } elseif ($heightM !== null) {
-                $add(sprintf('             %s height', UnitFormatter::length($heightM, $unit)), 'sub');
+                $add(ExportLanguage::t('             %s height', UnitFormatter::length($heightM, $unit)), 'sub');
             }
             $openings = $room['openings'] ?? [];
             if ($openings !== []) {
@@ -576,7 +578,7 @@ final class FloorPlanPdfRenderer
                     $counts[$opening['category']] = ($counts[$opening['category']] ?? 0) + 1;
                 }
                 $summary = implode(', ', array_map(
-                    static fn (string $category, int $count) => "{$count} {$category}" . ($count === 1 ? '' : 's'),
+                    static fn (string $category, int $count) => ExportLanguage::openingCount($category, $count),
                     array_keys($counts),
                     array_values($counts)
                 ));
@@ -584,7 +586,7 @@ final class FloorPlanPdfRenderer
             }
             $walkPath = $room['walk_path_m'] ?? [];
             if ($planStyle->showWalkPath && count($walkPath) >= 2) {
-                $add(sprintf('             walk path: %d point(s) recorded', count($walkPath)), 'sub');
+                $add(ExportLanguage::t('             walk path: %d point(s) recorded', count($walkPath)), 'sub');
             }
             $objects = $room['objects'] ?? [];
             if ($objects !== []) {
@@ -593,11 +595,11 @@ final class FloorPlanPdfRenderer
                     $objectCounts[$object['category']] = ($objectCounts[$object['category']] ?? 0) + 1;
                 }
                 $objectSummary = implode(', ', array_map(
-                    static fn (string $category, int $count) => "{$count} {$category}",
+                    static fn (string $category, int $count) => "{$count} " . ExportLanguage::objectName($category),
                     array_keys($objectCounts),
                     array_values($objectCounts)
                 ));
-                $add("             detected objects: {$objectSummary}", 'sub');
+                $add(ExportLanguage::t('             detected objects: %s', $objectSummary), 'sub');
                 }
             }
             if ($planStyle->showNotes) {
@@ -607,7 +609,7 @@ final class FloorPlanPdfRenderer
                 ));
                 foreach ($roomNotes as $note) {
                     $tags = is_array($note['tags'] ?? null) ? $note['tags'] : [];
-                    $prefix = in_array('missing_item', $tags, true) ? 'missing item: ' : 'note: ';
+                    $prefix = ExportLanguage::t(in_array('missing_item', $tags, true) ? 'missing item: ' : 'note: ');
                     foreach ($this->wrapTextLines($note['text'], 85) as $i => $wrapped) {
                         $add($i === 0 ? "             {$prefix}{$wrapped}" : "                   {$wrapped}", 'sub');
                     }
@@ -616,13 +618,13 @@ final class FloorPlanPdfRenderer
                             static fn (string $tagValue) => \VuuroScan\InspectionTag::labelFor($tagValue),
                             $tags
                         );
-                        $add('             tags: ' . implode(', ', $labels), 'sub');
+                        $add('             ' . ExportLanguage::t('tags:') . ' ' . implode(', ', $labels), 'sub');
                     }
                 }
             }
         }
         $add('');
-        $add(sprintf('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalArea, $unit), count($floorPlan['rooms'])), 'small');
+        $add(ExportLanguage::t('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalArea, $unit), count($floorPlan['rooms'])), 'small');
 
         if ($planStyle->showNotes) {
             $unitNotes = array_values(array_filter(
@@ -631,7 +633,7 @@ final class FloorPlanPdfRenderer
             ));
             if ($unitNotes !== []) {
             $add('');
-            $add('Whole-unit notes', 'section');
+            $add(ExportLanguage::t('Whole-unit notes'), 'section');
             foreach ($unitNotes as $note) {
                 foreach ($this->wrapTextLines($note['text'], 90) as $i => $wrapped) {
                     $add($i === 0 ? "- {$wrapped}" : "  {$wrapped}", 'sub');
@@ -642,14 +644,14 @@ final class FloorPlanPdfRenderer
                         static fn (string $tagValue) => \VuuroScan\InspectionTag::labelFor($tagValue),
                         $tags
                     );
-                    $add('  tags: ' . implode(', ', $labels), 'sub');
+                    $add('  ' . ExportLanguage::t('tags:') . ' ' . implode(', ', $labels), 'sub');
                 }
             }
         }
 
         if ($floorPlan['photos'] !== [] || $floorPlan['notes'] !== []) {
             $add('');
-            $add(sprintf('Photos attached: %d   Notes attached: %d', count($floorPlan['photos']), count($floorPlan['notes'])), 'small');
+            $add(ExportLanguage::t('Photos attached: %d   Notes attached: %d', count($floorPlan['photos']), count($floorPlan['notes'])), 'small');
             }
         }
 
@@ -657,10 +659,106 @@ final class FloorPlanPdfRenderer
     }
 
 
+    private function changesLines(array $changes, string $unit): array
+    {
+        $lines = [];
+        $add = static function (string $text, string $style = 'body') use (&$lines): void {
+            $lines[] = ['text' => $text, 'style' => $style];
+        };
+        $earlier = $changes['earlier'] ?? [];
+        $earlierPurpose = (string) ($earlier['purpose'] ?? '');
+        $earlierDate = self::formatCapturedDate((string) ($earlier['captured_at'] ?? $earlier['created_at'] ?? ''));
+        $roomName = static fn (array $room): string => RoomType::localizedLabel(trim((string) ($room['label'] ?? $room['room_label'] ?? ''))) . (is_string($room['floor'] ?? null) && trim($room['floor']) !== '' ? ' (' . trim($room['floor']) . ')' : '');
+        $thresholds = $changes['thresholds'] ?? [];
+        $rooms = $changes['rooms'] ?? [];
+
+        $add('');
+        $add(ExportLanguage::t($earlierPurpose === 'check_in' ? 'Changes since check-in' : 'Changes since the earlier scan'), 'section');
+        $intro = ExportLanguage::t(
+            'Compared with the %s scan of %s. Indicative: both scans are mobile LiDAR captures, so areas can differ slightly without any real change. A room counts as changed above %s or %s%%.',
+            strtolower(self::purposeLabel($earlierPurpose)),
+            $earlierDate,
+            UnitFormatter::area((float) ($thresholds['area_change_m2'] ?? 0.0), $unit),
+            preg_replace('/[.,]0$/', '', ExportLanguage::number((float) ($thresholds['area_change_percent'] ?? 0.0), 1))
+        );
+        foreach ($this->wrapTextLines($intro, 105) as $wrapped) {
+            $add($wrapped, 'italic');
+        }
+
+        $hasChanges = false;
+        if (($rooms['changed'] ?? []) !== []) {
+            $hasChanges = true;
+            $add('');
+            $add(ExportLanguage::t('Rooms with a different indicative area'), 'room');
+            foreach ($rooms['changed'] as $room) {
+                $percent = $room['area_change_percent'] ?? null;
+                $add(sprintf(
+                    '- %s: %s -> %s (%s%s%s)',
+                    $roomName($room),
+                    UnitFormatter::area((float) $room['earlier_area_m2'], $unit),
+                    UnitFormatter::area((float) $room['later_area_m2'], $unit),
+                    $room['area_change_m2'] > 0 ? '+' : '',
+                    UnitFormatter::area((float) $room['area_change_m2'], $unit),
+                    $percent === null ? '' : ', ' . ($percent > 0 ? '+' : '') . ExportLanguage::number((float) $percent, 1) . '%'
+                ), 'sub');
+            }
+        }
+        if (($rooms['added'] ?? []) !== []) {
+            $hasChanges = true;
+            $add('');
+            $add(ExportLanguage::t('Rooms in this scan only'), 'room');
+            foreach ($rooms['added'] as $room) {
+                $add(sprintf('- %s: %s', $roomName($room), UnitFormatter::area((float) $room['area_m2'], $unit)), 'sub');
+            }
+        }
+        if (($rooms['not_matched'] ?? []) !== []) {
+            $hasChanges = true;
+            $add('');
+            $add(ExportLanguage::t('Rooms from the earlier scan not matched'), 'room');
+            foreach ($this->wrapTextLines(ExportLanguage::t('Not matched means no room with the same name and floor was found. It does not mean the room was removed.'), 105) as $wrapped) {
+                $add($wrapped, 'italic');
+            }
+            foreach ($rooms['not_matched'] as $room) {
+                $add(sprintf('- %s: %s', $roomName($room), UnitFormatter::area((float) $room['area_m2'], $unit)), 'sub');
+            }
+        }
+        if (($changes['objects_gone'] ?? []) !== []) {
+            $hasChanges = true;
+            $add('');
+            $add(ExportLanguage::t('Objects from the earlier scan not found again'), 'room');
+            foreach ($changes['objects_gone'] as $object) {
+                $count = (int) ($object['count'] ?? 1);
+                $add(sprintf('- %s: %s%s', $roomName($object), $object['name'], $count > 1 ? " x{$count}" : ''), 'sub');
+            }
+        }
+        $notes = $changes['notes_added'] ?? [];
+        $photos = $changes['photos_added'] ?? [];
+        if ($notes !== [] || $photos !== []) {
+            $hasChanges = true;
+            $add('');
+            $add(ExportLanguage::t('Notes and photos in this scan'), 'room');
+            foreach ($notes as $note) {
+                $where = is_string($note['room_label'] ?? null) && $note['room_label'] !== '' ? $note['room_label'] : ExportLanguage::t('Whole unit');
+                $tagText = $note['tags'] !== [] ? ' [' . implode(', ', array_map(static fn (string $tag) => \VuuroScan\InspectionTag::labelFor($tag), $note['tags'])) . ']' : '';
+                foreach ($this->wrapTextLines("{$where}{$tagText}: {$note['text']}", 90) as $i => $wrapped) {
+                    $add($i === 0 ? "- {$wrapped}" : "  {$wrapped}", in_array('damage', $note['tags'], true) ? 'warning' : 'sub');
+                }
+            }
+            if ($photos !== []) {
+                $damagePhotos = count(array_filter($photos, static fn (array $photo): bool => in_array('damage', $photo['tags'], true)));
+                $add(ExportLanguage::t('Photos: %d (%d tagged damage), on the photo pages', count($photos), $damagePhotos), 'sub');
+            }
+        }
+        if (!$hasChanges) {
+            $add('');
+            $add(ExportLanguage::t('No room changed above the threshold, and nothing else was added or missing.'), 'sub');
+        }
+        return $lines;
+    }
+
     private function wrapTextLines(string $text, int $maxChars): array
     {
-        $wrapped = wordwrap($text, $maxChars, "\n", true);
-        return $wrapped === '' ? [''] : explode("\n", $wrapped);
+        return TextWrap::lines($text, $maxChars);
     }
 
     private function rgOp(array $rgb): string
