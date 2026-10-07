@@ -44,6 +44,19 @@ ss_check('every purpose starts switched off', array_filter(array_column($default
 ss_check('the suggested days are pre-filled', $defaults['retention']['check_out']['days'] === 30 && $defaults['retention']['check_in']['days'] === 365);
 ss_check('nothing is purged by default', $settings->activeRetentionDays() === []);
 ss_check('tenant deletion requests are on with 7 days by default', $settings->tenantDeletionEnabled() && $settings->tenantGraceDays() === 7);
+ss_check('no env value means switched off with the default source', $defaults['retention']['check_out']['enabled'] === false && $defaults['retention']['check_out']['source'] === 'default' && $defaults['retention']['check_out']['server_config_days'] === null);
+
+echo "\n== Empty env values from .env.example keep retention off ==\n";
+foreach (ServiceSettings::PURPOSES as $purpose) {
+    putenv('SCAN_SERVICE_RETENTION_DAYS_' . strtoupper($purpose) . '=');
+}
+$emptyEnv = $settings->all()['retention'];
+ss_check('an empty env value does not switch any purpose on', array_filter(array_column($emptyEnv, 'enabled')) === [] && $settings->activeRetentionDays() === []);
+ss_check('an empty env value reports the default source', array_unique(array_column($emptyEnv, 'source')) === ['default']);
+ss_check('the admin page still suggests the usual days', array_combine(ServiceSettings::PURPOSES, array_column($emptyEnv, 'days')) === ServiceSettings::SUGGESTED_RETENTION_DAYS);
+foreach (ServiceSettings::PURPOSES as $purpose) {
+    putenv('SCAN_SERVICE_RETENTION_DAYS_' . strtoupper($purpose));
+}
 
 echo "\n== Server config still counts until an admin changes it ==\n";
 putenv('SCAN_SERVICE_RETENTION_DAYS_CHECK_OUT=45');

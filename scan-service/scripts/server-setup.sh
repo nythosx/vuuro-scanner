@@ -86,7 +86,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 say "Packages"
 apt-get update -q
-apt-get install -y -q ca-certificates curl git ufw rclone openssl cron
+apt-get install -y -q ca-certificates curl git ufw rclone openssl cron openssh-server fail2ban
 
 if docker compose version >/dev/null 2>&1; then
     echo "Docker with the compose plugin is already installed"
@@ -125,6 +125,43 @@ if [ -s /root/.ssh/authorized_keys ] && [ ! -s "$deploy_home/.ssh/authorized_key
     install -m 0600 -o "$deploy_user" -g "$deploy_user" /root/.ssh/authorized_keys "$deploy_home/.ssh/authorized_keys"
     echo "copied root's SSH keys to $deploy_user"
 fi
+
+say "SSH login"
+has_ssh_key() {
+    [ -s "$1" ] && grep -q -v -e '^[[:space:]]*#' -e '^[[:space:]]*$' "$1"
+}
+sshd_dropin=/etc/ssh/sshd_config.d/10-vuuro.conf
+if has_ssh_key /root/.ssh/authorized_keys || has_ssh_key "$deploy_home/.ssh/authorized_keys"; then
+    if grep -qi '^[[:space:]]*PasswordAuthentication[[:space:]]\{1,\}yes' /etc/ssh/sshd_config.d/50-cloud-init.conf 2>/dev/null; then
+        echo "50-cloud-init.conf turns password login on; $sshd_dropin is read first and wins"
+    fi
+    printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password' > "$sshd_dropin"
+    chmod 644 "$sshd_dropin"
+    install -d -m 0755 /run/sshd
+    if ! sshd_error="$(/usr/sbin/sshd -t 2>&1)"; then
+        rm -f "$sshd_dropin"
+        fail "the SSH config does not pass 'sshd -t', removed $sshd_dropin and left SSH as it was: $sshd_error" 3
+    fi
+    effective="$(/usr/sbin/sshd -T 2>/dev/null | grep -i -e '^passwordauthentication ' -e '^kbdinteractiveauthentication ' -e '^permitrootlogin ' | sort | tr '\n' ' ')"
+    if [ "$effective" != "kbdinteractiveauthentication no passwordauthentication no permitrootlogin without-password " ]; then
+        rm -f "$sshd_dropin"
+        fail "sshd does not pick up $sshd_dropin (effective: $effective), removed it and left SSH as it was" 3
+    fi
+    if systemctl try-reload-or-restart ssh; then
+        echo "password login is off, key login only (root keeps key login)"
+    else
+        echo "WARNING: could not reload ssh; the new settings apply after: systemctl restart ssh"
+    fi
+else
+    echo "WARNING: no SSH key in /root/.ssh/authorized_keys or $deploy_home/.ssh/authorized_keys, password login left on so this server cannot lock you out. Add a key, then run this script again"
+fi
+
+if [ -f /etc/fail2ban/jail.d/defaults-debian.conf ] && grep -q '^\[sshd\]' /etc/fail2ban/jail.d/defaults-debian.conf; then
+    echo "fail2ban: the sshd jail is on through the package default"
+else
+    echo "WARNING: fail2ban's package default no longer enables the sshd jail; check /etc/fail2ban/jail.d/"
+fi
+systemctl enable --now fail2ban >/dev/null 2>&1 || echo "WARNING: fail2ban did not start; see: systemctl status fail2ban"
 
 say "Code in $install_dir"
 as_deploy() {

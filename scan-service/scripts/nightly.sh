@@ -16,7 +16,26 @@ env_value() {
 }
 
 [ -f "$env_file" ] || { log "ERROR: $env_file not found"; exit 2; }
-cd "$service_dir" || exit 2
+
+healthcheck_url="$(env_value SCAN_SERVICE_HEALTHCHECK_URL)"
+healthcheck_url="${healthcheck_url%/}"
+
+ping_healthcheck() {
+    [ -n "$healthcheck_url" ] || return 0
+    curl -fsS -m 10 --retry 3 -o /dev/null "$healthcheck_url$1" >/dev/null 2>&1 || log "WARNING: healthcheck ping failed, the backup itself is not affected"
+}
+
+finish() {
+    if [ "$1" -eq 0 ]; then
+        ping_healthcheck ""
+    else
+        ping_healthcheck "/fail"
+    fi
+    exit "$1"
+}
+
+ping_healthcheck "/start"
+cd "$service_dir" || finish 2
 
 domain="$(env_value SCAN_SERVICE_DOMAIN)"
 admin_key="$(env_value SCAN_SERVICE_ADMIN_API_KEY)"
@@ -43,13 +62,13 @@ if snapshot="$($compose exec -T scan-service frankenphp php-cli /app/tools/snaps
     log "database snapshot $snapshot written"
 else
     log "ERROR: database snapshot failed, the off-box copy would be stale"
-    exit 3
+    finish 3
 fi
 
 remote="$(env_value SCAN_SERVICE_BACKUP_REMOTE)"
 if [ -z "$remote" ]; then
     log "ERROR: SCAN_SERVICE_BACKUP_REMOTE is empty in $env_file, nothing was copied off the server"
-    exit 2
+    finish 2
 fi
 SCAN_SERVICE_BACKUP_REMOTE="$remote"
 export SCAN_SERVICE_BACKUP_REMOTE
@@ -64,7 +83,7 @@ if [ -n "$keep_weekly" ]; then
     export SCAN_SERVICE_BACKUP_KEEP_WEEKLY
 fi
 
-sh "$script_dir/backup-offbox.sh" || { rc=$?; log "ERROR: off-box backup failed with exit $rc"; exit "$rc"; }
+sh "$script_dir/backup-offbox.sh" || { rc=$?; log "ERROR: off-box backup failed with exit $rc"; finish "$rc"; }
 
 [ "$status" -eq 0 ] || log "finished with errors (exit $status)"
-exit "$status"
+finish "$status"

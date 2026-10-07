@@ -9,6 +9,11 @@ services:
     environment:
       SCAN_SERVICE_ENV: production
       SCAN_SERVICE_APP_KEY: ${SCAN_SERVICE_APP_KEY:?set SCAN_SERVICE_APP_KEY to a random value of at least 24 characters before running}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   caddy:
     image: caddy:2-alpine
@@ -23,6 +28,11 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   caddy_data:
