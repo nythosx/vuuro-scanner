@@ -22,7 +22,7 @@ struct VuuroHero: View {
     let subtitle: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             if let greeting {
                 Text(greeting)
                     .font(.system(size: 12, weight: .bold))
@@ -36,13 +36,15 @@ struct VuuroHero: View {
                 .lineSpacing(2)
                 .foregroundStyle(VuuroColor.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 400, alignment: .leading)
             if let subtitle {
                 Text(subtitle)
                     .font(.system(size: 15))
                     .tracking(-0.2)
-                    .lineSpacing(4)
+                    .lineSpacing(5)
                     .foregroundStyle(VuuroColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 400, alignment: .leading)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

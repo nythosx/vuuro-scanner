@@ -546,7 +546,7 @@ struct ResultSummaryView: View {
                         ProgressView().tint(VuuroColor.accent)
                     }
                 }
-                .frame(height: 220)
+                .vuuroPlanFrame()
                 .contentShape(Rectangle())
                 .onTapGesture {
                     guard floorPlanImage != nil else { return }

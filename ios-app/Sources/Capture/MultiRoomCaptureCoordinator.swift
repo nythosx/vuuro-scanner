@@ -2,6 +2,7 @@ import ARKit
 import Combine
 import Foundation
 import RoomPlan
+import UIKit
 import simd
 
 @MainActor
@@ -129,6 +130,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
             captureSession?.stop(pauseARSession: false)
         }
         arSession.pause()
+        UIApplication.shared.isIdleTimerDisabled = false
         DiagnosticsLog.shared.record("Multi-room capture view left the screen — capture session stopped and AR session paused", category: .state)
     }
 
@@ -258,6 +260,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
 
     func start(afterRelocalization: Bool = false) {
         _ = captureView
+        UIApplication.shared.isIdleTimerDisabled = true
         wasRelocalized = afterRelocalization
         state = .scanning
         liveRoomTypeGuess = nil
@@ -457,6 +460,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         captureSession?.stop(pauseARSession: false)
         arSession.pause()
         guard !capturedRooms.isEmpty else {
+            UIApplication.shared.isIdleTimerDisabled = false
             state = .mergeFailed("No rooms were captured in this walkthrough.")
             return
         }
@@ -525,6 +529,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     private func stopMergeHeartbeat() {
         heartbeatTask?.cancel()
         heartbeatTask = nil
+        UIApplication.shared.isIdleTimerDisabled = false
     }
 }
 

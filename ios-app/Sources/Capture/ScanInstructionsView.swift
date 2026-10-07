@@ -131,8 +131,9 @@ struct ScanInstructionsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Text(LocalizedStringKey(heroSubtitle))
                             .font(.system(size: 14))
-                            .lineSpacing(3)
+                            .lineSpacing(4)
                             .foregroundStyle(VuuroColor.textSecondary)
+                            .frame(maxWidth: 340, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.horizontal, 20)
@@ -261,8 +262,9 @@ struct ScanInstructionsView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Text(LocalizedStringKey(item.detail))
                 .font(.system(size: 13))
-                .lineSpacing(2)
+                .lineSpacing(3)
                 .foregroundStyle(VuuroColor.textSecondary)
+                .frame(maxWidth: 340, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }

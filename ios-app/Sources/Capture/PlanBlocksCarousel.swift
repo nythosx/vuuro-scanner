@@ -110,7 +110,7 @@ struct PlanBlocksCarousel: View {
                 }
                 .padding(.horizontal, 6)
             }
-            .frame(height: 220)
+            .vuuroPlanFrame()
             .background(VuuroColor.bgInset, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 

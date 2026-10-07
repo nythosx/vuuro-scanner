@@ -281,3 +281,23 @@ struct VuuroSkeleton: View {
             }
     }
 }
+private struct VuuroPlanFrameModifier: ViewModifier {
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    let portraitHeight: CGFloat
+
+    func body(content: Content) -> some View {
+        if verticalSizeClass == .compact {
+            content.containerRelativeFrame(.vertical) { height, _ in
+                max(portraitHeight, height - 24)
+            }
+        } else {
+            content.frame(height: portraitHeight)
+        }
+    }
+}
+
+extension View {
+    func vuuroPlanFrame(portraitHeight: CGFloat = 220) -> some View {
+        modifier(VuuroPlanFrameModifier(portraitHeight: portraitHeight))
+    }
+}

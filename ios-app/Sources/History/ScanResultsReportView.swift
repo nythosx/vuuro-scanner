@@ -463,7 +463,7 @@ struct ScanResultsReportView: View {
                         ProgressView().tint(VuuroColor.accent)
                     }
                 }
-                .frame(height: 220)
+                .vuuroPlanFrame()
                 .overlay(alignment: .topTrailing) {
                     if floorPlanImage != nil {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")

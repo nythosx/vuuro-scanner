@@ -1194,7 +1194,16 @@ SVG;
         $topGutter = $headerHeight + $dimGutter;
         $drawingWidth = (int) round(($maxX - $minX) * self::PX_PER_M);
         $drawingHeight = (int) round(($maxZ - $minZ) * self::PX_PER_M);
-        $canvasWidth = max(self::MARGIN * 2 + $dimGutter + $drawingWidth, 560);
+        $maxLabelWidth = 0;
+        foreach ($rooms as $labelRoom) {
+            $labelText = $isFunda ? RoomType::planName($labelRoom) : $this->displayLabel($labelRoom);
+            $labelFontSize = $isFunda ? (((float) ($labelRoom['floor_area_m2'] ?? 0)) < 4.0 ? 11 : 16) : 12;
+            $estimatedPx = (int) ceil(mb_strlen($labelText, 'UTF-8') * $labelFontSize * 0.7) + 12;
+            $maxLabelWidth = max($maxLabelWidth, $estimatedPx);
+        }
+        $labelPadding = (int) ceil($maxLabelWidth / 2) + 8;
+        $planBlockWidth = $dimGutter + $labelPadding + $drawingWidth + $labelPadding;
+        $canvasWidth = max(self::MARGIN * 2 + $planBlockWidth, 560);
         $canvasHeight = $topGutter + $drawingHeight + 40
             + ($this->planStyle->showNotes ? count($notesLines) * self::NOTE_LINE_HEIGHT : 0)
             + ($this->planStyle->showMetrics ? count($summaryLines) * self::NOTE_LINE_HEIGHT : 0)
@@ -1209,7 +1218,8 @@ SVG;
             ));
         }
 
-        $originPxX = self::MARGIN + $dimGutter;
+        $planLeft = max(self::MARGIN, (int) round(($canvasWidth - $planBlockWidth) / 2));
+        $originPxX = $planLeft + $dimGutter + $labelPadding;
         $originPxY = $topGutter;
         $toPx = fn (float $worldX, float $worldZ): array => [
             $originPxX + ($worldX - $minX) * self::PX_PER_M,
@@ -1226,7 +1236,7 @@ SVG;
         $xBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 0);
         $body .= $this->horizontalDimensionChainSvg($xBreakpoints, $dimY, $toPx, $unit);
 
-        $dimX = self::MARGIN + 14;
+        $dimX = $planLeft + 14;
         $zBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 1);
         $body .= $this->verticalDimensionChainSvg($zBreakpoints, $dimX, $toPx, $unit);
 

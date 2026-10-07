@@ -389,15 +389,42 @@ private struct AttachmentRoomCard: View {
     }
 
     private var labelField: some View {
-        TextField(roomTypePlaceholder, text: $labelDraft)
-            .accessibilityIdentifier("attachments.roomLabel")
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(VuuroColor.textSecondary)
-            .textInputAutocapitalization(.words)
-            .autocorrectionDisabled()
-            .submitLabel(.done)
-            .onChange(of: labelDraft) { _, _ in scheduleLabelSave() }
-            .onSubmit { flushLabelSave() }
+        VStack(alignment: .leading, spacing: 6) {
+            TextField(roomTypePlaceholder, text: $labelDraft)
+                .accessibilityIdentifier("attachments.roomLabel")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(VuuroColor.textSecondary)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+                .submitLabel(.done)
+                .onChange(of: labelDraft) { _, _ in scheduleLabelSave() }
+                .onSubmit { flushLabelSave() }
+
+            if let suggestion = suggestedLabel, labelDraft.isEmpty {
+                Button {
+                    labelDraft = suggestion
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(String(format: vuuroLocalized("Use %@"), suggestion))
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(VuuroColor.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(VuuroColor.accent.opacity(0.12), in: Capsule())
+                }
+                .accessibilityIdentifier("attachments.roomLabelSuggestion")
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var suggestedLabel: String? {
+        guard let guess = room.roomType?.guess, !guess.isEmpty else { return nil }
+        return RoomTypeClassifier.displayName(for: guess)
     }
 
     private var noteEditor: some View {

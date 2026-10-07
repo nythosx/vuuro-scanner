@@ -2,6 +2,7 @@ import ARKit
 import Combine
 import Foundation
 import RoomPlan
+import UIKit
 import simd
 
 struct CaptureLiveStats: Equatable {
@@ -164,6 +165,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
             captureSession?.stop()
         }
         arSession.pause()
+        UIApplication.shared.isIdleTimerDisabled = false
         DiagnosticsLog.shared.record("Capture view left the screen — capture session stopped and AR session paused", category: .state)
     }
 
@@ -190,6 +192,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
 
     func start() {
         _ = captureView
+        UIApplication.shared.isIdleTimerDisabled = true
         state = .scanning
         liveRoomTypeGuess = nil
         roomTypeConfirmation = nil
@@ -211,6 +214,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
         isRunning = false
         stopWalkPathTracking()
         captureSession?.stop()
+        UIApplication.shared.isIdleTimerDisabled = false
     }
 
     private func startWalkPathTracking() {

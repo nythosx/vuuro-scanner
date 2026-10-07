@@ -498,7 +498,7 @@ if (count($farApartPolys) === 2) {
 
 $overlapPolysBefore = svg_room_fill_polygons($svgRenderer->render($overlapPlan));
 x_check('rooms already flagged as overlapping are excluded from collision-snapping entirely (left at their captured position)',
-    count($overlapPolysBefore) === 2 && abs(polygon_bbox($overlapPolysBefore[0])['minX'] - 58.0) < 0.5,
+    count($overlapPolysBefore) === 2 && abs(polygon_bbox($overlapPolysBefore[1])['minX'] - polygon_bbox($overlapPolysBefore[0])['minX'] - 60.0) < 0.5,
     'Room A moved from its captured origin despite being flagged overlapping');
 
 echo "\n== FloorPlanSvgRenderer: collision works on non-axis-aligned (diagonal/\"pabalagbag\") walls too ==\n";
@@ -781,6 +781,24 @@ $untypedPng = $imageRenderer->render(build_floor_plan([$untypedRoom]), 'auto', n
 x_check('the PNG draws an untyped room in its own color, same as the SVG', png_contains_color($untypedPng, ...\VuuroScan\Export\FloorPlanPalette::hexToRgb($fill(null, 'room-loft-1'))));
 $untypedSvg = (new FloorPlanSvgRenderer())->render(build_floor_plan([$untypedRoom]), 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, \VuuroScan\Export\FloorPlanStyle::from('funda'));
 x_check('the SVG uses the same color for that room', str_contains(strtolower($untypedSvg), $fill(null, 'room-loft-1')));
+
+echo "\n== Long room names at the edge of the plan are not cut off ==\n";
+$edgePlan = build_floor_plan([
+    build_room_with_outline('Slaapkamer met inloopkast', [[0, 0], [0.9, 0], [0.9, 3], [0, 3]], [0.0, 0.0], [], null, 'edge-left'),
+    build_room_with_outline('Woonkamer', [[0, 0], [12, 0], [12, 3], [0, 3]], [0.9, 0.0], [], null, 'edge-main'),
+    build_room_with_outline('Badkamer met ligbad en douche', [[0, 0], [0.9, 0], [0.9, 3], [0, 3]], [12.9, 0.0], [], null, 'edge-right'),
+]);
+$edgeImage = imagecreatefromstring($imageRenderer->render($edgePlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, \VuuroScan\Export\FloorPlanStyle::from('full')));
+$edgeBackground = imagecolorat($edgeImage, 0, 0);
+$edgeInk = 0;
+foreach ([0, 1, imagesx($edgeImage) - 2, imagesx($edgeImage) - 1] as $edgeX) {
+    for ($edgeY = 0; $edgeY < imagesy($edgeImage); $edgeY++) {
+        if (imagecolorat($edgeImage, $edgeX, $edgeY) !== $edgeBackground) {
+            $edgeInk++;
+        }
+    }
+}
+x_check('a long name in a narrow room at the left or right edge stays inside the PNG', $edgeInk === 0, "$edgeInk pixel(s) drawn on the outer columns");
 
 echo "\n== Dutch letters in plan text ==\n";
 $wrapped = \VuuroScan\Export\TextWrap::lines(str_repeat('é', 200), 95);

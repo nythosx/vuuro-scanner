@@ -183,16 +183,17 @@ struct VuuroCaptureGuessPill: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Button(action: onReject) {
+            Button(action: onConfirm) {
                 Text("\(typeName)?")
                     .font(.system(size: 14, weight: .bold))
                     .tracking(-0.2)
                     .foregroundStyle(Color(red: 24 / 255, green: 24 / 255, blue: 27 / 255))
                     .padding(.leading, 16)
                     .padding(.trailing, 6)
+                    .padding(.vertical, 8)
             }
             .buttonStyle(.plain)
-            .accessibilityHint("Choose another room type or type a name")
+            .accessibilityHint("Tap to confirm this room type")
 
             Button(action: onConfirm) {
                 Text("✓")

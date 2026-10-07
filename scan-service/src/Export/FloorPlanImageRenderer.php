@@ -671,7 +671,18 @@ final class FloorPlanImageRenderer
             $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(1, $line));
         }
 
-        $canvasWidth = max($headerTextWidth, self::MARGIN * 2 + self::DIMENSION_GUTTER + (int) round(($maxX - $minX) * self::PIXELS_PER_METER));
+        $maxLabelWidth = 0;
+        foreach ($rooms as $labelRoom) {
+            if ($this->planStyle->isFunda) {
+                $sizeKey = ((float) ($labelRoom['floor_area_m2'] ?? 0)) < 4.0 ? 2 : 4;
+                $maxLabelWidth = max($maxLabelWidth, $this->textWidth($sizeKey, $this->printable(RoomType::planName($labelRoom))));
+            } else {
+                $maxLabelWidth = max($maxLabelWidth, $this->textWidth(3, $this->printable($this->displayLabel($labelRoom))));
+            }
+        }
+        $labelPadding = (int) ceil($maxLabelWidth / 2) + 8;
+        $planBlockWidth = self::DIMENSION_GUTTER + $labelPadding + (int) round(($maxX - $minX) * self::PIXELS_PER_METER) + $labelPadding;
+        $canvasWidth = max($headerTextWidth, self::MARGIN * 2 + $planBlockWidth);
         $canvasHeight = self::MARGIN * 2 + $topGutter + (int) round(($maxZ - $minZ) * self::PIXELS_PER_METER)
             + count($notesLines) * self::NOTE_LINE_HEIGHT
             + count($summaryLines) * self::NOTE_LINE_HEIGHT
@@ -730,9 +741,8 @@ final class FloorPlanImageRenderer
             $this->drawText($image, 2, self::MARGIN, $headerLineY, ExportLanguage::t('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms)), $subtext);
         }
 
-        $planBlockWidth = self::DIMENSION_GUTTER + (int) round(($maxX - $minX) * self::PIXELS_PER_METER);
         $planLeft = max(self::MARGIN, (int) round((imagesx($image) - $planBlockWidth) / 2));
-        $originPxX = $planLeft + self::DIMENSION_GUTTER;
+        $originPxX = $planLeft + self::DIMENSION_GUTTER + $labelPadding;
         $originPxY = self::MARGIN + $topGutter;
         $toPx = function (float $worldX, float $worldZ) use ($minX, $minZ, $originPxX, $originPxY): array {
             return [
