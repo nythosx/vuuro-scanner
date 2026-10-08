@@ -32,21 +32,23 @@ final class DollhouseMeshBuilderTests: XCTestCase {
         """
     }
 
-    func testSingleRoomBoundsMatchOutline() throws {
+    func testSingleRoomBoundsCoverOutlinePlusWallThickness() throws {
         let rooms = try makeRooms("[\(roomJSON())]")
-        let scene = try DollhouseMeshBuilder.build(rooms: rooms)
+        let scene = try DollhouseMeshBuilder.build(rooms: rooms, configuration: DollhouseBuildConfiguration(mode: .dollhouse))
+        let halfWall = DollhouseConstants.exteriorWallThicknessM / 2
         XCTAssertEqual(scene.roomCount, 1)
         XCTAssertFalse(scene.isEmpty)
-        XCTAssertEqual(scene.boundsMin.x, 0, accuracy: 0.05)
-        XCTAssertEqual(scene.boundsMin.y, 0, accuracy: 0.05)
-        XCTAssertEqual(scene.boundsMax.x, 4, accuracy: 0.05)
-        XCTAssertEqual(scene.boundsMax.z, 3, accuracy: 0.05)
-        XCTAssertEqual(scene.boundsMax.y, 2.6, accuracy: 0.05)
+        XCTAssertEqual(scene.boundsMin.x, -halfWall, accuracy: 0.01)
+        XCTAssertEqual(scene.boundsMin.z, -halfWall, accuracy: 0.01)
+        XCTAssertEqual(scene.boundsMin.y, 0, accuracy: 0.01)
+        XCTAssertEqual(scene.boundsMax.x, 4 + halfWall, accuracy: 0.01)
+        XCTAssertEqual(scene.boundsMax.z, 3 + halfWall, accuracy: 0.01)
+        XCTAssertEqual(scene.boundsMax.y, 2.6, accuracy: 0.01)
     }
 
     func testNullHeightUsesDefaultAndFlagsEstimate() throws {
         let rooms = try makeRooms("[\(roomJSON(height: "null"))]")
-        let scene = try DollhouseMeshBuilder.build(rooms: rooms)
+        let scene = try DollhouseMeshBuilder.build(rooms: rooms, configuration: DollhouseBuildConfiguration(mode: .dollhouse))
         XCTAssertTrue(scene.usedEstimatedHeight)
         XCTAssertEqual(scene.boundsMax.y, DollhouseConstants.defaultHeightM, accuracy: 0.05)
     }

@@ -1,5 +1,6 @@
 import Foundation
 import ModelIO
+import SceneKit
 import simd
 
 enum DollhouseUSDZExporterError: Error, LocalizedError {
@@ -18,10 +19,24 @@ enum DollhouseUSDZExporter {
 
     static func export(_ scene: DollhouseScene, to url: URL) throws {
         guard !scene.isEmpty else { throw DollhouseUSDZExporterError.emptyScene }
-        guard MDLAsset.canExportFileExtension("usdz") else {
-            throw DollhouseUSDZExporterError.usdzNotSupported
+        var modelIOError: Error?
+        if MDLAsset.canExportFileExtension("usdz") {
+            do {
+                try exportWithModelIO(scene, to: url)
+                return
+            } catch {
+                modelIOError = error
+            }
         }
+        let sceneKitScene = DollhouseSceneBuilder.buildScene(from: scene)
+        if sceneKitScene.write(to: url, options: nil, delegate: nil, progressHandler: nil),
+           FileManager.default.fileExists(atPath: url.path) {
+            return
+        }
+        throw modelIOError ?? DollhouseUSDZExporterError.usdzNotSupported
+    }
 
+    private static func exportWithModelIO(_ scene: DollhouseScene, to url: URL) throws {
         let asset = MDLAsset()
 
         var objectsByPath: [String: MDLObject] = [:]
