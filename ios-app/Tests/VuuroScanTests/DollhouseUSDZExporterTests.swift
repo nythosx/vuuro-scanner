@@ -70,20 +70,7 @@ final class DollhouseUSDZExporterTests: XCTestCase {
 
         let reloaded = MDLAsset(url: url)
         XCTAssertGreaterThan(reloaded.count, 0)
-
-        var meshCount = 0
-        func walk(_ object: MDLObject) {
-            if object.components.contains(where: { $0 is MDLMesh }) { meshCount += 1 }
-            for child in object.children.objects {
-                walk(child)
-            }
-        }
-        for index in 0..<reloaded.count {
-            if let object = reloaded.object(at: index) as MDLObject? {
-                walk(object)
-            }
-        }
-        XCTAssertGreaterThan(meshCount, 0)
+        XCTAssertGreaterThan(reloaded.childObjects(of: MDLMesh.self).count, 0)
     }
 
 
