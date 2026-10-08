@@ -40,6 +40,18 @@ final class ExportStyleSettingsTests: XCTestCase {
         XCTAssertEqual(settings(categories: ["sofa", "bed"]).furnitureQueryValue, "bed,sofa")
     }
 
+    func testSaveIfChangedOnlyWritesARealChange() {
+        let original = ExportStyleSettings.load()
+        defer { original.save() }
+        let before = settings()
+        before.save()
+        XCTAssertFalse(before.saveIfChanged(from: before))
+        var after = before
+        after.orientation = "longest_horizontal"
+        XCTAssertTrue(after.saveIfChanged(from: before))
+        XCTAssertEqual(ExportStyleSettings.load().orientation, "longest_horizontal")
+    }
+
     func testSettingsRoundTripThroughUserDefaults() {
         let original = ExportStyleSettings.load()
         defer { original.save() }

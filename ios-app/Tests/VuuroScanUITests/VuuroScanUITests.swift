@@ -104,7 +104,7 @@ final class VuuroScanUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Unit captured"].waitForExistence(timeout: timeout))
     }
 
-    func testExportStyleChangesWaitForSave() {
+    func testExportStyleChangesSaveRightAway() {
         let app = makeApp()
         app.launch()
         startScan(app, entry: "home.scanSingleRoom", property: "prop-ui-style", unit: "unit-1")
@@ -115,10 +115,13 @@ final class VuuroScanUITests: XCTestCase {
         let planType = element(app, "exportStyle.planType")
         XCTAssertTrue(planType.waitForExistence(timeout: timeout))
         scrollIntoView(app, planType)
+        planType.buttons["Automatic"].tap()
         planType.buttons["Full report"].tap()
-        XCTAssertTrue(element(app, "result.saveChanges").waitForExistence(timeout: timeout))
-        tap(app, "result.discardChanges")
+        tap(app, "exportStyle.walkPath")
         XCTAssertFalse(element(app, "result.saveChanges").waitForExistence(timeout: 3))
+        tap(app, "result.done")
+        XCTAssertFalse(app.alerts["Unsaved changes"].waitForExistence(timeout: 2))
+        XCTAssertTrue(element(app, "home.scanSingleRoom").waitForExistence(timeout: timeout))
     }
 
     func testAttachmentsAddNoteAndFinish() {
@@ -136,6 +139,31 @@ final class VuuroScanUITests: XCTestCase {
 
         tap(app, "attachments.finishAndUpload")
         XCTAssertTrue(element(app, "result.done").waitForExistence(timeout: timeout), "result screen never appeared")
+    }
+
+    func testEditNoteFromResult() {
+        let app = makeApp()
+        app.launch()
+        startScan(app, entry: "home.scanSingleRoom", property: "prop-ui-editnote", unit: "unit-1")
+        tap(app, "capture.fakeScan")
+        tap(app, "anotherRoom.finishUnit")
+
+        let noteEditor = element(app, "attachments.note")
+        XCTAssertTrue(noteEditor.waitForExistence(timeout: timeout), "attachments.note never appeared")
+        scrollIntoView(app, noteEditor)
+        noteEditor.tap()
+        noteEditor.typeText("Crack in wall")
+        finishToResult(app)
+
+        tap(app, "attachmentsList.editNote")
+        let editor = element(app, "noteEdit.text")
+        XCTAssertTrue(editor.waitForExistence(timeout: timeout), "noteEdit.text never appeared")
+        editor.tap()
+        editor.typeText(" near window")
+        tap(app, "noteEdit.save")
+
+        let edited = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "near window")).firstMatch
+        XCTAssertTrue(edited.waitForExistence(timeout: timeout), "edited note text never showed on the result screen")
     }
 
     func testMissingItemFromResult() {

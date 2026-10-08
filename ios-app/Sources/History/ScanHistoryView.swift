@@ -1187,7 +1187,7 @@ private struct ImportScanView: View {
                     VuuroHero(
                         greeting: nil,
                         title: "Paste a share code",
-                        subtitle: "Ask the other person for the code from their History. Once added, you can view and export the scan, and continue it by adding rooms or floors."
+                        subtitle: "Ask the other person for the code in their History. Then you can view, export and continue the scan."
                     )
 
                     ZStack(alignment: .topLeading) {

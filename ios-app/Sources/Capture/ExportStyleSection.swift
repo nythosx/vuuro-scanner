@@ -22,7 +22,7 @@ struct ExportStyleSection: View {
                 }
                 .accessibilityIdentifier("exportStyle.planType")
                 .pickerStyle(.segmented)
-                Text(style.planType.explanation + " Applies to every export from this phone once you save.")
+                Text(vuuroLocalized(style.planType.explanation) + " " + vuuroLocalized("Saved right away. Applies to every export from this phone."))
                     .font(.system(size: 12))
                     .foregroundStyle(VuuroColor.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -45,7 +45,7 @@ struct ExportStyleSection: View {
                     .tint(VuuroColor.lime)
             }
 
-            VuuroInputRow(leadingIcon: "rectangle.portrait.rotate", label: "Plan orientation", showsDivider: true) {
+            VuuroInputRow(leadingIcon: "rectangle.portrait.rotate", label: "Plan orientation", showsDivider: false) {
                 Picker("", selection: $style.orientation) {
                     Text("As scanned").tag("as_captured")
                     Text("Straightened").tag("longest_horizontal")
@@ -55,6 +55,17 @@ struct ExportStyleSection: View {
                 .pickerStyle(.menu)
                 .tint(VuuroColor.textPrimary)
             }
+
+            Text(vuuroLocalized("Straightened only changes a plan that was scanned at an angle."))
+                .font(.system(size: 12))
+                .foregroundStyle(VuuroColor.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
+                .overlay(alignment: .bottom) {
+                    Rectangle().fill(VuuroColor.borderSoft).frame(height: 1)
+                }
 
             VuuroInputRow(leadingIcon: "paintpalette", label: "Room color", showsDivider: true) {
                 Picker("", selection: $style.roomFill) {

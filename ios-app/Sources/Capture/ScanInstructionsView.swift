@@ -39,26 +39,26 @@ struct ScanInstructionsView: View {
 
     private var heroSubtitle: String {
         type == .multi
-            ? "Scan room after room in one walk. When you finish, all rooms are merged into one connected plan."
-            : "Scan a room on its own. Every room you add shows as its own tile on the plan."
+            ? "Scan room after room in one walk. At the end, all rooms become one plan."
+            : "Each room is scanned on its own. It shows as its own tile on the plan."
     }
 
     private var steps: [ScanInstructionItem] {
         switch type {
         case .single:
             return [
-                ScanInstructionItem(icon: "", title: "Fill in the property details", detail: "Then tap Start room scan. The camera starts scanning right away."),
-                ScanInstructionItem(icon: "", title: "Pan slowly around the walls", detail: "Hold the phone upright at chest height and keep each wall in view for a few seconds. The ring counts the walls found."),
-                ScanInstructionItem(icon: "", title: "Cover every corner and doorway", detail: "The plan is drawn from the floor outline, so make sure it closes all the way around."),
-                ScanInstructionItem(icon: "", title: "Tap Finish room", detail: "The room uploads. Then choose Scan another room, or Finish unit to add notes and photos."),
+                ScanInstructionItem(icon: "", title: "Fill in the property details", detail: "Then tap Start room scan. Scanning starts right away."),
+                ScanInstructionItem(icon: "", title: "Pan slowly around the walls", detail: "Hold the phone upright at chest height. Keep each wall in view for a few seconds. The ring counts the walls found."),
+                ScanInstructionItem(icon: "", title: "Cover every corner and doorway", detail: "The plan follows the floor outline. Make sure it closes all the way around."),
+                ScanInstructionItem(icon: "", title: "Tap Finish room", detail: "The room uploads. Then tap Scan another room, or Finish unit to add notes and photos."),
             ]
         case .multi:
             return [
-                ScanInstructionItem(icon: "", title: "Start in the first room", detail: "Fill in the property details and tap Start unit scan. The camera starts scanning right away."),
+                ScanInstructionItem(icon: "", title: "Start in the first room", detail: "Fill in the property details. Then tap Start unit scan. Scanning starts right away."),
                 ScanInstructionItem(icon: "", title: "Scan the room slowly", detail: "Pan around all the walls and corners before you leave the room."),
-                ScanInstructionItem(icon: "", title: "Tap Save & next", detail: "The room is saved on this phone and the next room starts scanning. Keep the camera up while you walk to the next room."),
-                ScanInstructionItem(icon: "", title: "Repeat for every room", detail: "Tap the room counter next to Save & next to see the saved rooms, remove one to rescan it, or delete it."),
-                ScanInstructionItem(icon: "", title: "Tap Finish in the last room", detail: "Finish appears once the first room is saved. The room you are scanning is included, then all rooms are merged and uploaded."),
+                ScanInstructionItem(icon: "", title: "Tap Save & next", detail: "The room is saved on this phone. The next room starts scanning. Keep the camera up as you walk."),
+                ScanInstructionItem(icon: "", title: "Repeat for every room", detail: "Tap the room counter next to Save & next. There you can see, rescan or delete saved rooms."),
+                ScanInstructionItem(icon: "", title: "Tap Finish in the last room", detail: "Finish shows once the first room is saved. The room you are scanning is included. Then all rooms are merged and uploaded."),
             ]
         }
     }
@@ -67,20 +67,20 @@ struct ScanInstructionsView: View {
         let shared = [
             ScanInstructionItem(icon: "lightbulb", title: "Turn on the lights", detail: "Dim rooms, mirrors and glass walls reduce accuracy."),
             ScanInstructionItem(icon: "tortoise", title: "Move slower than feels natural", detail: "Fast pans lose corners and door frames."),
-            ScanInstructionItem(icon: "ruler", title: "Large rooms: walk the walls slowly", detail: "For a big open space, follow the walls and keep the phone pointed at them. If the app says the space is too large, save what you have and scan the rest as a separate room."),
+            ScanInstructionItem(icon: "ruler", title: "Large rooms: walk the walls slowly", detail: "Follow the walls and keep the phone pointed at them. If the app says the space is too large, save what you have. Then scan the rest as a separate room."),
             ScanInstructionItem(icon: "iphone", title: "Keep the app open while scanning", detail: "Switching apps, a call or locking the screen stops the scan. Rooms already captured are kept and can be uploaded."),
         ]
         switch type {
         case .single:
             return shared + [
                 ScanInstructionItem(icon: "building.2", title: "Set the floor", detail: "Tap Set floor at the top of the camera to note which floor the room is on."),
-                ScanInstructionItem(icon: "square.grid.2x2", title: "Need rooms joined into one layout?", detail: "Rooms scanned here are not placed next to each other. Use Scan a whole unit for one connected plan."),
+                ScanInstructionItem(icon: "square.grid.2x2", title: "Need one connected plan?", detail: "Rooms scanned here are not placed next to each other. Use Scan a whole unit instead."),
             ]
         case .multi:
             return shared + [
-                ScanInstructionItem(icon: "building.2", title: "Set the floor when you change floors", detail: "Tap Set floor at the top of the camera. It applies to the room you are scanning and the rooms after it, until you change it."),
+                ScanInstructionItem(icon: "building.2", title: "Set the floor when you change floors", detail: "Tap Set floor at the top of the camera. It applies to this room and the next ones, until you change it."),
                 ScanInstructionItem(icon: "iphone", title: "Keep the app open while scanning", detail: "Switching apps or locking the phone can interrupt the room you are scanning."),
-                ScanInstructionItem(icon: "tray.and.arrow.down", title: "Interrupted? Saved rooms are kept", detail: "Start a whole unit scan again with the same property details, and you can upload the rooms you already saved."),
+                ScanInstructionItem(icon: "tray.and.arrow.down", title: "Interrupted? Saved rooms are kept", detail: "Start a whole unit scan again with the same property details. Then you can upload the saved rooms."),
             ]
         }
     }
@@ -88,7 +88,7 @@ struct ScanInstructionsView: View {
     private var avoid: [ScanInstructionItem] {
         guard type == .multi else { return [] }
         return [
-            ScanInstructionItem(icon: "xmark", title: "Don't tap Finish before the last room", detail: "Finish merges and uploads the unit. To add rooms later, open the scan in History and tap Continue this scan."),
+            ScanInstructionItem(icon: "xmark", title: "Don't tap Finish before the last room", detail: "Finish merges and uploads the unit. To add rooms later, use Continue this scan in History."),
             ScanInstructionItem(icon: "xmark", title: "Don't scan the same room twice", detail: "It can create overlapping rooms. To redo a room, remove it first with the retry arrow in the room list."),
         ]
     }
@@ -130,7 +130,7 @@ struct ScanInstructionsView: View {
                             .foregroundStyle(VuuroColor.textPrimary)
                             .fixedSize(horizontal: false, vertical: true)
                         Text(LocalizedStringKey(heroSubtitle))
-                            .font(.system(size: 14))
+                            .font(.system(size: 15))
                             .lineSpacing(4)
                             .foregroundStyle(VuuroColor.textSecondary)
                             .frame(maxWidth: 340, alignment: .leading)
@@ -254,15 +254,15 @@ struct ScanInstructionsView: View {
     }
 
     private func itemText(_ item: ScanInstructionItem) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(LocalizedStringKey(item.title))
-                .font(.system(size: 14, weight: .bold))
+                .font(.system(size: 15, weight: .bold))
                 .tracking(-0.2)
                 .foregroundStyle(VuuroColor.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
             Text(LocalizedStringKey(item.detail))
-                .font(.system(size: 13))
-                .lineSpacing(3)
+                .font(.system(size: 14))
+                .lineSpacing(4)
                 .foregroundStyle(VuuroColor.textSecondary)
                 .frame(maxWidth: 340, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)

@@ -231,12 +231,23 @@ struct FloorPlan: Codable {
         let category: String
         let positionM: [Double]
         let confidence: String
+        let widthM: Double?
 
         enum CodingKeys: String, CodingKey {
             case openingId = "opening_id"
             case category
             case positionM = "position_m"
             case confidence
+            case widthM = "width_m"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            openingId = try c.decode(String.self, forKey: .openingId)
+            category = try c.decode(String.self, forKey: .category)
+            positionM = try c.decode([Double].self, forKey: .positionM)
+            confidence = try c.decode(String.self, forKey: .confidence)
+            widthM = try c.decodeIfPresent(Double.self, forKey: .widthM)
         }
     }
 
@@ -248,6 +259,7 @@ struct FloorPlan: Codable {
         let confidence: String
         let customName: String?
         let excluded: Bool
+        let yawDeg: Double?
 
         enum CodingKeys: String, CodingKey {
             case objectId = "object_id"
@@ -257,6 +269,7 @@ struct FloorPlan: Codable {
             case confidence
             case customName = "custom_name"
             case excluded
+            case yawDeg = "yaw_deg"
         }
 
         init(from decoder: Decoder) throws {
@@ -268,6 +281,7 @@ struct FloorPlan: Codable {
             confidence = try c.decode(String.self, forKey: .confidence)
             customName = try c.decodeIfPresent(String.self, forKey: .customName)
             excluded = try c.decodeIfPresent(Bool.self, forKey: .excluded) ?? false
+            yawDeg = try c.decodeIfPresent(Double.self, forKey: .yawDeg)
         }
 
         var displayName: String {

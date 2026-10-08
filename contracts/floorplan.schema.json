@@ -119,7 +119,7 @@
             "minItems": 2,
             "maxItems": 2,
             "items": { "type": "number" },
-            "description": "LIDAR-5/11: this room's [x, z] placement in a multi-room fused structure's shared frame, only when captured together with other rooms via StructureBuilder in one continuous visit. Null for every room captured the ordinary way (single-room, or LIDAR-4 resume-later) — never fabricated. outline_m itself stays room-local regardless; this is an additive offset, not a replacement (see docs/proposals/multi-room-fusion.md)."
+            "description": "LIDAR-5/11: this room's [x, z] placement in a multi-room fused structure's shared frame, only when captured together with other rooms via StructureBuilder in one continuous visit. Null for every room captured the ordinary way (single-room, or LIDAR-4 resume-later) — never fabricated. outline_m itself stays room-local regardless; this is an additive offset, not a replacement (see docs/proposals/multi-room-fusion.md). Feeds the 3D dollhouse view (see docs/adr/0008-dollhouse-3d.md)."
           },
           "floor": {
             "type": ["string", "null"],
@@ -139,7 +139,7 @@
             "type": ["number", "null"],
             "minimum": 0,
             "exclusiveMaximum": 360,
-            "description": "Compass bearing (degrees, clockwise from true north, [0, 360)) of the direction of increasing z in this room's own outline_m frame — i.e. which way true north points relative to this room's own local coordinates, captured once from the device's heading at the moment this room's capture session began. Independent of structure_origin_m: a real compass reading, not derived from ARKit/RoomPlan geometry. Null whenever the device's compass wasn't available or calibrated at capture time (no location permission, heading unavailable, or a client older than this field) — never fabricated or assumed to be 0/north-up. Two rooms only share a heading_deg value when they were captured in the same continuous session (see structure_origin_m); an ordinary tiled room added later has its own independent reading."
+            "description": "Compass bearing (degrees, clockwise from true north, [0, 360)) of the direction of increasing z in this room's own outline_m frame — i.e. which way true north points relative to this room's own local coordinates, captured once from the device's heading at the moment this room's capture session began. Independent of structure_origin_m: a real compass reading, not derived from ARKit/RoomPlan geometry. Null whenever the device's compass wasn't available or calibrated at capture time (no location permission, heading unavailable, or a client older than this field) — never fabricated or assumed to be 0/north-up. Two rooms only share a heading_deg value when they were captured in the same continuous session (see structure_origin_m); an ordinary tiled room added later has its own independent reading. The 3D dollhouse view (see docs/adr/0008-dollhouse-3d.md) will use this field for a north indicator once that view renders one; the 2D SVG renderer already uses it."
           },
           "openings": {
             "type": "array",

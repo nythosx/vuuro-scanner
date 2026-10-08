@@ -115,10 +115,10 @@ struct HomeDetailView: View {
 
     private var addChoiceMessage: String {
         guard let latest = home?.mostRecentEntry else {
-            return "This saves as a new report, grouped under this home."
+            return vuuroLocalized("This saves as a new report, grouped under this home.")
         }
         let date = Self.dateFormatter.string(from: latest.lastActivityAt)
-        return "Adding to the latest scan (\(date)) keeps every floor in one report; the new rooms show as their own section next to the existing plan. A new visit saves as its own report, grouped under this home."
+        return String(format: vuuroLocalized("Continue this home adds the rooms to the latest scan (%@). Every floor stays in one report, and the new rooms get their own section. A new visit saves as its own report under this home."), date)
     }
 
     private var hero: some View {

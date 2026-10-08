@@ -107,6 +107,7 @@ struct RoomResultCard: View {
     var onUndoSplit: (() -> Void)? = nil
     var onSetFloor: (() -> Void)? = nil
     var onDeleteRoom: (() -> Void)? = nil
+    var onAttachmentsChanged: ((FloorPlan) -> Void)? = nil
 
     @State private var showCustomRoomType = false
     @State private var customRoomTypeDraft: String = ""
@@ -586,7 +587,13 @@ struct RoomResultCard: View {
     private var attachments: some View {
         VStack(alignment: .leading, spacing: 10) {
             Divider().background(VuuroColor.borderSoft)
-            RoomAttachmentsList(session: session, photos: photos, notes: notes)
+            RoomAttachmentsList(
+                session: session,
+                photos: photos,
+                notes: notes,
+                roomId: room.roomId,
+                onChanged: onAttachmentsChanged
+            )
         }
     }
 

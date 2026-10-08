@@ -51,6 +51,11 @@ struct ScanResultsReportView: View {
     @State private var showUnsavedChangesAlert = false
 
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
+    @AppStorage("reportUses3D") private var reportUses3D: Bool = false
+    @State private var isExportingUSDZ = false
+    @State private var usdzURL: URL?
+    @State private var showUSDZShare = false
+    @State private var showUSDZPreview = false
 
     private var exportUnit: MeasurementUnit {
         MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
@@ -84,26 +89,37 @@ struct ScanResultsReportView: View {
                         loadingState
                     } else if let floorPlan {
                         if !floorPlan.rooms.isEmpty {
-                            if RoomGridSection.shows(for: floorPlan.rooms) {
-                                RoomGridSection(
+                            reportPlanViewPicker
+                            if reportUses3D {
+                                DollhouseContainerView(
                                     rooms: floorPlan.rooms,
-                                    sessionId: entry.sessionId,
-                                    accessToken: entry.accessToken,
-                                    unit: exportUnit,
-                                    refreshKey: "\(planRevision)",
-                                    identifierPrefix: "report",
-                                    imageActionLabel: "Save image",
-                                    imageActionIdentifier: "report.saveImage",
-                                    isFetchingPDF: isFetchingPDF,
-                                    onOpen: { image in previewImage = PreviewImage(image: image) },
-                                    onImageAction: { Task { await shareImage() } },
-                                    onViewPDF: { Task { await openPDF() } }
+                                    onShowPlan: { reportUses3D = false }
                                 )
+                                .padding(.bottom, 12)
                             } else {
-                                floorPlanCard(floorPlan: floorPlan)
+                                if RoomGridSection.shows(for: floorPlan.rooms) {
+                                    RoomGridSection(
+                                        rooms: floorPlan.rooms,
+                                        sessionId: entry.sessionId,
+                                        accessToken: entry.accessToken,
+                                        unit: exportUnit,
+                                        refreshKey: "\(planRevision)",
+                                        identifierPrefix: "report",
+                                        imageActionLabel: "Save image",
+                                        imageActionIdentifier: "report.saveImage",
+                                        isFetchingPDF: isFetchingPDF,
+                                        onOpen: { image in previewImage = PreviewImage(image: image) },
+                                        onImageAction: { Task { await shareImage() } },
+                                        onViewPDF: { Task { await openPDF() } }
+                                    )
+                                } else {
+                                    floorPlanCard(floorPlan: floorPlan)
+                                }
                             }
                         }
-                        placementBanner
+                        if !reportUses3D {
+                            placementBanner
+                        }
                         if onContinueScan != nil && DeviceCapability.canCaptureRooms {
                             continueScanButton
                         }
@@ -306,6 +322,28 @@ struct ScanResultsReportView: View {
         } message: {
             Text("You have unsaved edits on this scan.")
         }
+        .sheet(isPresented: $showUSDZShare) {
+            if let usdzURL {
+                ActivityShareSheet(items: [usdzURL])
+            }
+        }
+        .fullScreenCover(isPresented: $showUSDZPreview) {
+            if let usdzURL {
+                ARQuickLookPreview(url: usdzURL, onDismiss: { showUSDZPreview = false })
+                    .ignoresSafeArea()
+            }
+        }
+    }
+
+    private var reportPlanViewPicker: some View {
+        Picker("View", selection: $reportUses3D) {
+            Text("2D plan").tag(false)
+            Text("3D").tag(true)
+        }
+        .accessibilityIdentifier("report.planViewMode")
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 12)
     }
 
     private var navBar: some View {
@@ -335,6 +373,18 @@ struct ScanResultsReportView: View {
                         Label("Share PDF", systemImage: "doc")
                     }
                     .accessibilityIdentifier("report.sharePDF")
+                    Button {
+                        Task { await prepareUSDZ(forPreview: false) }
+                    } label: {
+                        Label("Share 3D model", systemImage: "cube")
+                    }
+                    .accessibilityIdentifier("report.shareUSDZ")
+                    Button {
+                        Task { await prepareUSDZ(forPreview: true) }
+                    } label: {
+                        Label("Preview in AR", systemImage: "arkit")
+                    }
+                    .accessibilityIdentifier("report.previewAR")
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 15, weight: .semibold))
@@ -605,7 +655,8 @@ struct ScanResultsReportView: View {
                 RoomAttachmentsList(
                     session: entry.asResumableSession(),
                     photos: unitPhotos,
-                    notes: unitNotes
+                    notes: unitNotes,
+                    onChanged: { updated in applyAttachmentChange(updated) }
                 )
             }
             .padding(16)
@@ -693,7 +744,8 @@ struct ScanResultsReportView: View {
                 roomFloorDraft = room.floor ?? ""
                 floorTargetRoom = room
             },
-            onDeleteRoom: delete
+            onDeleteRoom: delete,
+            onAttachmentsChanged: { updated in applyAttachmentChange(updated) }
         )
     }
 
@@ -841,6 +893,14 @@ struct ScanResultsReportView: View {
     }
 
     @MainActor
+    private func applyAttachmentChange(_ updated: FloorPlan) {
+        floorPlan = updated
+        cacheRoomBreakdown(updated)
+        discardRenderedExports()
+        Task { await loadImage() }
+    }
+
+    @MainActor
     private func discardRenderedExports() {
         FloorPlanImageCache.shared.invalidate(sessionId: entry.sessionId)
         ExportNaming.removeExports(sessionId: entry.sessionId)
@@ -905,7 +965,7 @@ struct ScanResultsReportView: View {
     private var continueScanMessage: String {
         let isUnitScan = floorPlan?.rooms.contains { $0.captureGroupId != nil && $0.structureOriginM != nil } ?? false
         if isUnitScan {
-            return vuuroLocalized("If this phone recognises the rooms you already scanned, the new rooms are joined to this plan. Otherwise they are added as their own section and you can place them by hand. Only scan rooms that are not in the plan yet.")
+            return vuuroLocalized("If this phone recognises the rooms you already scanned, new rooms join this plan. Otherwise they get their own section, and you can place them by hand. Only scan rooms that are not in the plan yet.")
         }
         return vuuroLocalized("New rooms are added to this report as their own section. They are not joined to the rooms you already scanned, so only scan rooms that are not in the plan yet.")
     }
@@ -999,6 +1059,49 @@ struct ScanResultsReportView: View {
             sessionId: entry.sessionId,
             roomsByFloor: CachedFloorSummary.buckets(from: plan.rooms)
         )
+    }
+
+    @MainActor
+    private func prepareUSDZ(forPreview: Bool) async {
+        guard !isExportingUSDZ, let floorPlan, !floorPlan.rooms.isEmpty else { return }
+        isExportingUSDZ = true
+        defer { isExportingUSDZ = false }
+        do {
+            let scene = try DollhouseMeshBuilder.build(
+                rooms: floorPlan.rooms,
+                configuration: DollhouseBuildConfiguration(mode: .dollhouse)
+            )
+            let url = try ExportNaming.url(
+                sessionId: entry.sessionId,
+                property: entry.propertyId,
+                unit: entry.unitId,
+                room: nil,
+                date: Date(),
+                suffix: "dollhouse",
+                ext: "usdz"
+            )
+            try DollhouseUSDZExporter.export(
+                scene,
+                to: url,
+                metadata: [
+                    "property_id": entry.propertyId,
+                    "unit_id": entry.unitId,
+                    "organisation_id": entry.organisationId,
+                    "captured_at": floorPlan.capturedAt,
+                    "measurement_basis": "indicative_nen2580_inspired",
+                    "disclaimer": "Indicative measurements - NEN2580-inspired, not certified.",
+                ]
+            )
+            usdzURL = url
+            if forPreview {
+                showUSDZPreview = true
+            } else {
+                showUSDZShare = true
+            }
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .dollhouseExport, underlying: error)
+        }
     }
 
     @MainActor

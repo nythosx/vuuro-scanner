@@ -33,7 +33,12 @@ struct ResultSummaryView: View {
     @State private var loadingPlanTarget: PlanTarget?
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
     @State private var exportStyle: ExportStyleSettings = ExportStyleSettings.load()
-    @State private var savedExportStyle: ExportStyleSettings = ExportStyleSettings.load()
+    @State private var styleRenderTask: Task<Void, Never>?
+    @AppStorage("resultUses3D") private var resultUses3D: Bool = false
+    @State private var isExportingUSDZ = false
+    @State private var usdzURL: URL?
+    @State private var showUSDZShare = false
+    @State private var showUSDZPreview = false
 
     private var exportUnit: MeasurementUnit {
         MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
@@ -46,7 +51,7 @@ struct ResultSummaryView: View {
     }
 
     private var hasPendingChanges: Bool {
-        !pendingObjectChanges.isEmpty || exportStyle != savedExportStyle
+        !pendingObjectChanges.isEmpty
     }
 
     init(session: ScanSessionResponse, floorPlan: FloorPlan, onDone: @escaping () -> Void) {
@@ -62,17 +67,46 @@ struct ResultSummaryView: View {
                 title: "Scan result",
                 leading: { VuuroNavSpacer() },
                 trailing: {
-                    Button("Done") {
-                        if hasPendingChanges {
-                            showUnsavedChangesAlert = true
-                        } else {
-                            onDone()
+                    HStack(spacing: 12) {
+                        Menu {
+                            Button {
+                                Task { await prepareUSDZ(forPreview: false) }
+                            } label: {
+                                Label("Share 3D model", systemImage: "cube")
+                            }
+                            .accessibilityIdentifier("result.shareUSDZ")
+                            Button {
+                                Task { await prepareUSDZ(forPreview: true) }
+                            } label: {
+                                Label("Preview in AR", systemImage: "arkit")
+                            }
+                            .accessibilityIdentifier("result.previewAR")
+                        } label: {
+                            if isExportingUSDZ {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Image(systemName: "square.and.arrow.up")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(VuuroColor.accent)
+                                    .frame(width: 30, height: 30, alignment: .trailing)
+                                    .contentShape(Rectangle())
+                            }
                         }
+                        .accessibilityIdentifier("result.shareMenu")
+                        .disabled(isExportingUSDZ || currentFloorPlan.rooms.isEmpty)
+
+                        Button("Done") {
+                            if hasPendingChanges {
+                                showUnsavedChangesAlert = true
+                            } else {
+                                onDone()
+                            }
+                        }
+                        .accessibilityIdentifier("result.done")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(VuuroColor.accent)
+                        .disabled(isSavingChanges)
                     }
-                    .accessibilityIdentifier("result.done")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(VuuroColor.accent)
-                    .disabled(isSavingChanges)
                 }
             )
 
@@ -83,27 +117,36 @@ struct ResultSummaryView: View {
                         splitWarningBanner(warnings)
                     }
                     if !currentFloorPlan.rooms.isEmpty {
-                        if RoomGridSection.shows(for: currentFloorPlan.rooms) {
-                            RoomGridSection(
+                        resultPlanViewPicker
+                        if resultUses3D {
+                            DollhouseContainerView(
                                 rooms: currentFloorPlan.rooms,
-                                sessionId: session.id,
-                                accessToken: session.accessToken,
-                                unit: exportUnit,
-                                refreshKey: "\(planRevision)",
-                                identifierPrefix: "result",
-                                imageActionLabel: "View image",
-                                imageActionIdentifier: "result.viewImage",
-                                isFetchingPDF: isFetchingPDF,
-                                onOpen: { image in previewImage = PreviewImage(image: image) },
-                                onImageAction: { Task { await fetchAndPreviewImage() } },
-                                onViewPDF: { Task { await fetchAndPreviewPDF() } }
+                                onShowPlan: { resultUses3D = false }
                             )
+                            .padding(.bottom, 12)
                         } else {
-                            floorPlanCard
+                            if RoomGridSection.shows(for: currentFloorPlan.rooms) {
+                                RoomGridSection(
+                                    rooms: currentFloorPlan.rooms,
+                                    sessionId: session.id,
+                                    accessToken: session.accessToken,
+                                    unit: exportUnit,
+                                    refreshKey: "\(planRevision)",
+                                    identifierPrefix: "result",
+                                    imageActionLabel: "View image",
+                                    imageActionIdentifier: "result.viewImage",
+                                    isFetchingPDF: isFetchingPDF,
+                                    onOpen: { image in previewImage = PreviewImage(image: image) },
+                                    onImageAction: { Task { await fetchAndPreviewImage() } },
+                                    onViewPDF: { Task { await fetchAndPreviewPDF() } }
+                                )
+                            } else {
+                                floorPlanCard
+                            }
+                            placementBanner
+                            separatePlans
+                            ExportStyleSection(style: $exportStyle)
                         }
-                        placementBanner
-                        separatePlans
-                        ExportStyleSection(style: $exportStyle)
                     }
                     ForEach(RoomFloorSection.sections(for: currentFloorPlan.rooms)) { section in
                         if let title = section.title {
@@ -135,6 +178,9 @@ struct ResultSummaryView: View {
         }
         .background(VuuroColor.bgApp)
         .task { await loadImage() }
+        .onChange(of: exportStyle) { oldStyle, newStyle in
+            applyExportStyle(newStyle, previous: oldStyle)
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if hasPendingChanges {
                 saveBar
@@ -235,7 +281,6 @@ struct ResultSummaryView: View {
             .accessibilityIdentifier("result.unsavedSaveAndLeave")
             Button("Discard and leave", role: .destructive) {
                 pendingObjectChanges.removeAll()
-                exportStyle = savedExportStyle
                 onDone()
             }
             .accessibilityIdentifier("result.unsavedDiscardAndLeave")
@@ -258,6 +303,17 @@ struct ResultSummaryView: View {
                 onCancel: { placementTarget = nil }
             )
         }
+        .sheet(isPresented: $showUSDZShare) {
+            if let usdzURL {
+                ActivityShareSheet(items: [usdzURL])
+            }
+        }
+        .fullScreenCover(isPresented: $showUSDZPreview) {
+            if let usdzURL {
+                ARQuickLookPreview(url: usdzURL, onDismiss: { showUSDZPreview = false })
+                    .ignoresSafeArea()
+            }
+        }
     }
 
     private struct PreviewImage: Identifiable {
@@ -268,6 +324,17 @@ struct ResultSummaryView: View {
     private struct MissingItemTarget: Identifiable {
         let room: FloorPlan.Room
         var id: String { room.roomId }
+    }
+
+    private var resultPlanViewPicker: some View {
+        Picker("View", selection: $resultUses3D) {
+            Text("2D plan").tag(false)
+            Text("3D").tag(true)
+        }
+        .accessibilityIdentifier("result.planViewMode")
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 12)
     }
 
     @MainActor
@@ -307,7 +374,8 @@ struct ResultSummaryView: View {
                 roomFloorDraft = room.floor ?? ""
                 floorTargetRoom = room
             },
-            onDeleteRoom: delete
+            onDeleteRoom: delete,
+            onAttachmentsChanged: { updated in applyAttachmentChange(updated) }
         )
     }
 
@@ -425,7 +493,6 @@ struct ResultSummaryView: View {
         HStack(spacing: 10) {
             Button {
                 pendingObjectChanges.removeAll()
-                exportStyle = savedExportStyle
             } label: {
                 Text("Discard")
                     .font(.system(size: 15, weight: .semibold))
@@ -633,7 +700,8 @@ struct ResultSummaryView: View {
             RoomAttachmentsList(
                 session: session,
                 photos: currentFloorPlan.photos.filter { $0.roomId == nil },
-                notes: currentFloorPlan.notes.filter { $0.roomId == nil }
+                notes: currentFloorPlan.notes.filter { $0.roomId == nil },
+                onChanged: { updated in applyAttachmentChange(updated) }
             )
         }
         .padding(16)
@@ -710,22 +778,26 @@ struct ResultSummaryView: View {
     @MainActor
     private func loadImage() async {
         guard !currentFloorPlan.rooms.isEmpty, floorPlanImage == nil, !isLoadingImage else { return }
-        isLoadingImage = true
-        defer { isLoadingImage = false }
-
         if let cached = FloorPlanImageCache.shared.cachedData(sessionId: session.id, unit: exportUnit),
            let decoded = UIImage(data: cached) {
             floorPlanImage = decoded
             return
         }
 
+        isLoadingImage = true
+        let revision = planRevision
         let data = await FloorPlanImageCache.shared.prefetch(
             sessionId: session.id,
             accessToken: session.accessToken,
             unit: exportUnit,
             client: client
         ).value
+        isLoadingImage = false
 
+        guard revision == planRevision else {
+            await loadImage()
+            return
+        }
         guard let data, let image = UIImage(data: data) else {
             imageFailed = true
             return
@@ -738,21 +810,6 @@ struct ResultSummaryView: View {
         guard !isSavingChanges, hasPendingChanges else { return }
         isSavingChanges = true
         defer { isSavingChanges = false }
-
-        let styleChanged = exportStyle != savedExportStyle
-        if styleChanged {
-            exportStyle.save()
-            savedExportStyle = exportStyle
-            FloorPlanImageCache.shared.clearAll()
-            ExportNaming.removeAllExports()
-        }
-
-        guard !pendingObjectChanges.isEmpty else {
-            discardRenderedExports()
-            await loadImage()
-            await showSaveSuccess()
-            return
-        }
 
         let requests: [ObjectChangeRequest] = pendingObjectChanges.map { key, change in
             ObjectChangeRequest(
@@ -779,10 +836,23 @@ struct ResultSummaryView: View {
         } catch is CancellationError {
         } catch {
             appError = AppError(site: .roomTypeUpdate, underlying: error)
-            if styleChanged {
-                discardRenderedExports()
-                await loadImage()
+        }
+    }
+
+    @MainActor
+    private func applyExportStyle(_ style: ExportStyleSettings, previous: ExportStyleSettings) {
+        guard style.saveIfChanged(from: previous) else { return }
+        FloorPlanImageCache.shared.clearAll()
+        ExportNaming.removeAllExports()
+        discardRenderedExports()
+        styleRenderTask?.cancel()
+        styleRenderTask = Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 400_000_000)
+            } catch {
+                return
             }
+            await loadImage()
         }
     }
 
@@ -816,6 +886,13 @@ struct ResultSummaryView: View {
         } catch {
             appError = AppError(site: .roomTypeUpdate, underlying: error)
         }
+    }
+
+    @MainActor
+    private func applyAttachmentChange(_ updated: FloorPlan) {
+        currentFloorPlan = updated
+        discardRenderedExports()
+        Task { await loadImage() }
     }
 
     @MainActor
@@ -888,6 +965,49 @@ struct ResultSummaryView: View {
         } catch is CancellationError {
         } catch {
             appError = AppError(site: .historyImageDownload, underlying: error)
+        }
+    }
+
+    @MainActor
+    private func prepareUSDZ(forPreview: Bool) async {
+        guard !isExportingUSDZ, !currentFloorPlan.rooms.isEmpty else { return }
+        isExportingUSDZ = true
+        defer { isExportingUSDZ = false }
+        do {
+            let scene = try DollhouseMeshBuilder.build(
+                rooms: currentFloorPlan.rooms,
+                configuration: DollhouseBuildConfiguration(mode: .dollhouse)
+            )
+            let url = try ExportNaming.url(
+                sessionId: session.id,
+                property: session.propertyId,
+                unit: session.unitId,
+                room: nil,
+                date: Date(),
+                suffix: "dollhouse",
+                ext: "usdz"
+            )
+            try DollhouseUSDZExporter.export(
+                scene,
+                to: url,
+                metadata: [
+                    "property_id": session.propertyId,
+                    "unit_id": session.unitId,
+                    "organisation_id": session.organisationId,
+                    "captured_at": currentFloorPlan.capturedAt,
+                    "measurement_basis": "indicative_nen2580_inspired",
+                    "disclaimer": "Indicative measurements - NEN2580-inspired, not certified.",
+                ]
+            )
+            usdzURL = url
+            if forPreview {
+                showUSDZPreview = true
+            } else {
+                showUSDZShare = true
+            }
+        } catch is CancellationError {
+        } catch {
+            appError = AppError(site: .dollhouseExport, underlying: error)
         }
     }
 

@@ -26,6 +26,7 @@ struct AppError {
         case noteUpdate = "NOTE_UPDATE"
         case noteDelete = "NOTE_DELETE"
         case photoDelete = "PHOTO_DELETE"
+        case photoLoad = "PHOTO_LOAD"
         case roomTypeUpdate = "ROOM_TYPE_UPDATE"
         case roomLabelUpdate = "ROOM_LABEL_UPDATE"
         case roomSplit = "ROOM_SPLIT"
@@ -34,6 +35,7 @@ struct AppError {
         case resultImageLoad = "RESULT_IMAGE_LOAD"
         case resultImageDecode = "RESULT_IMAGE_DECODE"
         case resultPDFLoad = "RESULT_PDF_LOAD"
+        case dollhouseExport = "DOLLHOUSE_EXPORT"
         case accessLog = "ACCESS_LOG"
         case historyImageDownload = "HISTORY_IMAGE_DOWNLOAD"
         case historyPDFDownload = "HISTORY_PDF_DOWNLOAD"
@@ -50,6 +52,8 @@ struct AppError {
                 return "Capture finished without a usable room."
             case .resultImageDecode:
                 return "The floor plan image couldn't be decoded."
+            case .dollhouseExport:
+                return "Couldn't build the 3D model file."
             case .photoUpload:
                 return "Couldn't read the selected photo."
             case .photoTooLarge:

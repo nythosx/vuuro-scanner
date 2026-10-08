@@ -30,7 +30,7 @@ struct VuuroHero: View {
                     .textCase(.uppercase)
                     .foregroundStyle(VuuroColor.textSecondary)
             }
-            Text(title)
+            Text(vuuroLocalized(title))
                 .font(.system(size: 30, weight: .bold))
                 .tracking(-0.9)
                 .lineSpacing(2)
@@ -38,7 +38,7 @@ struct VuuroHero: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 400, alignment: .leading)
             if let subtitle {
-                Text(subtitle)
+                Text(vuuroLocalized(subtitle))
                     .font(.system(size: 15))
                     .tracking(-0.2)
                     .lineSpacing(5)

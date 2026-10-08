@@ -327,7 +327,8 @@ function renderSettings(data) {
   }).join('');
   container.innerHTML =
     '<h2>Default floor plan</h2>' +
-    '<p class="muted">Used when the app is set to Automatic, and for Automatic in this dashboard. Listing plan is the clean Funda-style plan; Full report adds measurements, notes and missing items.</p>' +
+    '<p class="muted">Used by every export set to Automatic: the app on Automatic, Automatic in this dashboard, and the .vuuroscan download. A change applies to the next export, also for existing scans. Listing plan is the clean Funda-style plan; Full report adds measurements, notes and missing items.</p>' +
+    '<p class="muted">Plan settings changed on a phone (plan type, walk path, orientation, room colour, furniture) stay on that phone and never change these defaults or the plans shown here.</p>' +
     wrapTable('<table class="data-table settings-table"><thead><tr><th>Purpose</th><th>Plan</th></tr></thead><tbody>' + planRows + '</tbody></table>') +
     '<h2>Delete scans automatically</h2>' +
     '<p class="muted">When a purpose is on, scans of that purpose are deleted once they are older than the number of days set. Off means they are kept until the access link expires.</p>' +
@@ -681,6 +682,7 @@ function renderDetail(data, sessionId) {
           PLAN_STYLES.map((s) => '<option value="' + s.value + '"' + (s.value === state.planStyle ? ' selected' : '') + '>' + s.label + '</option>').join('') +
         '</select>' +
       '</label>' +
+      '<p class="muted plan-style-note">Shows the style picked here. Plan settings made on a phone stay on that phone.</p>' +
       '<img id="floorPlanImage" alt="Floor plan">' +
       '<p id="floorPlanError" class="error hidden"></p>' +
     '</div>' +

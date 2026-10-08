@@ -113,6 +113,13 @@ struct ExportStyleSettings: Equatable {
         d.set(roomFill, forKey: Keys.roomFill)
     }
 
+    @discardableResult
+    func saveIfChanged(from previous: ExportStyleSettings) -> Bool {
+        guard self != previous else { return false }
+        save()
+        return true
+    }
+
     var furnitureQueryValue: String {
         if !showFurniture { return "none" }
         if furnitureCategories.isEmpty { return "none" }

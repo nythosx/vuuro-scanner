@@ -93,7 +93,7 @@ struct AttachmentsScreen: View {
                     VuuroHero(
                         greeting: nil,
                         title: "Add context",
-                        subtitle: "Attach photos and notes per room. They'll appear on the PDF export."
+                        subtitle: "Add photos and notes per room. They print on the PDF."
                     )
 
                     roomsSection
@@ -114,14 +114,11 @@ struct AttachmentsScreen: View {
         }
         .background(VuuroColor.bgApp)
         .environmentObject(flushCoordinator)
-        .sheet(item: $preview) { item in
+        .fullScreenCover(item: $preview) { item in
             AttachmentPhotoViewer(
                 session: session,
                 photo: item.photo,
-                onDelete: { updated in
-                    current = updated
-                    preview = nil
-                },
+                onChanged: { updated in current = updated },
                 onClose: { preview = nil }
             )
         }
@@ -177,7 +174,9 @@ struct AttachmentsScreen: View {
                     RoomAttachmentsList(
                         session: session,
                         photos: [],
-                        notes: Array(unitNotes.dropFirst())
+                        notes: Array(unitNotes.dropFirst()),
+                        allowsAddingPhotos: false,
+                        onChanged: { updated in current = updated }
                     )
                 }
 
@@ -185,6 +184,7 @@ struct AttachmentsScreen: View {
                     session: session,
                     notes: unitNotes,
                     photos: unitPhotos,
+                    onOpenPhoto: { photo in preview = PhotoPreview(photo: photo) },
                     onUpdate: { updated in current = updated },
                     onError: { appError = $0 }
                 )
@@ -768,31 +768,148 @@ struct RoomAttachmentsList: View {
     let session: ScanSessionResponse
     let photos: [FloorPlan.Photo]
     let notes: [FloorPlan.Note]
+    var roomId: String? = nil
+    var allowsAddingPhotos = true
+    var onChanged: ((FloorPlan) -> Void)? = nil
+
+    @State private var viewerPhoto: PhotoPreview?
+    @State private var editingNote: NoteEditTarget?
+    @State private var showAddSource = false
+    @State private var isAddingPhoto = false
+    @State private var addError: AppError?
+
+    private let client = ScanServiceClient()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(notes, id: \.noteId) { note in
-                VStack(alignment: .leading, spacing: 4) {
-                    (
-                        Text("Note: ").font(.system(size: 12, weight: .semibold))
-                        + Text(note.text).font(.system(size: 12))
-                    )
-                    .foregroundStyle(VuuroColor.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    InspectionTagChips(tags: note.tags ?? [])
-                }
-            }
-            if !photos.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(photos, id: \.photoId) { photo in
-                            AttachedPhotoThumbnail(session: session, url: photo.url) {}
+                HStack(alignment: .top, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        (
+                            Text("Note: ").font(.system(size: 12, weight: .semibold))
+                            + Text(note.text).font(.system(size: 12))
+                        )
+                        .foregroundStyle(VuuroColor.textPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        InspectionTagChips(tags: note.tags ?? [])
+                    }
+                    if onChanged != nil {
+                        Button {
+                            editingNote = NoteEditTarget(note: note)
+                        } label: {
+                            Label("Edit", systemImage: "pencil")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(VuuroColor.accent)
                         }
+                        .accessibilityIdentifier("attachmentsList.editNote")
+                        .buttonStyle(.plain)
                     }
                 }
             }
+            if !photos.isEmpty || canAddPhotos {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(photos, id: \.photoId) { photo in
+                            AttachedPhotoThumbnail(session: session, url: photo.url) {
+                                viewerPhoto = PhotoPreview(photo: photo)
+                            }
+                        }
+                        if canAddPhotos {
+                            addPhotoTile
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            if let addError {
+                ErrorCodeView(error: addError)
+            }
+        }
+        .fullScreenCover(item: $viewerPhoto) { item in
+            AttachmentPhotoViewer(
+                session: session,
+                photo: item.photo,
+                onChanged: onChanged,
+                onClose: { viewerPhoto = nil }
+            )
+        }
+        .sheet(item: $editingNote) { target in
+            NoteEditSheet(
+                session: session,
+                note: target.note,
+                onSaved: { updated in
+                    editingNote = nil
+                    onChanged?(updated)
+                },
+                onCancel: { editingNote = nil }
+            )
+            .presentationDetents([.medium, .large])
+        }
+        .photoSourcePicker(isPresented: $showAddSource) { result in
+            switch result {
+            case .success(let data):
+                Task { await addPhoto(data) }
+            case .failure(let error):
+                addError = AppError(site: .photoUpload, underlying: error)
+            }
         }
     }
+
+    private var canAddPhotos: Bool {
+        allowsAddingPhotos && onChanged != nil
+    }
+
+    private var addPhotoTile: some View {
+        Button {
+            addError = nil
+            showAddSource = true
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(VuuroColor.bgInset)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(VuuroColor.borderMed, style: StrokeStyle(lineWidth: 2, dash: [4]))
+                if isAddingPhoto {
+                    ProgressView().tint(VuuroColor.accent)
+                } else {
+                    Image(systemName: "plus")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(VuuroColor.textTertiary)
+                }
+            }
+            .frame(width: 64, height: 64)
+        }
+        .accessibilityIdentifier("attachmentsList.addPhoto")
+        .accessibilityLabel("Add photo")
+        .buttonStyle(.plain)
+        .disabled(isAddingPhoto)
+    }
+
+    @MainActor
+    private func addPhoto(_ data: Data) async {
+        guard !isAddingPhoto, let onChanged else { return }
+        isAddingPhoto = true
+        defer { isAddingPhoto = false }
+        do {
+            let updated = try await PhotoAttachmentUploader.add(
+                data,
+                session: session,
+                roomId: roomId,
+                caption: "",
+                client: client
+            )
+            onChanged(updated)
+            VuuroToast.shared.show(vuuroLocalized("Photo added"))
+        } catch is CancellationError {
+        } catch {
+            addError = AppError(site: .photoUpload, underlying: error)
+        }
+    }
+}
+
+private struct NoteEditTarget: Identifiable {
+    let note: FloorPlan.Note
+    var id: String { note.noteId }
 }
 
 struct AttachedPhotoThumbnail: View {
@@ -846,169 +963,6 @@ struct AttachedPhotoThumbnail: View {
     }
 }
 
-private struct AttachmentPhotoViewer: View {
-    let session: ScanSessionResponse
-    let photo: FloorPlan.Photo
-    let onDelete: (FloorPlan) -> Void
-    let onClose: () -> Void
-
-    @State private var image: UIImage?
-    @State private var isLoading = false
-    @State private var isDeleting = false
-    @State private var showDeleteConfirmation = false
-    @State private var deleteError: AppError?
-
-    private let client = ScanServiceClient()
-
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            VStack(spacing: 0) {
-                header
-                Spacer(minLength: 0)
-                body_
-                Spacer(minLength: 0)
-                footer
-            }
-        }
-        .task { await loadImage() }
-        .alert("Delete this photo?", isPresented: $showDeleteConfirmation) {
-            Button("Delete", role: .destructive) {
-                Task { await deletePhoto() }
-            }
-            .accessibilityIdentifier("photoViewer.deleteConfirm")
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The photo is removed from this scan and from the server. This cannot be undone.")
-        }
-    }
-
-    private var header: some View {
-        HStack {
-            Text("Photo")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white)
-            Spacer()
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 36, height: 36)
-                    .background(Color.white.opacity(0.12), in: Circle())
-            }
-            .accessibilityIdentifier("photoViewer.close")
-            .accessibilityLabel("Close photo")
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 16)
-    }
-
-    @ViewBuilder
-    private var body_: some View {
-        if let image {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .padding(20)
-        } else if isLoading {
-            ProgressView().tint(.white)
-        } else {
-            VStack(spacing: 8) {
-                Image(systemName: "photo")
-                    .font(.system(size: 34))
-                    .foregroundStyle(.white.opacity(0.4))
-                Text("Couldn't load this photo.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.white.opacity(0.6))
-            }
-        }
-    }
-
-    private var footer: some View {
-        VStack(spacing: 10) {
-            if let deleteError {
-                ErrorCodeView(error: deleteError)
-                    .frame(maxWidth: 320)
-            }
-
-            HStack(spacing: 10) {
-                if let image {
-                    ShareLink(
-                        item: Image(uiImage: image),
-                        preview: SharePreview("Photo", image: Image(uiImage: image))
-                    ) {
-                        Label("Save", systemImage: "square.and.arrow.down")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 11)
-                            .background(Color.white.opacity(0.12), in: Capsule())
-                    }
-                    .accessibilityIdentifier("photoViewer.save")
-                }
-
-                Button {
-                    showDeleteConfirmation = true
-                } label: {
-                    if isDeleting {
-                        ProgressView().tint(.white)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 11)
-                            .background(Color.white.opacity(0.12), in: Capsule())
-                    } else {
-                        Label("Delete", systemImage: "trash")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color(red: 1.0, green: 0.42, blue: 0.39))
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 11)
-                            .background(Color.white.opacity(0.12), in: Capsule())
-                    }
-                }
-                .accessibilityIdentifier("photoViewer.delete")
-                .accessibilityLabel("Delete photo")
-                .buttonStyle(.plain)
-                .disabled(isDeleting)
-            }
-        }
-        .padding(.bottom, 32)
-    }
-
-    @MainActor
-    private func loadImage() async {
-        if let cached = PhotoImageCache.shared.image(for: photo.url) {
-            image = cached
-            return
-        }
-        isLoading = true
-        defer { isLoading = false }
-        if let data = try? await client.fetchPhotoData(url: photo.url, accessToken: session.accessToken),
-           let decoded = UIImage(data: data) {
-            PhotoImageCache.shared.store(decoded, for: photo.url)
-            image = decoded
-        }
-    }
-
-    @MainActor
-    private func deletePhoto() async {
-        guard !isDeleting else { return }
-        isDeleting = true
-        defer { isDeleting = false }
-        do {
-            let updated = try await client.deletePhoto(
-                sessionId: session.id,
-                accessToken: session.accessToken,
-                photoId: photo.photoId
-            )
-            PhotoImageCache.shared.remove(for: photo.url)
-            VuuroToast.shared.show(vuuroLocalized("Photo removed"))
-            onDelete(updated)
-        } catch {
-            deleteError = AppError(site: .photoDelete, underlying: error)
-        }
-    }
-}
-
 @MainActor
 final class PhotoImageCache {
     static let shared = PhotoImageCache()
@@ -1044,6 +998,7 @@ private struct SessionAttachmentEditor: View {
     let session: ScanSessionResponse
     let notes: [FloorPlan.Note]
     var photos: [FloorPlan.Photo] = []
+    var onOpenPhoto: ((FloorPlan.Photo) -> Void)? = nil
     let onUpdate: (FloorPlan) -> Void
     let onError: (AppError) -> Void
 
@@ -1163,7 +1118,9 @@ private struct SessionAttachmentEditor: View {
             HStack(spacing: 8) {
                 ForEach(photos, id: \.photoId) { photo in
                     ZStack(alignment: .topTrailing) {
-                        AttachedPhotoThumbnail(session: session, url: photo.url) {}
+                        AttachedPhotoThumbnail(session: session, url: photo.url) {
+                            onOpenPhoto?(photo)
+                        }
                         Button {
                             Task { await removePhoto(photo.photoId) }
                         } label: {

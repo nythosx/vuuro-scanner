@@ -6880,6 +6880,838 @@
                     }
                 }
             }
+        },
+        "Uses the plan your admin chose for each scan purpose: Listing plan or Full report.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Uses the plan your admin chose for each scan purpose: Listing plan or Full report."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Gebruikt de plattegrond die je beheerder per scandoel heeft gekozen: Listing plan of Full report."
+                    }
+                }
+            }
+        },
+        "Plan with measurements, notes and missing items. Use this for inspections and your own records.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Plan with measurements, notes and missing items. Use this for inspections and your own records."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Plattegrond met maten, notities en ontbrekende items. Voor inspecties en je eigen administratie."
+                    }
+                }
+            }
+        },
+        "Clean plan for a property listing: color-coded rooms, dimension lines and fixed fixtures like sink, toilet and stove. No loose furniture, walk path or notes.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Clean plan for a property listing: color-coded rooms, dimension lines and fixed fixtures like sink, toilet and stove. No loose furniture, walk path or notes."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Strakke plattegrond voor een woningadvertentie: gekleurde ruimtes, maatlijnen en vaste voorzieningen zoals gootsteen, toilet en fornuis. Geen losse meubels, looproute of notities."
+                    }
+                }
+            }
+        },
+        "Saved right away. Applies to every export from this phone.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Saved right away. Applies to every export from this phone."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Wordt direct opgeslagen. Geldt voor elke export vanaf deze telefoon."
+                    }
+                }
+            }
+        },
+        "Straightened only changes a plan that was scanned at an angle.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Straightened only changes a plan that was scanned at an angle."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Straightened verandert alleen een plattegrond die scheef is gescand."
+                    }
+                }
+            }
+        },
+        "Replace": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Replace"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Vervangen"
+                    }
+                }
+            }
+        },
+        "Couldn't load this photo.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Couldn't load this photo."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze foto kon niet worden geladen."
+                    }
+                }
+            }
+        },
+        "Photo replaced": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Photo replaced"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Foto vervangen"
+                    }
+                }
+            }
+        },
+        "Note saved": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Note saved"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Notitie opgeslagen"
+                    }
+                }
+            }
+        },
+        "Edit note": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Edit note"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Notitie bewerken"
+                    }
+                }
+            }
+        },
+        "Save": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Save"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Bewaren"
+                    }
+                }
+            }
+        },
+        "Photo": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Photo"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Foto"
+                    }
+                }
+            }
+        },
+        "Add photo": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Add photo"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Foto toevoegen"
+                    }
+                }
+            }
+        },
+        "The new photo was added, but the old one couldn't be removed. Delete the old photo by hand.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The new photo was added, but the old one couldn't be removed. Delete the old photo by hand."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De nieuwe foto is toegevoegd, maar de oude kon niet worden verwijderd. Verwijder de oude foto zelf."
+                    }
+                }
+            }
+        },
+        "Scan room after room in one walk. At the end, all rooms become one plan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan room after room in one walk. At the end, all rooms become one plan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Scan kamer na kamer in één ronde. Aan het eind worden alle kamers één plattegrond."
+                    }
+                }
+            }
+        },
+        "Each room is scanned on its own. It shows as its own tile on the plan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Each room is scanned on its own. It shows as its own tile on the plan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Elke kamer wordt los gescand. Die verschijnt als eigen tegel op de plattegrond."
+                    }
+                }
+            }
+        },
+        "Then tap Start room scan. Scanning starts right away.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Then tap Start room scan. Scanning starts right away."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tik daarna op Kamer scannen starten. Het scannen begint direct."
+                    }
+                }
+            }
+        },
+        "Hold the phone upright at chest height. Keep each wall in view for a few seconds. The ring counts the walls found.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Hold the phone upright at chest height. Keep each wall in view for a few seconds. The ring counts the walls found."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Houd de telefoon rechtop op borsthoogte. Houd elke muur een paar seconden in beeld. De ring telt de gevonden muren."
+                    }
+                }
+            }
+        },
+        "The plan follows the floor outline. Make sure it closes all the way around.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The plan follows the floor outline. Make sure it closes all the way around."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De plattegrond volgt de vloeromtrek. Zorg dat die helemaal rond sluit."
+                    }
+                }
+            }
+        },
+        "The room uploads. Then tap Scan another room, or Finish unit to add notes and photos.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The room uploads. Then tap Scan another room, or Finish unit to add notes and photos."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De kamer wordt geüpload. Tik daarna op Nog een kamer scannen, of op Eenheid afronden voor notities en foto's."
+                    }
+                }
+            }
+        },
+        "Fill in the property details. Then tap Start unit scan. Scanning starts right away.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Fill in the property details. Then tap Start unit scan. Scanning starts right away."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Vul de gegevens van het object in. Tik daarna op Eenheid scannen starten. Het scannen begint direct."
+                    }
+                }
+            }
+        },
+        "The room is saved on this phone. The next room starts scanning. Keep the camera up as you walk.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The room is saved on this phone. The next room starts scanning. Keep the camera up as you walk."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De kamer wordt op deze telefoon opgeslagen. De volgende kamer wordt meteen gescand. Houd de camera omhoog terwijl je loopt."
+                    }
+                }
+            }
+        },
+        "Tap the room counter next to Save & next. There you can see, rescan or delete saved rooms.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tap the room counter next to Save & next. There you can see, rescan or delete saved rooms."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tik op de kamerteller naast Opslaan & volgende. Daar kun je opgeslagen kamers zien, opnieuw scannen of wissen."
+                    }
+                }
+            }
+        },
+        "Finish shows once the first room is saved. The room you are scanning is included. Then all rooms are merged and uploaded.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Finish shows once the first room is saved. The room you are scanning is included. Then all rooms are merged and uploaded."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Afronden verschijnt zodra de eerste kamer is opgeslagen. De kamer die je nu scant telt mee. Daarna worden alle kamers samengevoegd en geüpload."
+                    }
+                }
+            }
+        },
+        "Follow the walls and keep the phone pointed at them. If the app says the space is too large, save what you have. Then scan the rest as a separate room.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Follow the walls and keep the phone pointed at them. If the app says the space is too large, save what you have. Then scan the rest as a separate room."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Volg de muren en richt de telefoon erop. Zegt de app dat de ruimte te groot is, sla dan op wat je hebt. Scan de rest daarna als aparte ruimte."
+                    }
+                }
+            }
+        },
+        "Need one connected plan?": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Need one connected plan?"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Eén samenhangende plattegrond nodig?"
+                    }
+                }
+            }
+        },
+        "Rooms scanned here are not placed next to each other. Use Scan a whole unit instead.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Rooms scanned here are not placed next to each other. Use Scan a whole unit instead."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kamers die je hier scant, worden niet naast elkaar geplaatst. Gebruik dan Een hele eenheid scannen."
+                    }
+                }
+            }
+        },
+        "Tap Set floor at the top of the camera. It applies to this room and the next ones, until you change it.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tap Set floor at the top of the camera. It applies to this room and the next ones, until you change it."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tik bovenaan de camera op Verdieping instellen. Dit geldt voor deze kamer en de kamers daarna, totdat je het wijzigt."
+                    }
+                }
+            }
+        },
+        "Start a whole unit scan again with the same property details. Then you can upload the saved rooms.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Start a whole unit scan again with the same property details. Then you can upload the saved rooms."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Start opnieuw een scan van een hele eenheid met dezelfde objectgegevens. Daarna kun je de opgeslagen kamers uploaden."
+                    }
+                }
+            }
+        },
+        "Finish merges and uploads the unit. To add rooms later, use Continue this scan in History.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Finish merges and uploads the unit. To add rooms later, use Continue this scan in History."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Afronden voegt de eenheid samen en uploadt deze. Kamers later toevoegen doe je met Deze scan voortzetten in Geschiedenis."
+                    }
+                }
+            }
+        },
+        "Add photos and notes per room. They print on the PDF.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Add photos and notes per room. They print on the PDF."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Voeg per kamer foto's en notities toe. Ze komen in de pdf."
+                    }
+                }
+            }
+        },
+        "Add context": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Add context"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Context toevoegen"
+                    }
+                }
+            }
+        },
+        "Ask the other person for the code in their History. Then you can view, export and continue the scan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ask the other person for the code in their History. Then you can view, export and continue the scan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Vraag de ander om de code uit de Geschiedenis. Daarna kun je de scan bekijken, exporteren en voortzetten."
+                    }
+                }
+            }
+        },
+        "Paste a share code": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Paste a share code"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deelcode plakken"
+                    }
+                }
+            }
+        },
+        "If this phone recognises the rooms you already scanned, new rooms join this plan. Otherwise they get their own section, and you can place them by hand. Only scan rooms that are not in the plan yet.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "If this phone recognises the rooms you already scanned, new rooms join this plan. Otherwise they get their own section, and you can place them by hand. Only scan rooms that are not in the plan yet."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Herkent deze telefoon de al gescande ruimtes, dan worden nieuwe ruimtes aan deze plattegrond gekoppeld. Anders krijgen ze een eigen deel en kun je ze met de hand plaatsen. Scan alleen ruimtes die nog niet in de plattegrond staan."
+                    }
+                }
+            }
+        },
+        "Continue this home adds the rooms to the latest scan (%@). Every floor stays in one report, and the new rooms get their own section. A new visit saves as its own report under this home.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Continue this home adds the rooms to the latest scan (%@). Every floor stays in one report, and the new rooms get their own section. A new visit saves as its own report under this home."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze woning voortzetten voegt de ruimtes toe aan de laatste scan (%@). Alle verdiepingen blijven in één rapport en de nieuwe ruimtes krijgen een eigen deel. Een nieuw bezoek wordt een eigen rapport onder deze woning."
+                    }
+                }
+            }
+        },
+        "This saves as a new report, grouped under this home.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This saves as a new report, grouped under this home."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Dit wordt een nieuw rapport, gegroepeerd onder deze woning."
+                    }
+                }
+            }
+        },
+        "2D plan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "2D plan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "2D-plattegrond"
+                    }
+                }
+            }
+        },
+        "Share 3D model": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Share 3D model"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "3D-model delen"
+                    }
+                }
+            }
+        },
+        "Preview in AR": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Preview in AR"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Voorbeeld in AR"
+                    }
+                }
+            }
+        },
+        "Dollhouse": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Dollhouse"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Poppenhuis"
+                    }
+                }
+            }
+        },
+        "Cutaway": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Cutaway"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Doorsnede"
+                    }
+                }
+            }
+        },
+        "Furniture": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Furniture"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Meubels"
+                    }
+                }
+            }
+        },
+        "Show 2D plan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Show 2D plan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "2D-plattegrond tonen"
+                    }
+                }
+            }
+        },
+        "Building 3D view…": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Building 3D view…"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "3D-weergave wordt gemaakt…"
+                    }
+                }
+            }
+        },
+        "No rooms to show in 3D": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "No rooms to show in 3D"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Geen kamers om in 3D te tonen"
+                    }
+                }
+            }
+        },
+        "Couldn't build the 3D view": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Couldn't build the 3D view"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De 3D-weergave kon niet worden gemaakt"
+                    }
+                }
+            }
+        },
+        "Performance mode is on for this plan: furniture is hidden by default.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Performance mode is on for this plan: furniture is hidden by default."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Prestatiemodus staat aan voor deze plattegrond: meubels zijn standaard verborgen."
+                    }
+                }
+            }
+        },
+        "Height estimated at %.1f m for at least one room.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Height estimated at %.1f m for at least one room."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Hoogte geschat op %.1f m voor ten minste één kamer."
+                    }
+                }
+            }
+        },
+        "Close photo": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Close photo"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Foto sluiten"
+                    }
+                }
+            }
+        },
+        "Delete photo": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Delete photo"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Foto verwijderen"
+                    }
+                }
+            }
+        },
+        "This scan has no captured room geometry. The 2D plan and PDF are still available.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This scan has no captured room geometry. The 2D plan and PDF are still available."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze scan heeft geen vastgelegde ruimtevormen. De 2D-plattegrond en de pdf zijn nog wel beschikbaar."
+                    }
+                }
+            }
         }
     },
     "version": "1.0"
