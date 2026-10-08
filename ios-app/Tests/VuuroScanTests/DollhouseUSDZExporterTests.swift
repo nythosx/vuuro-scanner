@@ -36,7 +36,7 @@ final class DollhouseUSDZExporterTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appendingPathComponent("model.usdz")
 
-        try DollhouseUSDZExporter.export(scene, to: url, metadata: ["property_id": "prop-1"])
+        try DollhouseUSDZExporter.export(scene, to: url)
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
         let size = (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
@@ -86,24 +86,6 @@ final class DollhouseUSDZExporterTests: XCTestCase {
         XCTAssertGreaterThan(meshCount, 0)
     }
 
-    func testMetadataSurvivesRoundTrip() throws {
-        let rooms = try makeRooms("[\(roomJSON())]")
-        let scene = try DollhouseMeshBuilder.build(rooms: rooms)
-        let dir = try tempDirectory()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let url = dir.appendingPathComponent("model.usdz")
-
-        try DollhouseUSDZExporter.export(scene, to: url, metadata: [
-            "property_id": "prop-round-trip",
-            "unit_id": "unit-2b",
-            "measurement_basis": "indicative_nen2580_inspired",
-        ])
-
-        let reloaded = MDLAsset(url: url)
-        let metadata = reloaded.metadata as? [String: Any]
-        XCTAssertNotNil(metadata)
-        XCTAssertEqual(metadata?["format"] as? String, "vuuro-dollhouse/1")
-    }
 
     func testEmptySceneThrows() {
         let emptyScene = DollhouseScene(

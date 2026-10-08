@@ -16,21 +16,13 @@ enum DollhouseUSDZExporterError: Error, LocalizedError {
 
 enum DollhouseUSDZExporter {
 
-    static func export(_ scene: DollhouseScene, to url: URL, metadata: [String: String] = [:]) throws {
+    static func export(_ scene: DollhouseScene, to url: URL) throws {
         guard !scene.isEmpty else { throw DollhouseUSDZExporterError.emptyScene }
         guard MDLAsset.canExportFileExtension("usdz") else {
             throw DollhouseUSDZExporterError.usdzNotSupported
         }
 
         let asset = MDLAsset()
-
-        let metadataDict = NSMutableDictionary()
-        for (key, value) in metadata {
-            metadataDict[key] = value
-        }
-        metadataDict["format"] = "vuuro-dollhouse/1"
-        metadataDict["unit_scale"] = "meters"
-        asset.metadata = metadataDict
 
         var objectsByPath: [String: MDLObject] = [:]
         let root = MDLObject()
@@ -44,7 +36,7 @@ enum DollhouseUSDZExporter {
             let parent = ensureObject(for: mesh.path, objectsByPath: &objectsByPath, root: root)
             let holder = MDLObject()
             holder.name = mesh.material.name
-            holder.add(mdlMesh)
+            holder.addChild(mdlMesh)
             parent.addChild(holder)
         }
 

@@ -1082,15 +1082,7 @@ struct ScanResultsReportView: View {
             )
             try DollhouseUSDZExporter.export(
                 scene,
-                to: url,
-                metadata: [
-                    "property_id": entry.propertyId,
-                    "unit_id": entry.unitId,
-                    "organisation_id": entry.organisationId,
-                    "captured_at": floorPlan.capturedAt,
-                    "measurement_basis": "indicative_nen2580_inspired",
-                    "disclaimer": "Indicative measurements - NEN2580-inspired, not certified.",
-                ]
+                to: url
             )
             usdzURL = url
             if forPreview {
