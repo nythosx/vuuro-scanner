@@ -96,11 +96,13 @@ final class VuuroScanUITests: XCTestCase {
     }
 
     private func closeShareSheet(_ app: XCUIApplication) {
-        let close = app.buttons["Close"].firstMatch
-        if close.waitForExistence(timeout: 3) {
+        let close = app.buttons
+            .matching(NSPredicate(format: "label == %@ AND identifier != %@", "Close", "report.close"))
+            .firstMatch
+        if close.waitForExistence(timeout: 3) && close.isHittable {
             close.tap()
         } else {
-            app.swipeDown(velocity: .fast)
+            shareSheet(app).swipeDown(velocity: .fast)
         }
     }
 
