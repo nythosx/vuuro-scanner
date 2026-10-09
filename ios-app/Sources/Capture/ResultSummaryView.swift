@@ -38,7 +38,6 @@ struct ResultSummaryView: View {
     @AppStorage("resultUses3D") private var resultUses3D: Bool = false
     @State private var isExportingUSDZ = false
     @State private var usdzURL: URL?
-    @State private var showUSDZShare = false
 
     private var exportUnit: MeasurementUnit {
         MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
@@ -304,11 +303,6 @@ struct ResultSummaryView: View {
                 },
                 onCancel: { placementTarget = nil }
             )
-        }
-        .sheet(isPresented: $showUSDZShare) {
-            if let usdzURL {
-                ActivityShareSheet(items: [usdzURL])
-            }
         }
     }
 
@@ -1011,7 +1005,7 @@ struct ResultSummaryView: View {
                 }
                 ARQuickLookPresenter.shared.present(url: url)
             } else {
-                showUSDZShare = true
+                ShareSheetPresenter.present(items: [url])
             }
         } catch is CancellationError {
         } catch DollhouseMeshBuilderError.tooManyTriangles {

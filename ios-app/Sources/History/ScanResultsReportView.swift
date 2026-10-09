@@ -21,8 +21,6 @@ struct ScanResultsReportView: View {
     @State private var shareImageURL: URL?
     @State private var pdfURL: URL?
 
-    @State private var showImageShare = false
-    @State private var showPDFShare = false
     @State private var showPDFPreview = false
     @State private var isFetchingPDF = false
     @State private var planRevision = 0
@@ -55,7 +53,6 @@ struct ScanResultsReportView: View {
     @AppStorage("reportUses3D") private var reportUses3D: Bool = false
     @State private var isExportingUSDZ = false
     @State private var usdzURL: URL?
-    @State private var showUSDZShare = false
 
     private var exportUnit: MeasurementUnit {
         MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
@@ -184,16 +181,6 @@ struct ScanResultsReportView: View {
         } message: {
             Text("Name the floor you're about to scan.")
         }
-        .sheet(isPresented: $showImageShare) {
-            if let shareImageURL {
-                ActivityShareSheet(items: [shareImageURL])
-            }
-        }
-        .sheet(isPresented: $showPDFShare) {
-            if let pdfURL {
-                ActivityShareSheet(items: [pdfURL])
-            }
-        }
         .fullScreenCover(isPresented: $showPDFPreview) {
             if let pdfURL {
                 QuickLookPreview(url: pdfURL) {
@@ -321,11 +308,6 @@ struct ScanResultsReportView: View {
                 .accessibilityIdentifier("report.unsavedStay")
         } message: {
             Text("You have unsaved edits on this scan.")
-        }
-        .sheet(isPresented: $showUSDZShare) {
-            if let usdzURL {
-                ActivityShareSheet(items: [usdzURL])
-            }
         }
     }
 
@@ -1096,7 +1078,7 @@ struct ScanResultsReportView: View {
                 }
                 ARQuickLookPresenter.shared.present(url: url)
             } else {
-                showUSDZShare = true
+                ShareSheetPresenter.present(items: [url])
             }
         } catch is CancellationError {
         } catch DollhouseMeshBuilderError.tooManyTriangles {
@@ -1262,7 +1244,7 @@ struct ScanResultsReportView: View {
     @MainActor
     private func shareImage() async {
         if let existing = shareImageURL, FileManager.default.fileExists(atPath: existing.path) {
-            showImageShare = true
+            ShareSheetPresenter.present(items: [existing])
             return
         }
         do {
@@ -1283,7 +1265,7 @@ struct ScanResultsReportView: View {
             )
             try data.write(to: url, options: .atomic)
             shareImageURL = url
-            showImageShare = true
+            ShareSheetPresenter.present(items: [url])
         } catch is CancellationError {
         } catch {
             appError = AppError(site: .historyImageDownload, underlying: error)
@@ -1295,8 +1277,8 @@ struct ScanResultsReportView: View {
         if pdfURL == nil {
             await fetchPDF()
         }
-        guard pdfURL != nil else { return }
-        showPDFShare = true
+        guard let pdfURL else { return }
+        ShareSheetPresenter.present(items: [pdfURL])
     }
 
     @MainActor

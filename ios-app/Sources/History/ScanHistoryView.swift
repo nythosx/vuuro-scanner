@@ -23,9 +23,6 @@ struct ScanHistoryView: View {
     @State private var selectedHome: HomeKey?
     @State private var isFetchingToAttach: Set<String> = []
     @State private var isPreparingQuickShare: Set<String> = []
-    @State private var quickShareURL: URL?
-    @State private var shareCodeSource: ShareCodeItemSource?
-    @State private var showQuickShare = false
     @State private var attachErrors: [String: AppError] = [:]
 
     @State private var perEntryImageURLs: [String: URL] = [:]
@@ -164,13 +161,6 @@ struct ScanHistoryView: View {
                         reloadEntries()
                     }
                 )
-            }
-        }
-        .sheet(isPresented: $showQuickShare) {
-            if let shareCodeSource {
-                ActivityShareSheet(items: [shareCodeSource])
-            } else if let quickShareURL {
-                ActivityShareSheet(items: [quickShareURL])
             }
         }
         .alert("Forget this scan?", isPresented: forgetBinding) {
@@ -549,13 +539,12 @@ struct ScanHistoryView: View {
 
     private func shareAccessCode(for entry: ScanHistoryEntry) {
         guard let code = ScanShareCode.encode(entry) else { return }
-        quickShareURL = nil
-        shareCodeSource = ShareCodeItemSource(
+        let source = ShareCodeItemSource(
             code: code,
             subject: "Vuuro Scan access — \(entry.propertyId) / \(entry.unitId)",
             messageBody: "In Vuuro Scan, open History → Actions → \"Add a shared scan\" and paste this message or the code below to get full access to this scan: view, export, add rooms or floors to continue the walk, and delete. Only share it with someone you trust."
         )
-        showQuickShare = true
+        ShareSheetPresenter.present(items: [source])
     }
 
     private func reloadEntries() {
@@ -757,9 +746,7 @@ struct ScanHistoryView: View {
 
         let url = pdf ? perEntryPDFURLs[entry.sessionId] : perEntryImageURLs[entry.sessionId]
         guard let url else { return }
-        shareCodeSource = nil
-        quickShareURL = url
-        showQuickShare = true
+        ShareSheetPresenter.present(items: [url])
     }
 
     @MainActor

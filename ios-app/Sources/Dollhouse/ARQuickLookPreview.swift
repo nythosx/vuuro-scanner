@@ -12,7 +12,7 @@ final class ARQuickLookPresenter: NSObject, QLPreviewControllerDataSource, QLPre
     @MainActor
     @discardableResult
     func present(url: URL, onDismiss: @escaping () -> Void = {}) -> Bool {
-        guard controller == nil, let presenter = ARQuickLookPresenter.topViewController() else { return false }
+        guard controller == nil, let presenter = TopViewController.find() else { return false }
         self.url = url
         self.onDismiss = onDismiss
         let preview = QLPreviewController()
@@ -40,16 +40,5 @@ final class ARQuickLookPresenter: NSObject, QLPreviewControllerDataSource, QLPre
         onDismiss = nil
         self.controller = nil
         callback?()
-    }
-
-    @MainActor
-    private static func topViewController() -> UIViewController? {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        let windows = scenes.flatMap(\.windows)
-        var top = (windows.first(where: \.isKeyWindow) ?? windows.first)?.rootViewController
-        while let presented = top?.presentedViewController, !presented.isBeingDismissed {
-            top = presented
-        }
-        return top
     }
 }
