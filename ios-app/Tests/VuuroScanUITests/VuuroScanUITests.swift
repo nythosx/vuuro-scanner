@@ -113,8 +113,8 @@ final class VuuroScanUITests: XCTestCase {
             XCTAssertTrue(menu.waitForExistence(timeout: timeout), "share menu never appeared (round \(round))")
             let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: menu)
             if XCTWaiter().wait(for: [hittable], timeout: 10) != .completed {
-                print("SHARE_MENU_NOT_HITTABLE round \(round)
-\(app.debugDescription)")
+                print("SHARE_MENU_NOT_HITTABLE round \(round)")
+                print(app.debugDescription)
                 let shot = XCTAttachment(screenshot: app.screenshot())
                 shot.name = "share-menu-not-hittable-round-\(round)"
                 shot.lifetime = .keepAlways
