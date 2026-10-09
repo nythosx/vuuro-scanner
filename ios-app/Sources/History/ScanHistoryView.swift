@@ -561,6 +561,7 @@ struct ScanHistoryView: View {
     private func reloadEntries() {
         let token = UUID()
         reloadToken = token
+        PerfTrace.begin(.historyLoad)
         Task {
             let loaded = await Task.detached(priority: .userInitiated) {
                 ScanHistoryStore.shared.all()
@@ -568,6 +569,7 @@ struct ScanHistoryView: View {
             guard reloadToken == token else { return }
             entries = loaded
             isLoadingEntries = false
+            PerfTrace.end(.historyLoad, detail: "\(loaded.count) scans")
             await refreshActivity(for: loaded)
         }
     }

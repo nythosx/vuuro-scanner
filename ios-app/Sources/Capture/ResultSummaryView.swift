@@ -39,7 +39,6 @@ struct ResultSummaryView: View {
     @State private var isExportingUSDZ = false
     @State private var usdzURL: URL?
     @State private var showUSDZShare = false
-    @State private var showUSDZPreview = false
 
     private var exportUnit: MeasurementUnit {
         MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
@@ -309,12 +308,6 @@ struct ResultSummaryView: View {
         .sheet(isPresented: $showUSDZShare) {
             if let usdzURL {
                 ActivityShareSheet(items: [usdzURL])
-            }
-        }
-        .fullScreenCover(isPresented: $showUSDZPreview) {
-            if let usdzURL {
-                ARQuickLookPreview(url: usdzURL, onDismiss: { showUSDZPreview = false })
-                    .ignoresSafeArea()
             }
         }
     }
@@ -781,31 +774,39 @@ struct ResultSummaryView: View {
     @MainActor
     private func loadImage() async {
         guard !currentFloorPlan.rooms.isEmpty, floorPlanImage == nil, !isLoadingImage else { return }
-        if let cached = FloorPlanImageCache.shared.cachedData(sessionId: session.id, unit: exportUnit),
-           let decoded = UIImage(data: cached) {
-            floorPlanImage = decoded
-            return
-        }
-
+        PerfTrace.begin(.resultPlanImage)
         isLoadingImage = true
         let revision = planRevision
-        let data = await FloorPlanImageCache.shared.prefetch(
-            sessionId: session.id,
-            accessToken: session.accessToken,
-            unit: exportUnit,
-            client: client
-        ).value
+        var source = "cache"
+        var data = FloorPlanImageCache.shared.cachedData(sessionId: session.id, unit: exportUnit)
+        if data == nil {
+            source = "network"
+            data = await FloorPlanImageCache.shared.prefetch(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                unit: exportUnit,
+                client: client
+            ).value
+        }
+        let decodedImage: UIImage?
+        if let data {
+            decodedImage = await ImageDecoding.decoded(data)
+        } else {
+            decodedImage = nil
+        }
         isLoadingImage = false
 
         guard revision == planRevision else {
             await loadImage()
             return
         }
-        guard let data, let image = UIImage(data: data) else {
+        guard let image = decodedImage else {
+            PerfTrace.cancel(.resultPlanImage)
             imageFailed = true
             return
         }
         floorPlanImage = image
+        PerfTrace.end(.resultPlanImage, detail: source)
     }
 
     @MainActor
@@ -982,9 +983,7 @@ struct ResultSummaryView: View {
         let propertyId = session.propertyId
         let unitId = session.unitId
         do {
-            let scene = try await Task.detached(priority: .userInitiated) {
-                try DollhouseMeshBuilder.buildForExport(rooms: rooms)
-            }.value
+            PerfTrace.begin(.usdzExport)
             let url = try ExportNaming.url(
                 sessionId: sessionId,
                 property: propertyId,
@@ -994,10 +993,11 @@ struct ResultSummaryView: View {
                 suffix: "dollhouse",
                 ext: "usdz"
             )
-            try DollhouseUSDZExporter.export(
-                scene,
-                to: url
-            )
+            try await Task.detached(priority: .userInitiated) {
+                let scene = try DollhouseMeshBuilder.buildForExport(rooms: rooms)
+                try DollhouseUSDZExporter.export(scene, to: url)
+            }.value
+            PerfTrace.end(.usdzExport, detail: "\(rooms.count) rooms")
             if let old = usdzURL, FileManager.default.fileExists(atPath: old.path) {
                 try? FileManager.default.removeItem(at: old)
             }
@@ -1009,7 +1009,7 @@ struct ResultSummaryView: View {
                     VuuroToast.shared.show(vuuroLocalized("This 3D model is too large to open in AR. Try sharing it as a file instead."))
                     return
                 }
-                showUSDZPreview = true
+                ARQuickLookPresenter.shared.present(url: url)
             } else {
                 showUSDZShare = true
             }

@@ -1,54 +1,55 @@
 import ARKit
 import QuickLook
-import SwiftUI
+import UIKit
 
-struct ARQuickLookPreview: UIViewControllerRepresentable {
-    let url: URL
-    let onDismiss: () -> Void
+final class ARQuickLookPresenter: NSObject, QLPreviewControllerDataSource, QLPreviewControllerDelegate {
+    static let shared = ARQuickLookPresenter()
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(url: url, onDismiss: onDismiss)
+    private var url: URL?
+    private var onDismiss: (() -> Void)?
+    private weak var controller: QLPreviewController?
+
+    @MainActor
+    @discardableResult
+    func present(url: URL, onDismiss: @escaping () -> Void = {}) -> Bool {
+        guard controller == nil, let presenter = ARQuickLookPresenter.topViewController() else { return false }
+        self.url = url
+        self.onDismiss = onDismiss
+        let preview = QLPreviewController()
+        preview.dataSource = self
+        preview.delegate = self
+        preview.modalPresentationStyle = .fullScreen
+        controller = preview
+        presenter.present(preview, animated: true)
+        return true
     }
 
-    func makeUIViewController(context: Context) -> UINavigationController {
-        let controller = QLPreviewController()
-        controller.dataSource = context.coordinator
-        controller.navigationItem.rightBarButtonItem = UIBarButtonItem(
-            barButtonSystemItem: .done,
-            target: context.coordinator,
-            action: #selector(Coordinator.dismiss)
-        )
-        let navigation = UINavigationController(rootViewController: controller)
-        context.coordinator.navigationController = navigation
-        return navigation
+    func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
+        url == nil ? 0 : 1
     }
 
-    func updateUIViewController(_ uiViewController: UINavigationController, context: Context) {
-        context.coordinator.url = url
-        context.coordinator.onDismiss = onDismiss
-        (uiViewController.viewControllers.first as? QLPreviewController)?.reloadData()
+    func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+        let item = ARQuickLookPreviewItem(fileAt: url ?? FileManager.default.temporaryDirectory)
+        item.allowsContentScaling = false
+        return item
     }
 
-    final class Coordinator: NSObject, QLPreviewControllerDataSource {
-        var url: URL
-        var onDismiss: () -> Void
-        weak var navigationController: UINavigationController?
+    func previewControllerDidDismiss(_ controller: QLPreviewController) {
+        let callback = onDismiss
+        url = nil
+        onDismiss = nil
+        self.controller = nil
+        callback?()
+    }
 
-        init(url: URL, onDismiss: @escaping () -> Void) {
-            self.url = url
-            self.onDismiss = onDismiss
+    @MainActor
+    private static func topViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let windows = scenes.flatMap(\.windows)
+        var top = (windows.first(where: \.isKeyWindow) ?? windows.first)?.rootViewController
+        while let presented = top?.presentedViewController, !presented.isBeingDismissed {
+            top = presented
         }
-
-        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
-
-        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
-            let item = ARQuickLookPreviewItem(fileAt: url)
-            item.allowsContentScaling = false
-            return item
-        }
-
-        @objc func dismiss() {
-            onDismiss()
-        }
+        return top
     }
 }

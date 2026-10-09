@@ -10,6 +10,7 @@ struct VuuroScanApp: App {
     @AppStorage(AppLanguageSettings.storageKey) private var appLanguageRaw: String = AppLanguage.system.rawValue
 
     init() {
+        PerfTrace.begin(.launchToHome)
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-uiTestResetOnboarding") {
             UserDefaults.standard.removeObject(forKey: OnboardingKeys.hasCompleted)
@@ -66,6 +67,9 @@ struct VuuroRootView: View {
             }
         }
         .preferredColorScheme(darkMode ? .dark : .light)
+        .onAppear {
+            if onboardingNeeded { PerfTrace.cancel(.launchToHome) }
+        }
         .vuuroToastHost()
         .vuuroOfflineBannerHost()
     }

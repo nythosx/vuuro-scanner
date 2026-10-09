@@ -182,7 +182,7 @@ struct RoomGridSection: View {
                     unit: unit,
                     roomId: room.roomId
                 )
-                if let image = UIImage(data: data) {
+                if let image = await ImageDecoding.decoded(data) {
                     thumbnails[room.roomId] = image
                 } else {
                     failedIds.insert(room.roomId)

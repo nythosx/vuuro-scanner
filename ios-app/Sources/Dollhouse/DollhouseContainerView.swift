@@ -1,3 +1,4 @@
+import SceneKit
 import SwiftUI
 
 struct DollhouseContainerView: View {
@@ -8,6 +9,7 @@ struct DollhouseContainerView: View {
     @AppStorage("dollhouseShowFurniture") private var showFurniture: Bool = true
 
     @State private var scene: DollhouseScene?
+    @State private var scnScene: SCNScene?
     @State private var errorMessage: String?
     @State private var isLoading = true
     @State private var buildToken = UUID()
@@ -56,8 +58,8 @@ struct DollhouseContainerView: View {
         Group {
             if isLoading {
                 DollhousePlaceholderView(kind: .loading)
-            } else if let scene, !scene.isEmpty {
-                DollhouseSceneView(scene: scene)
+            } else if let scene, let scnScene, !scene.isEmpty {
+                DollhouseSceneView(scene: scene, scnScene: scnScene)
                     .frame(minHeight: 320)
                     .background(VuuroColor.bgInset)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -104,24 +106,35 @@ struct DollhouseContainerView: View {
         isLoading = true
         errorMessage = nil
         scene = nil
+        scnScene = nil
         let roomsSnapshot = rooms
         let configuration = DollhouseBuildConfiguration(
             mode: mode,
             showFurniture: showFurniture,
             performanceMode: isLargePlan
         )
+        PerfTrace.begin(.dollhouseBuild)
         buildTask = Task {
             do {
                 let built = try await Task.detached(priority: .userInitiated) {
-                    try DollhouseMeshBuilder.build(rooms: roomsSnapshot, configuration: configuration)
+                    let dollhouse = try DollhouseMeshBuilder.build(rooms: roomsSnapshot, configuration: configuration)
+                    return BuiltDollhouse(scene: dollhouse, scnScene: DollhouseSceneBuilder.buildScene(from: dollhouse))
                 }.value
                 guard !Task.isCancelled else { return }
-                scene = built
+                scene = built.scene
+                scnScene = built.scnScene
+                PerfTrace.end(.dollhouseBuild, detail: "\(roomsSnapshot.count) rooms, \(configuration.mode.rawValue)")
             } catch {
                 guard !Task.isCancelled else { return }
+                PerfTrace.cancel(.dollhouseBuild)
                 errorMessage = error.localizedDescription
             }
             isLoading = false
         }
     }
+}
+
+private struct BuiltDollhouse: @unchecked Sendable {
+    let scene: DollhouseScene
+    let scnScene: SCNScene
 }

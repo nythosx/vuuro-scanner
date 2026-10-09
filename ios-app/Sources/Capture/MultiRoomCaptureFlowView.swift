@@ -1061,6 +1061,7 @@ struct MultiRoomCaptureFlowView: View {
         var floorPlan: FloorPlan?
         for (index, capture) in pending.captures.enumerated() {
             uploadProgress.markUploading(index: index)
+            PerfTrace.begin(.roomUpload)
             do {
                 let result = try await client.uploadCaptureKeepingRoom(
                     sessionId: session.id,
@@ -1069,6 +1070,7 @@ struct MultiRoomCaptureFlowView: View {
                     bodyJSON: capture.bodyJSON
                 )
                 floorPlan = result.floorPlan
+                PerfTrace.end(.roomUpload, detail: "room \(index + 1) of \(pending.captures.count), \(capture.bodyJSON.count / 1024) KB")
                 if result.addedAsNew {
                     VuuroToast.shared.show(vuuroLocalized(RescanResume.addedAsNewNotice))
                 }

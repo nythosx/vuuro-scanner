@@ -67,7 +67,7 @@ enum DollhousePalette {
         case "garage", "storage_room", "basement", "attic":
             return SIMD4(0.91, 0.89, 0.87, 1.0)
         default:
-            return SIMD4(0.98, 0.98, 0.98, 1.0)
+            return SIMD4(0.90, 0.88, 0.84, 1.0)
         }
     }
 

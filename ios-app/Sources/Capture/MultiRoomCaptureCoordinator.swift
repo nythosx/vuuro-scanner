@@ -272,6 +272,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         liveStats = .empty
         liveUpdateThrottle.resetRoomTypeAnswered()
         startWalkPathTracking()
+        PerfTrace.begin(.scanStartToReady)
         pendingRun = true
         runIfReady()
     }
@@ -281,6 +282,8 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         pendingRun = false
         isRunning = false
         stopWalkPathTracking()
+        PerfTrace.cancel(.scanStartToReady)
+        PerfTrace.begin(.roomProcessing)
         captureSession?.stop(pauseARSession: false)
     }
 
@@ -568,16 +571,19 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
             } catch {
                 self.state = .failed(error.localizedDescription, partialRoomAvailable: false)
             }
+            PerfTrace.end(.roomProcessing, detail: "\(self.capturedRooms.count) rooms")
         }
     }
 
     nonisolated func captureSession(_ session: RoomCaptureSession, didProvide instruction: RoomCaptureSession.Instruction) {
+        PerfTrace.end(.scanStartToReady, detail: "first instruction")
         Task { @MainActor in
             DiagnosticsLog.shared.record("RoomPlan instruction (multi-room): \(instruction)", category: .instruction)
         }
     }
 
     nonisolated func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
+        PerfTrace.end(.scanStartToReady, detail: "first room update")
         let decision = liveUpdateThrottle.decideUpdate()
         guard decision.shouldProcess else { return }
         let exceedsSizeLimit = RoomSizeGuard.exceedsPracticalLimit(room)

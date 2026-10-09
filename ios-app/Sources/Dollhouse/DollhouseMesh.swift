@@ -12,8 +12,8 @@ struct DollhouseMaterial: Equatable {
     let roughness: Float
     let metalness: Float
 
-    static let exteriorWall = DollhouseMaterial(name: "exteriorWall", color: SIMD4(0.0, 0.0, 0.0, 1.0), roughness: 0.9, metalness: 0.0)
-    static let interiorWall = DollhouseMaterial(name: "interiorWall", color: SIMD4(0.11, 0.11, 0.12, 1.0), roughness: 0.9, metalness: 0.0)
+    static let exteriorWall = DollhouseMaterial(name: "exteriorWall", color: SIMD4(0.58, 0.56, 0.53, 1.0), roughness: 0.9, metalness: 0.0)
+    static let interiorWall = DollhouseMaterial(name: "interiorWall", color: SIMD4(0.84, 0.83, 0.80, 1.0), roughness: 0.9, metalness: 0.0)
     static let door = DollhouseMaterial(name: "door", color: SIMD4(1.0, 0.51, 0.07, 1.0), roughness: 0.7, metalness: 0.0)
     static let window = DollhouseMaterial(name: "window", color: SIMD4(0.18, 0.76, 1.0, 1.0), roughness: 0.4, metalness: 0.0)
     static let otherOpening = DollhouseMaterial(name: "otherOpening", color: SIMD4(0.55, 0.55, 0.56, 1.0), roughness: 0.8, metalness: 0.0)

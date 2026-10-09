@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DollhouseSceneView: UIViewRepresentable {
     let scene: DollhouseScene
+    let scnScene: SCNScene
 
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
@@ -17,7 +18,6 @@ struct DollhouseSceneView: UIViewRepresentable {
             ? vuuroLocalized("1 room")
             : String(format: vuuroLocalized("%d rooms"), scene.roomCount)
         view.accessibilityHint = vuuroLocalized("Drag with one finger to rotate, pinch to zoom, and drag with two fingers to pan.")
-        let scnScene = DollhouseSceneBuilder.buildScene(from: scene)
         view.scene = scnScene
         if let cameraNode = scnScene.rootNode.childNodes.first(where: { $0.camera != nil }) {
             view.pointOfView = cameraNode
@@ -30,7 +30,6 @@ struct DollhouseSceneView: UIViewRepresentable {
     func updateUIView(_ view: SCNView, context: Context) {
         guard context.coordinator.lastSceneId != scene.id else { return }
         context.coordinator.lastSceneId = scene.id
-        let scnScene = DollhouseSceneBuilder.buildScene(from: scene)
         view.scene = scnScene
         if let cameraNode = scnScene.rootNode.childNodes.first(where: { $0.camera != nil }) {
             view.pointOfView = cameraNode

@@ -56,7 +56,6 @@ struct ScanResultsReportView: View {
     @State private var isExportingUSDZ = false
     @State private var usdzURL: URL?
     @State private var showUSDZShare = false
-    @State private var showUSDZPreview = false
 
     private var exportUnit: MeasurementUnit {
         MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
@@ -326,12 +325,6 @@ struct ScanResultsReportView: View {
         .sheet(isPresented: $showUSDZShare) {
             if let usdzURL {
                 ActivityShareSheet(items: [usdzURL])
-            }
-        }
-        .fullScreenCover(isPresented: $showUSDZPreview) {
-            if let usdzURL {
-                ARQuickLookPreview(url: usdzURL, onDismiss: { showUSDZPreview = false })
-                    .ignoresSafeArea()
             }
         }
     }
@@ -1075,9 +1068,7 @@ struct ScanResultsReportView: View {
         let propertyId = entry.propertyId
         let unitId = entry.unitId
         do {
-            let scene = try await Task.detached(priority: .userInitiated) {
-                try DollhouseMeshBuilder.buildForExport(rooms: rooms)
-            }.value
+            PerfTrace.begin(.usdzExport)
             let url = try ExportNaming.url(
                 sessionId: sessionId,
                 property: propertyId,
@@ -1087,10 +1078,11 @@ struct ScanResultsReportView: View {
                 suffix: "dollhouse",
                 ext: "usdz"
             )
-            try DollhouseUSDZExporter.export(
-                scene,
-                to: url
-            )
+            try await Task.detached(priority: .userInitiated) {
+                let scene = try DollhouseMeshBuilder.buildForExport(rooms: rooms)
+                try DollhouseUSDZExporter.export(scene, to: url)
+            }.value
+            PerfTrace.end(.usdzExport, detail: "\(rooms.count) rooms")
             if let old = usdzURL, FileManager.default.fileExists(atPath: old.path) {
                 try? FileManager.default.removeItem(at: old)
             }
@@ -1102,7 +1094,7 @@ struct ScanResultsReportView: View {
                     VuuroToast.shared.show(vuuroLocalized("This 3D model is too large to open in AR. Try sharing it as a file instead."))
                     return
                 }
-                showUSDZPreview = true
+                ARQuickLookPresenter.shared.present(url: url)
             } else {
                 showUSDZShare = true
             }
@@ -1194,6 +1186,7 @@ struct ScanResultsReportView: View {
         if let floorPlan, floorPlan.rooms.isEmpty { return }
 
         imageFailed = false
+        PerfTrace.begin(.resultPlanImage)
         let alreadyCached = FloorPlanImageCache.shared.cachedData(
             sessionId: entry.sessionId,
             unit: exportUnit
@@ -1208,7 +1201,14 @@ struct ScanResultsReportView: View {
             client: client
         ).value
 
-        guard let data, let image = UIImage(data: data) else {
+        let decodedImage: UIImage?
+        if let data {
+            decodedImage = await ImageDecoding.decoded(data)
+        } else {
+            decodedImage = nil
+        }
+        guard let image = decodedImage else {
+            PerfTrace.cancel(.resultPlanImage)
             appError = AppError(
                 site: .resultImageLoad,
                 underlying: FloorPlanImageCache.shared.lastError(
@@ -1220,6 +1220,7 @@ struct ScanResultsReportView: View {
             return
         }
         floorPlanImage = image
+        PerfTrace.end(.resultPlanImage, detail: alreadyCached ? "cache" : "network")
     }
 
     @ViewBuilder

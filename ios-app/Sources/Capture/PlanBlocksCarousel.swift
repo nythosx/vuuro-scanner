@@ -220,7 +220,7 @@ struct PlanBlocksCarousel: View {
                     floor: block.floor ?? "",
                     group: block.group
                 )
-                if let image = UIImage(data: data) {
+                if let image = await ImageDecoding.decoded(data) {
                     images[block.id] = image
                 } else {
                     failedIds.insert(block.id)

@@ -143,6 +143,7 @@ struct HomeView: View {
         }.value
         recentScan = all.first
         hasPendingUpload = pending != nil && pending?.skippedAt != nil
+        PerfTrace.end(.launchToHome, detail: "\(all.count) scans")
         guard activityThrottle.shouldRefresh(now: Date()) else { return }
         await client.noteActivity(all)
         let refreshed = await Task.detached(priority: .userInitiated) {

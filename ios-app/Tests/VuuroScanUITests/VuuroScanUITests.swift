@@ -76,6 +76,69 @@ final class VuuroScanUITests: XCTestCase {
         XCTAssertTrue(element(app, "result.done").waitForExistence(timeout: timeout), "result screen never appeared")
     }
 
+    private func openSavedReport(_ app: XCUIApplication, property: String) {
+        startScan(app, entry: "home.scanSingleRoom", property: property, unit: "unit-1")
+        tap(app, "capture.fakeScan")
+        tap(app, "anotherRoom.finishUnit")
+        finishToResult(app)
+        tap(app, "result.saveAndReturnHome")
+        tap(app, "home.recentScan")
+        let card = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "history.card.")).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: timeout), "history card never appeared")
+        card.tap()
+        XCTAssertTrue(element(app, "report.close").waitForExistence(timeout: timeout), "report did not open")
+    }
+
+    private func shareSheet(_ app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier IN %@", ["ActivityListView", "UIActivityContentView"]))
+            .firstMatch
+    }
+
+    private func closeShareSheet(_ app: XCUIApplication) {
+        let close = app.buttons["Close"].firstMatch
+        if close.waitForExistence(timeout: 3) {
+            close.tap()
+        } else {
+            app.swipeDown(velocity: .fast)
+        }
+    }
+
+    func testSavedReportShare3DModelOpensAndClosesTwice() {
+        let app = makeApp()
+        app.launch()
+        openSavedReport(app, property: "prop-ui-usdz")
+        for round in 1...2 {
+            tap(app, "report.shareMenu")
+            tap(app, "report.shareUSDZ")
+            XCTAssertTrue(shareSheet(app).waitForExistence(timeout: 60), "share sheet for the 3D model never appeared (round \(round))")
+            closeShareSheet(app)
+            let gone = NSPredicate(format: "exists == false")
+            let closed = XCTNSPredicateExpectation(predicate: gone, object: shareSheet(app))
+            XCTAssertEqual(XCTWaiter().wait(for: [closed], timeout: timeout), .completed, "share sheet did not close (round \(round))")
+            XCTAssertTrue(element(app, "report.close").waitForExistence(timeout: timeout), "report not reachable after closing the share sheet (round \(round))")
+        }
+    }
+
+    func testSavedReportSwitchesTo3DAndBack() {
+        let app = makeApp()
+        app.launch()
+        openSavedReport(app, property: "prop-ui-3d")
+        let viewMode = element(app, "report.planViewMode")
+        XCTAssertTrue(viewMode.waitForExistence(timeout: timeout), "report.planViewMode never appeared")
+        scrollIntoView(app, viewMode)
+        viewMode.buttons["3D"].tap()
+        XCTAssertTrue(element(app, "dollhouse.mode").waitForExistence(timeout: timeout), "3D controls never appeared")
+        let modes = element(app, "dollhouse.mode")
+        modes.buttons.element(boundBy: 0).tap()
+        modes.buttons.element(boundBy: 1).tap()
+        let scene = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "3D floor plan")).firstMatch
+        XCTAssertTrue(scene.waitForExistence(timeout: timeout), "3D scene never appeared")
+        viewMode.buttons["2D plan"].tap()
+        let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element(app, "dollhouse.mode"))
+        XCTAssertEqual(XCTWaiter().wait(for: [gone], timeout: timeout), .completed, "3D controls did not go away after switching back to 2D")
+    }
+
     func testOnboardingCanBeSkippedToHome() {
         let app = makeApp(onboardingDone: false)
         app.launch()
