@@ -6,17 +6,21 @@ final class DollhouseCamera: NSObject {
 
     private weak var view: SCNView?
     private weak var cameraNode: SCNNode?
+    private weak var attachedView: SCNView?
     private var distance: Float = 10
+    private var defaultTarget: SIMD3<Float> = .zero
     private var yaw: Float = .pi / 4
     private var pitch: Float = .pi / 4
     private var target: SIMD3<Float> = .zero
     private var lastPanLocation: CGPoint = .zero
-    private var lastPinchDistance: CGFloat = 0
 
     func attach(to view: SCNView, cameraNode: SCNNode, framing scene: DollhouseScene) {
         self.view = view
         self.cameraNode = cameraNode
+        defaultTarget = scene.boundsCenter
         DollhouseCamera.placeDefault(cameraNode: cameraNode, framing: scene, camera: self)
+        guard attachedView !== view else { return }
+        attachedView = view
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
         let twoFingerPan = UIPanGestureRecognizer(target: self, action: #selector(handleTwoFingerPan(_:)))
@@ -93,10 +97,9 @@ final class DollhouseCamera: NSObject {
     }
 
     @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
-        guard let cameraNode else { return }
         yaw = .pi / 4
         pitch = .pi / 4
+        target = defaultTarget
         update()
-        _ = cameraNode
     }
 }

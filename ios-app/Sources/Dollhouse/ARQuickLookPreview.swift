@@ -43,7 +43,7 @@ struct ARQuickLookPreview: UIViewControllerRepresentable {
 
         func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
             let item = ARQuickLookPreviewItem(fileAt: url)
-            item.allowsContentScaling = true
+            item.allowsContentScaling = false
             return item
         }
 

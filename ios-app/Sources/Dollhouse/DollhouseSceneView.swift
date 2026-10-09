@@ -11,16 +11,25 @@ struct DollhouseSceneView: UIViewRepresentable {
         view.autoenablesDefaultLighting = false
         view.antialiasingMode = .multisampling4X
         view.preferredFramesPerSecond = 60
+        view.isAccessibilityElement = true
+        view.accessibilityLabel = vuuroLocalized("3D floor plan")
+        view.accessibilityValue = scene.roomCount == 1
+            ? vuuroLocalized("1 room")
+            : String(format: vuuroLocalized("%d rooms"), scene.roomCount)
+        view.accessibilityHint = vuuroLocalized("Drag with one finger to rotate, pinch to zoom, and drag with two fingers to pan.")
         let scnScene = DollhouseSceneBuilder.buildScene(from: scene)
         view.scene = scnScene
         if let cameraNode = scnScene.rootNode.childNodes.first(where: { $0.camera != nil }) {
             view.pointOfView = cameraNode
             context.coordinator.camera.attach(to: view, cameraNode: cameraNode, framing: scene)
         }
+        context.coordinator.lastSceneId = scene.id
         return view
     }
 
     func updateUIView(_ view: SCNView, context: Context) {
+        guard context.coordinator.lastSceneId != scene.id else { return }
+        context.coordinator.lastSceneId = scene.id
         let scnScene = DollhouseSceneBuilder.buildScene(from: scene)
         view.scene = scnScene
         if let cameraNode = scnScene.rootNode.childNodes.first(where: { $0.camera != nil }) {
@@ -35,5 +44,6 @@ struct DollhouseSceneView: UIViewRepresentable {
 
     final class Coordinator {
         let camera = DollhouseCamera()
+        var lastSceneId: UUID?
     }
 }

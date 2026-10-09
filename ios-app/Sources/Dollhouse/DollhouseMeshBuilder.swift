@@ -24,11 +24,13 @@ struct DollhouseBuildConfiguration {
 enum DollhouseMeshBuilderError: Error, LocalizedError {
     case noRooms
     case emptyGeometry
+    case tooManyTriangles
 
     var errorDescription: String? {
         switch self {
         case .noRooms: return "This scan has no rooms to show in 3D."
         case .emptyGeometry: return "The captured rooms produced no usable 3D geometry."
+        case .tooManyTriangles: return vuuroLocalized("This 3D model has too many details to export.")
         }
     }
 }
@@ -41,7 +43,9 @@ enum DollhouseConstants {
     static let maxOpeningWallDistanceM: Float = 0.6
     static let minRoomAreaM2: Float = 0.25
     static let largePlanRoomThreshold = 12
+    static let maxTriangles = 150_000
     static let sectionVerticalGapM: Float = 1.5
+    static let seamOverlapM: Float = 0.015
     static let doorHeightM: Float = 2.05
     static let windowHeightM: Float = 1.2
     static let windowSillM: Float = 0.9
@@ -85,7 +89,7 @@ struct DollhouseMeshBuilder {
     static func build(rooms: [FloorPlan.Room], configuration: DollhouseBuildConfiguration = DollhouseBuildConfiguration()) throws -> DollhouseScene {
         guard !rooms.isEmpty else { throw DollhouseMeshBuilderError.noRooms }
 
-        let largePlan = rooms.count > DollhouseConstants.largePlanRoomThreshold
+        let largePlan = isLargePlan(rooms)
         var effectiveConfiguration = configuration
         if largePlan && configuration.performanceMode {
             effectiveConfiguration.showFurniture = false
@@ -96,6 +100,7 @@ struct DollhouseMeshBuilder {
         var boundsMax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         var hasGeometry = false
         var usedEstimatedHeight = false
+        var degenerateRoomCount = 0
 
         let sections = makeFloorSections(rooms: rooms)
         var sectionOffsetZ: Float = 0.0
@@ -106,9 +111,11 @@ struct DollhouseMeshBuilder {
             var sectionMin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
             var sectionMax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
 
+            let sectionSharedEdges = findSharedEdges(section.rooms)
             for room in section.rooms {
-                let result = buildRoom(room: room, configuration: effectiveConfiguration, sectionOrigin: sectionOrigin)
+                let result = buildRoom(room: room, configuration: effectiveConfiguration, sectionOrigin: sectionOrigin, skipEdges: sectionSharedEdges.skip[room.roomId] ?? [], interiorEdges: sectionSharedEdges.interior[room.roomId] ?? [])
                 if result.estimatedHeight { usedEstimatedHeight = true }
+                if result.degenerate { degenerateRoomCount += 1 }
                 for mesh in result.meshes where !mesh.isEmpty {
                     meshes.append(mesh)
                     hasGeometry = true
@@ -121,14 +128,15 @@ struct DollhouseMeshBuilder {
                 }
             }
 
-            sectionSummaries.append(DollhouseFloorSection(
-                id: "section-\(sectionIndex)",
-                title: section.title,
-                roomIds: section.rooms.map(\.roomId),
-                originOffset: sectionOrigin
-            ))
-
             if sectionMin.x.isFinite && sectionMax.x.isFinite {
+                sectionSummaries.append(DollhouseFloorSection(
+                    id: "section-\(sectionIndex)",
+                    title: section.title,
+                    roomIds: section.rooms.map(\.roomId),
+                    originOffset: sectionOrigin,
+                    boundsMin: sectionMin,
+                    boundsMax: sectionMax
+                ))
                 sectionOffsetZ += (sectionMax.z - sectionMin.z) + DollhouseConstants.sectionVerticalGapM
             }
         }
@@ -141,7 +149,9 @@ struct DollhouseMeshBuilder {
             boundsMax: boundsMax,
             roomCount: rooms.count,
             floorSections: sectionSummaries,
-            usedEstimatedHeight: usedEstimatedHeight
+            usedEstimatedHeight: usedEstimatedHeight,
+            headingDeg: sections.count == 1 ? agreedHeading(rooms) : nil,
+            degenerateRoomCount: degenerateRoomCount
         )
     }
 
@@ -154,6 +164,81 @@ struct DollhouseMeshBuilder {
             }
         }
         return minZ.isFinite ? minZ : 0
+    }
+
+    private struct SharedEdge {
+        let roomId: String
+        let index: Int
+        let ax: Float
+        let az: Float
+        let bx: Float
+        let bz: Float
+        let length: Float
+        let isOpen: Bool
+    }
+
+    private static func findSharedEdges(_ rooms: [FloorPlan.Room]) -> (skip: [String: Set<Int>], interior: [String: Set<Int>]) {
+        var edges: [SharedEdge] = []
+        for room in rooms {
+            guard let origin = room.structureOriginM, origin.count >= 2 else { continue }
+            let ox = Float(origin[0])
+            let oz = Float(origin[1])
+            let n = room.outlineM.count
+            guard n >= 3 else { continue }
+            let openSet = Set(room.openEdges)
+            for i in 0..<n {
+                let a = room.outlineM[i]
+                let b = room.outlineM[(i + 1) % n]
+                guard a.count >= 2, b.count >= 2 else { continue }
+                let ax = Float(a[0]) + ox
+                let az = Float(a[1]) + oz
+                let bx = Float(b[0]) + ox
+                let bz = Float(b[1]) + oz
+                let dx = bx - ax
+                let dz = bz - az
+                let length = (dx * dx + dz * dz).squareRoot()
+                edges.append(SharedEdge(roomId: room.roomId, index: i, ax: ax, az: az, bx: bx, bz: bz, length: length, isOpen: openSet.contains(i)))
+            }
+        }
+        var skip: [String: Set<Int>] = [:]
+        var interior: [String: Set<Int>] = [:]
+        let count = edges.count
+        for i in 0..<count {
+            for j in (i + 1)..<count {
+                let e1 = edges[i]
+                let e2 = edges[j]
+                if e1.roomId == e2.roomId { continue }
+                if e1.isOpen || e2.isOpen { continue }
+                guard let overlap = collinearOverlap(e1, e2) else { continue }
+                let shorter = e1.length <= e2.length ? e1 : e2
+                let longer = e1.length <= e2.length ? e2 : e1
+                guard overlap >= 0.9 * shorter.length else { continue }
+                interior[longer.roomId, default: []].insert(longer.index)
+                skip[shorter.roomId, default: []].insert(shorter.index)
+            }
+        }
+        return (skip, interior)
+    }
+
+    private static func collinearOverlap(_ e1: SharedEdge, _ e2: SharedEdge) -> Float? {
+        let len1 = e1.length
+        let len2 = e2.length
+        if len1 < 0.2 || len2 < 0.2 { return nil }
+        let d1x = e1.bx - e1.ax
+        let d1z = e1.bz - e1.az
+        let d2x = e2.bx - e2.ax
+        let d2z = e2.bz - e2.az
+        let crossAbs = abs(d1x * d2z - d1z * d2x)
+        if crossAbs / (len1 * len2) > 0.05 { return nil }
+        let ux = d1x / len1
+        let uz = d1z / len1
+        let perp = abs((e2.ax - e1.ax) * uz - (e2.az - e1.az) * ux)
+        if perp > 0.15 { return nil }
+        let t1 = (e2.ax - e1.ax) * ux + (e2.az - e1.az) * uz
+        let t2 = (e2.bx - e1.ax) * ux + (e2.bz - e1.az) * uz
+        let tLo = max(0, min(t1, t2))
+        let tHi = min(len1, max(t1, t2))
+        return tHi - tLo
     }
 
     private struct Section {
@@ -198,7 +283,7 @@ struct DollhouseMeshBuilder {
             }
             for (index, subgroup) in subgroups.enumerated() {
                 let base = floorName.isEmpty ? "Floor not set" : floorName
-                sections.append(Section(title: "\(base) \u{00B7} part \(index + 1)", rooms: subgroup))
+                sections.append(Section(title: "\(base) \u{00B7} \(vuuroLocalized("part")) \(index + 1)", rooms: subgroup))
             }
         }
         return sections
@@ -222,6 +307,33 @@ struct DollhouseMeshBuilder {
         return order.map { buckets[$0] ?? [] }
     }
 
+    static func buildForExport(rooms: [FloorPlan.Room], maxTriangles: Int = DollhouseConstants.maxTriangles) throws -> DollhouseScene {
+        let full = try build(rooms: rooms, configuration: DollhouseBuildConfiguration(mode: .dollhouse))
+        if full.totalTriangles <= maxTriangles { return full }
+        let reduced = try build(rooms: rooms, configuration: DollhouseBuildConfiguration(mode: .dollhouse, showFurniture: false))
+        if reduced.totalTriangles <= maxTriangles { return reduced }
+        throw DollhouseMeshBuilderError.tooManyTriangles
+    }
+
+    static func isLargePlan(_ rooms: [FloorPlan.Room]) -> Bool {
+        if rooms.count > DollhouseConstants.largePlanRoomThreshold { return true }
+        let complexity = rooms.reduce(0) { $0 + $1.outlineM.count + $1.objects.count }
+        return complexity > 120
+    }
+
+    private static func agreedHeading(_ rooms: [FloorPlan.Room]) -> Double? {
+        let headings = rooms.compactMap(\.headingDeg).filter { $0.isFinite }
+        guard let first = headings.first else { return nil }
+        let base = ((first.truncatingRemainder(dividingBy: 360)) + 360).truncatingRemainder(dividingBy: 360)
+        for h in headings {
+            let norm = ((h.truncatingRemainder(dividingBy: 360)) + 360).truncatingRemainder(dividingBy: 360)
+            var diff = abs(norm - base)
+            if diff > 180 { diff = 360 - diff }
+            if diff > 5 { return nil }
+        }
+        return base
+    }
+
     private static func floorRank(_ name: String) -> Int {
         let n = name.lowercased()
         if n.contains("attic") || n.contains("zolder") || n.contains("loft") { return 100 }
@@ -237,17 +349,18 @@ struct DollhouseMeshBuilder {
     private struct RoomBuildResult {
         let meshes: [DollhouseMesh]
         let estimatedHeight: Bool
+        var degenerate: Bool = false
     }
 
-    private static func buildRoom(room: FloorPlan.Room, configuration: DollhouseBuildConfiguration, sectionOrigin: SIMD3<Float>) -> RoomBuildResult {
-        guard room.outlineM.count >= 3 else { return RoomBuildResult(meshes: [], estimatedHeight: false) }
+    private static func buildRoom(room: FloorPlan.Room, configuration: DollhouseBuildConfiguration, sectionOrigin: SIMD3<Float>, skipEdges: Set<Int>, interiorEdges: Set<Int>) -> RoomBuildResult {
+        guard room.outlineM.count >= 3 else { return RoomBuildResult(meshes: [], estimatedHeight: false, degenerate: true) }
         let outline = room.outlineM.compactMap { point -> SIMD2<Float>? in
             guard point.count >= 2 else { return nil }
             return SIMD2<Float>(Float(point[0]), Float(point[1]))
         }
-        guard outline.count >= 3 else { return RoomBuildResult(meshes: [], estimatedHeight: false) }
+        guard outline.count >= 3 else { return RoomBuildResult(meshes: [], estimatedHeight: false, degenerate: true) }
         let area = polygonArea(outline)
-        guard area >= DollhouseConstants.minRoomAreaM2 else { return RoomBuildResult(meshes: [], estimatedHeight: false) }
+        guard area >= DollhouseConstants.minRoomAreaM2 else { return RoomBuildResult(meshes: [], estimatedHeight: false, degenerate: true) }
 
         var estimated = false
         let requestedHeight: Float
@@ -279,16 +392,28 @@ struct DollhouseMeshBuilder {
         let signedArea = outlineSignedArea(outline)
         let isCounterClockwise = signedArea > 0
         for index in outline.indices {
-            if openEdges.contains(index) { continue }
             let a = outline[index]
             let b = outline[(index + 1) % outline.count]
+            if skipEdges.contains(index) { continue }
+            if openEdges.contains(index) {
+                let edge = b - a
+                let edgeLength = simd_length(edge)
+                if edgeLength > 0.05 {
+                    let yaw = atan2(edge.y, edge.x)
+                    let mid = (a + b) * 0.5
+                    let marker = makeBox(center: SIMD3<Float>(mid.x, 0.015, mid.y), size: SIMD3<Float>(edgeLength, 0.03, 0.08), yaw: yaw, base: base, material: DollhouseMaterial.openEdge, path: roomPath.appending("OpenEdge-\(index)"))
+                    meshes.append(marker)
+                }
+                continue
+            }
             let direction = b - a
             let length = simd_length(direction)
             if length < 1e-4 { continue }
             let unit = direction / length
             let inwardSign: Float = isCounterClockwise ? 1 : -1
             let inwardNormal2D = SIMD2<Float>(-unit.y * inwardSign, unit.x * inwardSign)
-            let mesh = makeWallMesh(a: a, b: b, height: wallHeight, base: base, material: DollhouseMaterial.exteriorWall, path: roomPath.appending("Wall-\(index)"), inwardNormal2D: inwardNormal2D)
+            let thickness = interiorEdges.contains(index) ? DollhouseConstants.interiorWallThicknessM : DollhouseConstants.exteriorWallThicknessM
+            let mesh = makeWallMesh(a: a, b: b, height: wallHeight, base: base, material: DollhouseMaterial.exteriorWall, path: roomPath.appending("Wall-\(index)"), inwardNormal2D: inwardNormal2D, thickness: thickness)
             meshes.append(mesh)
         }
 
@@ -509,17 +634,20 @@ struct DollhouseMeshBuilder {
         base: SIMD3<Float>,
         material: DollhouseMaterial,
         path: DollhouseNodePath,
-        inwardNormal2D: SIMD2<Float>
+        inwardNormal2D: SIMD2<Float>,
+        thickness: Float
     ) -> DollhouseMesh {
         let direction = b - a
         let length = simd_length(direction)
         if length < 1e-4 { return DollhouseMesh(vertices: [], indices: [], material: material, path: path) }
         let unit = direction / length
-        let halfThickness = DollhouseConstants.exteriorWallThicknessM / 2
-        let innerA = a + inwardNormal2D * halfThickness
-        let innerB = b + inwardNormal2D * halfThickness
-        let outerA = a - inwardNormal2D * halfThickness
-        let outerB = b - inwardNormal2D * halfThickness
+        let halfThickness = thickness / 2
+        let aExt = a - unit * DollhouseConstants.seamOverlapM
+        let bExt = b + unit * DollhouseConstants.seamOverlapM
+        let innerA = aExt + inwardNormal2D * halfThickness
+        let innerB = bExt + inwardNormal2D * halfThickness
+        let outerA = aExt - inwardNormal2D * halfThickness
+        let outerB = bExt - inwardNormal2D * halfThickness
 
         func world(_ p: SIMD2<Float>, _ y: Float) -> SIMD3<Float> {
             SIMD3<Float>(p.x + base.x, base.y + y, p.y + base.z)

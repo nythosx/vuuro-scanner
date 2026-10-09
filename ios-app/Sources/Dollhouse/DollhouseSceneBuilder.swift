@@ -1,10 +1,11 @@
 import Foundation
 import SceneKit
+import UIKit
 import simd
 
 enum DollhouseSceneBuilder {
 
-    static func buildScene(from dollhouse: DollhouseScene) -> SCNScene {
+    static func buildScene(from dollhouse: DollhouseScene, includeAnnotations: Bool = true) -> SCNScene {
         let scene = SCNScene()
 
         var nodesByPath: [String: SCNNode] = [:]
@@ -28,6 +29,58 @@ enum DollhouseSceneBuilder {
         }
 
         addLights(to: scene)
+
+        if includeAnnotations {
+            for section in dollhouse.floorSections where dollhouse.floorSections.count > 1 && !section.title.isEmpty && !section.title.hasPrefix("Floor not set") && section.boundsMin.x.isFinite && section.boundsMax.x.isFinite {
+                let text = SCNText(string: section.title, extrusionDepth: 0.02)
+                text.font = UIFont.systemFont(ofSize: 1.0, weight: .semibold)
+                text.flatness = 0.05
+                let textMaterial = SCNMaterial()
+                textMaterial.diffuse.contents = UIColor(white: 0.1, alpha: 1.0)
+                textMaterial.lightingModel = .constant
+                textMaterial.isDoubleSided = true
+                text.materials = [textMaterial]
+                let textNode = SCNNode(geometry: text)
+                textNode.scale = SCNVector3(0.4, 0.4, 0.4)
+                let cx = (section.boundsMin.x + section.boundsMax.x) * 0.5
+                let cz = (section.boundsMin.z + section.boundsMax.z) * 0.5
+                let cy = section.boundsMax.y + 0.35
+                let (minBound, maxBound) = text.boundingBox
+                let textWidth = (maxBound.x - minBound.x) * 0.4
+                textNode.position = SCNVector3(cx - textWidth * 0.5, cy, cz)
+                root.addChildNode(textNode)
+            }
+
+            if let rawHeadingDeg = dollhouse.headingDeg, rawHeadingDeg.isFinite, dollhouse.boundsMin.x.isFinite {
+                let headingDeg = ((rawHeadingDeg.truncatingRemainder(dividingBy: 360)) + 360).truncatingRemainder(dividingBy: 360)
+                let compassText = SCNText(string: "N", extrusionDepth: 0.02)
+                compassText.font = UIFont.systemFont(ofSize: 1.2, weight: .bold)
+                compassText.flatness = 0.05
+                let compassMaterial = SCNMaterial()
+                compassMaterial.diffuse.contents = UIColor(red: 0.84, green: 0.27, blue: 0.24, alpha: 1.0)
+                compassMaterial.lightingModel = .constant
+                compassMaterial.isDoubleSided = true
+                compassText.materials = [compassMaterial]
+                let compassNode = SCNNode(geometry: compassText)
+                compassNode.scale = SCNVector3(0.4, 0.4, 0.4)
+                let baseX = dollhouse.boundsMin.x - 0.8
+                let baseZ = dollhouse.boundsMin.z - 0.8
+                let baseY = dollhouse.boundsMin.y + 0.1
+                compassNode.position = SCNVector3(baseX, baseY, baseZ)
+                root.addChildNode(compassNode)
+                let headingRad = Float(headingDeg) * .pi / 180.0
+                let length: Float = 1.5
+                let dx = sin(headingRad)
+                let dz = cos(headingRad)
+                let lineGeom = SCNBox(width: 0.06, height: 0.02, length: CGFloat(length), chamferRadius: 0)
+                lineGeom.firstMaterial?.diffuse.contents = UIColor(red: 0.84, green: 0.27, blue: 0.24, alpha: 1.0)
+                lineGeom.firstMaterial?.lightingModel = .constant
+                let lineNode = SCNNode(geometry: lineGeom)
+                lineNode.position = SCNVector3(baseX + dx * length * 0.5, baseY, baseZ + dz * length * 0.5)
+                lineNode.eulerAngles = SCNVector3(0, atan2(dx, dz), 0)
+                root.addChildNode(lineNode)
+            }
+        }
 
         let cameraNode = SCNNode()
         cameraNode.camera = SCNCamera()

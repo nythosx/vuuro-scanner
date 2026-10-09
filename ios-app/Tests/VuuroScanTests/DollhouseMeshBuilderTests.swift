@@ -81,7 +81,10 @@ final class DollhouseMeshBuilderTests: XCTestCase {
         let openRooms = try makeRooms("[\(roomJSON(openEdges: "[0]"))]")
         let closedScene = try DollhouseMeshBuilder.build(rooms: closedRooms)
         let openScene = try DollhouseMeshBuilder.build(rooms: openRooms)
-        XCTAssertGreaterThan(closedScene.totalTriangles, openScene.totalTriangles)
+        XCTAssertEqual(meshes(closedScene, named: "Wall-").count, 4)
+        XCTAssertEqual(meshes(openScene, named: "Wall-").count, 3)
+        XCTAssertTrue(meshes(openScene, named: "Wall-0").isEmpty)
+        XCTAssertEqual(meshes(openScene, named: "OpenEdge-0").count, 1)
     }
 
     func testTwoRoomsWithOriginShareFrame() throws {
@@ -233,5 +236,89 @@ final class DollhouseMeshBuilderTests: XCTestCase {
         let atticRange = zRange("room-attic")
         let groundRange = zRange("room-ground")
         XCTAssertLessThan(atticRange.1, groundRange.0)
+    }
+
+    private func walls(_ scene: DollhouseScene, room roomId: String) -> [DollhouseMesh] {
+        meshes(scene, named: "Wall-").filter { $0.path.components.contains("Room-\(roomId)") }
+    }
+
+    private func wallNames(_ scene: DollhouseScene, room roomId: String) -> Set<String> {
+        Set(walls(scene, room: roomId).compactMap { $0.path.components.last })
+    }
+
+    func testSharedWallIsDrawnOnceAsInteriorWall() throws {
+        let left = roomJSON(id: "room-a", origin: "[0, 0]")
+        let right = roomJSON(id: "room-b", origin: "[4, 0]")
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(left),\(right)]"), configuration: DollhouseBuildConfiguration(mode: .dollhouse))
+        let all = meshes(scene, named: "Wall-")
+        XCTAssertEqual(all.count, 7)
+        let sharedX: Float = 4
+        let onSeam = all.filter { wall in
+            let xs = wall.vertices.map(\.position.x)
+            return xs.min()! < sharedX && xs.max()! > sharedX && xs.max()! - xs.min()! < 0.5
+        }
+        XCTAssertEqual(onSeam.count, 1)
+        let xs = onSeam[0].vertices.map(\.position.x)
+        XCTAssertEqual(xs.max()! - xs.min()!, DollhouseConstants.interiorWallThicknessM, accuracy: 0.01)
+    }
+
+    func testWallsOnDifferentFloorsAreNotMerged() throws {
+        let ground = roomJSON(id: "room-a", origin: "[0, 0]", floor: "Ground")
+        let first = roomJSON(id: "room-b", origin: "[0, 0]", floor: "First")
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(ground),\(first)]"))
+        XCTAssertEqual(walls(scene, room: "room-a").count, 4)
+        XCTAssertEqual(walls(scene, room: "room-b").count, 4)
+    }
+
+    func testTileRoomsWithoutOriginKeepAllWalls() throws {
+        let first = roomJSON(id: "room-a", origin: "null")
+        let second = roomJSON(id: "room-b", origin: "null")
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(first),\(second)]"))
+        XCTAssertEqual(walls(scene, room: "room-a").count, 4)
+        XCTAssertEqual(walls(scene, room: "room-b").count, 4)
+    }
+
+    func testShortNeighbourDoesNotRemoveLongWall() throws {
+        let hallway = roomJSON(id: "room-z", outline: "[[0,0],[6,0],[6,1.2],[0,1.2]]", origin: "[0, 0]")
+        let toilet = roomJSON(id: "room-a", outline: "[[0,0],[1.5,0],[1.5,1.5],[0,1.5]]", origin: "[1, 1.2]")
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(hallway),\(toilet)]"))
+        XCTAssertEqual(wallNames(scene, room: "room-z"), ["Wall-0", "Wall-1", "Wall-2", "Wall-3"])
+        XCTAssertEqual(wallNames(scene, room: "room-a"), ["Wall-1", "Wall-2", "Wall-3"])
+    }
+
+    func testOpenEdgeOnEitherSideKeepsBothWalls() throws {
+        let left = roomJSON(id: "room-a", origin: "[0, 0]", openEdges: "[1]")
+        let right = roomJSON(id: "room-b", origin: "[4, 0]")
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(left),\(right)]"))
+        XCTAssertEqual(wallNames(scene, room: "room-b"), ["Wall-0", "Wall-1", "Wall-2", "Wall-3"])
+    }
+
+    func testExportBuildDropsFurnitureWhenOverBudget() throws {
+        let sofa = "[{\"object_id\":\"o1\",\"category\":\"sofa\",\"position_m\":[2,1.5],\"dimensions_m\":[2,0.8,0.9],\"confidence\":\"high\",\"custom_name\":null,\"excluded\":false}]"
+        let rooms = try makeRooms("[\(roomJSON(objects: sofa))]")
+        let full = try DollhouseMeshBuilder.build(rooms: rooms, configuration: DollhouseBuildConfiguration(mode: .dollhouse))
+        let bare = try DollhouseMeshBuilder.build(rooms: rooms, configuration: DollhouseBuildConfiguration(mode: .dollhouse, showFurniture: false))
+        XCTAssertGreaterThan(full.totalTriangles, bare.totalTriangles)
+        let scene = try DollhouseMeshBuilder.buildForExport(rooms: rooms, maxTriangles: bare.totalTriangles)
+        XCTAssertEqual(scene.totalTriangles, bare.totalTriangles)
+    }
+
+    func testExportBuildThrowsWhenStillOverBudget() throws {
+        let rooms = try makeRooms("[\(roomJSON())]")
+        XCTAssertThrowsError(try DollhouseMeshBuilder.buildForExport(rooms: rooms, maxTriangles: 1)) { error in
+            guard case DollhouseMeshBuilderError.tooManyTriangles = error else {
+                return XCTFail("unexpected error \(error)")
+            }
+        }
+    }
+
+    func testHeadingOnlyKeptWhenRoomsAgree() throws {
+        func room(_ id: String, _ origin: String, _ heading: String) -> String {
+            roomJSON(id: id, origin: origin).replacingOccurrences(of: "\"open_edges\": []", with: "\"open_edges\": [], \"heading_deg\": \(heading)")
+        }
+        let agree = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(room("room-a", "[0, 0]", "90")),\(room("room-b", "[6, 0]", "92"))]"))
+        XCTAssertEqual(agree.headingDeg ?? -1, 90, accuracy: 0.01)
+        let disagree = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(room("room-a", "[0, 0]", "90")),\(room("room-b", "[6, 0]", "180"))]"))
+        XCTAssertNil(disagree.headingDeg)
     }
 }

@@ -1,3 +1,4 @@
+import ARKit
 import QuickLook
 import SwiftUI
 import UIKit
@@ -75,12 +76,14 @@ struct ResultSummaryView: View {
                                 Label("Share 3D model", systemImage: "cube")
                             }
                             .accessibilityIdentifier("result.shareUSDZ")
-                            Button {
-                                Task { await prepareUSDZ(forPreview: true) }
-                            } label: {
-                                Label("Preview in AR", systemImage: "arkit")
+                            if ARWorldTrackingConfiguration.isSupported {
+                                Button {
+                                    Task { await prepareUSDZ(forPreview: true) }
+                                } label: {
+                                    Label("Preview in AR", systemImage: "arkit")
+                                }
+                                .accessibilityIdentifier("result.previewAR")
                             }
-                            .accessibilityIdentifier("result.previewAR")
                         } label: {
                             if isExportingUSDZ {
                                 ProgressView().controlSize(.small)
@@ -903,6 +906,7 @@ struct ResultSummaryView: View {
         floorPlanImage = nil
         imageFailed = false
         pdfURL = nil
+        usdzURL = nil
     }
 
     @ViewBuilder
@@ -973,15 +977,18 @@ struct ResultSummaryView: View {
         guard !isExportingUSDZ, !currentFloorPlan.rooms.isEmpty else { return }
         isExportingUSDZ = true
         defer { isExportingUSDZ = false }
+        let rooms = currentFloorPlan.rooms
+        let sessionId = session.id
+        let propertyId = session.propertyId
+        let unitId = session.unitId
         do {
-            let scene = try DollhouseMeshBuilder.build(
-                rooms: currentFloorPlan.rooms,
-                configuration: DollhouseBuildConfiguration(mode: .dollhouse)
-            )
+            let scene = try await Task.detached(priority: .userInitiated) {
+                try DollhouseMeshBuilder.buildForExport(rooms: rooms)
+            }.value
             let url = try ExportNaming.url(
-                sessionId: session.id,
-                property: session.propertyId,
-                unit: session.unitId,
+                sessionId: sessionId,
+                property: propertyId,
+                unit: unitId,
                 room: nil,
                 date: Date(),
                 suffix: "dollhouse",
@@ -991,13 +998,24 @@ struct ResultSummaryView: View {
                 scene,
                 to: url
             )
+            if let old = usdzURL, FileManager.default.fileExists(atPath: old.path) {
+                try? FileManager.default.removeItem(at: old)
+            }
             usdzURL = url
             if forPreview {
+                if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+                   let size = attrs[.size] as? Int,
+                   size > 100 * 1024 * 1024 {
+                    VuuroToast.shared.show(vuuroLocalized("This 3D model is too large to open in AR. Try sharing it as a file instead."))
+                    return
+                }
                 showUSDZPreview = true
             } else {
                 showUSDZShare = true
             }
         } catch is CancellationError {
+        } catch DollhouseMeshBuilderError.tooManyTriangles {
+            VuuroToast.shared.show(vuuroLocalized("This 3D model has too many details to export."))
         } catch {
             appError = AppError(site: .dollhouseExport, underlying: error)
         }

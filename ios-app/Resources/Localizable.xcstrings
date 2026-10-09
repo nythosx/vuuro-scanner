@@ -7712,6 +7712,150 @@
                     }
                 }
             }
+        },
+        "This 3D model is too large to open in AR. Try sharing it as a file instead.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This 3D model is too large to open in AR. Try sharing it as a file instead."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Dit 3D-model is te groot om in AR te openen. Deel het in plaats daarvan als bestand."
+                    }
+                }
+            }
+        },
+        "This 3D model has too many details to export.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This 3D model has too many details to export."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Dit 3D-model heeft te veel details om te exporteren."
+                    }
+                }
+            }
+        },
+        "%d room couldn't be shown in 3D because its geometry was too small or flat.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%d room couldn't be shown in 3D because its geometry was too small or flat."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%d ruimte kon niet in 3D worden getoond omdat de vorm te klein of te plat was."
+                    }
+                }
+            }
+        },
+        "%d rooms couldn't be shown in 3D because their geometry was too small or flat.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%d rooms couldn't be shown in 3D because their geometry was too small or flat."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%d ruimtes konden niet in 3D worden getoond omdat de vorm te klein of te plat was."
+                    }
+                }
+            }
+        },
+        "3D floor plan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "3D floor plan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "3D-plattegrond"
+                    }
+                }
+            }
+        },
+        "1 room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "1 room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "1 ruimte"
+                    }
+                }
+            }
+        },
+        "%d rooms": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%d rooms"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%d ruimtes"
+                    }
+                }
+            }
+        },
+        "Drag with one finger to rotate, pinch to zoom, and drag with two fingers to pan.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Drag with one finger to rotate, pinch to zoom, and drag with two fingers to pan."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Sleep met één vinger om te draaien, knijp om te zoomen en sleep met twee vingers om te verschuiven."
+                    }
+                }
+            }
+        },
+        "part": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "part"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "deel"
+                    }
+                }
+            }
         }
     },
     "version": "1.0"

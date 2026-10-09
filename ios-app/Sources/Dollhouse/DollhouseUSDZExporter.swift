@@ -6,11 +6,13 @@ import simd
 enum DollhouseUSDZExporterError: Error, LocalizedError {
     case usdzNotSupported
     case emptyScene
+    case writeFailed(reason: String)
 
     var errorDescription: String? {
         switch self {
         case .usdzNotSupported: return "This device cannot write USDZ files."
         case .emptyScene: return "There is no 3D geometry to export."
+        case .writeFailed(let reason): return "Couldn't write the 3D model file: \(reason)"
         }
     }
 }
@@ -19,6 +21,14 @@ enum DollhouseUSDZExporter {
 
     static func export(_ scene: DollhouseScene, to url: URL) throws {
         guard !scene.isEmpty else { throw DollhouseUSDZExporterError.emptyScene }
+        let sceneKitScene = DollhouseSceneBuilder.buildScene(from: scene, includeAnnotations: false)
+        let renderer = SCNRenderer(device: nil, options: nil)
+        renderer.scene = sceneKitScene
+        _ = renderer.prepare(sceneKitScene.rootNode, shouldAbortBlock: nil)
+        if sceneKitScene.write(to: url, options: nil, delegate: nil, progressHandler: nil),
+           FileManager.default.fileExists(atPath: url.path) {
+            return
+        }
         var modelIOError: Error?
         if MDLAsset.canExportFileExtension("usdz") {
             do {
@@ -28,12 +38,7 @@ enum DollhouseUSDZExporter {
                 modelIOError = error
             }
         }
-        let sceneKitScene = DollhouseSceneBuilder.buildScene(from: scene)
-        if sceneKitScene.write(to: url, options: nil, delegate: nil, progressHandler: nil),
-           FileManager.default.fileExists(atPath: url.path) {
-            return
-        }
-        throw modelIOError ?? DollhouseUSDZExporterError.usdzNotSupported
+        throw DollhouseUSDZExporterError.writeFailed(reason: modelIOError?.localizedDescription ?? "The USDZ file could not be written to disk.")
     }
 
     private static func exportWithModelIO(_ scene: DollhouseScene, to url: URL) throws {

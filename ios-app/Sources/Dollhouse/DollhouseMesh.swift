@@ -58,6 +58,8 @@ struct DollhouseFloorSection: Equatable, Identifiable {
     let title: String
     let roomIds: [String]
     let originOffset: SIMD3<Float>
+    let boundsMin: SIMD3<Float>
+    let boundsMax: SIMD3<Float>
 }
 
 struct DollhouseScene {
@@ -67,6 +69,9 @@ struct DollhouseScene {
     let roomCount: Int
     let floorSections: [DollhouseFloorSection]
     let usedEstimatedHeight: Bool
+    let id: UUID = UUID()
+    var headingDeg: Double? = nil
+    var degenerateRoomCount: Int = 0
 
     var boundsCenter: SIMD3<Float> { (boundsMin + boundsMax) * 0.5 }
     var boundsSize: SIMD3<Float> { boundsMax - boundsMin }

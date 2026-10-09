@@ -11,13 +11,14 @@ struct DollhouseContainerView: View {
     @State private var errorMessage: String?
     @State private var isLoading = true
     @State private var buildToken = UUID()
+    @State private var buildTask: Task<Void, Never>?
 
     private var mode: DollhouseMode {
         DollhouseMode(rawValue: modeRaw) ?? .cutaway
     }
 
     private var isLargePlan: Bool {
-        rooms.count > DollhouseConstants.largePlanRoomThreshold
+        DollhouseMeshBuilder.isLargePlan(rooms)
     }
 
     var body: some View {
@@ -32,6 +33,12 @@ struct DollhouseContainerView: View {
             }
             if let scene, scene.usedEstimatedHeight {
                 Text("Height estimated at \(String(format: "%.1f", DollhouseConstants.defaultHeightM)) m for at least one room.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(VuuroColor.textSecondary)
+                    .padding(.horizontal, 4)
+            }
+            if let scene, scene.degenerateRoomCount > 0 {
+                Text(verbatim: degenerateMessage(count: scene.degenerateRoomCount))
                     .font(.system(size: 12))
                     .foregroundStyle(VuuroColor.textSecondary)
                     .padding(.horizontal, 4)
@@ -85,7 +92,15 @@ struct DollhouseContainerView: View {
         .padding(.horizontal, 20)
     }
 
+    private func degenerateMessage(count: Int) -> String {
+        let template = count == 1
+            ? vuuroLocalized("%d room couldn't be shown in 3D because its geometry was too small or flat.")
+            : vuuroLocalized("%d rooms couldn't be shown in 3D because their geometry was too small or flat.")
+        return String(format: template, count)
+    }
+
     private func rebuild() {
+        buildTask?.cancel()
         isLoading = true
         errorMessage = nil
         scene = nil
@@ -95,12 +110,18 @@ struct DollhouseContainerView: View {
             showFurniture: showFurniture,
             performanceMode: isLargePlan
         )
-        do {
-            let built = try DollhouseMeshBuilder.build(rooms: roomsSnapshot, configuration: configuration)
-            scene = built
-        } catch {
-            errorMessage = error.localizedDescription
+        buildTask = Task {
+            do {
+                let built = try await Task.detached(priority: .userInitiated) {
+                    try DollhouseMeshBuilder.build(rooms: roomsSnapshot, configuration: configuration)
+                }.value
+                guard !Task.isCancelled else { return }
+                scene = built
+            } catch {
+                guard !Task.isCancelled else { return }
+                errorMessage = error.localizedDescription
+            }
+            isLoading = false
         }
-        isLoading = false
     }
 }
