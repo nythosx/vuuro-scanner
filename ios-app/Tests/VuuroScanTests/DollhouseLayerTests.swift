@@ -1,4 +1,5 @@
 import XCTest
+import SceneKit
 import simd
 @testable import VuuroScan
 

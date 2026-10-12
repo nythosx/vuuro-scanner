@@ -13,7 +13,7 @@ final class DollhouseWallSubdivisionTests: XCTestCase {
         outline: String = "[[0,0],[6,0],[6,3],[0,3]]",
         openings: String = "[]",
         openEdges: String = "[]",
-        origin: String? = null,
+        origin: String? = nil,
         floor: String = "Ground"
     ) -> String {
         let originValue = origin ?? "null"
