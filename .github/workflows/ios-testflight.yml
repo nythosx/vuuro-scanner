@@ -1,0 +1,189 @@
+name: iOS TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: "CFBundleVersion for this upload (empty = the workflow run number). Must be higher than the last TestFlight build."
+        required: false
+        default: ""
+
+concurrency:
+  group: ios-testflight
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  testflight:
+    runs-on: macos-15
+    env:
+      SCAN_SERVICE_BASE_URL: https://scan.vuuro.nl
+    steps:
+      - name: Check the signing and upload secrets
+        env:
+          HAS_IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 != '' }}
+          HAS_IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD != '' }}
+          HAS_IOS_APPSTORE_PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROFILE_BASE64 != '' }}
+          HAS_IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM != '' }}
+          HAS_ASC_KEY_ID: ${{ secrets.ASC_KEY_ID != '' }}
+          HAS_ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID != '' }}
+          HAS_ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 != '' }}
+          HAS_SCAN_SERVICE_APP_KEY: ${{ secrets.SCAN_SERVICE_APP_KEY != '' }}
+        run: |
+          missing=""
+          for name in IOS_CERTIFICATE_P12_BASE64 IOS_CERTIFICATE_PASSWORD IOS_APPSTORE_PROFILE_BASE64 IOS_DEVELOPMENT_TEAM ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8_BASE64 SCAN_SERVICE_APP_KEY; do
+            if [ "$(printenv "HAS_$name")" != "true" ]; then
+              missing="$missing $name"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::TestFlight upload needs these repository secrets, missing:$missing (see docs/hosting-spec.md, TestFlight step)"
+            exit 1
+          fi
+          echo "all secrets are set"
+
+      - uses: actions/checkout@v5
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios-app
+        run: xcodegen generate
+
+      - name: Import signing certificate
+        env:
+          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/testflight.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          echo "::add-mask::$keychain_password"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          printf '%s' "$IOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$IOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          echo "TESTFLIGHT_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
+      - name: Install App Store provisioning profile
+        env:
+          IOS_APPSTORE_PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROFILE_BASE64 }}
+        run: |
+          profile_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$profile_dir"
+          printf '%s' "$IOS_APPSTORE_PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/appstore.mobileprovision"
+          security cms -D -i "$RUNNER_TEMP/appstore.mobileprovision" > "$RUNNER_TEMP/appstore.plist"
+          uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/appstore.plist")"
+          if /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$RUNNER_TEMP/appstore.plist" > /dev/null 2>&1; then
+            echo "::error::IOS_APPSTORE_PROFILE_BASE64 is an ad-hoc or development profile; TestFlight needs an App Store distribution profile"
+            exit 1
+          fi
+          mv "$RUNNER_TEMP/appstore.mobileprovision" "$profile_dir/$uuid.mobileprovision"
+          rm -f "$RUNNER_TEMP/appstore.plist"
+          echo "APPSTORE_PROFILE_UUID=$uuid" >> "$GITHUB_ENV"
+
+      - name: Write the release build settings
+        env:
+          SCAN_SERVICE_APP_KEY: ${{ secrets.SCAN_SERVICE_APP_KEY }}
+          IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
+          BUILD_NUMBER_INPUT: ${{ inputs.build_number }}
+        run: |
+          build_number="${BUILD_NUMBER_INPUT:-$GITHUB_RUN_NUMBER}"
+          case "$build_number" in
+            ''|*[!0-9.]*) echo "::error::build_number must be digits (and dots), got '$build_number'"; exit 1 ;;
+          esac
+          case "$SCAN_SERVICE_APP_KEY" in
+            *[!A-Za-z0-9._-]*) echo "::error::SCAN_SERVICE_APP_KEY may only use letters, digits, . _ - (the server generates hex)"; exit 1 ;;
+          esac
+          base_url_xcconfig="$(printf '%s' "$SCAN_SERVICE_BASE_URL" | sed 's#//#/$()/#')"
+          umask 077
+          {
+            echo "SCAN_SERVICE_BASE_URL = $base_url_xcconfig"
+            echo "SCAN_SERVICE_APP_KEY = $SCAN_SERVICE_APP_KEY"
+            echo "DEVELOPMENT_TEAM = $IOS_DEVELOPMENT_TEAM"
+            echo "CODE_SIGN_STYLE = Manual"
+            echo "CODE_SIGN_IDENTITY = Apple Distribution"
+            echo "PROVISIONING_PROFILE_SPECIFIER = $APPSTORE_PROFILE_UUID"
+            echo "CURRENT_PROJECT_VERSION = $build_number"
+          } > "$RUNNER_TEMP/release.xcconfig"
+          echo "build number $build_number, Scan Service $SCAN_SERVICE_BASE_URL"
+
+      - name: Archive Release build
+        working-directory: ios-app
+        run: |
+          xcodebuild archive \
+            -project VuuroScan.xcodeproj \
+            -scheme VuuroScan \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/VuuroScan.xcarchive" \
+            -xcconfig "$RUNNER_TEMP/release.xcconfig" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $TESTFLIGHT_KEYCHAIN"
+          plist="$RUNNER_TEMP/VuuroScan.xcarchive/Products/Applications/VuuroScan.app/Info.plist"
+          baked_url="$(/usr/libexec/PlistBuddy -c 'Print :ScanServiceBaseURL' "$plist")"
+          baked_key_length="$(/usr/libexec/PlistBuddy -c 'Print :ScanServiceAppKey' "$plist" | tr -d '\n' | wc -c | tr -d ' ')"
+          if [ "$baked_url" != "$SCAN_SERVICE_BASE_URL" ]; then
+            echo "::error::the archive points at '$baked_url', expected $SCAN_SERVICE_BASE_URL"
+            exit 1
+          fi
+          if [ "$baked_key_length" -lt 24 ]; then
+            echo "::error::the archive has no usable app key (length $baked_key_length)"
+            exit 1
+          fi
+          echo "archive points at $baked_url with an app key of $baked_key_length characters"
+
+      - name: Upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
+        run: |
+          umask 077
+          printf '%s' "$ASC_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/asc_key.p8"
+          cat > "$RUNNER_TEMP/ExportOptions-TestFlight.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$IOS_DEVELOPMENT_TEAM</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>provisioningProfiles</key>
+            <dict><key>com.vuuro.scan</key><string>$APPSTORE_PROFILE_UUID</string></dict>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/VuuroScan.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions-TestFlight.plist" \
+            -authenticationKeyPath "$RUNNER_TEMP/asc_key.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          echo "uploaded; the build shows up in App Store Connect > TestFlight after Apple finishes processing"
+
+      - name: Remove signing material and the build
+        if: always()
+        run: |
+          if [ -n "${TESTFLIGHT_KEYCHAIN:-}" ]; then
+            security delete-keychain "$TESTFLIGHT_KEYCHAIN" || true
+          fi
+          if [ -n "${APPSTORE_PROFILE_UUID:-}" ]; then
+            rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$APPSTORE_PROFILE_UUID.mobileprovision"
+          fi
+          rm -rf "$RUNNER_TEMP/asc_key.p8" "$RUNNER_TEMP/release.xcconfig" "$RUNNER_TEMP/ExportOptions-TestFlight.plist" \
+            "$RUNNER_TEMP/VuuroScan.xcarchive" "$RUNNER_TEMP/export" "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/appstore.mobileprovision" "$RUNNER_TEMP/appstore.plist"

@@ -54,6 +54,24 @@
       "description": "Why this scan was taken. First-class per the brief's 'ops memory' principle, not an afterthought tag.",
       "enum": ["listing", "check_in", "check_out", "renovation", "other"]
     },
+    "room_splits": {
+      "type": "array",
+      "description": "Corrections made after capture with POST .../rooms/{room_id}/split, oldest first. Kept so a Continue re-upload (which replaces every room) can re-apply them, and so the last one can be undone with POST .../room-splits/undo. line_m and keep_point_m are in the split room's own outline_m frame.",
+      "items": {
+        "type": "object",
+        "required": ["room_id", "mode", "line_m", "keep_point_m"],
+        "properties": {
+          "room_id": { "type": "string" },
+          "new_room_id": { "type": ["string", "null"] },
+          "new_label": { "type": ["string", "null"] },
+          "mode": { "type": "string", "enum": ["split", "trim"] },
+          "line_m": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" } } },
+          "keep_point_m": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" } },
+          "original_room": { "type": "object" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
     "capture_location": {
       "type": ["object", "null"],
       "description": "Session-wide (not per-room), set once from the first capture call that reported it and never overwritten to null by a later one. Null when location permission was denied or never asked — never fabricated. No public exposure of this exists in this repo (ADR-0003: no public session listing).",
@@ -70,7 +88,7 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["room_id", "label", "floor_area_m2", "perimeter_m", "bounding_dimensions_m", "confidence", "outline_m", "coverage", "openings", "height_m", "volume_m3_indicative", "objects", "structure_origin_m", "room_type"],
+        "required": ["room_id", "label", "floor_area_m2", "perimeter_m", "bounding_dimensions_m", "confidence", "outline_m", "coverage", "openings", "height_m", "volume_m3_indicative", "objects", "structure_origin_m", "room_type", "heading_deg"],
         "properties": {
           "room_id": { "type": "string" },
           "label": { "type": "string" },
@@ -101,7 +119,27 @@
             "minItems": 2,
             "maxItems": 2,
             "items": { "type": "number" },
-            "description": "LIDAR-5/11: this room's [x, z] placement in a multi-room fused structure's shared frame, only when captured together with other rooms via StructureBuilder in one continuous visit. Null for every room captured the ordinary way (single-room, or LIDAR-4 resume-later) — never fabricated. outline_m itself stays room-local regardless; this is an additive offset, not a replacement (see docs/proposals/multi-room-fusion.md)."
+            "description": "LIDAR-5/11: this room's [x, z] placement in a multi-room fused structure's shared frame, only when captured together with other rooms via StructureBuilder in one continuous visit. Null for every room captured the ordinary way (single-room, or LIDAR-4 resume-later) — never fabricated. outline_m itself stays room-local regardless; this is an additive offset, not a replacement (see docs/proposals/multi-room-fusion.md). Feeds the 3D dollhouse view (see docs/adr/0008-dollhouse-3d.md)."
+          },
+          "floor": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "Which floor this specific room sits on (e.g. \"attic\", \"1st floor\", \"basement\"). Free-form, not an enum — different organisations name floors differently. Set at capture time from the session's default_floor, or overridden per capture call. Null when neither the capture nor the session provided one — never fabricated."
+          },
+          "capture_group_id": {
+            "type": ["string", "null"],
+            "pattern": "^[A-Za-z0-9-]{1,64}$",
+            "description": "Identifies the walkthrough this room was captured in. Rooms with the same capture_group_id share one structure_origin_m frame and are fused together; rooms from different walkthroughs or floors are drawn as separate sections. Null for rooms captured before this field existed."
+          },
+          "story": {
+            "type": ["integer", "null"],
+            "description": "RoomPlan's own story index for this room, passed through as captured. Informational only: the floor field is what exports group by."
+          },
+          "heading_deg": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "exclusiveMaximum": 360,
+            "description": "Compass bearing (degrees, clockwise from true north, [0, 360)) of the direction of increasing z in this room's own outline_m frame — i.e. which way true north points relative to this room's own local coordinates, captured once from the device's heading at the moment this room's capture session began. Independent of structure_origin_m: a real compass reading, not derived from ARKit/RoomPlan geometry. Null whenever the device's compass wasn't available or calibrated at capture time (no location permission, heading unavailable, or a client older than this field) — never fabricated or assumed to be 0/north-up. Two rooms only share a heading_deg value when they were captured in the same continuous session (see structure_origin_m); an ordinary tiled room added later has its own independent reading. The 3D dollhouse view (see docs/adr/0008-dollhouse-3d.md) will use this field for a north indicator once that view renders one; the 2D SVG renderer already uses it."
           },
           "openings": {
             "type": "array",
@@ -119,9 +157,20 @@
                   "items": { "type": "number" },
                   "description": "Room-local [x, z] centroid of the opening's captured outline, same frame/translation as outline_m."
                 },
+                "width_m": {
+                  "type": "number",
+                  "minimum": 0.2,
+                  "maximum": 6.0,
+                  "description": "Measured width of the opening along its wall, from RoomPlan's dimensions (or the span of its corners). Omitted when nothing plausible was reported; renderers then use a standard width."
+                },
                 "confidence": { "type": "string", "enum": ["low", "medium", "high"] }
               }
             }
+          },
+          "open_edges": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 0 },
+            "description": "Indices into outline_m (edge i runs from point i to point i+1) where there is no wall: the line a person drew when splitting or trimming an open-plan room. Renderers draw these as a thin dashed line instead of a wall. Omitted or empty for rooms that were never split."
           },
           "height_m": {
             "type": ["number", "null"],
@@ -156,18 +205,24 @@
                   "items": { "type": "number" },
                   "description": "[width, height, depth] as RoomPlan reported them."
                 },
+                "yaw_deg": {
+                  "type": "number",
+                  "minimum": 0,
+                  "exclusiveMaximum": 360,
+                  "description": "Direction of the object's width axis as atan2(z, x) in degrees, in the same frame as outline_m. Omitted for captures made before the app sent it; renderers then draw the object unrotated."
+                },
                 "confidence": { "type": "string", "enum": ["low", "medium", "high"] }
               }
             }
           },
           "room_type": {
             "type": ["object", "null"],
-            "description": "A guess at what kind of room this is, live-classified on-device during capture. Primary source is RoomPlan's own CapturedRoom.Section.label (iOS 17+); falls back to a simple fixture heuristic (a toilet means a bathroom, ...) only when RoomPlan reported no sections. Never certified — confirmed only reflects what the on-screen ✓/✗ prompt during capture resolved to, not a verified fact. Null when the on/off toggle was off or neither source produced a guess.",
-            "required": ["guess", "guess_source", "confirmed"],
+            "description": "A guess at what kind of room this is, live-classified on-device during capture. Primary source is RoomPlan's own CapturedRoom.Section.label (iOS 17+); falls back to a simple fixture heuristic (a toilet means a bathroom, ...) only when RoomPlan reported no sections. Never certified. Null when the on/off toggle was off or neither source produced a guess AND the room type has never been set manually either — guess/guess_source are omitted (not present, not null) rather than fabricated when confirmed was set through POST .../room-type on a room with no live guess.",
+            "required": ["confirmed"],
             "properties": {
               "guess": { "type": "string", "enum": ["living_room", "bedroom", "bathroom", "kitchen", "dining_room"] },
               "guess_source": { "type": "string", "enum": ["roomplan_section", "object_heuristic"] },
-              "confirmed": { "type": ["string", "null"], "enum": ["living_room", "bedroom", "bathroom", "kitchen", "dining_room", "other", null], "description": "What the live ✓/✗ prompt resolved to — the guess itself if ✓, a picked correction if ✗, or null if dismissed/timed out unanswered." }
+              "confirmed": { "type": ["string", "null"], "minLength": 1, "maxLength": 60, "description": "The room's actual type as far as a human has said so: the live ✓/✗ prompt during capture, or a later correction via POST .../rooms/{room_id}/room-type. Free text up to 60 characters (not restricted to the app's suggested list — see RoomType::isValidConfirmedValue), so this is not an enum. Null if dismissed/timed out unanswered, or explicitly cleared." }
             }
           },
           "coverage": {
@@ -197,27 +252,40 @@
       "description": "Attached via POST /scan-sessions/{id}/capture's sibling endpoint /photos. Always present; empty until at least one photo is attached.",
       "items": {
         "type": "object",
-        "required": ["photo_id", "url", "caption", "room_id", "taken_at"],
+        "required": ["photo_id", "url", "caption", "room_id", "taken_at", "tags"],
         "properties": {
           "photo_id": { "type": "string" },
           "url": { "type": "string", "description": "Wherever the image is hosted — either an externally-hosted URL the client already had, or, if the client uploaded real image bytes via POST /scan-sessions/{id}/photo-uploads first (added 2026-08-27), the exact URL that endpoint returned: /scan-sessions/{session_id}/photo-uploads/{filename} under this host. This field's shape didn't change, only what a URL under this host can now mean." },
           "caption": { "type": "string" },
           "room_id": { "type": ["string", "null"], "description": "Which room this photo belongs to, matching a rooms[].room_id. Null means unit-level (not tied to one room)." },
-          "taken_at": { "type": "string", "format": "date-time" }
+          "taken_at": { "type": "string", "format": "date-time" },
+          "tags": {
+            "type": "array",
+            "description": "#21: inspection purpose tags — why this specific photo was taken (damage, normal wear, confirmed present, etc.), independent of the session-wide FloorPlan.purpose. Optional, defaults to []; every photo attached before this field existed is valid with tags: []. A photo can carry more than one tag (e.g. both damage and safety_issue).",
+            "items": { "type": "string", "enum": ["damage", "wear_and_tear", "missing_item", "safety_issue", "pre_existing_condition", "maintenance_needed", "confirmed_present", "other"] },
+            "default": []
+          }
         }
       }
     },
     "notes": {
       "type": "array",
-      "description": "Attached via POST /scan-sessions/{id}/notes. Always present; empty until at least one note is attached.",
+      "description": "Attached via POST /scan-sessions/{id}/notes, edited in place via POST /scan-sessions/{id}/notes/{note_id}. Always present; empty until at least one note is attached.",
       "items": {
         "type": "object",
-        "required": ["note_id", "text", "room_id", "created_at"],
+        "required": ["note_id", "text", "room_id", "created_at", "tags"],
         "properties": {
           "note_id": { "type": "string" },
           "text": { "type": "string" },
           "room_id": { "type": ["string", "null"], "description": "Null means unit-level, matching photos[].room_id semantics." },
-          "created_at": { "type": "string", "format": "date-time" }
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time", "description": "Present only after at least one edit via POST /scan-sessions/{id}/notes/{note_id}." },
+          "tags": {
+            "type": "array",
+            "description": "#21: inspection purpose tags — why this specific note was taken, independent of the session-wide FloorPlan.purpose. Optional, defaults to []; every note attached before this field existed is valid with tags: []. Updatable in place via POST /scan-sessions/{id}/notes/{note_id}, same as text.",
+            "items": { "type": "string", "enum": ["damage", "wear_and_tear", "missing_item", "safety_issue", "pre_existing_condition", "maintenance_needed", "confirmed_present", "other"] },
+            "default": []
+          }
         }
       }
     }

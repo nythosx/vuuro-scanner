@@ -1,13 +1,6 @@
-//
-//  ScanSessionResponse.swift
-//  VuuroScan
-//
-//  WRITTEN, NOT COMPILED OR RUN — see ScanIdentity.swift header.
-//
 
 import Foundation
 
-/// Response shape from `POST /scan-sessions` (scan-service/public/index.php).
 struct ScanSessionResponse: Codable {
     let id: String
     let propertyId: String
@@ -20,6 +13,7 @@ struct ScanSessionResponse: Codable {
     let consentObtained: Bool
     let accessToken: String
     let expiresAt: String
+    let defaultFloor: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -33,6 +27,51 @@ struct ScanSessionResponse: Codable {
         case consentObtained = "consent_obtained"
         case accessToken = "access_token"
         case expiresAt = "expires_at"
+        case defaultFloor = "default_floor"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        propertyId = try c.decode(String.self, forKey: .propertyId)
+        unitId = try c.decode(String.self, forKey: .unitId)
+        organisationId = try c.decode(String.self, forKey: .organisationId)
+        purpose = try c.decode(String.self, forKey: .purpose)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        status = try c.decode(String.self, forKey: .status)
+        occupied = try c.decode(Bool.self, forKey: .occupied)
+        consentObtained = try c.decode(Bool.self, forKey: .consentObtained)
+        accessToken = try c.decode(String.self, forKey: .accessToken)
+        expiresAt = try c.decode(String.self, forKey: .expiresAt)
+        defaultFloor = try c.decodeIfPresent(String.self, forKey: .defaultFloor)
+    }
+
+    init(
+        id: String,
+        propertyId: String,
+        unitId: String,
+        organisationId: String,
+        purpose: String,
+        createdAt: String,
+        status: String,
+        occupied: Bool,
+        consentObtained: Bool,
+        accessToken: String,
+        expiresAt: String,
+        defaultFloor: String? = nil
+    ) {
+        self.id = id
+        self.propertyId = propertyId
+        self.unitId = unitId
+        self.organisationId = organisationId
+        self.purpose = purpose
+        self.createdAt = createdAt
+        self.status = status
+        self.occupied = occupied
+        self.consentObtained = consentObtained
+        self.accessToken = accessToken
+        self.expiresAt = expiresAt
+        self.defaultFloor = defaultFloor
     }
 }
 
@@ -49,6 +88,35 @@ struct FloorPlan: Codable {
     let photos: [Photo]
     let notes: [Note]
     let captureLocation: CaptureLocation?
+    let roomSplits: [RoomSplit]?
+    let roomSplitWarnings: [RoomSplitWarning]?
+
+    struct RoomSplitWarning: Codable {
+        let roomLabel: String
+        let reason: String
+
+        enum CodingKeys: String, CodingKey {
+            case roomLabel = "room_label"
+            case reason
+        }
+    }
+
+    struct RoomSplit: Codable {
+        let roomId: String
+        let newRoomId: String?
+        let mode: String
+
+        enum CodingKeys: String, CodingKey {
+            case roomId = "room_id"
+            case newRoomId = "new_room_id"
+            case mode
+        }
+    }
+
+    var lastSplitRoomIds: Set<String> {
+        guard let last = roomSplits?.last else { return [] }
+        return Set([last.roomId, last.newRoomId].compactMap { $0 })
+    }
 
     struct Photo: Codable {
         let photoId: String
@@ -71,12 +139,14 @@ struct FloorPlan: Codable {
         let text: String
         let roomId: String?
         let createdAt: String
+        let tags: [String]?
 
         enum CodingKeys: String, CodingKey {
             case noteId = "note_id"
             case text
             case roomId = "room_id"
             case createdAt = "created_at"
+            case tags
         }
     }
 
@@ -89,25 +159,17 @@ struct FloorPlan: Codable {
         let confidence: String
         let outlineM: [[Double]]
         let coverage: Coverage
-        // LIDAR-10: doors/windows/openings with positions, indicative
-        // height/volume, and real captured objects. No UI consumption yet
-        // (deferred to LIDAR-11's fused 2D/3D view) — the data just needs
-        // somewhere to land.
-        //
-        // Review finding: a session captured before LIDAR-10 shipped has a
-        // stored contract_json with no openings/objects keys at all (the
-        // server returns it as-is, never regenerated — see
-        // ScanSessionRepository::findFloorPlan()). openings/objects need a
-        // custom decode defaulting to [] for that case, same as
-        // heightM/volumeM3Indicative already get for free from being
-        // Optional.
         let openings: [Opening]
         let heightM: Double?
         let volumeM3Indicative: Double?
         let objects: [CapturedObject]
-        // LIDAR-5/11: this room's placement in a fused structure's shared frame. Nil for every ordinary (non-fused) room.
         let structureOriginM: [Double]?
         let roomType: RoomType?
+        let floor: String?
+        let openEdges: [Int]
+        let captureGroupId: String?
+        let joinedToGroupId: String?
+        let headingDeg: Double?
 
         enum CodingKeys: String, CodingKey {
             case roomId = "room_id"
@@ -124,6 +186,11 @@ struct FloorPlan: Codable {
             case objects
             case structureOriginM = "structure_origin_m"
             case roomType = "room_type"
+            case floor
+            case openEdges = "open_edges"
+            case captureGroupId = "capture_group_id"
+            case joinedToGroupId = "joined_to_group_id"
+            case headingDeg = "heading_deg"
         }
 
         init(from decoder: Decoder) throws {
@@ -142,12 +209,17 @@ struct FloorPlan: Codable {
             objects = try c.decodeIfPresent([CapturedObject].self, forKey: .objects) ?? []
             structureOriginM = try c.decodeIfPresent([Double].self, forKey: .structureOriginM)
             roomType = try c.decodeIfPresent(RoomType.self, forKey: .roomType)
+            floor = try c.decodeIfPresent(String.self, forKey: .floor)
+            openEdges = try c.decodeIfPresent([Int].self, forKey: .openEdges) ?? []
+            captureGroupId = try c.decodeIfPresent(String.self, forKey: .captureGroupId)
+            joinedToGroupId = try c.decodeIfPresent(String.self, forKey: .joinedToGroupId)
+            headingDeg = try c.decodeIfPresent(Double.self, forKey: .headingDeg)
         }
     }
 
     struct RoomType: Codable {
-        let guess: String
-        let guessSource: String
+        let guess: String?
+        let guessSource: String?
         let confirmed: String?
 
         enum CodingKeys: String, CodingKey {
@@ -162,21 +234,35 @@ struct FloorPlan: Codable {
         let category: String
         let positionM: [Double]
         let confidence: String
+        let widthM: Double?
 
         enum CodingKeys: String, CodingKey {
             case openingId = "opening_id"
             case category
             case positionM = "position_m"
             case confidence
+            case widthM = "width_m"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            openingId = try c.decode(String.self, forKey: .openingId)
+            category = try c.decode(String.self, forKey: .category)
+            positionM = try c.decode([Double].self, forKey: .positionM)
+            confidence = try c.decode(String.self, forKey: .confidence)
+            widthM = try c.decodeIfPresent(Double.self, forKey: .widthM)
         }
     }
 
-    struct CapturedObject: Codable {
+    struct CapturedObject: Codable, Equatable {
         let objectId: String
         let category: String
         let positionM: [Double]
         let dimensionsM: [Double]
         let confidence: String
+        let customName: String?
+        let excluded: Bool
+        let yawDeg: Double?
 
         enum CodingKeys: String, CodingKey {
             case objectId = "object_id"
@@ -184,6 +270,26 @@ struct FloorPlan: Codable {
             case positionM = "position_m"
             case dimensionsM = "dimensions_m"
             case confidence
+            case customName = "custom_name"
+            case excluded
+            case yawDeg = "yaw_deg"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            objectId = try c.decode(String.self, forKey: .objectId)
+            category = try c.decode(String.self, forKey: .category)
+            positionM = try c.decode([Double].self, forKey: .positionM)
+            dimensionsM = try c.decode([Double].self, forKey: .dimensionsM)
+            confidence = try c.decode(String.self, forKey: .confidence)
+            customName = try c.decodeIfPresent(String.self, forKey: .customName)
+            excluded = try c.decodeIfPresent(Bool.self, forKey: .excluded) ?? false
+            yawDeg = try c.decodeIfPresent(Double.self, forKey: .yawDeg)
+        }
+
+        var displayName: String {
+            if let customName, !customName.isEmpty { return customName }
+            return ObjectCategoryCatalog.displayName(for: category)
         }
     }
 
@@ -230,5 +336,7 @@ struct FloorPlan: Codable {
         case photos
         case notes
         case captureLocation = "capture_location"
+        case roomSplits = "room_splits"
+        case roomSplitWarnings = "room_split_warnings"
     }
 }

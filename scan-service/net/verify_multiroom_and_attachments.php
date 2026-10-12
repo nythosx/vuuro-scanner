@@ -2,15 +2,8 @@
 
 declare(strict_types=1);
 
-/**
- * Independent net for multi-room stitching and photos/notes attachment.
- * Same rules as net/verify_capture_geometry.php — HTTP only, no adapter/repository
- * imports, expected values re-derived independently.
- *
- * Usage: php net/verify_multiroom_and_attachments.php [base_url]
- */
-
 require_once __DIR__ . '/lib/http_client.php';
+require_once __DIR__ . '/../tests/lib/pdf_object_graph.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';
 $failures = [];
@@ -26,6 +19,12 @@ function check(string $label, bool $pass, string $detail = ''): void
         $failures[] = "$label — $detail";
         echo "  [FAIL] $label — $detail\n";
     }
+}
+
+function check_pdf_graph(string $label, string $pdfBytes): void
+{
+    $problems = pdf_validate_object_graph($pdfBytes);
+    check("$label: object graph is fully valid", $problems === [], implode('; ', $problems));
 }
 
 function approx(float $a, float $b, float $tolerance = 0.01): bool
@@ -62,6 +61,7 @@ $wantAreaB = shoelace_area(to_xz($fixtureB['floors'][0]['polygonCorners']));
     'organisation_id' => 'org-net-p2',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 check('session created (HTTP 201)', $createStatus === 201, "got HTTP $createStatus");
 $sessionId = $session['id'] ?? null;
@@ -167,6 +167,63 @@ $rejectOutcomes = array_column(array_filter($accessLogAfterReject['access_log'] 
 check('access log records a rejected upload as rejected, not lumped in with "granted"',
     in_array('rejected_unsupported_type', $rejectOutcomes, true), 'got ' . json_encode($rejectOutcomes));
 
+echo "\n== Adversarial: an oversized photo upload is rejected before it can bloat storage ==\n";
+
+$maxPhotoUploadBytes = 25 * 1024 * 1024;
+$oversizedTargetBytes = $maxPhotoUploadBytes + (200 * 1024);
+$oversizedPhotoPath = tempnam(sys_get_temp_dir(), 'net_photo_oversized_') . '.png';
+$oversizedHandle = fopen($oversizedPhotoPath, 'wb');
+$oversizedChunk = str_repeat('x', 100 * 1024);
+for ($written = 0; $written < $oversizedTargetBytes; $written += strlen($oversizedChunk)) {
+    fwrite($oversizedHandle, $oversizedChunk);
+}
+fclose($oversizedHandle);
+
+[$oversizedStatus, $oversizedBody] = net_http_multipart_upload("$baseUrl/scan-sessions/$sessionId/photo-uploads", $oversizedPhotoPath, 'image/png', $accessToken);
+check('an upload over the 25MB cap is rejected (HTTP 422), not silently accepted', $oversizedStatus === 422, "got HTTP $oversizedStatus");
+check('the rejection names the specific error', ($oversizedBody['error'] ?? null) === 'photo_too_large', 'got ' . ($oversizedBody['error'] ?? 'null'));
+
+[, $accessLogAfterOversized] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId/access-log", null, $accessToken);
+$oversizedOutcomes = array_column(array_filter($accessLogAfterOversized['access_log'] ?? [], fn ($e) => $e['action'] === 'upload_photo'), 'outcome');
+check('access log records the oversized upload as rejected_too_large, distinct from rejected_unsupported_type',
+    in_array('rejected_too_large', $oversizedOutcomes, true), 'got ' . json_encode($oversizedOutcomes));
+
+unlink($oversizedPhotoPath);
+
+echo "\n== Adversarial: a truncated image that still LOOKS like an image must not break PDF export ==\n";
+
+$corruptSourceImg = imagecreatetruecolor(40, 40);
+imagefill($corruptSourceImg, 0, 0, imagecolorallocate($corruptSourceImg, 200, 50, 50));
+$corruptPhotoPath = tempnam(sys_get_temp_dir(), 'net_photo_corrupt_') . '.png';
+imagepng($corruptSourceImg, $corruptPhotoPath);
+imagedestroy($corruptSourceImg);
+$corruptTruncatedBytes = substr((string) file_get_contents($corruptPhotoPath), 0, 50);
+check('setup: the truncated PNG still sniffs as image/png, same bug class as a real corrupt user upload',
+    (new \finfo(FILEINFO_MIME_TYPE))->buffer($corruptTruncatedBytes) === 'image/png');
+check('setup: the truncated PNG genuinely fails to decode — this is the corruption that matters, not just a short file',
+    @imagecreatefromstring($corruptTruncatedBytes) === false);
+file_put_contents($corruptPhotoPath, $corruptTruncatedBytes);
+
+[$corruptUploadStatus, $corruptUploadBody] = net_http_multipart_upload("$baseUrl/scan-sessions/$sessionId/photo-uploads", $corruptPhotoPath, 'image/png', $accessToken);
+check('the truncated-but-sniffable-as-image upload is still accepted (HTTP 201) — finfo can only catch what it can catch',
+    $corruptUploadStatus === 201, "got HTTP $corruptUploadStatus");
+unlink($corruptPhotoPath);
+
+$corruptUploadedUrl = $corruptUploadBody['url'] ?? null;
+if (is_string($corruptUploadedUrl)) {
+    [$corruptAttachStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/photos", [
+        'url' => $corruptUploadedUrl,
+        'caption' => 'net test: corrupt image',
+    ], $accessToken);
+    check('the corrupt photo still attaches to the session (HTTP 201) — attaching is a URL reference, not a decode', $corruptAttachStatus === 201, "got HTTP $corruptAttachStatus");
+
+    [$corruptPdfStatus, , $corruptPdfBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.pdf", null, $accessToken);
+    check('PDF export with an undecodable attached photo still returns HTTP 200, not a 500', $corruptPdfStatus === 200, "got HTTP $corruptPdfStatus");
+    if ($corruptPdfStatus === 200) {
+        check_pdf_graph('PDF export with an undecodable attached photo', $corruptPdfBytes);
+    }
+}
+
 unlink($textFilePath);
 unlink($testImagePath);
 
@@ -194,7 +251,6 @@ if ($realRoomId !== null) {
     check('a note with a room_id that DOES match a real room in this session still succeeds (HTTP 201)', $realRoomIdStatus === 201, "got HTTP $realRoomIdStatus");
 }
 
-// room_id must stay optional, not become required.
 [$noRoomIdStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/notes", [
     'text' => 'net test: no room_id at all',
 ], $accessToken);
@@ -231,6 +287,7 @@ check('the rejection names the specific error', ($badLocBody['error'] ?? null) =
 [, $freshLocSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-noloc', 'unit_id' => 'unit-net-noloc', 'organisation_id' => 'org-net-noloc',
     'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
 ]);
 [, $freshLocAfter] = net_http_json('POST', "$baseUrl/scan-sessions/{$freshLocSession['id']}/capture", ['raw_capture' => $fixtureA], $freshLocSession['access_token']);
 check('a session that never sent a location gets capture_location: null, never fabricated',
@@ -244,6 +301,7 @@ echo "\n== Adversarial: photos/notes must not attach before any capture exists =
     'organisation_id' => 'org-net-p2-empty',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 check('empty session created for the negative case', $emptyCreateStatus === 201);
 $emptySessionId = $emptySession['id'] ?? null;

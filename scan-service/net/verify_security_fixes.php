@@ -2,14 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Independent net for core security properties: error handling, session
- * enumeration, geometry bounds, field length caps, URL scheme validation.
- * HTTP only, no importing the code under test.
- *
- * Usage: php net/verify_security_fixes.php [base_url]
- */
-
 require_once __DIR__ . '/lib/http_client.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';
@@ -34,6 +26,7 @@ function check(string $label, bool $pass, string $detail = ''): void
     'organisation_id' => 'org-net-security',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 $sessionId = $session['id'] ?? null;
 $accessToken = $session['access_token'] ?? null;
@@ -42,17 +35,31 @@ if ($sessionId === null || $accessToken === null) {
     exit(1);
 }
 
-// A legitimate capture first, so the photos[]/notes[] checks below exercise
-// their own validation rather than the "no floor plan yet" 409.
+echo "== Access token is stored hashed at rest, never in plaintext ==\n";
+$dbPath = getenv('SCAN_SERVICE_DB_PATH') ?: __DIR__ . '/../data/scan_service.sqlite';
+if (!is_file($dbPath)) {
+    check('server database file is readable by this test', false, "no database at $dbPath — run this against a local server sharing SCAN_SERVICE_DB_PATH");
+} else {
+    $atRestDb = new PDO('sqlite:' . $dbPath, null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+    $atRestStmt = $atRestDb->prepare('SELECT access_token, access_token_hash FROM scan_sessions WHERE id = :id');
+    $atRestStmt->execute(['id' => $sessionId]);
+    $atRestRow = $atRestStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    check('the session row exists in the server database', $atRestRow !== [], "no row for $sessionId in $dbPath");
+    check('the plaintext access_token column is empty in the database', ($atRestRow['access_token'] ?? null) === '', 'got: ' . var_export($atRestRow['access_token'] ?? null, true));
+    check(
+        'access_token_hash equals sha256 of the token returned by POST /scan-sessions',
+        hash_equals((string) ($atRestRow['access_token_hash'] ?? ''), hash('sha256', $accessToken))
+    );
+    check('POST /scan-sessions does not expose access_token_hash', !array_key_exists('access_token_hash', $session));
+    $atRestDb = null;
+}
+echo "\n";
+
 $validFixture = json_decode((string) file_get_contents(__DIR__ . '/../fixtures/roomplan_captured_room_single_room.json'), true, 512, JSON_THROW_ON_ERROR);
 net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $validFixture], $accessToken);
 
 echo "== Uncaught exceptions do not leak stack traces or return a misleading 200 ==\n";
 
-// Built as a literal string, not json_encode()'d: 1e400 is a syntactically
-// valid JSON number token that overflows to PHP float INF only once
-// *decoded* server-side — PHP's own json_encode() can't produce this token
-// from an INF value, so encoding it here would just crash this net script.
 $maliciousCapture = '{"raw_capture":{"floors":[{"identifier":"evil","category":"floor",'
     . '"confidence":"high","polygonCorners":[[0,0,0],[1e400,0,0],[1e400,0,1],[0,0,1]]}]}}';
 [$status, , $body] = net_http_raw_literal('POST', "$baseUrl/scan-sessions/$sessionId/capture", $maliciousCapture, $accessToken);
@@ -98,8 +105,6 @@ $hugeButFiniteCapture = json_encode([
 check('a 50000m coordinate is rejected with a clean 422, not accepted', $hugeStatus === 422, "got HTTP $hugeStatus, body: " . substr($hugeBody, 0, 200));
 
 echo "\n== Data directory permissions ==\n";
-// Can't inspect filesystem permissions of the running server process from
-// here (this net is HTTP-only by design). See Database.php's mkdir mode.
 check('(informational) see Database.php mkdir mode', true);
 
 echo "\n== Rate limiting ==\n";
@@ -114,6 +119,7 @@ $hugePropertyId = str_repeat('a', 201);
     'organisation_id' => 'o',
     'purpose' => 'listing',
     'occupied' => false,
+    'floor' => 'Ground',
 ]);
 check('a 201-character property_id is rejected with 422', $hugeFieldStatus === 422, "got HTTP $hugeFieldStatus");
 
@@ -121,15 +127,6 @@ $hugeNoteText = str_repeat('n', 5001);
 [$hugeNoteStatus, ] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/notes", ['text' => $hugeNoteText], $accessToken);
 check('a 5001-character note text is rejected with 422', $hugeNoteStatus === 422, "got HTTP $hugeNoteStatus");
 
-// Exports-surface scan finding: capture_provider had a type check but no
-// length cap, unlike every other client-suppliable string field above.
-// Confirmed live before the fix: a 500,000-char capture_provider was
-// accepted and inflated a normal ~1.3KB PDF export to ~500KB — a
-// client-controlled amplification path through storage and every later
-// export, capped nowhere. Proven end to end here, not just at the capture
-// boundary: the over-cap value must be rejected AND a value actually at the
-// new 200-char cap must still flow through capture into a real PDF export
-// without inflating it.
 $hugeCaptureProviderBody = json_encode([
     'raw_capture' => ['floors' => [['identifier' => 'f', 'polygonCorners' => [[0, 0, 0], [3, 0, 0], [3, 0, 3], [0, 0, 3]]]]],
     'capture_provider' => str_repeat('X', 201),
@@ -145,10 +142,28 @@ $atCapBody = json_encode([
 check('a 200-character (at the cap) capture_provider is still accepted', $atCapStatus === 200, "got HTTP $atCapStatus");
 
 [$pdfAfterCapStatus, , $pdfAfterCapBody] = net_http_raw_literal('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.pdf", null, $accessToken);
+check('the PDF export after a 200-char capture_provider still succeeds (HTTP 200)', $pdfAfterCapStatus === 200, "got HTTP $pdfAfterCapStatus");
+
+[, $shortProviderSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
+    'property_id' => 'prop-net-security-short', 'unit_id' => 'unit-net-security-short', 'organisation_id' => 'org-net-security-short',
+    'purpose' => 'listing', 'occupied' => false,
+    'floor' => 'Ground',
+]);
+$shortProviderSessionId = $shortProviderSession['id'] ?? null;
+$shortProviderToken = $shortProviderSession['access_token'] ?? null;
+net_http_json('POST', "$baseUrl/scan-sessions/$shortProviderSessionId/capture", ['raw_capture' => $validFixture], $shortProviderToken);
+$shortProviderBody = json_encode([
+    'raw_capture' => ['floors' => [['identifier' => 'f', 'polygonCorners' => [[0, 0, 0], [3, 0, 0], [3, 0, 3], [0, 0, 3]]]]],
+    'capture_provider' => 'p',
+], JSON_THROW_ON_ERROR);
+net_http_raw_literal('POST', "$baseUrl/scan-sessions/$shortProviderSessionId/capture", $shortProviderBody, $shortProviderToken);
+[, , $pdfShortProviderBody] = net_http_raw_literal('GET', "$baseUrl/scan-sessions/$shortProviderSessionId/export/floorplan.pdf", null, $shortProviderToken);
+
+$sizeDelta = strlen($pdfAfterCapBody) - strlen($pdfShortProviderBody);
 check(
-    'the PDF export after a 200-char capture_provider stays a normal small size, not amplified',
-    $pdfAfterCapStatus === 200 && strlen($pdfAfterCapBody) < 5000,
-    "got HTTP $pdfAfterCapStatus, " . strlen($pdfAfterCapBody) . ' bytes'
+    'the identical geometry with a 200-char vs 1-char capture_provider produces near-identical PDF size, not amplified',
+    abs($sizeDelta) < 1000,
+    "1-char provider: " . strlen($pdfShortProviderBody) . " bytes, 200-char provider: " . strlen($pdfAfterCapBody) . " bytes, delta: $sizeDelta"
 );
 
 echo "\n== photos[].url rejects non-http(s) schemes ==\n";
@@ -169,17 +184,6 @@ check('response includes X-Content-Type-Options: nosniff', stripos($responseHead
     "headers were: " . trim($responseHeaders));
 
 echo "\n== CORS is scoped to a single configured origin, not a wildcard ==\n";
-// Portability finding: the allowed CORS origin used to be a bare hardcoded
-// string in public/index.php, so a web-viewer served from any port other
-// than the one baked into the code got silently blocked by the browser with
-// no config knob. Now reads SCAN_SERVICE_CORS_ORIGIN (default:
-// http://127.0.0.1:8090, unchanged for this suite's default-env server).
-// This net only exercises default-env behavior (still correctly scoped, not
-// a wildcard) — the env override itself was verified by hand by starting a
-// second server with SCAN_SERVICE_CORS_ORIGIN set and confirming the
-// allowed origin moved with it, same tradeoff as PDF MAX_PAGES: it needs a
-// differently-configured server process, not something one HTTP client can
-// drive against a fixed net server.
 function net_cors_headers_for_origin(string $url, string $origin): string
 {
     $ch = curl_init($url);
@@ -193,6 +197,16 @@ function net_cors_headers_for_origin(string $url, string $origin): string
     curl_close($ch);
     return (string) $raw;
 }
+
+$adminHeaders = net_cors_headers_for_origin("$baseUrl/admin/", 'http://127.0.0.1:8090');
+preg_match('/^Content-Security-Policy:\s*(.+)$/mi', $adminHeaders, $cspMatch);
+preg_match('/img-src([^;]*)/', $cspMatch[1] ?? '', $imgSrcMatch);
+check('the admin page sends a Content-Security-Policy', isset($cspMatch[1]), 'headers were: ' . trim($adminHeaders));
+check(
+    "the admin CSP allows blob: images (floor plan and photo previews are fetched with the admin key and shown as blob: URLs)",
+    str_contains($imgSrcMatch[1] ?? '', 'blob:'),
+    'img-src was: ' . trim($imgSrcMatch[1] ?? '(missing)')
+);
 
 $allowedOriginHeaders = net_cors_headers_for_origin("$baseUrl/health", 'http://127.0.0.1:8090');
 check(

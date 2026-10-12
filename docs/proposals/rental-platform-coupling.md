@@ -2,12 +2,37 @@
 
 ## Status
 
-Proposed — not accepted. This is the "you write a proposal Mark can accept or change" card
+Proposed — not accepted. An approach is chosen below ("Chosen approach"), still waiting on Mark. This is the "you write a proposal Mark can accept or change" card
 (LIDAR-9). Nothing in the rental platform (`vastgoed-app` or whatever its actual repo is
 called) has been cloned, read, or edited to write this — every claim below is inferred
 from the Scan Service contract this repo already owns, not from the platform codebase.
 Where an answer depends on that codebase, it's listed under "Open questions" instead of
 guessed.
+
+## Chosen approach (7 Oct 2026, awaiting Mark)
+
+Answers to the open questions in section 6, chosen from the Scan Service side. Nothing below
+is built yet; it is the shape to confirm with Mark before any platform work starts.
+
+- **Handoff: the share code.** The app already makes a `VUURO-SCAN-1:` share code from
+  History (base64 JSON with the session id and token). Staff paste that code into the
+  platform's unit page. The platform backend decodes it, checks the session's
+  `property_id`/`unit_id`/`organisation_id` against the unit it is pasted on, and stores
+  `(session_id, access_token)` server-side only. No webhook, no shared table, no new
+  Scan Service endpoint.
+- **Sites: platform side.** Which of athomevastgoed, staffhousing and vuuro shows a unit is
+  decided by the platform, the same way it decides that for the listing itself. Scan
+  Service gets no `website_id` or site field.
+- **Interior photos hidden until move-out.** For an occupied unit the platform shows room
+  sizes (marked indicative) but no interior photos or notes until the tenant has moved out.
+  Staff can still see them behind the platform's own login. Scan Service changes nothing for
+  this; the platform holds the rule.
+- **Opaque platform ids.** `property_id`, `unit_id` and `organisation_id` carry the
+  platform's own ids as opaque strings. Scan Service never interprets them and never
+  invents its own.
+- **Rescans by polling.** The platform re-reads `GET /scan-sessions/{id}` on its own
+  schedule (or when a listing is opened) and uses the newest data. No push or webhook from
+  Scan Service.
 
 ## Why this is a proposal and not an implementation
 

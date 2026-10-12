@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Accepted, partially superseded — see the 2026-09-10 addendum below. The Context and
+Decision sections describe the situation as it stood before multi-room fusion landed;
+kept as-is for history rather than rewritten.
 
 ## Context
 
@@ -64,3 +66,21 @@ with the rest of this ADR's "one continuous multi-room RoomPlan session" scenari
 relevant to LIDAR-9 (rental-platform coupling proposal): the FloorPlan contract's
 `openings[]`/`objects[]` per room are only meaningful under this one-floor-per-call
 guarantee.
+
+## Addendum (2026-09-10): the "one continuous multi-room RoomPlan session" scenario has landed
+
+`MultiRoomCaptureCoordinator` now runs one continuous `ARSession` across an entire
+multi-room walkthrough (`RoomCaptureView(frame:arSession:)`, Apple's documented
+"bring your own ARSession" initializer) and fuses the captured rooms via
+`StructureBuilder` into a shared coordinate frame — each room's `structure_origin_m`
+is real, captured data, not fabricated adjacency. `POST /scan-sessions/{id}/rooms`
+persists that fused result server-side, and both `FloorPlanImageRenderer` and
+`FloorPlanPdfRenderer` render a real single fused layout (`renderFused()`) whenever
+every room in the session carries `structure_origin_m`, falling back to the per-room
+tiles this ADR originally described only when it doesn't (or when `?layout=tiles` is
+explicitly requested).
+
+What has NOT changed: a single `capture()` call still only ever adapts one room at a
+time (the Addendum above, LIDAR-10, still applies), and this fused path is still only
+simulator/fixture-verified — see `ios-app/README.md`'s verification status — not yet
+proven against real LiDAR hardware.

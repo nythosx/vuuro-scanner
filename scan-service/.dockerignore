@@ -1,2 +1,6 @@
 data/
 *.sqlite
+.env
+.env.*
+!.env.example
+*.log

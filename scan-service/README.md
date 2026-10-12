@@ -4,6 +4,16 @@ The single backend in this repo. Plain PHP 8.1+, PDO/SQLite, no framework, no Co
 dependency. See root `ARCHITECTURE.md` section 3.2.1 for the full component
 description, and `docs/adr/0001-scan-service-stack.md` for why this stack.
 
+## Cross-platform note
+
+The Scan Service and admin panel run identically on Mac, Windows, and Linux via
+Docker. The Python scripts in this repo (run\*server.py, install\*\*.py) are
+Windows-only dev tooling used on the original dev machine — end users never need
+them.
+
+This path is used by the original dev machine on Windows with XAMPP. Mac and Linux
+users should prefer the Docker path below.
+
 ## Run it (native PHP, no Docker)
 
 ```
@@ -22,16 +32,133 @@ The schema in `migrations/schema.sql` is applied fresh on boot — no separate m
 step. The database file lives at `data/scan_service.sqlite` (gitignored) or wherever
 `SCAN_SERVICE_DB_PATH` points.
 
-## Run it (Docker, host-independent)
+## Run it (Docker — any OS)
 
 ```
 cd scan-service
-docker build -t vuuro-scan-service .
-docker run -p 8089:8089 -v "$(pwd)/data:/app/data" vuuro-scan-service
+docker compose up
+open http://localhost:8089/admin in a browser
 ```
 
-The `Dockerfile` installs both `pdo_sqlite` and `gd` — PNG export needs `gd` and will
-500 without it (see "Known limits").
+Sign in with the `SCAN_SERVICE_ADMIN_API_KEY` value (default is
+`change-me-local-dev` if no `.env` was created).
+
+Note: the default key is intentionally weak for local testing, and only works
+because `SCAN_SERVICE_ENV` defaults to `development`. `docker-compose.prod.yml`
+sets `SCAN_SERVICE_ENV=production`, which makes the app refuse to boot at all
+(hard `RuntimeException`, not a silent fallback) if `SCAN_SERVICE_ADMIN_API_KEY`
+or `SCAN_SERVICE_EXPORT_SECRET` is missing or still set to its default value —
+see "Known limits". For anything shared with anyone else, copy `.env.example`
+to `.env` and set both secrets regardless.
+
+The `Dockerfile` builds on [FrankenPHP](https://frankenphp.dev/) (PHP embedded in
+Caddy) rather than `php -S`, so it can actually serve concurrent requests instead of
+one at a time — see "Known limits" for why the old built-in server was a problem.
+It installs both `pdo_sqlite` and `gd` — PNG export needs `gd` and will 500 without
+it.
+
+## Local TLS test (self-signed, localhost only)
+
+```
+cd scan-service
+sh scripts/tls-local-up.sh
+curl -k https://localhost:8443/health
+```
+
+`docker-compose.tls-local.yml` adds a Caddy container with `tls internal` (Caddy's own
+local CA) on `https://localhost:8443`, in front of the same `scan-service` container.
+The script brings both up, waits for their health checks (the Caddy one hits `/health`
+over HTTPS), prints the SHA-256 fingerprint of Caddy's local root certificate, and
+fails unless `/health` returns 200 over HTTPS. Tear down with
+`docker compose -f docker-compose.yml -f docker-compose.tls-local.yml down`.
+
+This is for testing the HTTPS path only. The certificate is self-signed, so a phone
+will not trust it without installing that root certificate, and `tls internal` must
+never be used in `docker-compose.prod.yml`.
+
+### Real certificate on a free subdomain (DuckDNS) — not configured yet
+
+Once there is a host with a public IP, a free DuckDNS subdomain is enough for a real
+Let's Encrypt certificate:
+
+1. Sign in at duckdns.org, create a subdomain (e.g. `vuuro-scan.duckdns.org`), and set
+   its IP to the host's public IP.
+2. Keep the IP current if it can change: a cron job calling
+   `https://www.duckdns.org/update?domains=vuuro-scan&token=<your token>&ip=`. The token
+   is a secret; keep it out of git.
+3. Open ports 80 and 443 to the host (Let's Encrypt's HTTP challenge needs port 80).
+4. On a fresh Ubuntu 24.04 server: `sh scripts/server-setup.sh --domain vuuro-scan.duckdns.org`
+   (steps in `docs/hosting-spec.md`). By hand instead: copy `.env.example` to `.env`, fill
+   in the secrets, `SCAN_SERVICE_DOMAIN` and `SCAN_SERVICE_PUBLIC_BASE_URL`, then
+   `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`. The production
+   overlay passes every value in `.env` into the container (`env_file`) and does not start
+   without `.env`. `Caddyfile` reads `SCAN_SERVICE_DOMAIN`, and Caddy issues and renews
+   the certificate itself.
+5. Point the iOS app's `SCAN_SERVICE_BASE_URL` at `https://vuuro-scan.duckdns.org`.
+
+## Off-box backups (free tier)
+
+The app writes local snapshots to `data/backups/*.sqlite` (`VACUUM INTO`, at most once a
+day, when a scan starts), and photos are separate files in `data/photos/<session id>/`.
+Both live on the same disk as the database. `scripts/backup-offbox.sh` copies them to
+object storage with [rclone](https://rclone.org):
+
+- `daily/<snapshot name>.sqlite` on every run, keeping the newest
+  `SCAN_SERVICE_BACKUP_KEEP_DAILY` (default 14);
+- `weekly/<ISO week>.sqlite`, overwritten within the same week, keeping the newest
+  `SCAN_SERVICE_BACKUP_KEEP_WEEKLY` (default 8);
+- `photos/<session id>/...`, a mirror (`rclone sync`) of `data/photos/`. A photo or session
+  deleted on the server (by the user or by retention) is deleted off-box on the next run
+  too, so the privacy deletion also reaches the backup. Only the database copies are kept
+  per day and week; the photos are the current set.
+
+It refuses to upload an empty or non-SQLite file, verifies the upload landed, refuses to
+empty the remote photos when `data/photos/` is empty or missing (a new or wiped server
+must be restored first; `SCAN_SERVICE_BACKUP_ALLOW_EMPTY_PHOTOS=1` overrides it when every
+photo really was deleted), and exits non-zero with a clear log line (exit codes: 2 bad
+config, 3 no usable local backup, 4 remote failure, 5 refused to empty the photos).
+
+On the server, `scripts/server-setup.sh` installs one nightly cron job (03:00 UTC) that
+runs `scripts/nightly.sh`: retention, then a fresh snapshot (`tools/snapshot-db.php`, so
+the copy is never older than that night even on a day without new scans), then
+`backup-offbox.sh`. Without the setup script: `scripts/backup-offbox.cron.example`.
+
+Restore: `sh scripts/restore-offbox.sh --yes [--db <name>.sqlite]` downloads the newest
+(or the named) database copy from `daily/` and all photos, stops the scan service, moves
+the current `data/scan_service.sqlite` and `data/photos/` aside to
+`data/pre-restore-<time>/`, puts the copies in place, starts the stack, and runs
+`tools/restore-check.php` (integrity check, session and photo counts, and the newest
+session with a photo read back through the API with the admin key).
+
+Both free options below give 10 GB. The database needs very little; photos are what fill
+it, so check the bucket size once the pilot runs. Use one.
+
+**Cloudflare R2** (10 GB free, no egress fees): create a bucket `vuuro-scan-backups`,
+then an R2 API token with Object Read & Write on that bucket only.
+
+```
+rclone config create r2 s3 provider=Cloudflare   access_key_id=<key id> secret_access_key=<secret>   endpoint=https://<account id>.r2.cloudflarestorage.com   acl=private no_check_bucket=true
+export SCAN_SERVICE_BACKUP_REMOTE=r2:vuuro-scan-backups
+```
+
+**Backblaze B2** (first 10 GB free): create a private bucket `vuuro-scan-backups` and an
+application key restricted to it.
+
+```
+rclone config create b2 b2 account=<key id> key=<application key>
+export SCAN_SERVICE_BACKUP_REMOTE=b2:vuuro-scan-backups
+```
+
+Then `sh scripts/backup-offbox.sh` once by hand before enabling the cron job.
+
+Local test, no cloud account needed (Docker only): `sh scripts/test-offbox-backup.sh`
+starts an S3 test server (`rclone serve s3`) and an rclone container on a throwaway
+network, runs the script against it, checks upload, content, daily/weekly retention,
+the photo mirror (copy, deletion, the empty-folder guard), and the failure paths, then
+removes everything.
+
+Snapshots taken before the access-token hashing migration still contain plaintext
+tokens. Delete old local snapshots rather than uploading them.
 
 ## Testing this locally from a real device (not just Simulator/curl)
 
@@ -52,26 +179,63 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/health` | Unauthenticated liveness check — touches only the DB connection. |
-| POST | `/scan-sessions` | Create a session. Body carries `ScanIdentity` (property/unit/organisation, purpose, `occupied`, `consent_obtained`). Returns the session id and its one-time access token. `occupied: true` requires `consent_obtained: true` or `403 consent_required`. |
+| POST | `/scan-sessions` | Create a session. When `SCAN_SERVICE_APP_KEY` is set (required in production) the request must carry the same value in `X-Scan-App-Key`, otherwise `401 invalid_or_missing_app_key`. Body carries `ScanIdentity` (property/unit/organisation, purpose, `occupied`, `consent_obtained`). Returns the session id and its one-time access token. `occupied: true` requires `consent_obtained: true` or `403 consent_required`. |
 | POST | `/scan-sessions/{id}/rotate-token` | Issue a new token before or within `ROTATE_GRACE_PERIOD_SECONDS` (7 days) after expiry. |
 | POST | `/scan-sessions/{id}/capture` | Submit `raw_capture` (RoomPlan-shaped JSON) + `capture_provider`. Converted via the matching adapter into the `FloorPlan` contract. Supports `Idempotency-Key` for safe retries. |
-| POST | `/scan-sessions/{id}/photos` | Attach a photo by URL (e.g. one already returned by `photo-uploads` below), with optional caption/room id. |
+| POST | `/scan-sessions/{id}/rooms` | Wholesale-replace this session's rooms with a fused set (body: `captures[]`, one `raw_capture` per room) — used once a multi-room merge succeeds, superseding the individually-uploaded tiles from `capture` above without double-counting them. |
+| POST | `/scan-sessions/{id}/photos` | Attach a photo by URL (e.g. one already returned by `photo-uploads` below), with optional caption/room id/`tags` (#21 inspection purpose tags — array from `VuuroScan\InspectionTag::VALUES`, defaults to `[]`). |
 | POST | `/scan-sessions/{id}/photo-uploads` | Upload real image bytes (multipart), content-sniffed via `finfo`, stored under `data/photos/{session_id}/`. Returns a `url` to pass into `/photos`. |
 | GET | `/scan-sessions/{id}/photo-uploads/{filename}` | Fetch a previously uploaded photo. |
-| POST | `/scan-sessions/{id}/notes` | Attach a text note, with optional room id. |
-| GET | `/scan-sessions/{id}/export/floorplan.png` | Fused single-layout PNG when every room in the session carries `structure_origin_m` (see `docs/adr/0002-export-coordinate-frame.md`); per-room tiles otherwise, or always with `?layout=tiles`. `?room_id=<id>` isolates one room's own tile. |
-| GET | `/scan-sessions/{id}/export/floorplan.pdf` | Per-room metrics-table PDF, all rooms unless narrowed with `?room_id=<id>`. |
+| DELETE | `/scan-sessions/{id}/photos/{photo_id}` | Remove a single attached photo. Also deletes the underlying uploaded file from disk, unless another photo entry still references the same file. |
+| POST | `/scan-sessions/{id}/notes` | Attach a text note, with optional room id/`tags` (#21 inspection purpose tags, same enum as photos, defaults to `[]`). |
+| POST | `/scan-sessions/{id}/notes/{note_id}` | Edit a note's `text` in place; optionally replace its `tags` too (omit `tags` entirely to leave the existing ones untouched). |
+| DELETE | `/scan-sessions/{id}/notes/{note_id}` | Remove a single attached note. |
+| POST | `/scan-sessions/{id}/rooms/{room_id}/room-type` | Set or clear a room's `room_type.confirmed` after capture — body `{"room_type": "kitchen"}` or `{"room_type": null}` to clear. Independent of the live ✓/✗ capture-time prompt; works even on a room that never had a guess. |
+| GET | `/scan-sessions/{id}/export/floorplan.png` | Rooms are first split into sections by `floor` and by walkthrough (`capture_group_id`); with more than one section, each is drawn separately and stacked, topmost floor first (the PDF gets one drawing page per section). Within a section: fused single layout when every room carries `structure_origin_m` (see `docs/adr/0002-export-coordinate-frame.md`); per-room tiles otherwise, or always with `?layout=tiles`. `?room_id=<id>` isolates one room's own tile. `?unit=metric\|imperial` (default `metric`) controls displayed measurement units. `?label=<text>` (120 chars max) adds an optional branding/caption line. `?lang=en\|nl` sets the export language (labels, decimal comma, dates); without it the admin setting "Export language" is used (default `en`). User-entered text (room names, notes) is never translated. |
+| GET | `/scan-sessions/{id}/export/floorplan.svg` | Same layout/room_id/unit/label params and fused-vs-tiles logic as the PNG export, rendered as an SVG floor plan sheet instead (grid background, room fills by type, wall outlines, door-swing/window symbols, dimension labels). |
+| GET | `/scan-sessions/{id}/export/floorplan.pdf` | Per-room metrics-table PDF, all rooms unless narrowed with `?room_id=<id>`. Same `?unit=` and `?label=` params as the PNG export above. With `X-Scan-Compare-Token` (and optional `?with=`) the Full report of the later scan gets a "Changes since check-in" section, same pairing and access rules as `/compare`. |
+| GET | `/scan-sessions/{id}/compare` | Indicative comparison of two scans of the same property/unit/organisation. Needs this session's token plus the other scan's token in `X-Scan-Compare-Token` (or the admin key). `?with=<id>` picks the other scan; without it a check-out pairs with the latest check-in of the unit and a check-in with the latest check-out. Rooms are matched by `room_id`, then by label + floor (case and spaces ignored) and reported as `added`, `changed`, `unchanged` or `not_matched` (never "removed"); `changed` means more than the admin thresholds (default 0.5 m² or 5%). Also lists notes and photos of the later scan (damage first) and objects of matched rooms not found again. |
 | GET | `/scan-sessions/{id}/access-log` | This session's `action`/`outcome`/`occurred_at` audit trail — never the token or caller IP. |
 | GET | `/scan-sessions/{id}` | Fetch the current `FloorPlan` state for the session. |
+| DELETE | `/scan-sessions/{id}` | Delete the session and everything attached to it (floor plan, photos, notes, access log). |
+| GET | `/scan-sessions?property_id=&unit_id=&organisation_id=` | Look up sessions by any combination of those three filters — the only way to recover "what scans exist for this property" without already holding a session's id/token. Gated behind an `X-Admin-Api-Key` header matching `SCAN_SERVICE_ADMIN_API_KEY`; disabled entirely (always `401`) if that env var isn't set. Never returns `access_token`. |
+
+
+## Retention defaults by purpose
+
+Early purge is opt-in per purpose and is switched on or off in the admin dashboard under **Settings** (`GET`/`POST /admin/settings`, admin key required), together with whether tenants can request deletion and how many days that takes (default on, 7 days). Until an admin saves a choice for a purpose, the matching `SCAN_SERVICE_RETENTION_DAYS_<PURPOSE>` env var still applies; with neither set, nothing is purged early. `.env.example` leaves these env vars empty, so a new server deletes nothing until a purpose is switched on. The day counts pre-filled in Settings, and suggested in the `.env.example` comment:
+
+| Purpose | Days | Rationale |
+| --- | --- | --- |
+| `listing` | 90 | Listing lifecycle, short tail after delisting |
+| `check_in` | 365 | Move-in evidence, kept through tenancy |
+| `check_out` | 30 | Move-out evidence, short dispute window |
+| `renovation` | 365 | Project reference, kept for the year |
+| `other` | 180 | Conservative middle ground |
+
+Purge runs opportunistically on every tenth session creation and on demand via `POST /admin/run-retention` (admin key required).
 
 ## Known limits
 
+- **Single-instance runtime**: the app itself is still a single PHP process handling
+  SQLite writes serially — FrankenPHP gives it a real concurrent HTTP server (no more
+  one-request-at-a-time queuing on slow requests like large exports), but it is not a
+  multi-node deployment. Fine for a single-instance pilot; a real production rollout
+  would still want multiple app replicas behind a load balancer for anything beyond
+  that.
+- **Production secrets are fail-fast, not silently defaulted**: `SCAN_SERVICE_ENV`
+  defaults to `development`, which allows the weak `change-me-local-dev` /
+  `change-me-local-dev-signing` defaults so local setup works with zero config.
+  `docker-compose.prod.yml` sets `SCAN_SERVICE_ENV=production`, and in that mode the
+  app throws at boot (every request 500s until fixed) if `SCAN_SERVICE_ADMIN_API_KEY`
+  or `SCAN_SERVICE_EXPORT_SECRET` is unset or still equal to its default value.
 - **Body-size enforcement order**: `post_max_size` must stay set *above*
   `MAX_REQUEST_BODY_BYTES` (8MB). If they're equal, PHP's own SAPI-level check fires
   first, emitting a raw startup Warning that bypasses `set_exception_handler` (a
   Warning is not a `Throwable`) and leaves the HTTP status at 200 instead of the app's
-  own `413`. This applies to both the native `php -S` invocation above and the
-  Dockerfile's `CMD`.
+  own `413`. This applies both to the native `php -S` invocation above and to the
+  Docker image, which sets the same `post_max_size`/`upload_max_filesize` via
+  `conf.d/scan-service.ini`.
 - **Rate limiting**: per-session and per-caller-IP fixed-window buckets on session
   creation (default 60 per 600s window, overridable via
   `SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX` /
@@ -82,7 +246,14 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
   rate limiter in a real deployment.
 - **Token model is per-session, not per-account**: see
   `docs/adr/0003-privacy-acl-session-tokens.md`'s "what this doesn't solve" section in
-  full — no login, no org-level isolation, no TLS in this repo.
+  full — no login, no org-level isolation. TLS itself is available (see below) but not
+  on by default for local dev.
+- **TLS**: the app itself speaks plain HTTP only; Caddy terminates TLS in front of it.
+  `docker-compose.prod.yml` + `Caddyfile` get a Let's Encrypt certificate automatically
+  once `SCAN_SERVICE_DOMAIN` is a real DNS name pointed at the host (see "Real
+  certificate on a free subdomain"). For local HTTPS testing without a domain, use the
+  self-signed overlay in "Local TLS test". Let's Encrypt cannot issue for a bare
+  `127.0.0.1`.
 - **Export bounds**: PNG canvas capped at 4000px per side
   (`FloorPlanImageRenderer::MAX_CANVAS_DIMENSION_PX`); PDF capped at 200 pages
   (`FloorPlanPdfRenderer::MAX_PAGES`). A capture large enough to exceed either is
@@ -97,24 +268,19 @@ Every route below except `POST /scan-sessions` and `GET /health` requires an
   `concurrency_test.php` (a real multi-process `proc_open` test — the write-lock race it
   checks can't be proven any other way against `php -S`'s single-threaded server).
 - `net/verify_*.php` — the independent net, the actual merge gate. HTTP-only, re-derives
-  expected results with separate logic, never imports `src/`. Run in order (all but the
-  last are chained against one shared server/DB — `verify_enterprise_hardening.php`'s
-  rate-limit check must run last):
+  expected results with separate logic, never imports `src/`. Run all of it with:
   ```
-  php net/verify_capture_geometry.php http://127.0.0.1:8089
-  php net/verify_multiroom_and_attachments.php http://127.0.0.1:8089
-  php net/verify_multiroom_fusion.php http://127.0.0.1:8089
-  php net/verify_exports.php http://127.0.0.1:8089
-  php net/verify_acl.php http://127.0.0.1:8089
-  php net/verify_coverage.php http://127.0.0.1:8089
-  php net/verify_openings_and_objects.php http://127.0.0.1:8089
-  php net/verify_security_fixes.php http://127.0.0.1:8089
-  php net/verify_error_messages.php http://127.0.0.1:8089
-  php net/verify_enterprise_hardening.php http://127.0.0.1:8089
+  php net/run_all.php
   ```
-  `net/verify_post_body_read_rate_limit.php` is deliberately standalone — it floods a
-  global per-IP bucket that would spuriously 429 every other script above if it shared
-  a server, so run it last against its own fresh server/DB on a different port.
-- `.github/workflows/scan-service-ci.yml` and `.gitlab-ci.yml` both run the full
-  sequence above automatically. GitLab is where merges to this repo actually happen —
-  that's the real merge gate.
+  It starts its own Scan Service on 127.0.0.1:18089 with a throwaway database and the
+  raised rate limits the suites need, runs every suite in order against it
+  (`verify_enterprise_hardening.php`'s rate-limit check last), then starts a second fresh
+  server on 127.0.0.1:19499 for `verify_post_body_read_rate_limit.php`, which floods a
+  global per-IP bucket and would 429 everything else if it shared a server. Your local
+  `data/scan_service.sqlite` is never touched. Pass other ports as arguments if those two
+  are taken: `php net/run_all.php 18189 19599`. Running a single suite by hand against a
+  dev server with default rate limits can hit 429s once the bucket fills; that is the
+  limiter doing its job, not a regression.
+- `.github/workflows/scan-service-ci.yml` and `.gitlab-ci.yml` both call `net/run_all.php`,
+  so the suite list lives in one place. GitLab is where merges to this repo actually
+  happen — that's the real merge gate.

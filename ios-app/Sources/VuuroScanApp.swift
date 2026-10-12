@@ -1,14 +1,4 @@
-//
-//  VuuroScanApp.swift
-//  VuuroScan
-//
-//  Real-device confirmed for the core flow through Mark's 2026-09-01 test
-//  (feature/vuuro-scan @ a3c6284): identity intake, RoomCaptureScreen with
-//  live AR wireframe/coaching, and the error screen all ran for real. The
-//  Done/Stop button, Cancel button, and partial-capture recovery in this
-//  file were added after that test and are compiled-via-CI only so far —
-//  not yet run on real hardware, see Models/ScanIdentity.swift header for
-//  what that distinction means generally.
+import ImageIO
 import PhotosUI
 import RoomPlan
 import SwiftUI
@@ -16,170 +6,360 @@ import UIKit
 
 @main
 struct VuuroScanApp: App {
+    @UIApplicationDelegateAdaptor(VuuroAppDelegate.self) private var appDelegate
+    @AppStorage(AppLanguageSettings.storageKey) private var appLanguageRaw: String = AppLanguage.system.rawValue
+
+    init() {
+        PerfTrace.begin(.launchToHome)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-uiTestResetOnboarding") {
+            UserDefaults.standard.removeObject(forKey: OnboardingKeys.hasCompleted)
+            UserDefaults.standard.removeObject(forKey: OnboardingKeys.version)
+        }
+        if ProcessInfo.processInfo.arguments.contains("-uiTestResetState") {
+            PendingUploadStore.clear()
+            WalkthroughStore.clear()
+        }
+        #endif
+        DispatchQueue.global(qos: .utility).async {
+            KeychainTokenStore.resetIfReinstalled()
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
-            NavigationStack {
-                ScanFlowView()
+            VuuroRootView()
+                .tint(VuuroColor.accent)
+                .environment(\.locale, AppLanguage(rawValue: appLanguageRaw)?.locale ?? Locale.autoupdatingCurrent)
+        }
+    }
+}
+
+private enum OnboardingKeys {
+    static let hasCompleted = "hasCompletedOnboarding"
+    static let version = "onboardingCompletedVersion"
+    static let currentVersion = 2
+}
+
+struct VuuroRootView: View {
+    @AppStorage(OnboardingKeys.hasCompleted) private var hasCompletedOnboarding = false
+    @AppStorage(OnboardingKeys.version) private var onboardingVersion = 0
+    @AppStorage("darkModeEnabled") private var darkMode = false
+
+    private var onboardingNeeded: Bool {
+        !hasCompletedOnboarding || onboardingVersion < OnboardingKeys.currentVersion
+    }
+
+    var body: some View {
+        Group {
+            if !onboardingNeeded {
+                NavigationStack {
+                    ScanFlowView()
+                        .background(VuuroColor.bgApp)
+                }
+            } else {
+                OnboardingFlowView {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        hasCompletedOnboarding = true
+                        onboardingVersion = OnboardingKeys.currentVersion
+                    }
+                }
             }
+        }
+        .preferredColorScheme(darkMode ? .dark : .light)
+        .onAppear {
+            if onboardingNeeded { PerfTrace.cancel(.launchToHome) }
+        }
+        .vuuroToastHost()
+        .vuuroOfflineBannerHost()
+    }
+}
+
+struct OnboardingFlowView: View {
+    enum Stage { case onboarding, permissions }
+
+    let onComplete: () -> Void
+    @State private var stage: Stage = .onboarding
+
+    var body: some View {
+        switch stage {
+        case .onboarding:
+            OnboardingView(
+                onSkip: onComplete,
+                onGetStarted: { stage = .permissions }
+            )
+        case .permissions:
+            PermissionsView(
+                onBack: { stage = .onboarding },
+                onContinue: onComplete
+            )
         }
     }
 }
 
 struct ScanFlowView: View {
     private enum Stage {
-        case intake
+        case home
+        case resumingUpload(PendingUploadState)
         case capturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
         case multiRoomCapturing(identity: ScanIdentity, session: ScanSessionResponse?, attempt: UUID)
-        case attachments(session: ScanSessionResponse, floorPlan: FloorPlan)
+        case noteOnly(identity: ScanIdentity)
+        case attachments(session: ScanSessionResponse, floorPlan: FloorPlan, identity: ScanIdentity)
         case summary(session: ScanSessionResponse, floorPlan: FloorPlan)
-        // Carries identity/existingSession, not just the error, so "Try
-        // again" can resume the same multi-room session instead of resetting
-        // to blank intake. Real gap this closes: Mark's actual test was a
-        // 2-room session (attic, then bathroom) — without this, a room 2
-        // failure would silently orphan room 1's already-created session
-        // instead of letting him retry room 2 into it.
         case error(AppError, identity: ScanIdentity, existingSession: ScanSessionResponse?)
         case multiRoomError(AppError, identity: ScanIdentity, existingSession: ScanSessionResponse?)
     }
 
-    @State private var stage: Stage = .intake
-    #if DEBUG
+    @State private var stage: Stage
+    @State private var showStartSheet = false
+    @State private var startType: ScanStartType = .single
+    @State private var showScanInstructions = false
+    @State private var openSetupAfterInstructions = false
+    @State private var showSettings = false
+    @State private var showHistory = false
+    @State private var showTerms = false
     @State private var showDiagnostics = false
+    @AppStorage(AppLanguageSettings.storageKey) private var appLanguageRaw: String = AppLanguage.system.rawValue
 
-    // Whether presenting a full-screen .sheet over an active RoomCaptureView/
-    // ARSession is actually safe (does iOS pause/interrupt ARKit tracking
-    // when its hosting view stops being frontmost?) is genuinely unverified
-    // here — no Xcode/device to check it against, same category as every
-    // other "unverified against real SDK behavior" note in this codebase.
-    // Hiding the button for the whole capturing stage, not just while
-    // coordinator.state == .scanning specifically, is the conservative
-    // choice until that's confirmed: this tool exists to help diagnose
-    // problems, it should not risk causing the exact class of problem
-    // (a world-tracking failure) it was built to help diagnose. The log
-    // itself keeps recording underneath regardless — only viewing/exporting
-    // it is paused, not capturing it.
-    private var isCapturingStage: Bool {
-        if case .capturing = stage { return true }
-        if case .multiRoomCapturing = stage { return true }
-        return false
+    init() {
+        if let pending = PendingUploadStore.load(), pending.skippedAt == nil {
+            _stage = State(initialValue: .resumingUpload(pending))
+        } else {
+            _stage = State(initialValue: .home)
+        }
     }
-    #endif
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            content
-            #if DEBUG
-            // Top-leading, opposite corner from the capture screen's back
-            // button (top-trailing) so the two never overlap. Shown on every
-            // other stage, since real errors happen in session creation/
-            // upload/photo-attach too, not only mid-scan — see
-            // isCapturingStage for why it's hidden specifically here.
-            if !isCapturingStage {
-                Button {
-                    showDiagnostics = true
-                } label: {
-                    Image(systemName: "ladybug")
-                        .font(.headline)
-                        .padding(10)
-                        .background(.regularMaterial, in: Circle())
-                }
-                .padding(.leading, 20)
-                .padding(.top, 8)
-            }
-            #endif
-        }
-        #if DEBUG
-        .sheet(isPresented: $showDiagnostics) {
-            DiagnosticsLogView()
-        }
-        #endif
-    }
-
-    @ViewBuilder
-    private var content: some View {
         Group {
             switch stage {
-            case .intake:
-                IdentityIntakeScreen(onStart: { identity in
-                    stage = .capturing(identity: identity, session: nil, attempt: UUID())
-                }, onStartMultiRoom: { identity in
-                    stage = .multiRoomCapturing(identity: identity, session: nil, attempt: UUID())
-                })
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        NavigationLink("History") {
-                            // LIDAR-4: the actual recovery path for "landlord
-                            // left mid multi-room unit and came back" — see
-                            // ScanHistoryEntry.asResumableSession()/
-                            // asResumableIdentity() for why reconstructing
-                            // these two values here is safe.
-                            ScanHistoryView(onResumeToAddRoom: { entry in
-                                stage = .capturing(
-                                    identity: entry.asResumableIdentity(),
-                                    session: entry.asResumableSession(),
-                                    attempt: UUID()
-                                )
-                            }, onAttachToSession: { entry, floorPlan in
-                                stage = .attachments(session: entry.asResumableSession(), floorPlan: floorPlan)
-                            })
+            case .home:
+                HomeView(
+                    onStartSingle: {
+                        beginStart(.single)
+                    },
+                    onStartMulti: {
+                        beginStart(.multi)
+                    },
+                    onOpenSettings: { showSettings = true },
+                    onOpenHistory: { showHistory = true },
+                    onOpenTerms: { showTerms = true },
+                    onResumePendingUpload: {
+                        if let pending = PendingUploadStore.load() {
+                            stage = .resumingUpload(pending)
                         }
                     }
-                }
+                )
+                .toolbar(.hidden, for: .navigationBar)
+
+            case .resumingUpload(let pending):
+                PendingUploadRecoveryView(
+                    state: pending,
+                    onFinished: { session, floorPlan in
+                        stage = .attachments(session: session, floorPlan: floorPlan, identity: pending.identity)
+                    },
+                    onDiscarded: { stage = .home },
+                    onSkipped: {
+                        PendingUploadStore.markSkipped()
+                        stage = .home
+                    }
+                )
+                .toolbar(.hidden, for: .navigationBar)
+
             case .capturing(let identity, let session, let attempt):
-                RoomCaptureFlowStep(identity: identity, existingSession: session) { session, floorPlan, addAnotherRoom in
+                RoomCaptureFlowStep(
+                    identity: identity,
+                    existingSession: session
+                ) { session, floorPlan, addAnotherRoom in
                     if addAnotherRoom {
                         stage = .capturing(identity: identity, session: session, attempt: UUID())
                     } else {
-                        stage = .attachments(session: session, floorPlan: floorPlan)
+                        stage = .attachments(session: session, floorPlan: floorPlan, identity: identity)
                     }
                 } onError: { appError, sessionToResume in
                     stage = .error(appError, identity: identity, existingSession: sessionToResume)
                 } onGoBack: {
-                    stage = .intake
+                    PendingUploadStore.clear()
+                    stage = .home
                 } onDiscardRoom: {
-                    // Real bug fixed here: this used to always call onGoBack,
-                    // which resets straight to .intake — for room 2+ of a
-                    // multi-room unit, that wiped identity AND session,
-                    // silently orphaning every already-uploaded room (no
-                    // idempotency key on POST /scan-sessions to catch the
-                    // duplicate a retry would then create). Discarding THIS
-                    // room's in-progress capture should only ever cost this
-                    // room, matching what the confirmation alert promises —
-                    // so with an existing session, resume a fresh attempt
-                    // against it instead of leaving the flow entirely.
+                    PendingUploadStore.clear()
                     if let session {
                         stage = .capturing(identity: identity, session: session, attempt: UUID())
                     } else {
-                        stage = .intake
+                        stage = .home
                     }
                 }
                 .id(attempt)
+                .toolbar(.hidden, for: .navigationBar)
+
             case .multiRoomCapturing(let identity, let session, let attempt):
-                MultiRoomCaptureFlowView(identity: identity, existingSession: session) { session, floorPlan in
-                    stage = .attachments(session: session, floorPlan: floorPlan)
+                MultiRoomCaptureFlowView(
+                    identity: identity,
+                    existingSession: session
+                ) { session, floorPlan in
+                    stage = .attachments(session: session, floorPlan: floorPlan, identity: identity)
                 } onError: { appError, sessionToResume in
                     stage = .multiRoomError(appError, identity: identity, existingSession: sessionToResume)
                 } onGoBack: {
-                    stage = .intake
+                    PendingUploadStore.clear()
+                    stage = .home
                 }
                 .id(attempt)
-            case .attachments(let session, let floorPlan):
-                AttachmentsScreen(session: session, floorPlan: floorPlan) { updated in
+                .toolbar(.hidden, for: .navigationBar)
+
+            case .noteOnly(let identity):
+                NoteOnlyFlowStep(
+                    identity: identity,
+                    onFinished: { session, floorPlan in
+                        stage = .attachments(session: session, floorPlan: floorPlan, identity: identity)
+                    },
+                    onGoBack: {
+                        stage = .home
+                    }
+                )
+                .toolbar(.hidden, for: .navigationBar)
+
+            case .attachments(let session, let floorPlan, let identity):
+                AttachmentsScreen(
+                    session: session,
+                    floorPlan: floorPlan
+                ) { updated in
                     stage = .summary(session: session, floorPlan: updated)
+                } onAddRoom: {
+                    stage = .capturing(identity: identity, session: session, attempt: UUID())
+                } onBack: {
+                    PendingUploadStore.clear()
+                    DraftStore.clearAll(sessionId: session.id)
+                    stage = .home
                 }
+                .toolbar(.hidden, for: .navigationBar)
+
             case .summary(let session, let floorPlan):
                 ResultSummaryView(session: session, floorPlan: floorPlan) {
-                    stage = .intake
+                    DraftStore.clearAll(sessionId: session.id)
+                    VuuroToast.shared.show(vuuroLocalized("Scan saved to history"))
+                    stage = .home
                 }
+                .toolbar(.hidden, for: .navigationBar)
+
             case .error(let appError, let identity, let existingSession):
                 ErrorView(error: appError) {
-                    stage = .capturing(identity: identity, session: existingSession, attempt: UUID())
+                    if let pending = PendingUploadStore.load(), pending.skippedAt == nil, pending.identity == identity {
+                        stage = .resumingUpload(pending)
+                    } else {
+                        stage = .capturing(identity: identity, session: existingSession, attempt: UUID())
+                    }
                 }
+                .toolbar(.hidden, for: .navigationBar)
+
             case .multiRoomError(let appError, let identity, let existingSession):
                 ErrorView(error: appError) {
-                    stage = .multiRoomCapturing(identity: identity, session: existingSession, attempt: UUID())
+                    if let pending = PendingUploadStore.load(), pending.skippedAt == nil, pending.identity == identity {
+                        stage = .resumingUpload(pending)
+                    } else {
+                        stage = .multiRoomCapturing(identity: identity, session: existingSession, attempt: UUID())
+                    }
                 }
+                .toolbar(.hidden, for: .navigationBar)
             }
+        }
+        .sheet(isPresented: $showStartSheet) {
+            StartScanSheet(
+                type: startType,
+                onCancel: { showStartSheet = false },
+                onStart: { identity in
+                    showStartSheet = false
+                    if startType == .multi {
+                        stage = .multiRoomCapturing(identity: identity, session: nil, attempt: UUID())
+                    } else {
+                        stage = .capturing(identity: identity, session: nil, attempt: UUID())
+                    }
+                },
+                onStartNoteOnly: { identity in
+                    showStartSheet = false
+                    stage = .noteOnly(identity: identity)
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.hidden)
+            .presentationCornerRadius(VuuroMetrics.sheetRadius)
+        }
+        .sheet(isPresented: $showScanInstructions, onDismiss: {
+            if openSetupAfterInstructions {
+                openSetupAfterInstructions = false
+                showStartSheet = true
+            }
+        }) {
+            ScanInstructionsView(
+                type: startType,
+                primaryLabel: "Got it, set up the scan",
+                onPrimary: {
+                    ScanInstructionsSettings.markSeen(startType)
+                    openSetupAfterInstructions = true
+                    showScanInstructions = false
+                },
+                onClose: {
+                    ScanInstructionsSettings.markSeen(startType)
+                    showScanInstructions = false
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.hidden)
+            .presentationCornerRadius(VuuroMetrics.sheetRadius)
+        }
+        .navigationDestination(isPresented: $showSettings) {
+            SettingsView(
+                onBack: { showSettings = false },
+                onOpenTerms: { showTerms = true },
+                onOpenDiagnostics: { showDiagnostics = true }
+            )
+            .toolbar(.hidden, for: .navigationBar)
+        }
+        .navigationDestination(isPresented: $showHistory) {
+            ScanHistoryView(
+                onResumeToAddRoom: { entry, continueAsUnit in
+                    showHistory = false
+                    if continueAsUnit {
+                        stage = .multiRoomCapturing(
+                            identity: entry.asResumableIdentity(),
+                            session: entry.asResumableSession(),
+                            attempt: UUID()
+                        )
+                    } else {
+                        stage = .capturing(
+                            identity: entry.asResumableIdentity(),
+                            session: entry.asResumableSession(),
+                            attempt: UUID()
+                        )
+                    }
+                },
+                onAttachToSession: { entry, floorPlan in
+                    showHistory = false
+                    stage = .attachments(
+                        session: entry.asResumableSession(),
+                        floorPlan: floorPlan,
+                        identity: entry.asResumableIdentity()
+                    )
+                },
+                onAddRoomsToHome: { identity in
+                    showHistory = false
+                    stage = .multiRoomCapturing(identity: identity, session: nil, attempt: UUID())
+                }
+            )
+        }
+        .navigationDestination(isPresented: $showTerms) {
+            TermsAndPrivacyView()
+        }
+        .navigationDestination(isPresented: $showDiagnostics) {
+            DiagnosticsLogView()
+        }
+    }
+
+    private func beginStart(_ type: ScanStartType) {
+        startType = type
+        if ScanInstructionsSettings.hasSeen(type) {
+            showStartSheet = true
+        } else {
+            showScanInstructions = true
         }
     }
 }
@@ -188,54 +368,42 @@ private struct RoomCaptureFlowStep: View {
     let identity: ScanIdentity
     let existingSession: ScanSessionResponse?
     let onRoomCaptured: (ScanSessionResponse, FloorPlan, _ addAnotherRoom: Bool) -> Void
-    // The second parameter is the session to resume with on retry, not
-    // necessarily existingSession: if submit() gets far enough to create a
-    // new session before failing (createSession succeeds, uploadCapture then
-    // fails on a network blip), retrying with existingSession (still nil at
-    // that point) would silently create a second orphaned session server-
-    // side instead of reusing the one that already exists. Real gap — POST
-    // /scan-sessions has no idempotency key the way /capture does, so
-    // nothing on the server catches this either.
     let onError: (AppError, ScanSessionResponse?) -> Void
     let onGoBack: () -> Void
-    // Separate from onGoBack on purpose: onGoBack means "leave the flow
-    // entirely" (only ever correct when nothing has been created server-side
-    // yet). Discarding a mid-scan room needs its own callback so the parent
-    // can resume with existingSession instead, rather than conflating "exit"
-    // and "abandon this one room" into the same action.
     let onDiscardRoom: () -> Void
 
     @StateObject private var coordinator = CaptureCoordinator()
     @State private var isUploading = false
+    @State private var uploadTask: Task<Void, Never>?
     @State private var justCaptured: (session: ScanSessionResponse, floorPlan: FloorPlan)?
     @State private var didRequestStop = false
+    @State private var showMissingOpeningsPrompt = false
+    @State private var missingOpenings: CaptureLiveStats.MissingOpenings = .doorsAndWindows
     @State private var partialCaptureFailureMessage: String?
     @State private var isUploadingPartialCapture = false
     @State private var showDiscardConfirmation = false
-    // Mark's 2026-09-02 ask (b): caught locally, before ever reaching the
-    // server — RoomBuilder produced a room, but its floor outline is
-    // degenerate (see CapturedRoomExporter.hasUsableFloorOutline). Nothing
-    // to upload here; only a rescan can fix it, so there's no export value
-    // worth holding onto.
     @State private var isDegenerateCapture = false
-    // Mark's 2026-09-02 ask (c): a rejected upload (network blip or a
-    // server-side validation reject) used to route straight to onError,
-    // which always started a brand new capture attempt — throwing away
-    // geometry that was already captured even when only the upload itself
-    // needed retrying. Keeping it here instead lets "Retry upload" resubmit
-    // the exact same export with no rescan required.
-    @State private var uploadRejection: (error: AppError, export: RoomPlanCaptureExport, session: ScanSessionResponse)?
-    // Same reasoning as isUploadingPartialCapture: a dedicated top-level flag,
-    // not a reuse of isUploading, because isUploading is only checked *inside*
-    // the bare-capture ZStack branch below — clearing uploadRejection without
-    // this would fall through to that branch, remounting it and re-firing its
-    // .onAppear { coordinator.start() } on an already-ended RoomCaptureSession.
+    @State private var uploadRejection: (error: AppError, export: RoomPlanCaptureExport, session: ScanSessionResponse, idempotencyKey: String, bodyJSON: Data)?
     @State private var isRetryingUpload = false
+    @State private var pendingRescan: PendingRescanChoice?
+    @State private var rescanExport: RoomPlanCaptureExport?
     @State private var capturedLocation: CaptureLocation?
+    @State private var capturedHeadingDeg: Double?
+    @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
+    @State private var didStart = false
+    @State private var showCorrectionDialog = false
+    @State private var showRoomNamePrompt = false
+    @State private var customRoomName = ""
+    @State private var captureFloor: String = ""
+    @State private var captureFloorBeforePrompt: String = ""
+    @State private var showFloorPrompt = false
+    @State private var showHowToScan = false
+    @State private var cameraDenied = CameraAccess.isDenied
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
     private let locationProvider = LocationProvider()
+    private let headingProvider = HeadingProvider()
 
     private var debugFakeCaptureActive: Bool {
         #if DEBUG
@@ -248,52 +416,37 @@ private struct RoomCaptureFlowStep: View {
     var body: some View {
         Group {
             if !DeviceCapability.isRoomPlanSupported && !debugFakeCaptureActive {
-                // Real dead-end bug found on this pass, same class as the
-                // results-screen one fixed earlier this window: this screen
-                // is hard constraint #5's required "designed fallback path"
-                // for unsupported devices, but its go-back button was never
-                // wired to anything at this call site — a user landing here
-                // had literally no way forward without force-quitting the
-                // app.
                 UnsupportedDeviceScreen(onGoBack: onGoBack)
+            } else if DeviceCapability.isRoomPlanSupported && cameraDenied {
+                CameraAccessDeniedScreen(onGoBack: onGoBack, onAccessRestored: { cameraDenied = false })
             } else if let justCaptured {
                 AnotherRoomPromptView(roomCount: justCaptured.floorPlan.rooms.count) { addAnother in
                     onRoomCaptured(justCaptured.session, justCaptured.floorPlan, addAnother)
                 }
             } else if isUploadingPartialCapture {
-                // Checked ahead of partialCaptureFailureMessage and the real-
-                // capture branch below, on purpose: real bug caught in review
-                // before this ever reached Mark — clearing
-                // partialCaptureFailureMessage synchronously while submit()
-                // only sets isUploading = true one Task{} hop later left a
-                // render frame where every guard here was false, which fell
-                // through to the bare capture branch and fired
-                // coordinator.start() again on an already-ended session
-                // (flashing the live camera back on mid-upload). Setting this
-                // flag synchronously, in the same scope that clears
-                // partialCaptureFailureMessage, closes that gap.
-                ProgressView("Uploading capture…")
+                UploadProgressView(message: "Uploading capture…", onCancel: { uploadTask?.cancel() })
                     .padding()
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             } else if let partialCaptureFailureMessage {
-                // Answers Mark's real-device question directly: RoomPlan can
-                // still hand back reconstructable geometry after a session-
-                // ending error like world tracking failure (see
-                // CaptureCoordinator.didEndWith) — so discard-and-retry isn't
-                // the only honest option when that happens. Only reachable
-                // when coordinator.capturedRoom is actually set (see handle
-                // below), so the force-unwrap in onUsePartial is safe.
                 PartialCaptureFailureView(
                     message: partialCaptureFailureMessage,
                     onUsePartial: {
-                        let room = coordinator.capturedRoom!
+                        self.partialCaptureFailureMessage = nil
+                        guard let room = coordinator.capturedRoom else {
+                            onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
+                            return
+                        }
                         isUploadingPartialCapture = true
-                        Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport)) }
+                        uploadTask = Task {
+                            await submit(CapturedRoomExporter.export(
+                                room,
+                                roomTypeConfirmation: coordinator.roomTypeConfirmationForExport,
+                                walkPath: coordinator.capturedRoomWalkPath,
+                                headingDeg: capturedHeadingDeg
+                            ))
+                        }
                     },
                     onDiscard: {
-                        // No session was created for this attempt (it failed
-                        // before ever reaching submit()), so existingSession
-                        // is still the right value to resume with.
                         onError(AppError(site: .captureFailed, underlying: PlainError(message: partialCaptureFailureMessage)), existingSession)
                     }
                 )
@@ -302,157 +455,342 @@ private struct RoomCaptureFlowStep: View {
                     onDiscardRoom()
                 }
             } else if isRetryingUpload {
-                ProgressView("Uploading capture…")
+                UploadProgressView(message: "Uploading capture…", onCancel: { uploadTask?.cancel() })
                     .padding()
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             } else if let uploadRejection {
                 UploadRejectedView(
                     error: uploadRejection.error,
                     onRetryUpload: {
-                        // isRetryingUpload must flip synchronously, in the
-                        // same scope that clears uploadRejection — same class
-                        // of gap isUploadingPartialCapture's comment
-                        // documents elsewhere in this file.
                         let pending = uploadRejection
                         self.uploadRejection = nil
                         isRetryingUpload = true
-                        Task { await retryUpload(session: pending.session, export: pending.export) }
+                        uploadTask = Task {
+                            await retryUpload(
+                                session: pending.session,
+                                export: pending.export,
+                                idempotencyKey: pending.idempotencyKey,
+                                bodyJSON: pending.bodyJSON
+                            )
+                        }
                     },
                     onRescan: {
                         onDiscardRoom()
                     }
                 )
             } else if !DeviceCapability.isRoomPlanSupported {
-                // debugFakeCaptureActive must be true to reach here (see the
-                // first branch) — real hardware doesn't support RoomPlan, but
-                // the Debug fake-LiDAR override is on. RoomCaptureView/ARKit
-                // need real LiDAR and would just hang or crash on a device/
-                // simulator without one (e.g. appetize.io), so this skips
-                // straight to submitting synthetic data through the exact
-                // same upload pipeline instead.
                 #if DEBUG
-                ProgressView("Generating fake capture (Debug)…")
-                    .onAppear { Task { await submit(FakeCaptureGenerator.random()) } }
+                if isUploading {
+                    UploadProgressView(message: "Uploading fake capture…", onCancel: { uploadTask?.cancel() })
+                        .padding()
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                } else {
+                    VuuroCenterView {
+                        VuuroIconBadge(systemName: "wand.and.stars", tint: VuuroColor.accent, background: VuuroColor.accentSoft)
+                        Text("Debug: fake capture")
+                            .font(.system(size: 20, weight: .bold))
+                            .tracking(-0.4)
+                            .foregroundStyle(VuuroColor.textPrimary)
+                        Text("This device/simulator has no LiDAR. Tap Scan to generate synthetic RoomPlan-shaped data and upload it to the configured Scan Service.")
+                            .font(.system(size: 14))
+                            .lineSpacing(4)
+                            .foregroundStyle(VuuroColor.textSecondary)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 300)
+                        Button("Scan (fake data)") {
+                            uploadTask = Task { await submit(FakeCaptureGenerator.random()) }
+                        }
+                        .accessibilityIdentifier("capture.fakeScan")
+                        .buttonStyle(.vuuroPrimary)
+                        .padding(.top, 12)
+                        .frame(maxWidth: 340)
+                    }
+                }
                 #else
-                // Unreachable in a Release build: debugFakeCaptureActive is
-                // always false there, so the first branch above already
-                // catches !isRoomPlanSupported. Only here so this branch
-                // still returns a View and compiles.
                 EmptyView()
                 #endif
             } else {
                 ZStack {
-                    RoomCaptureScreen(coordinator: coordinator)
-                        .ignoresSafeArea()
+                    Color.black.ignoresSafeArea()
+                    VStack(spacing: 0) {
+                        ZStack {
+                            RoomCaptureScreen(coordinator: coordinator)
+                                .ignoresSafeArea(edges: .top)
 
-                    if let guess = coordinator.liveRoomTypeGuess {
-                        VStack {
-                            RoomTypeGuessOverlay(
-                                guess: guess,
-                                onConfirm: { coordinator.confirmRoomTypeGuess() },
-                                onReject: { picked in coordinator.rejectRoomTypeGuess(correctedTo: picked) }
-                            )
-                            .id(guess.type)
-                            Spacer()
+                            if isUploading {
+                                UploadProgressView(message: "Uploading capture…", onCancel: { uploadTask?.cancel() })
+                                    .padding()
+                                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                            } else if didRequestStop {
+                                ProgressView("Finishing scan…")
+                                    .padding()
+                                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                            } else if coordinator.state == .scanning {
+                                singleCaptureOverlay
+                            }
                         }
-                    }
-
-                    if isUploading {
-                        ProgressView("Uploading capture…")
-                            .padding()
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                    } else if didRequestStop {
-                        // Gap between tapping Done and RoomPlan actually
-                        // delivering didEndWith (real bug Mark found on a
-                        // real device: without this, and without isUploading
-                        // yet true, there was no way to end a scan at all —
-                        // start() ran on appear but nothing ever called
-                        // coordinator.stop()).
-                        ProgressView("Finishing scan…")
-                            .padding()
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                    } else if coordinator.state == .scanning {
-                        VStack {
-                            // Same bug class as the missing Done button, other
-                            // direction: without this, a user who entered
-                            // capture by mistake (wrong unit, changed their
-                            // mind) had no way back except forcing an error —
-                            // there's no automatic nav-bar back button here
-                            // since this stage swaps in via @State, not a
-                            // NavigationStack push. .ignoresSafeArea() below
-                            // is on RoomCaptureScreen alone, not this VStack
-                            // or the ZStack — this button already lays out
-                            // respecting the safe area on its own, so 8pt is
-                            // a buffer past the notch/status bar inset, not
-                            // flush against it (corrected here after an
-                            // earlier pass bumped this to 50, on a wrong
-                            // assumption that it was overlapping — that
-                            // would have stacked 50pt past the safe area
-                            // inset too, risking crowding RoomPlan's own
-                            // coaching UI. Still unverified either way
-                            // without a real device — flag to Mark).
-                            HStack {
-                                Spacer()
-                                Button {
-                                    showDiscardConfirmation = true
-                                } label: {
-                                    Image(systemName: "chevron.backward")
-                                        .font(.headline)
-                                        .padding(10)
-                                        .background(.regularMaterial, in: Circle())
-                                }
-                                .padding(.trailing, 20)
-                                .padding(.top, 8)
-                                // chevron.backward reads as "go back, nothing
-                                // lost" (iOS's standard non-destructive-nav
-                                // symbol), but the action is a full abandon —
-                                // this confirmation is what makes that icon
-                                // honest instead of misleading, matching this
-                                // project's own "don't claim more than what
-                                // actually happens" standard.
-                                .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
-                                    Button("Discard", role: .destructive) {
-                                        coordinator.stop()
-                                        onDiscardRoom()
-                                    }
-                                    Button("Keep Scanning", role: .cancel) {}
-                                } message: {
-                                    Text("Everything captured so far in this room will be lost.")
-                                }
-                            }
-                            Spacer()
-                            if coordinator.isApproachingSizeLimit {
-                                Text("This room looks larger than RoomPlan's practical scanning range (~9m) — accuracy may degrade beyond this size.")
-                                    .font(.caption)
-                                    .foregroundStyle(.orange)
-                                    .multilineTextAlignment(.center)
-                                    .padding(.horizontal)
-                                    .padding(.bottom, 8)
-                            }
-                            Button("Done") {
-                                didRequestStop = true
-                                coordinator.stop()
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .padding(.bottom, 40)
-                        }
+                        singleCaptureBottomChrome
+                            .opacity(showsSingleCaptureChrome ? 1 : 0)
+                            .allowsHitTesting(showsSingleCaptureChrome)
                     }
                 }
                 .onAppear {
+                    guard !didStart else { return }
+                    didStart = true
+                    captureFloor = (existingSession?.defaultFloor ?? identity.floor ?? "")
                     coordinator.start()
                     Task { capturedLocation = await locationProvider.currentLocation() }
+                    Task { capturedHeadingDeg = await headingProvider.currentHeadingDeg() }
                 }
                 .onChange(of: coordinator.state) { _, state in
                     handle(state)
                 }
+                .onChange(of: coordinator.cameraFeedMissing) { _, missing in
+                    guard missing else { return }
+                    onError(AppError(site: .captureFailed, underlying: PlainError(message: vuuroLocalized("The camera didn't start. Close any other app using the camera, then tap Try again."))), existingSession)
+                }
+                .task(id: didRequestStop) {
+                    guard didRequestStop else { return }
+                    try? await Task.sleep(nanoseconds: 45_000_000_000)
+                    guard !Task.isCancelled, didRequestStop, coordinator.state == .scanning, !isUploading else { return }
+                    DiagnosticsLog.shared.record("Finish room got no result from RoomPlan within 45s — surfacing an error instead of spinning", category: .error)
+                    onError(AppError(site: .captureFailed, underlying: PlainError(message: vuuroLocalized("Finishing the scan took too long. Please scan the room again."))), existingSession)
+                }
                 .onChange(of: scenePhase) { _, newPhase in
                     if newPhase == .background, coordinator.state == .scanning {
-                        #if DEBUG
                         DiagnosticsLog.shared.record("App backgrounded mid-scan — ARKit/RoomPlan behavior here is unverified.", category: .state)
-                        #endif
                     }
                 }
             }
+        }
+    }
+
+    private func finishSingleRoom() {
+        if !FloorValidation.isValid(captureFloor) {
+            captureFloorBeforePrompt = captureFloor
+            showFloorPrompt = true
+            return
+        }
+        didRequestStop = true
+        coordinator.stop()
+    }
+
+    private var showsSingleCaptureChrome: Bool {
+        coordinator.state == .scanning && !isUploading && !didRequestStop
+    }
+
+    private var singleCaptureBottomChrome: some View {
+        VStack(spacing: 12) {
+            VuuroLiveStatsRow(stats: coordinator.liveStats)
+            VuuroFinishRoomButton(label: "Finish room") {
+                if let missing = coordinator.liveStats.missingOpenings {
+                    missingOpenings = missing
+                    showMissingOpeningsPrompt = true
+                } else {
+                    finishSingleRoom()
+                }
+            }
+            .accessibilityIdentifier("capture.finishRoom")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(Color.black)
+    }
+
+    private var singleCaptureOverlay: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                VuuroCaptureCircleButton(
+                    systemName: "xmark",
+                    accessibilityLabel: "Discard scan"
+                ) {
+                    showDiscardConfirmation = true
+                }
+                .accessibilityIdentifier("capture.cancel")
+                Spacer(minLength: 0)
+                VuuroCaptureTogglePill(isOn: roomTypeGuessOn) {
+                    roomTypeGuessOn.toggle()
+                    RoomTypeGuessSettings.isEnabled = roomTypeGuessOn
+                    VuuroToast.shared.show(vuuroLocalized(roomTypeGuessOn ? "Room-type guessing on" : "Room-type guessing off"))
+                }
+                .accessibilityIdentifier("capture.roomTypeGuessToggle")
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+
+            HStack {
+                ScanHowToChip { showHowToScan = true }
+                    .accessibilityIdentifier("capture.howToScan")
+                Spacer()
+                Button {
+                    captureFloorBeforePrompt = captureFloor
+                    showFloorPrompt = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "building.2")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(captureFloor.isEmpty ? vuuroLocalized("Set floor") : captureFloor)
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .background(Color.black.opacity(0.4), in: Capsule())
+                }
+                .accessibilityIdentifier("capture.floor")
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+
+            Spacer().frame(height: 24)
+
+            VuuroScanRing(walls: coordinator.liveStats.walls)
+
+            Spacer().frame(height: 14)
+
+            VuuroScanHint(text: vuuroLocalized("Slowly pan around the walls"))
+
+            if let guess = coordinator.liveRoomTypeGuess, !coordinator.hasAnsweredRoomType {
+                Spacer().frame(height: 20)
+                guessPill(for: guess)
+            }
+
+            Spacer(minLength: 20)
+
+            if coordinator.isApproachingSizeLimit {
+                Text("This room is getting large. Walk slowly along the walls, or save here and scan the rest as a separate room.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 8)
+            }
+        }
+        .sheet(isPresented: $showHowToScan) {
+            ScanInstructionsView(
+                type: .single,
+                primaryLabel: "Back to scanning",
+                onPrimary: { showHowToScan = false },
+                onClose: { showHowToScan = false }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.hidden)
+            .presentationCornerRadius(VuuroMetrics.sheetRadius)
+        }
+        .alert(missingOpenings.alertTitle, isPresented: $showMissingOpeningsPrompt) {
+            Button("Scan more", role: .cancel) {}
+                .accessibilityIdentifier("capture.missingOpenings.scanMore")
+            Button("Finish anyway") {
+                finishSingleRoom()
+            }
+            .accessibilityIdentifier("capture.missingOpenings.finishAnyway")
+        } message: {
+            Text(verbatim: missingOpenings.alertMessage)
+        }
+        .sheet(item: $pendingRescan) { choice in
+            RescanChoiceSheet(
+                choice: choice,
+                onReplace: { roomId in resolveRescan(replacing: roomId) },
+                onAddNew: { resolveRescan(replacing: nil) }
+            )
+        }
+        .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
+            Button("Discard", role: .destructive) {
+                coordinator.stop()
+                onGoBack()
+            }
+            .accessibilityIdentifier("capture.discardConfirm")
+            Button("Keep Scanning", role: .cancel) {}
+                .accessibilityIdentifier("capture.keepScanning")
+        } message: {
+            Text("Everything captured so far in this room will be lost.")
+        }
+        .alert("Which floor?", isPresented: $showFloorPrompt) {
+            TextField("e.g. Attic, 1st floor", text: $captureFloor)
+                .accessibilityIdentifier("capture.floorField")
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+            Button("Save") {
+                guard FloorValidation.isValid(captureFloor) else { return }
+                Task { await persistCaptureFloor() }
+            }
+            .accessibilityIdentifier("capture.floorSave")
+            Button("Cancel", role: .cancel) {
+                captureFloor = captureFloorBeforePrompt
+            }
+            .accessibilityIdentifier("capture.floorCancel")
+        } message: {
+            Text("Applies to this room and to the next rooms you scan in this session, until you change it.")
+        }
+        .portraitLocked()
+    }
+
+    @MainActor
+    private func persistCaptureFloor() async {
+        guard let session = existingSession else { return }
+        let trimmed = captureFloor.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            _ = try await client.setDefaultFloor(
+                sessionId: session.id,
+                accessToken: session.accessToken,
+                floor: trimmed.isEmpty ? nil : trimmed
+            )
+            captureFloor = trimmed
+            ScanHistoryStore.shared.updateFloor(sessionId: session.id, floor: trimmed.isEmpty ? nil : trimmed)
+        } catch is CancellationError {
+        } catch {
+            DiagnosticsLog.shared.record("Failed to update default floor: \(error.localizedDescription)", category: .error)
+        }
+    }
+
+    @ViewBuilder
+    private func guessPill(for guess: RoomTypeClassifier.Guess) -> some View {
+        VuuroCaptureGuessPill(
+            typeName: RoomTypeClassifier.displayName(for: guess.type),
+            onConfirm: { coordinator.confirmRoomTypeGuess() },
+            onReject: { showCorrectionDialog = true }
+        )
+        .accessibilityIdentifier("capture.roomTypeGuessPill")
+        .confirmationDialog(
+            "What kind of room is this?",
+            isPresented: $showCorrectionDialog,
+            titleVisibility: .visible
+        ) {
+            ForEach(RoomTypeClassifier.allTypes.filter { $0 != guess.type }, id: \.self) { type in
+                Button(RoomTypeClassifier.displayName(for: type)) {
+                    coordinator.rejectRoomTypeGuess(correctedTo: type)
+                }
+                .accessibilityIdentifier("capture.roomType.\(type)")
+            }
+            Button("Type a name…") {
+                customRoomName = ""
+                showRoomNamePrompt = true
+            }
+            .accessibilityIdentifier("capture.roomType.customName")
+            Button("Other") {
+                coordinator.rejectRoomTypeGuess(correctedTo: "other")
+            }
+            .accessibilityIdentifier("capture.roomType.other")
+            Button("Not sure", role: .cancel) {
+                coordinator.rejectRoomTypeGuess(correctedTo: nil)
+            }
+            .accessibilityIdentifier("capture.roomType.notSure")
+        }
+        .alert("Name this room", isPresented: $showRoomNamePrompt) {
+            TextField("e.g. Study, Utility room", text: $customRoomName)
+                .accessibilityIdentifier("capture.roomNameField")
+                .textInputAutocapitalization(.words)
+            Button("Save") {
+                coordinator.nameRoom(customRoomName)
+            }
+            .accessibilityIdentifier("capture.roomNameSave")
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The name is used for this room in the plan and the PDF.")
         }
     }
 
@@ -460,28 +798,13 @@ private struct RoomCaptureFlowStep: View {
         switch state {
         case .finished(roomAvailable: true):
             guard let room = coordinator.capturedRoom else { return }
-            // The degenerate-outline guard lives inside submit(), not here —
-            // "Upload what was captured" (below) calls submit() directly too,
-            // and needs the same guard.
-            Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport)) }
+            Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport, walkPath: coordinator.capturedRoomWalkPath, headingDeg: capturedHeadingDeg)) }
         case .finished(roomAvailable: false):
-            // No session created for this attempt yet (submit() never ran),
-            // so existingSession is the right value to resume with.
             onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
         case .failed(let message, let partialRoomAvailable):
             if partialRoomAvailable {
-                // Route through the local partial-capture choice, not
-                // straight to onError — see the body's dedicated branch.
                 partialCaptureFailureMessage = message
             } else if didRequestStop {
-                // The Done button (new, untested on real hardware until
-                // Mark's next run) has no minimum-scan-time guard, so an
-                // experimental tap right after appearing is a real scenario
-                // — RoomBuilder throwing on essentially-empty data here isn't
-                // a crash/error, it's "nothing to build yet." Same case
-                // .finished(roomAvailable: false) already has a friendly
-                // message for; use it here too instead of RoomBuilder's raw
-                // (likely cryptic) thrown-error text.
                 onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
             } else {
                 onError(AppError(site: .captureFailed, underlying: PlainError(message: message)), existingSession)
@@ -492,39 +815,81 @@ private struct RoomCaptureFlowStep: View {
     }
 
     @MainActor
-    private func submit(_ export: RoomPlanCaptureExport) async {
+    private func rescanCandidates(for export: RoomPlanCaptureExport, session: ScanSessionResponse) async -> [RescanCandidate] {
+        do {
+            let plan = try await client.fetchSession(sessionId: session.id, accessToken: session.accessToken)
+            return RescanMatcher.candidates(for: export, floor: captureFloor, existing: plan.rooms)
+        } catch is CancellationError {
+            return []
+        } catch {
+            DiagnosticsLog.shared.record("Rescan check skipped: \(error.localizedDescription)", category: .error)
+            return []
+        }
+    }
+
+    @MainActor
+    private func resolveRescan(replacing roomId: String?) {
+        guard var export = rescanExport else { return }
+        pendingRescan = nil
+        rescanExport = nil
+        export.replacesRoomId = roomId
+        DiagnosticsLog.shared.record(roomId.map { "Rescan: replacing \($0)" } ?? "Rescan: added as a new room", category: .info)
+        uploadTask = Task { await submit(export, rescanDecided: true) }
+    }
+
+    @MainActor
+    private func submit(_ export: RoomPlanCaptureExport, rescanDecided: Bool = false) async {
+        defer { isUploadingPartialCapture = false }
+        if !FloorValidation.isValid(captureFloor) {
+            captureFloor = [existingSession?.defaultFloor, identity.floor].compactMap { $0 }.map(FloorValidation.sanitized).first { !$0.isEmpty } ?? ""
+        }
+
         guard export.hasUsableFloorOutline else {
-            // Mark's 2026-09-02 ask (b): refuse locally instead of round-
-            // tripping to the server for the same deterministic reject.
-            // Checked here, not at each call site, so "Upload what was
-            // captured" (the partial-capture recovery path) gets the same
-            // guard as a normal finished capture — isUploadingPartialCapture
-            // must be cleared too, or it would keep showing its own
-            // "Uploading capture…" screen over this one (it's checked first
-            // in the view's if-else chain).
-            isUploadingPartialCapture = false
-            #if DEBUG
             DiagnosticsLog.shared.record("Local reject: floor outline too small/degenerate, upload skipped", category: .error)
-            #endif
             isDegenerateCapture = true
             return
         }
+        if !rescanDecided, let existingSession {
+            isUploading = true
+            let candidates = await rescanCandidates(for: export, session: existingSession)
+            isUploading = false
+            if !candidates.isEmpty {
+                let floor = captureFloor.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let bodyJSON = try? client.encodeCaptureBody(capture: export, location: capturedLocation, floor: floor.isEmpty ? nil : floor) {
+                    var pending = PendingUploadState(session: existingSession, identity: identity, captures: [.init(idempotencyKey: UUID().uuidString, bodyJSON: bodyJSON)])
+                    pending.pendingRescan = StoredRescanChoice(roomIndex: 0, candidates: candidates)
+                    PendingUploadStore.save(pending)
+                }
+                rescanExport = export
+                pendingRescan = PendingRescanChoice(candidates: candidates)
+                return
+            }
+        }
         isUploading = true
         defer { isUploading = false }
+
+        let idempotencyKey = UUID().uuidString
+        let trimmedFloor = captureFloor.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let bodyJSON = try? client.encodeCaptureBody(
+            capture: export,
+            location: capturedLocation,
+            floor: trimmedFloor.isEmpty ? nil : trimmedFloor
+        ) else {
+            onError(AppError(site: .captureFailed, underlying: PlainError(message: "Could not prepare this capture for upload.")), existingSession)
+            return
+        }
+
         let session: ScanSessionResponse
         if let existingSession {
             session = existingSession
         } else {
+            PendingUploadStore.save(PendingUploadState(session: nil, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)]))
             do {
-                session = try await client.createSession(identity: identity)
+                session = try await client.createSession(identity: identity.withFloor(captureFloor))
             } catch {
-                // No session exists yet — nil is correct here, retry should
-                // create one, same as this attempt just tried to.
                 onError(AppError(site: .sessionCreate, underlying: error), nil)
                 return
             }
-            // Local-only scan history — see History/ScanHistoryEntry.swift's
-            // header for why this can't be a server-side listing.
             ScanHistoryStore.shared.add(ScanHistoryEntry(
                 sessionId: session.id,
                 accessToken: session.accessToken,
@@ -533,557 +898,157 @@ private struct RoomCaptureFlowStep: View {
                 organisationId: identity.organisationId,
                 purpose: identity.purpose,
                 createdAt: Date(),
-                expiresAt: session.expiresAt
+                expiresAt: session.expiresAt,
+                occupied: identity.occupied,
+                consentObtained: identity.consentObtained,
+                floor: session.defaultFloor ?? identity.floor
             ))
         }
+
+        PendingUploadStore.save(PendingUploadState(session: session, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)]))
         do {
-            let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export, location: capturedLocation)
+            let result = try await client.uploadCaptureKeepingRoom(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
+            let floorPlan = result.floorPlan
+            if result.addedAsNew {
+                VuuroToast.shared.show(vuuroLocalized(RescanResume.addedAsNewNotice))
+            }
+            PendingUploadStore.clear()
+            ScanHistoryStore.shared.updateRoomSummary(
+                sessionId: session.id,
+                summary: RoomSummary.text(for: floorPlan.rooms),
+                floorAreaM2: floorPlan.rooms.reduce(0.0) { $0 + $1.floorAreaM2 }
+            )
+            ScanHistoryStore.shared.updateRoomsByFloor(
+                sessionId: session.id,
+                roomsByFloor: CachedFloorSummary.buckets(from: floorPlan.rooms)
+            )
             justCaptured = (session, floorPlan)
         } catch {
-            // Mark's 2026-09-02 ask (c): kept in place instead of routed to
-            // onError, which always started a whole new capture attempt —
-            // `session` here (not existingSession) is whatever this attempt
-            // actually ended up with, same reasoning as the comment this
-            // replaced, so "Retry upload" resubmits into the right session
-            // without a duplicate create.
-            uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session)
+            uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)
         }
     }
 
     @MainActor
-    private func retryUpload(session: ScanSessionResponse, export: RoomPlanCaptureExport) async {
+    private func retryUpload(session: ScanSessionResponse, export: RoomPlanCaptureExport, idempotencyKey: String, bodyJSON: Data) async {
         defer { isRetryingUpload = false }
+        PendingUploadStore.save(PendingUploadState(session: session, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)]))
         do {
-            let floorPlan = try await client.uploadCapture(sessionId: session.id, accessToken: session.accessToken, capture: export, location: capturedLocation)
+            let result = try await client.uploadCaptureKeepingRoom(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
+            let floorPlan = result.floorPlan
+            if result.addedAsNew {
+                VuuroToast.shared.show(vuuroLocalized(RescanResume.addedAsNewNotice))
+            }
+            PendingUploadStore.clear()
+            ScanHistoryStore.shared.updateRoomSummary(
+                sessionId: session.id,
+                summary: RoomSummary.text(for: floorPlan.rooms),
+                floorAreaM2: floorPlan.rooms.reduce(0.0) { $0 + $1.floorAreaM2 }
+            )
+            ScanHistoryStore.shared.updateRoomsByFloor(
+                sessionId: session.id,
+                roomsByFloor: CachedFloorSummary.buckets(from: floorPlan.rooms)
+            )
             justCaptured = (session, floorPlan)
         } catch {
-            uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session)
+            uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)
         }
     }
 }
 
-private struct AnotherRoomPromptView: View {
-    let roomCount: Int
-    let onChoice: (Bool) -> Void
+private struct NoteOnlyFlowStep: View {
+    let identity: ScanIdentity
+    let onFinished: (ScanSessionResponse, FloorPlan) -> Void
+    let onGoBack: () -> Void
 
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Room \(roomCount) captured").font(.headline)
-            Text("Scan another room in this unit, or finish and attach photos/notes.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Scan another room") { onChoice(true) }
-                .buttonStyle(.borderedProminent)
-            Button("Finish unit") { onChoice(false) }
-        }
-        .padding()
-    }
-}
-
-// Real-device finding (Mark, 2026-09-01): a session-ending error like
-// CaptureError.worldTrackingFailure doesn't necessarily mean nothing was
-// captured — RoomBuilder can still reconstruct a room from the partial
-// CapturedRoomData RoomPlan hands back alongside the error (see
-// CaptureCoordinator.didEndWith). This view is what turns that into an
-// actual choice instead of forcing discard-and-retry every time.
-private struct PartialCaptureFailureView: View {
-    let message: String
-    let onUsePartial: () -> Void
-    let onDiscard: () -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Scan interrupted").font(.headline)
-            Text(message)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Text("Some of this room was captured before the interruption. You can try uploading it as-is, or discard it and scan again.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Upload what was captured") { onUsePartial() }
-                .buttonStyle(.borderedProminent)
-            Button("Discard and try again", role: .destructive) { onDiscard() }
-        }
-        .padding()
-    }
-}
-
-// Mark's 2026-09-02 ask (b): a local, pre-upload rejection — no VS code,
-// no server round trip, since RoomBuilder finished normally and there was
-// simply nothing usable in the outline it produced.
-struct DegenerateCaptureView: View {
-    let onRescan: () -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Keep scanning").font(.headline)
-            Text("This room's outline came out too small or flat to use. Try scanning more slowly and cover the whole floor before tapping Done.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Rescan this room", action: onRescan).buttonStyle(.borderedProminent)
-        }
-        .padding()
-    }
-}
-
-// Mark's 2026-09-02 ask (c): keeps the already-captured export in place
-// instead of forcing a full rescan for what might just be a network blip —
-// "Rescan this room" is still offered for when the geometry itself is the
-// problem.
-private struct UploadRejectedView: View {
-    let error: AppError
-    let onRetryUpload: () -> Void
-    let onRescan: () -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Upload didn't go through").font(.headline)
-            ErrorCodeView(error: error)
-                .multilineTextAlignment(.center)
-            if error.isLikelyRetryable {
-                Text("This room's capture is still on your device. Retry the same upload, or rescan if the room itself needs it.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                Button("Retry upload", action: onRetryUpload).buttonStyle(.borderedProminent)
-                Button("Rescan this room", role: .destructive, action: onRescan)
-            } else {
-                // The server looked at this exact data and rejected it (a
-                // 4xx, e.g. a degenerate-outline reject) — retrying the same
-                // bytes would just fail the same way again, so only rescan
-                // is offered, not a pointless retry.
-                Text("The server rejected this capture's data — retrying the same upload won't change that. Rescanning this room is the way forward.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                Button("Rescan this room", action: onRescan).buttonStyle(.borderedProminent)
-            }
-        }
-        .padding()
-    }
-}
-
-// Not private: LIDAR-6 reuses this from ScanHistoryView to attach a photo/
-// note to a past session without a new room capture.
-struct AttachmentsScreen: View {
-    let session: ScanSessionResponse
-    let floorPlan: FloorPlan
-    let onDone: (FloorPlan) -> Void
-
-    @State private var noteText = ""
-    @State private var photoUrl = ""
-    @State private var selectedPhotoItems: [PhotosPickerItem] = []
-    @State private var current: FloorPlan
+    @State private var isWorking = false
+    @State private var createdSession: ScanSessionResponse?
     @State private var appError: AppError?
-    @State private var isSaving = false
-    @State private var isUploadingPhoto = false
-    @State private var selectedRoomId: String?
-    @State private var showCamera = false
-    @State private var batchUploadMessage: String?
-
     private let client = ScanServiceClient()
 
-    init(session: ScanSessionResponse, floorPlan: FloorPlan, onDone: @escaping (FloorPlan) -> Void) {
-        self.session = session
-        self.floorPlan = floorPlan
-        self.onDone = onDone
-        _current = State(initialValue: floorPlan)
-    }
-
     var body: some View {
-        Form {
-            if current.rooms.count > 1 {
-                Section("Applies to") {
-                    Picker("Room", selection: $selectedRoomId) {
-                        Text("Whole unit").tag(String?.none)
-                        ForEach(current.rooms, id: \.roomId) { room in
-                            Text(room.label).tag(String?.some(room.roomId))
-                        }
-                    }
-                }
-            }
+        VuuroCenterView {
+            VuuroIconBadge(
+                systemName: "note.text",
+                tint: VuuroColor.accent,
+                background: VuuroColor.accentSoft,
+                size: 72,
+                iconSize: 34
+            )
+            Text("Notes-only session")
+                .font(.system(size: 20, weight: .bold))
+                .tracking(-0.4)
+                .foregroundStyle(VuuroColor.textPrimary)
+            Text("This phone can't capture a floor plan, but you can still save inspection notes and photos against this property.")
+                .font(.system(size: 15))
+                .lineSpacing(5)
+                .foregroundStyle(VuuroColor.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 320)
 
-            Section("Add a note (optional)") {
-                TextField("Note text", text: $noteText, axis: .vertical)
-                Button("Add note") { Task { await addNote() } }
-                    .disabled(noteText.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
-            }
-
-            Section("Add a photo (optional)") {
-                PhotosPicker(selection: $selectedPhotoItems, maxSelectionCount: 10, matching: .images) {
-                    if isUploadingPhoto {
-                        ProgressView()
-                    } else {
-                        Text("Choose from library")
+            if isWorking {
+                ProgressView()
+                    .tint(VuuroColor.accent)
+                    .padding(.top, 12)
+            } else {
+                VStack(spacing: 10) {
+                    Button("Start notes-only session") {
+                        Task { await createAndContinue() }
                     }
-                }
-                .disabled(isUploadingPhoto)
-                .onChange(of: selectedPhotoItems) { _, newItems in
-                    guard !newItems.isEmpty else { return }
-                    Task {
-                        isUploadingPhoto = true
-                        var failureCount = 0
-                        for item in newItems {
-                            if await uploadSelectedPhoto(item) == false {
-                                failureCount += 1
-                            }
-                        }
-                        selectedPhotoItems = []
-                        isUploadingPhoto = false
-                        batchUploadMessage = failureCount > 0 ? "\(failureCount) of \(newItems.count) photo(s) failed to upload." : nil
-                    }
-                }
+                    .accessibilityIdentifier("noteOnly.start")
+                    .buttonStyle(.vuuroPrimary)
 
-                if let batchUploadMessage {
-                    Text(batchUploadMessage)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                    Button("Cancel", action: onGoBack)
+                        .accessibilityIdentifier("noteOnly.cancel")
+                        .buttonStyle(.vuuroGhostSmall)
                 }
-
-                if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                    Button("Take a photo") {
-                        showCamera = true
-                    }
-                    .disabled(isUploadingPhoto)
-                    .sheet(isPresented: $showCamera) {
-                        CameraCaptureView(onCaptured: { data in
-                            showCamera = false
-                            Task {
-                                isUploadingPhoto = true
-                                await uploadPhotoData(data)
-                                isUploadingPhoto = false
-                            }
-                        }, onCancel: {
-                            showCamera = false
-                        })
-                    }
-                }
-
-                Text("Or paste a URL to a photo already hosted elsewhere:")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("https://…", text: $photoUrl)
-                Button("Add photo URL") { Task { await addPhoto() } }
-                    .disabled(photoUrl.trimmingCharacters(in: .whitespaces).isEmpty || isSaving)
+                .padding(.top, 12)
+                .frame(maxWidth: 340)
             }
 
             if let appError {
                 ErrorCodeView(error: appError)
-            }
-
-            Section {
-                Text("\(current.notes.count) note(s), \(current.photos.count) photo(s) attached so far.")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-                Button("Finish") { onDone(current) }
-                    .buttonStyle(.borderedProminent)
+                    .frame(maxWidth: 340)
+                    .padding(.top, 8)
             }
         }
-        .navigationTitle("Notes & photos")
+        .background(VuuroColor.bgApp)
     }
 
     @MainActor
-    private func addNote() async {
-        isSaving = true
-        defer { isSaving = false }
+    private func createAndContinue() async {
+        guard !isWorking else { return }
+        isWorking = true
+        appError = nil
+        defer { isWorking = false }
         do {
-            current = try await client.addNote(sessionId: session.id, accessToken: session.accessToken, text: noteText, roomId: selectedRoomId)
-            noteText = ""
-            appError = nil
-        } catch {
-            appError = AppError(site: .noteAdd, underlying: error)
-        }
-    }
-
-    @MainActor
-    private func addPhoto() async {
-        isSaving = true
-        defer { isSaving = false }
-        do {
-            current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: photoUrl, roomId: selectedRoomId)
-            photoUrl = ""
-            appError = nil
-        } catch {
-            appError = AppError(site: .photoAdd, underlying: error)
-        }
-    }
-
-    // Sniffs the actual bytes rather than trusting whatever the Photos
-    // library labels the item as — same "don't trust the client's own
-    // label" principle the Scan Service itself applies server-side
-    // (finfo, not the claimed Content-Type) to this same upload.
-    private func detectedMimeType(for data: Data) -> (mime: String, extension: String) {
-        if data.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
-            return ("image/png", "png")
-        }
-        if data.starts(with: [0xFF, 0xD8, 0xFF]) {
-            return ("image/jpeg", "jpg")
-        }
-        if data.count > 12, data[data.startIndex.advanced(by: 4)..<data.startIndex.advanced(by: 8)].elementsEqual("ftyp".utf8) {
-            return ("image/heic", "heic")
-        }
-        return ("image/jpeg", "jpg")
-    }
-
-    @MainActor
-    // Same pattern as the zero-area guard: catch what the server would
-    // reject, client-side, so the user isn't sent through a round trip
-    // just to learn the photo was too big. Kept in sync with the server's
-    // MAX_PHOTO_UPLOAD_BYTES (scan-service/public/index.php).
-    private static let maxPhotoUploadBytes = 25 * 1024 * 1024
-
-    @discardableResult
-    private func uploadSelectedPhoto(_ item: PhotosPickerItem) async -> Bool {
-        do {
-            guard let data = try await item.loadTransferable(type: Data.self) else {
-                appError = AppError(site: .photoUpload, underlying: nil)
-                return false
-            }
-            return await uploadPhotoData(data)
-        } catch {
-            appError = AppError(site: .photoUpload, underlying: error)
-            return false
-        }
-    }
-
-    @discardableResult
-    private func uploadPhotoData(_ data: Data) async -> Bool {
-        if data.count > Self.maxPhotoUploadBytes {
-            appError = AppError(site: .photoTooLarge, underlying: nil)
-            return false
-        }
-        do {
-            let (mime, ext) = detectedMimeType(for: data)
-            let uploaded = try await client.uploadPhoto(sessionId: session.id, accessToken: session.accessToken, imageData: data, filename: "photo.\(ext)", mimeType: mime)
-            current = try await client.addPhoto(sessionId: session.id, accessToken: session.accessToken, url: uploaded.url, roomId: selectedRoomId)
-            appError = nil
-            return true
-        } catch {
-            appError = AppError(site: .photoUpload, underlying: error)
-            return false
-        }
-    }
-}
-
-struct CameraCaptureView: UIViewControllerRepresentable {
-    let onCaptured: (Data) -> Void
-    let onCancel: () -> Void
-
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let parent: CameraCaptureView
-
-        init(_ parent: CameraCaptureView) {
-            self.parent = parent
-        }
-
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let image = info[.originalImage] as? UIImage, let data = image.jpegData(compressionQuality: 0.9) {
-                parent.onCaptured(data)
+            let session: ScanSessionResponse
+            if let createdSession {
+                session = createdSession
             } else {
-                parent.onCancel()
+                session = try await client.createSession(identity: identity)
+                createdSession = session
+                ScanHistoryStore.shared.add(ScanHistoryEntry(
+                    sessionId: session.id,
+                    accessToken: session.accessToken,
+                    propertyId: identity.propertyId,
+                    unitId: identity.unitId,
+                    organisationId: identity.organisationId,
+                    purpose: identity.purpose,
+                    createdAt: Date(),
+                    expiresAt: session.expiresAt,
+                    occupied: identity.occupied,
+                    consentObtained: identity.consentObtained,
+                    floor: session.defaultFloor ?? identity.floor
+                ))
             }
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            parent.onCancel()
-        }
-    }
-}
-
-private struct ResultSummaryView: View {
-    let session: ScanSessionResponse
-    let floorPlan: FloorPlan
-    let onDone: () -> Void
-
-    @State private var isFetchingImage = false
-    @State private var isFetchingPDF = false
-    @State private var floorPlanImage: UIImage?
-    @State private var floorPlanImageURL: URL?
-    @State private var floorPlanPDFURL: URL?
-    @State private var appError: AppError?
-
-    private let client = ScanServiceClient()
-
-    var body: some View {
-        List {
-            ForEach(floorPlan.rooms, id: \.roomId) { room in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(room.label).font(.headline)
-                        if room.structureOriginM != nil {
-                            Label("Fused", systemImage: "square.on.square")
-                                .font(.caption2)
-                                .foregroundStyle(.blue)
-                        }
-                    }
-                    Text(String(format: "%.2f m²", room.floorAreaM2))
-                    Text(String(format: "%.2f m perimeter", room.perimeterM))
-                    Text("Indicative — NEN2580-inspired, not certified")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    if !room.coverage.usable, let message = room.coverage.message {
-                        Label(message, systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                            .padding(.top, 2)
-                    } else {
-                        Text("Scan quality: \(room.coverage.score)/100")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            // Vuuro Scan direction brief, "Export priority for early value":
-            // floor plan image/PDF through the Scan Service API. The server
-            // already renders both (FloorPlanImageRenderer/PdfRenderer,
-            // GET .../export/floorplan.png|.pdf) — this is what actually
-            // fetches and surfaces them client-side.
-            // Per-session, not per-room: the Scan Service renders one PNG
-            // (rooms tiled on one sheet) and one PDF (one metrics table) per
-            // session, not a separate file per room — see
-            // ../../docs/adr/0002-export-coordinate-frame.md for why. Same
-            // per-session shape as History/ScanHistoryView.swift's rows.
-            Section("Floor plan exports") {
-                Button {
-                    Task { await loadImage() }
-                } label: {
-                    if isFetchingImage {
-                        ProgressView()
-                    } else {
-                        Text("Download image")
-                    }
-                }
-                .disabled(isFetchingImage)
-
-                if let floorPlanImage {
-                    Image(uiImage: floorPlanImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 220)
-
-                    if let floorPlanImageURL {
-                        ShareLink(item: floorPlanImageURL) {
-                            Label("Save image", systemImage: "square.and.arrow.up")
-                        }
-                    }
-                }
-
-                Button {
-                    Task { await loadPDF() }
-                } label: {
-                    if isFetchingPDF {
-                        ProgressView()
-                    } else {
-                        Text("Download PDF")
-                    }
-                }
-                .disabled(isFetchingPDF)
-
-                if let floorPlanPDFURL {
-                    ShareLink(item: floorPlanPDFURL) {
-                        Label("Save PDF", systemImage: "square.and.arrow.up")
-                    }
-                }
-
-                if let appError {
-                    ErrorCodeView(error: appError)
-                }
-            }
-
-            Section {
-                NavigationLink("Access log") {
-                    AccessLogView(sessionId: session.id, accessToken: session.accessToken)
-                }
-            }
-
-            Section {
-                Button("Done") {
-                    cleanUpExportedFiles()
-                    onDone()
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .navigationTitle("Scan result")
-        .onDisappear { cleanUpExportedFiles() }
-    }
-
-    // loadImage()/loadPDF() write into the shared tmp directory, which iOS
-    // doesn't clear on any predictable schedule — without this, every
-    // "Download image"/"Download PDF" tap leaves a file behind for the life
-    // of the app install.
-    @MainActor
-    private func cleanUpExportedFiles() {
-        for url in [floorPlanImageURL, floorPlanPDFURL].compactMap({ $0 }) {
-            try? FileManager.default.removeItem(at: url)
-        }
-        floorPlanImageURL = nil
-        floorPlanPDFURL = nil
-    }
-
-    @MainActor
-    private func loadImage() async {
-        isFetchingImage = true
-        defer { isFetchingImage = false }
-        do {
-            let data = try await client.fetchFloorPlanImage(sessionId: session.id, accessToken: session.accessToken)
-            guard let image = UIImage(data: data) else {
-                appError = AppError(site: .resultImageDecode, underlying: nil)
-                return
-            }
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(session.id).png")
-            try data.write(to: url)
-            floorPlanImage = image
-            floorPlanImageURL = url
-            appError = nil
+            let floorPlan = try await client.markNoteOnly(
+                sessionId: session.id,
+                accessToken: session.accessToken
+            )
+            onFinished(session, floorPlan)
+        } catch is CancellationError {
         } catch {
-            appError = AppError(site: .resultImageLoad, underlying: error)
+            appError = AppError(site: .sessionCreate, underlying: error)
         }
-    }
-
-    @MainActor
-    private func loadPDF() async {
-        isFetchingPDF = true
-        defer { isFetchingPDF = false }
-        do {
-            let data = try await client.fetchFloorPlanPDF(sessionId: session.id, accessToken: session.accessToken)
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(session.id).pdf")
-            try data.write(to: url)
-            floorPlanPDFURL = url
-            appError = nil
-        } catch {
-            appError = AppError(site: .resultPDFLoad, underlying: error)
-        }
-    }
-}
-
-private struct ErrorView: View {
-    let error: AppError
-    let onRetry: () -> Void
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Text("Something went wrong").font(.headline)
-            ErrorCodeView(error: error)
-                .multilineTextAlignment(.center)
-            Button("Try again", action: onRetry).buttonStyle(.borderedProminent)
-        }
-        .padding()
     }
 }

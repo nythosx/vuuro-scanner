@@ -2,22 +2,13 @@
 
 declare(strict_types=1);
 
-/**
- * Independent verification for capture: re-implements polygon-area/perimeter
- * math from scratch (never imports the adapter) and checks it against the
- * live HTTP API. Talks to the Scan Service only over HTTP.
- *
- * Usage: php net/verify_capture_geometry.php [base_url]
- *   base_url defaults to http://127.0.0.1:8089
- */
-
 require_once __DIR__ . '/lib/http_client.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';
 $failures = [];
 $checks = 0;
 
-/** @param array<int, array{0: float, 1: float}> $xz */
+
 function expected_area(array $xz): float
 {
     $total = 0.0;
@@ -30,7 +21,7 @@ function expected_area(array $xz): float
     return abs($total) / 2.0;
 }
 
-/** @param array<int, array{0: float, 1: float}> $xz */
+
 function expected_perimeter(array $xz): float
 {
     $total = 0.0;
@@ -44,10 +35,7 @@ function expected_perimeter(array $xz): float
     return $total;
 }
 
-/**
- * @param array<int, array{0: float, 1: float}> $xz
- * @return array{0: float, 1: float}
- */
+
 function expected_bbox(array $xz): array
 {
     $xs = array_map(static fn ($p) => $p[0], $xz);
@@ -55,7 +43,7 @@ function expected_bbox(array $xz): array
     return [max($xs) - min($xs), max($zs) - min($zs)];
 }
 
-/** @param array<int, array{0: float, 1: float, 2: float}> $corners3d */
+
 function to_xz(array $corners3d): array
 {
     return array_map(static fn ($p) => [(float) $p[0], (float) $p[2]], $corners3d);
@@ -108,6 +96,7 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
 
     [$captureStatus, $floorPlan] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", [
         'raw_capture' => $fixture,
+        'floor' => 'Ground',
     ], $accessToken);
     check('capture accepted (HTTP 200)', $captureStatus === 200, "got HTTP $captureStatus");
 
@@ -137,8 +126,6 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
         approx((float) $room['bounding_dimensions_m']['length_m'], $wantLength),
         "API={$room['bounding_dimensions_m']['length_m']} expected=" . round($wantLength, 4));
 
-    // GET must return the same result the capture call already returned —
-    // catches a "write path lies about what read path serves" divergence.
     [$getStatus, $refetched] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId", null, $accessToken);
     check('GET after capture returns HTTP 200', $getStatus === 200, "got HTTP $getStatus");
     check('GET result matches captured result exactly', $refetched === $floorPlan, 'refetched floor plan differs from capture response');
@@ -148,18 +135,10 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
 
 run_fixture_case($baseUrl, __DIR__ . '/../fixtures/roomplan_captured_room_single_room.json', 'Regression: single rectangular room');
 
-// A concave (L-shaped) room: a bounding-box or width*length shortcut would
-// pass the rectangular case above and still silently return the wrong
-// area/perimeter here.
 run_fixture_case($baseUrl, __DIR__ . '/../fixtures/roomplan_captured_room_lshaped_adversarial.json', 'Adversarial: L-shaped concave room');
 
-// Every other fixture has every corner at y=0.0, anchored at the origin —
-// this one sits at a non-zero height and is translated well away from
-// (0,0), so a regression that only works "by accident" for y=0/origin-
-// anchored data (like the real 2026-09-02 exporter bug) would show up here.
 run_fixture_case($baseUrl, __DIR__ . '/../fixtures/roomplan_captured_room_offset_height_adversarial.json', 'Adversarial: non-zero height, translated origin');
 
-// A session missing any identity field must be rejected, not silently defaulted.
 foreach (['property_id', 'unit_id', 'organisation_id'] as $missingField) {
     $payload = [
         'property_id' => 'prop-x',

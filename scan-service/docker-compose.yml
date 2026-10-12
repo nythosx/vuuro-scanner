@@ -1,0 +1,17 @@
+services:
+  scan-service:
+    build: .
+    environment:
+      SCAN_SERVICE_ADMIN_API_KEY: ${SCAN_SERVICE_ADMIN_API_KEY:-change-me-local-dev}
+      SCAN_SERVICE_EXPORT_SECRET: ${SCAN_SERVICE_EXPORT_SECRET:-change-me-local-dev-signing}
+      SCAN_SERVICE_APP_KEY: ${SCAN_SERVICE_APP_KEY:-}
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "127.0.0.1:8089:8089"
+    healthcheck:
+      test: ["CMD-SHELL", "frankenphp php-cli -r \"exit(@file_get_contents('http://127.0.0.1:8089/health') === false ? 1 : 0);\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s

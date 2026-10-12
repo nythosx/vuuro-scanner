@@ -163,26 +163,27 @@ world-origin-shift report has no confirmed fix, the very first same-visit two-ro
 should specifically check room 2's position relative to room 1, not just that both rooms
 individually captured cleanly.
 
-## Diagnostics added for the next real-device test
+## Fusion geometry now carried in the export itself (superseding an earlier local-log draft)
 
-`CapturedStructureExporter.export()` now logs one `DiagnosticsLog` line per room (category
-`.state`, DEBUG-only, same floater/export path as everything else in that log):
-`Fusion geometry room N: origin_m (x, z), heading θ deg, floors K`. `origin_m` is the same
-value already sent to the server as `structure_origin_m` (this just surfaces it locally,
-full precision, without needing a server round trip to inspect it). `heading` is new — there
-is no rotation value anywhere else in this pipeline — derived from the room's first floor
-surface's `transform.columns.0` (the local X axis mapped into the shared frame) via `atan2`.
+An earlier draft of this diagnostics idea added a DEBUG-only `DiagnosticsLog` line deriving a
+heading guess from a floor surface's `transform.columns.0`. That guess is gone — superseded
+by a real implementation that landed in the same window: `HeadingProvider` reads the
+device's actual compass heading (`CLLocationManager`, true heading preferred, magnetic as
+fallback) once per walkthrough, and `CapturedRoomExporter`/`CapturedStructureExporter` now
+thread that real `heading_deg` plus a per-room `walk_path` (room entry points as the user
+walked the unit) and a per-surface `yaw_deg` (still `atan2` on `transform.columns.0`, but now
+applied consistently to every surface, not guessed once per room) straight into the exported
+JSON — the same payload already sent to and stored by the server, not a local-only log line.
 
-This heading extraction is unverified: it assumes the floor surface's local X axis is a
-meaningful "forward" for the room, which is not something Apple's docs state explicitly for
-`CapturedRoom.Surface.transform` on a floor. Treat the logged number as a diagnostic hint,
-not ground truth, until checked against a room whose real-world orientation is known.
+This is strictly better than the earlier draft: `heading_deg` has a real physical source
+(the compass) instead of an assumption about what a floor surface's local axis means, and
+it's retrievable server-side via the existing session GET, same as `structure_origin_m`.
 
-This alone is not sufficient to diagnose a fusion bug — it only gives self-consistent
-numbers. Getting real value out of it on the next test requires Mark to also note the actual
-physical layout he walked (a rough sketch or "room B's door is directly across from room A's,
-about one room-width apart" is enough) so the logged origin/heading can be checked against
-something real, not just against each other.
+Still true regardless: none of this alone proves the fusion is *correct* — only that the
+numbers are self-consistent. Diagnosing a real fusion bug on Mark's next test still needs a
+known physical layout to check the exported origin/heading/walk_path against (a rough sketch
+or "room B's door is directly across from room A's" is enough) — see the open questions
+below.
 
 ## Open questions for Mark
 

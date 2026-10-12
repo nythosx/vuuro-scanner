@@ -28,6 +28,7 @@ function base_payload(): array
         'organisation_id' => 'org-net-delete',
         'purpose' => 'listing',
         'occupied' => false,
+        'floor' => 'Ground',
     ];
 }
 
@@ -59,9 +60,9 @@ if ($sessionId !== null && $token !== null) {
 
 echo "\n== DELETE is authenticated like every other session route ==\n";
 
-[, $otherSession] = net_http_json('POST', "$baseUrl/scan-sessions", base_payload());
+[$otherCreateStatus, $otherSession] = net_http_json('POST', "$baseUrl/scan-sessions", base_payload());
 $otherId = $otherSession['id'] ?? null;
-check('second session created for the wrong-token case', $otherId !== null);
+check('second session created for the wrong-token case', $otherId !== null, "got HTTP $otherCreateStatus: " . json_encode($otherSession));
 
 if ($otherId !== null) {
     [$wrongTokenStatus, ] = net_http_json('DELETE', "$baseUrl/scan-sessions/$otherId", null, 'not-the-real-token');

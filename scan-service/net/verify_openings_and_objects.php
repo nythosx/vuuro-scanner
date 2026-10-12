@@ -2,24 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Independent verification for LIDAR-10 (doors/windows/height/objects):
- * re-derives expected openings/height/volume/objects counts and values from
- * the raw fixture JSON, from scratch (never imports RoomPlanSimulatorAdapter
- * or reuses any of its helpers), and checks the live HTTP API against them.
- * Talks to the Scan Service only over HTTP — same shape as
- * verify_capture_geometry.php and verify_coverage.php.
- *
- * This is the card's own required check: "A check that would fail if a door
- * was present in capture and missing in the contract." A door/window/opening
- * with no polygonCorners (no position reported) is correctly dropped by the
- * adapter, not a contract gap — this script counts only positioned items,
- * matching what mapOpenings()/mapObjects() are documented to do.
- *
- * Usage: php net/verify_openings_and_objects.php [base_url]
- *   base_url defaults to http://127.0.0.1:8089
- */
-
 require_once __DIR__ . '/lib/http_client.php';
 
 $baseUrl = $argv[1] ?? 'http://127.0.0.1:8089';
@@ -42,10 +24,6 @@ function approx(float $a, float $b, float $tolerance = 0.01): bool
 {
     return abs($a - $b) <= $tolerance;
 }
-
-/** Independently counts, per category, every door/window/opening in the raw
- * fixture that actually carries a positioned polygonCorners — the only ones
- * the contract is expected to carry forward. */
 function expected_opening_counts(array $fixture): array
 {
     $counts = ['door' => 0, 'window' => 0, 'opening' => 0];
@@ -59,7 +37,6 @@ function expected_opening_counts(array $fixture): array
     return $counts;
 }
 
-/** Independently recomputes the tallest wall dimensions[1] in the raw fixture. */
 function expected_height(array $fixture): ?float
 {
     $heights = [];
@@ -100,6 +77,7 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
 
     [$captureStatus, $floorPlan] = net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", [
         'raw_capture' => $fixture,
+        'floor' => 'Ground',
     ], $accessToken);
     check('capture accepted (HTTP 200)', $captureStatus === 200, "got HTTP $captureStatus");
 
@@ -109,8 +87,8 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
         return;
     }
 
-    // The card's own required check: every positioned door/window in the
-    // capture has a matching openings[] entry — none silently dropped.
+
+
     check('openings[] total count matches the fixture\'s positioned doors/windows/openings',
         count($room['openings'] ?? []) === $wantOpeningTotal,
         'API=' . count($room['openings'] ?? []) . " expected=$wantOpeningTotal");
@@ -129,12 +107,12 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
         $gotCounts === $wantOpeningCounts,
         'API=' . json_encode($gotCounts) . ' expected=' . json_encode($wantOpeningCounts));
 
-    // height_m / volume_m3_indicative: null must stay null, never a
-    // fabricated 0, and a real value must match the independently
-    // recomputed tallest wall height.
+
+
+
     if ($wantHeight === null) {
-        // `?? 'missing'` would wrongly treat a present-but-null value the
-        // same as a missing key — array_key_exists() is required here.
+
+
         check('height_m is null when the fixture has no usable wall height',
             array_key_exists('height_m', $room) && $room['height_m'] === null,
             'API=' . json_encode($room['height_m'] ?? 'key missing'));
@@ -161,9 +139,6 @@ function run_fixture_case(string $baseUrl, string $fixturePath, string $caseLabe
         $gotCategories === $wantCategories,
         'API=' . json_encode($gotCategories) . ' expected=' . json_encode($wantCategories));
 
-    // GET must return the same result the capture call already returned —
-    // catches a "write path lies about what read path serves" divergence,
-    // same check verify_capture_geometry.php already runs for area/perimeter.
     [$getStatus, $refetched] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId", null, $accessToken);
     check('GET after capture returns HTTP 200', $getStatus === 200, "got HTTP $getStatus");
     check('GET result matches captured result exactly (openings/height/objects included)', $refetched === $floorPlan);
@@ -189,7 +164,7 @@ $roomTypeToken = $roomTypeSession['access_token'] ?? null;
 check('session created for the room-type test', $roomTypeSessionId !== null && $roomTypeToken !== null);
 
 if ($roomTypeSessionId !== null && $roomTypeToken !== null) {
-    [, $withGuess] = net_http_json('POST', "$baseUrl/scan-sessions/$roomTypeSessionId/capture", ['raw_capture' => $roomTypeFixture], $roomTypeToken);
+    [, $withGuess] = net_http_json('POST', "$baseUrl/scan-sessions/$roomTypeSessionId/capture", ['raw_capture' => $roomTypeFixture, 'floor' => 'Ground'], $roomTypeToken);
     check('room_type round-trips the fixture\'s guess/guess_source/confirmed exactly',
         ($withGuess['rooms'][0]['room_type'] ?? null) === $roomTypeFixture['room_type']);
 
@@ -198,7 +173,7 @@ if ($roomTypeSessionId !== null && $roomTypeToken !== null) {
     [, $noGuessSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
         'property_id' => 'prop-net-room-type-none', 'unit_id' => 'u', 'organisation_id' => 'o', 'purpose' => 'listing', 'occupied' => false,
     ]);
-    [, $noGuess] = net_http_json('POST', "$baseUrl/scan-sessions/{$noGuessSession['id']}/capture", ['raw_capture' => $noGuessFixture], $noGuessSession['access_token']);
+    [, $noGuess] = net_http_json('POST', "$baseUrl/scan-sessions/{$noGuessSession['id']}/capture", ['raw_capture' => $noGuessFixture, 'floor' => 'Ground'], $noGuessSession['access_token']);
     check('room_type is null when the capture reported none',
         array_key_exists('room_type', $noGuess['rooms'][0] ?? []) && $noGuess['rooms'][0]['room_type'] === null);
 
@@ -207,7 +182,7 @@ if ($roomTypeSessionId !== null && $roomTypeToken !== null) {
     [, $invalidSession] = net_http_json('POST', "$baseUrl/scan-sessions", [
         'property_id' => 'prop-net-room-type-invalid', 'unit_id' => 'u', 'organisation_id' => 'o', 'purpose' => 'listing', 'occupied' => false,
     ]);
-    [, $invalidResult] = net_http_json('POST', "$baseUrl/scan-sessions/{$invalidSession['id']}/capture", ['raw_capture' => $invalidFixture], $invalidSession['access_token']);
+    [, $invalidResult] = net_http_json('POST', "$baseUrl/scan-sessions/{$invalidSession['id']}/capture", ['raw_capture' => $invalidFixture, 'floor' => 'Ground'], $invalidSession['access_token']);
     check('an unrecognized guess value is dropped to null, never stored as-is',
         array_key_exists('room_type', $invalidResult['rooms'][0] ?? []) && $invalidResult['rooms'][0]['room_type'] === null);
 }

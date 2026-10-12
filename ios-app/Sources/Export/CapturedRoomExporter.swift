@@ -1,12 +1,8 @@
-//
-//  CapturedRoomExporter.swift
-//  VuuroScan
-//
 
 import RoomPlan
 import simd
 
-struct RoomPlanCaptureExport: Encodable {
+struct RoomPlanCaptureExport: Codable {
     let story: Int
     let floors: [SurfaceExport]
     let walls: [SurfaceExport]
@@ -14,37 +10,42 @@ struct RoomPlanCaptureExport: Encodable {
     let windows: [SurfaceExport]
     let openings: [SurfaceExport]
     let objects: [SurfaceExport]
-    // Room-type guess (RoomTypeClassifier) plus whatever the live on-screen
-    // ✓/✗ prompt resolved to, if anything. Omitted entirely when the on/off
-    // toggle (RoomTypeGuessSettings) is off — see CapturedRoomExporter.export.
+
     var roomType: RoomTypeExport? = nil
-    // Set only by CapturedStructureExporter, for a room merged via StructureBuilder.
     var structureOriginM: [Double]? = nil
+    var walkPathM: [[Double]]? = nil
+    var headingDeg: Double? = nil
+    var captureGroupId: String? = nil
+    var replacesRoomId: String? = nil
+    var joinedToGroupId: String? = nil
+    var roomLabel: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case story, floors, walls, doors, windows, openings, objects
+        case captureGroupId = "capture_group_id"
+        case replacesRoomId = "replaces_room_id"
+        case joinedToGroupId = "joined_to_group_id"
+        case roomLabel = "room_label"
         case roomType = "room_type"
         case structureOriginM = "structure_origin_m"
+        case walkPathM = "walk_path"
+        case headingDeg = "heading_deg"
     }
 
-    struct SurfaceExport: Encodable {
+    struct SurfaceExport: Codable {
         let identifier: String
         let category: String
         let confidence: String
         var dimensions: [Double]? = nil
         var polygonCorners: [[Double]]? = nil
-        // Single world-space point — only set for `objects`, which RoomPlan
-        // reports as a bounding box + transform, not a polygon outline like
-        // floors/walls/doors/windows/openings.
+
         var position: [Double]? = nil
+        var yawDeg: Double? = nil
     }
 
-    struct RoomTypeExport: Encodable {
+    struct RoomTypeExport: Codable {
         let guess: String
         let guessSource: String
-        // What the live ✓/✗ prompt resolved to during capture — the guessed
-        // value if the user tapped ✓, a picked correction if ✗, or nil if the
-        // prompt timed out/auto-hid before either was tapped.
         var confirmed: String? = nil
 
         enum CodingKeys: String, CodingKey {
@@ -58,26 +59,28 @@ struct RoomPlanCaptureExport: Encodable {
 struct RoomTypeConfirmation {
     let value: String
     let answeredForGuessType: String?
+    var customName: String? = nil
+
+    var displayName: String {
+        if let customName, !customName.isEmpty { return customName }
+        return RoomTypeClassifier.displayName(for: value)
+    }
 }
 
 enum CapturedRoomExporter {
-    /// `roomTypeConfirmation` is whatever the live capture-screen ✓/✗ prompt
-    /// resolved to for this room (see CaptureCoordinator/RoomTypeGuess) — the
-    /// exporter itself only ever re-derives the guess, never the
-    /// confirmation, since confirming is a user action that happens live,
-    /// not something recoverable from the final CapturedRoom alone.
-    static func export(_ room: CapturedRoom, roomTypeConfirmation: RoomTypeConfirmation? = nil) -> RoomPlanCaptureExport {
+    static func export(_ room: CapturedRoom, roomTypeConfirmation: RoomTypeConfirmation? = nil, walkPath: [[Double]]? = nil, headingDeg: Double? = nil) -> RoomPlanCaptureExport {
         var export = RoomPlanCaptureExport(
-            story: 0,
+            story: room.story,
             floors: room.floors.map { mapSurface($0, category: "floor") },
             walls: room.walls.map { mapSurface($0, category: "wall") },
             doors: room.doors.map { mapSurface($0, category: "door") },
             windows: room.windows.map { mapSurface($0, category: "window") },
             openings: room.openings.map { mapSurface($0, category: "opening") },
-            // LIDAR-10: real captured furniture/fixtures, not the previous
-            // hardcoded `[]` — empty only when RoomPlan itself saw none.
             objects: room.objects.map(mapObject)
         )
+        export.walkPathM = (walkPath?.isEmpty ?? true) ? nil : walkPath
+        export.headingDeg = headingDeg
+        export.roomLabel = roomTypeConfirmation?.customName
         if RoomTypeGuessSettings.isEnabled, let guess = RoomTypeClassifier.guess(for: room) {
             let confirmedValue = roomTypeConfirmation?.answeredForGuessType == guess.type ? roomTypeConfirmation?.value : nil
             export.roomType = RoomPlanCaptureExport.RoomTypeExport(
@@ -89,28 +92,28 @@ enum CapturedRoomExporter {
         return export
     }
 
-    // Real bug found by Mark on the first real RoomPlan capture (2026-09-02):
-    // `polygonCorners` are in the surface's own local coordinate space (a
-    // floor's local plane, local Z near zero), not room-world space —
-    // exporting them raw collapsed every real floor to a 0.0000 m2 outline,
-    // deterministically, since the adapter's world-space (x,z) projection
-    // read a near-constant local Z as if it varied. `surface.transform`
-    // places the surface's local frame in the room's world coordinates —
-    // applying it here is what Apple's own RoomPlan documentation describes
-    // for reading polygonCorners in world space, and it's what every fixture
-    // (both here and scan-service/fixtures/*.json) always assumed the
-    // exporter already did. No fixture ever exercised this specific step
-    // because it was never possible to test without real hardware.
-    //
-    // LIDAR-10: doors/windows/openings get the same treatment now, not just
-    // floors — Mark's card asks for door/window "positions, not only
-    // coverage," and this is the one technique already proven on real
-    // hardware, so it's reused rather than inventing a second approach.
-    private static func worldPolygonCorners(_ surface: CapturedRoom.Surface) -> [[Double]] {
-        surface.polygonCorners.map { corner in
-            let world = surface.transform * simd_float4(corner, 1)
+    static func worldCorners(transform: simd_float4x4, dimensions: simd_float3, polygonCorners: [simd_float3]) -> [[Double]] {
+        let halfWidth = dimensions.x / 2
+        let halfHeight = dimensions.y / 2
+        let local: [simd_float3] = polygonCorners.isEmpty
+            ? [
+                simd_float3(-halfWidth, -halfHeight, 0),
+                simd_float3(halfWidth, -halfHeight, 0),
+                simd_float3(halfWidth, halfHeight, 0),
+                simd_float3(-halfWidth, halfHeight, 0),
+            ]
+            : polygonCorners
+        return local.map { corner in
+            let world = transform * simd_float4(corner, 1)
             return [Double(world.x), Double(world.y), Double(world.z)]
         }
+    }
+
+    static func yawDegrees(_ transform: simd_float4x4) -> Double? {
+        let axis = transform.columns.0
+        let yaw = atan2(Double(axis.z), Double(axis.x)) * 180 / Double.pi
+        guard yaw.isFinite else { return nil }
+        return (yaw.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
     }
 
     private static func mapSurface(_ surface: CapturedRoom.Surface, category: String) -> RoomPlanCaptureExport.SurfaceExport {
@@ -120,16 +123,13 @@ enum CapturedRoomExporter {
             confidence: mapConfidence(surface.confidence),
             dimensions: [Double(surface.dimensions.x), Double(surface.dimensions.y), Double(surface.dimensions.z)]
         )
-        export.polygonCorners = worldPolygonCorners(surface)
+        export.polygonCorners = worldCorners(transform: surface.transform, dimensions: surface.dimensions, polygonCorners: surface.polygonCorners)
+        let translation = surface.transform.columns.3
+        export.position = [Double(translation.x), Double(translation.y), Double(translation.z)]
+        export.yawDeg = yawDegrees(surface.transform)
         return export
     }
 
-    // Unverified without Xcode/real hardware (no Mac reachable on this
-    // machine — see docs/adr/0001-scan-service-stack.md): written to
-    // RoomPlan's documented CapturedRoom.Object shape (category, confidence,
-    // dimensions, transform), same caution CaptureCoordinator.swift's
-    // RoomBuilder call already flags. Mark's real-device retest loop is what
-    // confirms this, same as it caught the mapFloor transform bug above.
     private static func mapObject(_ object: CapturedRoom.Object) -> RoomPlanCaptureExport.SurfaceExport {
         var export = RoomPlanCaptureExport.SurfaceExport(
             identifier: object.identifier.uuidString,
@@ -139,12 +139,10 @@ enum CapturedRoomExporter {
         )
         let translation = object.transform.columns.3
         export.position = [Double(translation.x), Double(translation.y), Double(translation.z)]
+        export.yawDeg = yawDegrees(object.transform)
         return export
     }
 
-    // Passes through RoomPlan's own category — never invents one it did not
-    // report. @unknown default covers a category added in a newer SDK than
-    // this was written against.
     private static func mapObjectCategory(_ category: CapturedRoom.Object.Category) -> String {
         switch category {
         case .storage: return "storage"
@@ -178,19 +176,22 @@ enum CapturedRoomExporter {
 }
 
 extension RoomPlanCaptureExport {
-    // Mirrors RoomPlanSimulatorAdapter.php's MIN_POLYGON_AREA_M2 guard,
-    // client-side — Mark's 2026-09-02 request (b): a capture this degenerate
-    // needed no LiDAR to build or test, so it shouldn't have taken a round
-    // trip to the server to catch. Same (x,z) ground-plane projection and
-    // shoelace formula as the adapter, applied to the now-world-space
-    // corners mapFloor produces.
     private static let minFloorAreaM2 = 0.25
 
-    // Checks every floor, not just the first — RoomPlanSimulatorAdapter.php
-    // rejects on ANY floor with a degenerate outline (a multi-story capture
-    // can carry more than one), so a guard that only looked at floors[0]
-    // would let a bad floors[1] slip past locally and still round-trip to
-    // the server for the same reject this guard exists to avoid.
+    var floorAreaM2: Double {
+        floors.reduce(0.0) { sum, floor in
+            guard let corners = floor.polygonCorners, corners.count >= 3 else { return sum }
+            let points = corners.map { (x: $0[0], z: $0[2]) }
+            var area = 0.0
+            for i in points.indices {
+                let a = points[i]
+                let b = points[(i + 1) % points.count]
+                area += a.x * b.z - b.x * a.z
+            }
+            return sum + abs(area) / 2.0
+        }
+    }
+
     var hasUsableFloorOutline: Bool {
         guard !floors.isEmpty else { return false }
         return floors.allSatisfy { floor in

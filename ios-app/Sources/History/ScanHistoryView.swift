@@ -1,252 +1,516 @@
-//
-//  ScanHistoryView.swift
-//  VuuroScan
-//
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
-//
-//  Lists scan sessions this device remembers creating (ScanHistoryStore —
-//  local-only, see its header for why), with per-session floor plan
-//  image/PDF download and a link to that session's access log, plus a
-//  bulk "download all" action across the whole local history.
-//
-//  Per-session, not per-room: the Scan Service renders one PNG (rooms tiled
-//  on one sheet) and one PDF (one metrics table) per session, not a separate
-//  file per room — see ../../docs/adr/0002-export-coordinate-frame.md for why.
-//
-
 import SwiftUI
 
 struct ScanHistoryView: View {
-    /// LIDAR-4: lets a past session be resumed to add another room instead
-    /// of forcing a brand new one — see ScanHistoryEntry.asResumableSession()
-    /// for why this is the actual gap being closed. Optional so this view's
-    /// existing callers (and any future read-only use) don't have to supply
-    /// a callback they don't need.
-    var onResumeToAddRoom: ((ScanHistoryEntry) -> Void)?
-    /// LIDAR-6: attaching a photo/note (e.g. later check-in evidence) has no
-    /// path once you leave the live capture flow — same class of gap as
-    /// LIDAR-4's missing room-resume. Fetches this session's current
-    /// FloorPlan fresh, then hands it back so the caller can enter the same
-    /// AttachmentsScreen the live flow already uses.
+    var onResumeToAddRoom: ((ScanHistoryEntry, Bool) -> Void)?
     var onAttachToSession: ((ScanHistoryEntry, FloorPlan) -> Void)?
+    var onStartScan: (() -> Void)?
+    var onAddRoomsToHome: ((ScanIdentity) -> Void)?
 
-    @State private var entries: [ScanHistoryEntry] = ScanHistoryStore.shared.all()
+    @State private var entries: [ScanHistoryEntry] = []
+    @State private var isLoadingEntries = true
+    @State private var reloadToken = UUID()
+    @State private var searchText = ""
+    @State private var selectedFilter: HistoryFilter = .all
+
+    @State private var selectedEntryForReport: ScanHistoryEntry?
+    @State private var pendingDeleteEntry: ScanHistoryEntry?
+    @State private var pendingServerDeleteEntry: ScanHistoryEntry?
+    @State private var renameEntry: ScanHistoryEntry?
+    @State private var renameDraft = ""
+
+    @State private var showImportView = false
+    @State private var viewMode: HistoryViewMode = .scans
+    @State private var selectedHome: HomeKey?
     @State private var isFetchingToAttach: Set<String> = []
+    @State private var isPreparingQuickShare: Set<String> = []
+    @State private var attachErrors: [String: AppError] = [:]
+
     @State private var perEntryImageURLs: [String: URL] = [:]
     @State private var perEntryPDFURLs: [String: URL] = [:]
     @State private var bulkImageURLs: [URL] = []
     @State private var bulkPDFURLs: [URL] = []
     @State private var isBulkFetchingImages = false
     @State private var isBulkFetchingPDFs = false
+    @State private var bulkImageProgress: (done: Int, total: Int)?
+    @State private var bulkPDFProgress: (done: Int, total: Int)?
+
     @State private var appError: AppError?
     @State private var errorMessage: String?
-    @State private var pendingDeleteEntry: ScanHistoryEntry?
-    @State private var pendingServerDeleteEntry: ScanHistoryEntry?
+    @State private var activityThrottle = ActivityRefreshThrottle()
 
     @Environment(\.dismiss) private var dismiss
 
     private let client = ScanServiceClient()
 
+    private var filteredEntries: [ScanHistoryEntry] {
+        let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return entries.filter { entry in
+            guard selectedFilter.matches(entry.purpose) else { return false }
+            guard !needle.isEmpty else { return true }
+            let haystack = [
+                entry.propertyId,
+                entry.unitId,
+                entry.organisationId,
+                entry.nickname ?? "",
+            ].joined(separator: " ").lowercased()
+            return haystack.contains(needle)
+        }
+    }
+
+    private var heroSubtitle: String {
+        if entries.isEmpty { return "Nothing captured yet." }
+        let count = entries.count
+        return "\(count) scan\(count == 1 ? "" : "s") on this device."
+    }
+
+    private var renameBinding: Binding<Bool> {
+        Binding(
+            get: { renameEntry != nil },
+            set: { if !$0 { renameEntry = nil } }
+        )
+    }
+
     var body: some View {
-        List {
-            if entries.isEmpty {
-                Text("No scans yet on this device.")
-                    .foregroundStyle(.secondary)
-            }
+        VStack(spacing: 0) {
+            VuuroNavBar(
+                title: "History",
+                leading: {
+                    VuuroNavButton("Home", icon: "chevron.left") { dismiss() }
+                        .accessibilityIdentifier("history.home")
+                },
+                trailing: { VuuroNavSpacer() }
+            )
 
-            ForEach(entries) { entry in
-                Section {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("\(entry.propertyId) — \(entry.unitId)").font(.headline)
-                        Text(entry.purpose.displayName)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    HStack {
-                        Button("Download image") {
-                            Task { await downloadImage(for: entry) }
-                        }
-                        Spacer()
-                        if let url = perEntryImageURLs[entry.sessionId] {
-                            ShareLink(item: url) {
-                                Label("Save", systemImage: "square.and.arrow.up")
-                            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    VuuroHero(greeting: nil, title: viewMode == .homes ? "Your homes" : "Your scans", subtitle: heroSubtitle)
+                    viewModePicker
+                    if viewMode == .scans {
+                        searchBar
+                        filterChipRow
+                        content
+                        actionsSection
+                    } else {
+                        HomesListView(entries: entries) { homeKey in
+                            selectedHome = homeKey
                         }
                     }
 
-                    HStack {
-                        Button("Download PDF") {
-                            Task { await downloadPDF(for: entry) }
-                        }
-                        Spacer()
-                        if let url = perEntryPDFURLs[entry.sessionId] {
-                            ShareLink(item: url) {
-                                Label("Save", systemImage: "square.and.arrow.up")
-                            }
-                        }
+                    if let appError {
+                        ErrorCodeView(error: appError)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 8)
                     }
 
-                    NavigationLink("Access log") {
-                        AccessLogView(sessionId: entry.sessionId, accessToken: entry.accessToken)
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.system(size: 12))
+                            .foregroundStyle(VuuroColor.textSecondary)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 8)
                     }
 
-                    if let onResumeToAddRoom {
-                        Button("Scan another room") {
-                            Task {
-                                let refreshed = await rotateTokenIfNeeded(entry)
-                                dismiss()
-                                onResumeToAddRoom(refreshed)
-                            }
-                        }
-                    }
-
-                    if let onAttachToSession {
-                        Button {
-                            Task {
-                                let refreshed = await rotateTokenIfNeeded(entry)
-                                await attach(refreshed, using: onAttachToSession)
-                            }
-                        } label: {
-                            if isFetchingToAttach.contains(entry.sessionId) {
-                                ProgressView()
-                            } else {
-                                Text("Add a photo or note")
-                            }
-                        }
-                        .disabled(isFetchingToAttach.contains(entry.sessionId))
-                    }
-
-                    Button("Forget this scan (device only)", role: .destructive) {
-                        pendingDeleteEntry = entry
-                    }
-
-                    Divider()
-
-                    Button(role: .destructive) {
-                        pendingServerDeleteEntry = entry
-                    } label: {
-                        Label("Delete permanently from server", systemImage: "exclamationmark.triangle.fill")
-                    }
+                    Spacer().frame(height: 32)
                 }
             }
-
-            if !entries.isEmpty {
-                Section("Bulk export") {
-                    Button {
-                        Task { await downloadAllImages() }
-                    } label: {
-                        if isBulkFetchingImages {
-                            ProgressView()
-                        } else {
-                            Text("Download all images")
-                        }
+            .scrollIndicators(.hidden)
+        }
+        .background(VuuroColor.bgApp)
+        .toolbar(.hidden, for: .navigationBar)
+        .navigationBarBackButtonHidden(false)
+        .onAppear { reloadEntries() }
+        .onDisappear { cleanUpTempFiles() }
+        .sheet(item: $selectedEntryForReport) { entry in
+            NavigationStack {
+                ScanResultsReportView(
+                    entry: entry,
+                    onDelete: { reloadEntries() },
+                    onContinueScan: { floor in
+                        selectedEntryForReport = nil
+                        Task { await resumeToAddRooms(entry, floor: floor) }
                     }
-                    .disabled(isBulkFetchingImages)
-
-                    if !bulkImageURLs.isEmpty {
-                        ShareLink(items: bulkImageURLs) {
-                            Label("Save all images", systemImage: "square.and.arrow.up.on.square")
-                        }
-                    }
-
-                    Button {
-                        Task { await downloadAllPDFs() }
-                    } label: {
-                        if isBulkFetchingPDFs {
-                            ProgressView()
-                        } else {
-                            Text("Download all PDFs")
-                        }
-                    }
-                    .disabled(isBulkFetchingPDFs)
-
-                    if !bulkPDFURLs.isEmpty {
-                        ShareLink(items: bulkPDFURLs) {
-                            Label("Save all PDFs", systemImage: "square.and.arrow.up.on.square")
-                        }
-                    }
-                }
-            }
-
-            if let appError {
-                ErrorCodeView(error: appError)
-            }
-
-            if let errorMessage {
-                Text(errorMessage).foregroundStyle(.secondary).font(.caption)
+                )
             }
         }
-        .navigationTitle("Scan history")
-        .onAppear { entries = ScanHistoryStore.shared.all() }
-        .onDisappear { cleanUpTempFiles() }
-        .alert("Forget this scan?", isPresented: Binding(
-            get: { pendingDeleteEntry != nil },
-            set: { if !$0 { pendingDeleteEntry = nil } }
-        )) {
+        .sheet(item: $selectedHome) { homeKey in
+            NavigationStack {
+                HomeDetailView(key: homeKey) { request in
+                    selectedHome = nil
+                    switch request {
+                    case .newVisit(let identity):
+                        cleanUpTempFiles()
+                        dismiss()
+                        onAddRoomsToHome?(identity)
+                    case .addToScan(let entry, let floor):
+                        Task { await resumeToAddRooms(entry, floor: floor) }
+                    }
+                }
+            }
+        }
+
+
+
+
+        .sheet(isPresented: $showImportView) {
+            NavigationStack {
+                ImportScanView(
+                    onCancel: { showImportView = false },
+                    onImported: { entry in
+                        ScanHistoryStore.shared.add(entry)
+                        showImportView = false
+                        reloadEntries()
+                    }
+                )
+            }
+        }
+        .alert("Forget this scan?", isPresented: forgetBinding) {
             Button("Forget", role: .destructive) {
                 if let pendingDeleteEntry {
                     deleteEntry(pendingDeleteEntry)
                 }
                 pendingDeleteEntry = nil
             }
+            .accessibilityIdentifier("history.forgetConfirm")
             Button("Cancel", role: .cancel) { pendingDeleteEntry = nil }
+                .accessibilityIdentifier("history.forgetCancel")
         } message: {
-            Text("This removes the local record on this device only — the session data itself isn't deleted, but you won't be able to reopen it from History again.")
+            Text("This removes the local record on this device only. The session data itself isn't deleted.")
         }
-        .alert("Delete this scan from the server?", isPresented: Binding(
-            get: { pendingServerDeleteEntry != nil },
-            set: { if !$0 { pendingServerDeleteEntry = nil } }
-        )) {
+        .alert("Delete this scan from the server?", isPresented: serverDeleteBinding) {
             Button("Delete", role: .destructive) {
                 if let pendingServerDeleteEntry {
                     Task { await deleteFromServer(pendingServerDeleteEntry) }
                 }
                 pendingServerDeleteEntry = nil
             }
+            .accessibilityIdentifier("history.serverDeleteConfirm")
             Button("Cancel", role: .cancel) { pendingServerDeleteEntry = nil }
+                .accessibilityIdentifier("history.serverDeleteCancel")
         } message: {
-            Text("This permanently deletes the session's rooms, photos, and notes from the Scan Service. This cannot be undone.")
+            Text("This permanently deletes the session's rooms, photos, and notes. This cannot be undone.")
+        }
+        .alert("Rename scan", isPresented: renameBinding) {
+            TextField("Optional label", text: $renameDraft)
+                .accessibilityIdentifier("history.renameField")
+            Button("Save") {
+                if let entry = renameEntry {
+                    let trimmed = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let stored = trimmed.isEmpty ? nil : trimmed
+                    ScanHistoryStore.shared.updateNickname(sessionId: entry.sessionId, nickname: stored)
+                    reloadEntries()
+                }
+                renameEntry = nil
+            }
+            .accessibilityIdentifier("history.renameSave")
+            Button("Cancel", role: .cancel) {
+                renameEntry = nil
+            }
+            .accessibilityIdentifier("history.renameCancel")
+        }
+        .dynamicTypeSize(...DynamicTypeSize.accessibility3)
+    }
+
+    private var forgetBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeleteEntry != nil },
+            set: { if !$0 { pendingDeleteEntry = nil } }
+        )
+    }
+
+    private var serverDeleteBinding: Binding<Bool> {
+        Binding(
+            get: { pendingServerDeleteEntry != nil },
+            set: { if !$0 { pendingServerDeleteEntry = nil } }
+        )
+    }
+
+    private var viewModePicker: some View {
+        Picker("View", selection: $viewMode) {
+            Text("Scans").tag(HistoryViewMode.scans)
+            Text("Homes").tag(HistoryViewMode.homes)
+        }
+        .accessibilityIdentifier("history.viewMode")
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 14)
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(VuuroColor.textSecondary)
+            TextField("Search by property, unit, or label", text: $searchText)
+                .accessibilityIdentifier("history.search")
+                .font(.system(size: 15))
+                .foregroundStyle(VuuroColor.textPrimary)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(VuuroColor.textTertiary)
+                }
+                .accessibilityIdentifier("history.searchClear")
+                .accessibilityLabel("Clear search")
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .background(VuuroColor.bgCard, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: VuuroMetrics.cardShadowTightColor, radius: VuuroMetrics.cardShadowTightRadius, x: 0, y: 1)
+        .shadow(color: VuuroMetrics.cardShadowColor, radius: VuuroMetrics.cardShadowRadius, x: 0, y: 4)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 14)
+    }
+
+    private var filterChipRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(HistoryFilter.allCases) { filter in
+                    Button {
+                        selectedFilter = filter
+                    } label: {
+                        Text(filter.displayName)
+                            .font(.system(size: 12, weight: .semibold))
+                            .tracking(-0.1)
+                            .foregroundStyle(selectedFilter == filter ? .white : VuuroColor.textPrimary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                selectedFilter == filter ? VuuroColor.accent : VuuroColor.bgCard,
+                                in: Capsule()
+                            )
+                            .overlay {
+                                if selectedFilter != filter {
+                                    Capsule().stroke(VuuroColor.borderMed, lineWidth: 1.5)
+                                }
+                            }
+                    }
+                    .accessibilityIdentifier("history.filter.\(filter.rawValue)")
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+        .padding(.bottom, 14)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if isLoadingEntries {
+            loadingState
+        } else if filteredEntries.isEmpty {
+            emptyState
+        } else {
+            ForEach(filteredEntries) { entry in
+                HistoryCard(
+                    entry: entry,
+                    onTap: { selectedEntryForReport = entry },
+                    onAction: { action in handle(action, for: entry) }
+                )
+
+                if let attachError = attachErrors[entry.sessionId] {
+                    ErrorCodeView(error: attachError)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 8)
+                }
+            }
+        }
+    }
+
+    private var loadingState: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(0..<3, id: \.self) { _ in
+                VStack(alignment: .leading, spacing: 10) {
+                    VuuroSkeleton(cornerRadius: 6).frame(width: 180, height: 16)
+                    VuuroSkeleton(cornerRadius: 6).frame(width: 130, height: 13)
+                    VuuroSkeleton(cornerRadius: 6).frame(maxWidth: .infinity).frame(height: 30)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(VuuroColor.bgCard)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .shadow(color: VuuroMetrics.cardShadowTightColor, radius: VuuroMetrics.cardShadowTightRadius, x: 0, y: 1)
+                .shadow(color: VuuroMetrics.cardShadowColor, radius: VuuroMetrics.cardShadowRadius, x: 0, y: 4)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 10)
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                VuuroColor.accent.opacity(0.10),
+                                VuuroColor.lime.opacity(0.10),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                Image(systemName: "house")
+                    .font(.system(size: 40, weight: .regular))
+                    .foregroundStyle(VuuroColor.accent)
+            }
+            .frame(width: 100, height: 100)
+
+            Text(entries.isEmpty ? "No scans yet" : "No matching scans")
+                .font(.system(size: 20, weight: .bold))
+                .tracking(-0.4)
+                .foregroundStyle(VuuroColor.textPrimary)
+
+            Text(entries.isEmpty
+                 ? "Your scans will appear here. Start by capturing your first room."
+                 : "Try a different search or filter.")
+                .font(.system(size: 13))
+                .foregroundStyle(VuuroColor.textSecondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 260)
+
+            if entries.isEmpty, let onStartScan {
+                Button("Scan first room", action: onStartScan)
+                    .accessibilityIdentifier("history.scanFirstRoom")
+                    .buttonStyle(.vuuroPrimarySmall)
+                    .frame(maxWidth: 200)
+                    .padding(.top, 8)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+    }
+
+    private var actionsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VuuroSectionLabel(text: "Actions")
+
+            VStack(spacing: 10) {
+                Button {
+                    showImportView = true
+                } label: {
+                    Text("Add a shared scan")
+                }
+                .accessibilityIdentifier("history.addSharedScan")
+                .buttonStyle(.vuuroGhostSmall)
+
+                Button {
+                    Task { await downloadAllImages() }
+                } label: {
+                    if isBulkFetchingImages {
+                        HStack(spacing: 6) {
+                            ProgressView().tint(VuuroColor.textPrimary)
+                            if let bulkImageProgress {
+                                Text("\(bulkImageProgress.done) of \(bulkImageProgress.total)")
+                            }
+                        }
+                    } else {
+                        Text("Download all images")
+                    }
+                }
+                .accessibilityIdentifier("history.downloadAllImages")
+                .buttonStyle(.vuuroGhostSmall)
+                .disabled(isBulkFetchingImages || entries.isEmpty)
+
+                if !bulkImageURLs.isEmpty {
+                    ShareLink(items: bulkImageURLs) {
+                        Label("Save all images", systemImage: "square.and.arrow.up.on.square")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(VuuroColor.accent)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 11)
+                    }
+                    .accessibilityIdentifier("history.saveAllImages")
+                }
+
+                Button {
+                    Task { await downloadAllPDFs() }
+                } label: {
+                    if isBulkFetchingPDFs {
+                        HStack(spacing: 6) {
+                            ProgressView().tint(VuuroColor.textPrimary)
+                            if let bulkPDFProgress {
+                                Text("\(bulkPDFProgress.done) of \(bulkPDFProgress.total)")
+                            }
+                        }
+                    } else {
+                        Text("Download all PDFs")
+                    }
+                }
+                .accessibilityIdentifier("history.downloadAllPDFs")
+                .buttonStyle(.vuuroGhostSmall)
+                .disabled(isBulkFetchingPDFs || entries.isEmpty)
+
+                if !bulkPDFURLs.isEmpty {
+                    ShareLink(items: bulkPDFURLs) {
+                        Label("Save all PDFs", systemImage: "square.and.arrow.up.on.square")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(VuuroColor.accent)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 11)
+                    }
+                    .accessibilityIdentifier("history.saveAllPDFs")
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+
+    private func handle(_ action: HistoryCardAction, for entry: ScanHistoryEntry) {
+        switch action {
+        case .openReport:
+            selectedEntryForReport = entry
+        case .rename:
+            renameEntry = entry
+            renameDraft = entry.nickname ?? ""
+        case .scanAnotherRoom:
+            Task {
+                guard let refreshed = await rotateTokenIfNeeded(entry) else { return }
+                cleanUpTempFiles()
+                dismiss()
+                let continueAsUnit = await hasFusedRoomsOnFloor(entry: refreshed, floor: refreshed.floor)
+                onResumeToAddRoom?(refreshed, continueAsUnit)
+            }
+        case .attachPhoto:
+            Task {
+                guard let refreshed = await rotateTokenIfNeeded(entry) else { return }
+                await attach(refreshed)
+            }
+        case .shareImage:
+            Task { await shareFile(for: entry, pdf: false) }
+        case .sharePDF:
+            Task { await shareFile(for: entry, pdf: true) }
+        case .shareCode:
+            shareAccessCode(for: entry)
+        case .revokeShares:
+            Task { await revokeShares(for: entry) }
+        case .accessLog:
+            break
+        case .forget:
+            pendingDeleteEntry = entry
+        case .deleteFromServer:
+            pendingServerDeleteEntry = entry
         }
     }
 
     @MainActor
-    private func deleteFromServer(_ entry: ScanHistoryEntry) async {
-        do {
-            try await client.deleteSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
-            #if DEBUG
-            DiagnosticsLog.shared.record("Session \(entry.sessionId) deleted from server", category: .info)
-            #endif
-            appError = nil
-            deleteEntry(entry)
-        } catch {
-            appError = AppError(site: .historyServerDelete, underlying: error)
-        }
-    }
-
-    // A resumed/attached session's stored token can be close to (or past) its
-    // 90-day expiry with no other path to renew it (see AppError.swift's
-    // header and ScanSessionRepository.php's ROTATE_GRACE_PERIOD_SECONDS) —
-    // this device never proactively rotates otherwise, so the only chance is
-    // right before the token is actually used again.
-    @MainActor
-    private func rotateTokenIfNeeded(_ entry: ScanHistoryEntry) async -> ScanHistoryEntry {
-        if let expiresAtString = entry.expiresAt, !expiresAtString.isEmpty,
-           let expiresAt = ISO8601DateFormatter().date(from: expiresAtString),
-           expiresAt.timeIntervalSinceNow >= 14 * 24 * 60 * 60 {
-            #if DEBUG
-            DiagnosticsLog.shared.record("Token rotation skipped for session \(entry.sessionId): still valid until \(expiresAtString)", category: .info)
-            #endif
-            return entry
+    private func revokeShares(for entry: ScanHistoryEntry) async {
+        guard !entry.accessToken.isEmpty else {
+            appError = AppError(site: .historyTokenMissing, underlying: nil)
+            return
         }
         do {
-            let rotated = try await client.rotateToken(sessionId: entry.sessionId, accessToken: entry.accessToken)
-            #if DEBUG
-            DiagnosticsLog.shared.record("Token rotated for session \(entry.sessionId), new expiry \(rotated.expiresAt)", category: .info)
-            #endif
+            let rotated = try await client.rotateToken(
+                sessionId: entry.sessionId,
+                accessToken: entry.accessToken
+            )
             let updated = ScanHistoryEntry(
                 sessionId: entry.sessionId,
                 accessToken: rotated.accessToken,
@@ -255,32 +519,170 @@ struct ScanHistoryView: View {
                 organisationId: entry.organisationId,
                 purpose: entry.purpose,
                 createdAt: entry.createdAt,
-                expiresAt: rotated.expiresAt
+                expiresAt: rotated.expiresAt,
+                nickname: entry.nickname,
+                cachedRoomSummary: entry.cachedRoomSummary,
+                cachedFloorAreaM2: entry.cachedFloorAreaM2,
+                cachedRoomsByFloor: entry.cachedRoomsByFloor,
+                occupied: entry.occupied,
+                consentObtained: entry.consentObtained,
+                floor: entry.floor
             )
             ScanHistoryStore.shared.add(updated)
-            entries = ScanHistoryStore.shared.all()
-            return updated
+            reloadEntries()
+            VuuroToast.shared.show(vuuroLocalized("Previous shares are now revoked"))
+        } catch is CancellationError {
         } catch {
-            #if DEBUG
-            DiagnosticsLog.shared.record("Token rotation failed for session \(entry.sessionId): \(error.localizedDescription)", category: .error)
-            #endif
-            return entry
+            appError = AppError(site: .historySessionFetch, underlying: error)
         }
     }
 
-    // Every download below writes into the shared tmp directory, which iOS
-    // doesn't clear on any predictable schedule — same lesson as
-    // ResultSummaryView's cleanUpExportedFiles(). Cleaned up together here
-    // since this screen can accumulate many more files than that one did.
-    private func cleanUpTempFiles() {
-        let all = Array(perEntryImageURLs.values) + Array(perEntryPDFURLs.values) + bulkImageURLs + bulkPDFURLs
-        for url in all {
-            try? FileManager.default.removeItem(at: url)
+    private func shareAccessCode(for entry: ScanHistoryEntry) {
+        guard let code = ScanShareCode.encode(entry) else { return }
+        let source = ShareCodeItemSource(
+            code: code,
+            subject: "Vuuro Scan access — \(entry.propertyId) / \(entry.unitId)",
+            messageBody: "In Vuuro Scan, open History → Actions → \"Add a shared scan\" and paste this message or the code below to get full access to this scan: view, export, add rooms or floors to continue the walk, and delete. Only share it with someone you trust."
+        )
+        ShareSheetPresenter.present(items: [source])
+    }
+
+    private func reloadEntries() {
+        let token = UUID()
+        reloadToken = token
+        PerfTrace.begin(.historyLoad)
+        Task {
+            let loaded = await Task.detached(priority: .userInitiated) {
+                ScanHistoryStore.shared.all()
+            }.value
+            guard reloadToken == token else { return }
+            entries = loaded
+            isLoadingEntries = false
+            PerfTrace.end(.historyLoad, detail: "\(loaded.count) scans")
+            await refreshActivity(for: loaded)
         }
-        perEntryImageURLs = [:]
-        perEntryPDFURLs = [:]
-        bulkImageURLs = []
-        bulkPDFURLs = []
+    }
+
+    private func refreshActivity(for loaded: [ScanHistoryEntry]) async {
+        guard activityThrottle.shouldRefresh(now: Date()) else { return }
+        await client.noteActivity(loaded)
+        let refreshed = await Task.detached(priority: .userInitiated) {
+            ScanHistoryStore.shared.all()
+        }.value
+        entries = refreshed
+    }
+
+    @MainActor
+    private func deleteFromServer(_ entry: ScanHistoryEntry) async {
+        guard let refreshed = await rotateTokenIfNeeded(entry) else { return }
+        do {
+            try await client.deleteSession(sessionId: refreshed.sessionId, accessToken: refreshed.accessToken)
+            DiagnosticsLog.shared.record("Session \(refreshed.sessionId) deleted from server", category: .info)
+            appError = nil
+            deleteEntry(refreshed)
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record(
+                "Server delete cancelled for session \(refreshed.sessionId)",
+                category: .info
+            )
+        } catch {
+            appError = AppError(site: .historyServerDelete, underlying: error)
+        }
+    }
+
+    @MainActor
+    private func resumeToAddRooms(_ entry: ScanHistoryEntry, floor: String) async {
+        guard let refreshed = await rotateTokenIfNeeded(entry) else { return }
+        var resumed = refreshed
+        let trimmed = floor.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newFloor: String? = trimmed.isEmpty ? nil : trimmed
+        if newFloor != refreshed.floor {
+            do {
+                _ = try await client.setDefaultFloor(
+                    sessionId: refreshed.sessionId,
+                    accessToken: refreshed.accessToken,
+                    floor: newFloor
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                appError = AppError(site: .historyFloorUpdate, underlying: error)
+                return
+            }
+            ScanHistoryStore.shared.updateFloor(sessionId: refreshed.sessionId, floor: newFloor)
+            resumed.floor = newFloor
+        }
+        cleanUpTempFiles()
+        dismiss()
+        let continueAsUnit = await hasFusedRoomsOnFloor(entry: resumed, floor: resumed.floor)
+        onResumeToAddRoom?(resumed, continueAsUnit)
+    }
+
+    @MainActor
+    private func hasFusedRoomsOnFloor(entry: ScanHistoryEntry, floor: String?) async -> Bool {
+        do {
+            let plan = try await client.fetchSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
+            return ContinueRoute.continuesAsUnit(rooms: plan.rooms, floor: floor)
+        } catch {
+            DiagnosticsLog.shared.record("hasFusedRoomsOnFloor check failed: \(error.localizedDescription)", category: .error)
+            return false
+        }
+    }
+
+    @MainActor
+    private func rotateTokenIfNeeded(_ entry: ScanHistoryEntry) async -> ScanHistoryEntry? {
+        guard !entry.accessToken.isEmpty else {
+            appError = AppError(site: .historyTokenMissing, underlying: nil)
+            return nil
+        }
+        if let expiresAtString = entry.expiresAt, !expiresAtString.isEmpty,
+           let expiresAt = ISO8601DateFormatter().date(from: expiresAtString),
+           expiresAt.timeIntervalSinceNow >= 14 * 24 * 60 * 60 {
+            return entry
+        }
+        do {
+            let rotated = try await client.rotateToken(
+                sessionId: entry.sessionId,
+                accessToken: entry.accessToken
+            )
+            DiagnosticsLog.shared.record(
+                "Token rotated for session \(entry.sessionId), new expiry \(rotated.expiresAt)",
+                category: .info
+            )
+            let updated = ScanHistoryEntry(
+                sessionId: entry.sessionId,
+                accessToken: rotated.accessToken,
+                propertyId: entry.propertyId,
+                unitId: entry.unitId,
+                organisationId: entry.organisationId,
+                purpose: entry.purpose,
+                createdAt: entry.createdAt,
+                expiresAt: rotated.expiresAt,
+                nickname: entry.nickname,
+                cachedRoomSummary: entry.cachedRoomSummary,
+                cachedFloorAreaM2: entry.cachedFloorAreaM2,
+                cachedRoomsByFloor: entry.cachedRoomsByFloor,
+                occupied: entry.occupied,
+                consentObtained: entry.consentObtained,
+                floor: entry.floor
+            )
+            ScanHistoryStore.shared.add(updated)
+            reloadEntries()
+            return updated
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record(
+                "Token rotation cancelled for session \(entry.sessionId)",
+                category: .info
+            )
+            return nil
+        } catch {
+            DiagnosticsLog.shared.record(
+                "Token rotation failed for session \(entry.sessionId): \(error.localizedDescription)",
+                category: .error
+            )
+            appError = AppError(site: .historySessionFetch, underlying: error)
+            return nil
+        }
     }
 
     @MainActor
@@ -293,50 +695,90 @@ struct ScanHistoryView: View {
         }
         perEntryImageURLs[entry.sessionId] = nil
         perEntryPDFURLs[entry.sessionId] = nil
+        attachErrors[entry.sessionId] = nil
 
-        // Real bug fixed here: bulk downloads ("Download all images/PDFs")
-        // use the same filename shape (floorplan-<sessionId>.ext) but live in
-        // a flat array, not keyed by session — without this, "Forget" only
-        // cleared the per-entry dictionaries, leaving this entry's file
-        // untouched in bulkImageURLs/bulkPDFURLs and still shareable via
-        // "Save all images/PDFs", contradicting what "Forget" claims to do.
-        let imageFilename = "floorplan-\(entry.sessionId).png"
-        let pdfFilename = "floorplan-\(entry.sessionId).pdf"
-        for url in bulkImageURLs where url.lastPathComponent == imageFilename {
-            try? FileManager.default.removeItem(at: url)
-        }
-        bulkImageURLs.removeAll { $0.lastPathComponent == imageFilename }
-        for url in bulkPDFURLs where url.lastPathComponent == pdfFilename {
-            try? FileManager.default.removeItem(at: url)
-        }
-        bulkPDFURLs.removeAll { $0.lastPathComponent == pdfFilename }
+        let entryDirectory = ExportNaming.directory(sessionId: entry.sessionId).standardizedFileURL.path
+        let belongsToEntry: (URL) -> Bool = { $0.deletingLastPathComponent().standardizedFileURL.path == entryDirectory }
+        bulkImageURLs.removeAll(where: belongsToEntry)
+        bulkPDFURLs.removeAll(where: belongsToEntry)
+        ExportNaming.removeExports(sessionId: entry.sessionId)
 
         ScanHistoryStore.shared.remove(sessionId: entry.sessionId)
-        entries = ScanHistoryStore.shared.all()
+        reloadEntries()
     }
 
     @MainActor
-    private func attach(_ entry: ScanHistoryEntry, using onAttachToSession: (ScanHistoryEntry, FloorPlan) -> Void) async {
+    private func attach(_ entry: ScanHistoryEntry) async {
+        guard !isFetchingToAttach.contains(entry.sessionId) else { return }
         isFetchingToAttach.insert(entry.sessionId)
         defer { isFetchingToAttach.remove(entry.sessionId) }
         do {
-            let floorPlan = try await client.fetchSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
-            appError = nil
+            let floorPlan = try await client.fetchSession(
+                sessionId: entry.sessionId,
+                accessToken: entry.accessToken
+            )
+            attachErrors[entry.sessionId] = nil
+            cleanUpTempFiles()
             dismiss()
-            onAttachToSession(entry, floorPlan)
+            onAttachToSession?(entry, floorPlan)
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record(
+                "Attach fetch cancelled for session \(entry.sessionId)",
+                category: .info
+            )
         } catch {
-            appError = AppError(site: .historySessionFetch, underlying: error)
+            attachErrors[entry.sessionId] = AppError(site: .historySessionFetch, underlying: error)
         }
+    }
+
+    @MainActor
+    private func shareFile(for entry: ScanHistoryEntry, pdf: Bool) async {
+        let key = entry.sessionId + (pdf ? ":pdf" : ":image")
+        guard !isPreparingQuickShare.contains(key) else { return }
+        isPreparingQuickShare.insert(key)
+        defer { isPreparingQuickShare.remove(key) }
+
+        if pdf, perEntryPDFURLs[entry.sessionId] == nil {
+            await downloadPDF(for: entry)
+        } else if !pdf, perEntryImageURLs[entry.sessionId] == nil {
+            await downloadImage(for: entry)
+        }
+
+        let url = pdf ? perEntryPDFURLs[entry.sessionId] : perEntryImageURLs[entry.sessionId]
+        guard let url else { return }
+        ShareSheetPresenter.present(items: [url])
     }
 
     @MainActor
     private func downloadImage(for entry: ScanHistoryEntry) async {
+        guard !entry.accessToken.isEmpty else {
+            appError = AppError(site: .historyTokenMissing, underlying: nil)
+            return
+        }
         do {
-            let data = try await client.fetchFloorPlanImage(sessionId: entry.sessionId, accessToken: entry.accessToken)
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(entry.sessionId).png")
-            try data.write(to: url)
+            let data = try await client.fetchFloorPlanImage(
+                sessionId: entry.sessionId,
+                accessToken: entry.accessToken,
+                unit: currentExportUnit,
+                label: entry.nickname
+            )
+            let url = try ExportNaming.url(
+                sessionId: entry.sessionId,
+                property: entry.propertyId,
+                unit: entry.unitId,
+                room: nil,
+                date: entry.createdAt,
+                suffix: "floorplan",
+                ext: "png"
+            )
+            try data.write(to: url, options: .atomic)
             perEntryImageURLs[entry.sessionId] = url
             appError = nil
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record(
+                "Image download cancelled for session \(entry.sessionId)",
+                category: .info
+            )
         } catch {
             appError = AppError(site: .historyImageDownload, underlying: error)
         }
@@ -344,12 +786,34 @@ struct ScanHistoryView: View {
 
     @MainActor
     private func downloadPDF(for entry: ScanHistoryEntry) async {
+        guard !entry.accessToken.isEmpty else {
+            appError = AppError(site: .historyTokenMissing, underlying: nil)
+            return
+        }
         do {
-            let data = try await client.fetchFloorPlanPDF(sessionId: entry.sessionId, accessToken: entry.accessToken)
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(entry.sessionId).pdf")
-            try data.write(to: url)
+            let data = try await client.fetchFloorPlanPDF(
+                sessionId: entry.sessionId,
+                accessToken: entry.accessToken,
+                unit: currentExportUnit,
+                label: entry.nickname
+            )
+            let url = try ExportNaming.url(
+                sessionId: entry.sessionId,
+                property: entry.propertyId,
+                unit: entry.unitId,
+                room: nil,
+                date: entry.createdAt,
+                suffix: "floorplan",
+                ext: "pdf"
+            )
+            try data.write(to: url, options: .atomic)
             perEntryPDFURLs[entry.sessionId] = url
             appError = nil
+        } catch is CancellationError {
+            DiagnosticsLog.shared.record(
+                "PDF download cancelled for session \(entry.sessionId)",
+                category: .info
+            )
         } catch {
             appError = AppError(site: .historyPDFDownload, underlying: error)
         }
@@ -357,46 +821,458 @@ struct ScanHistoryView: View {
 
     @MainActor
     private func downloadAllImages() async {
+        guard !isBulkFetchingImages else { return }
         isBulkFetchingImages = true
-        defer { isBulkFetchingImages = false }
+        bulkImageProgress = (0, entries.count)
+        defer {
+            isBulkFetchingImages = false
+            bulkImageProgress = nil
+        }
+
         var urls: [URL] = []
         var skipped = 0
-        for entry in entries {
+        for (index, entry) in entries.enumerated() {
             do {
-                let data = try await client.fetchFloorPlanImage(sessionId: entry.sessionId, accessToken: entry.accessToken)
-                let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(entry.sessionId).png")
-                try data.write(to: url)
+                let data = try await client.fetchFloorPlanImage(
+                    sessionId: entry.sessionId,
+                    accessToken: entry.accessToken,
+                    unit: currentExportUnit,
+                    label: entry.nickname
+                )
+                let url = try ExportNaming.url(
+                    sessionId: entry.sessionId,
+                    property: entry.propertyId,
+                    unit: entry.unitId,
+                    room: nil,
+                    date: entry.createdAt,
+                    suffix: "floorplan",
+                    ext: "png"
+                )
+                try data.write(to: url, options: .atomic)
                 urls.append(url)
+            } catch is CancellationError {
+                DiagnosticsLog.shared.record(
+                    "Bulk image download cancelled after \(urls.count) image(s)",
+                    category: .info
+                )
+                return
             } catch {
-                // A session with no capture yet has no image to export —
-                // skip it rather than failing the whole batch over one
-                // not-yet-captured session.
                 skipped += 1
+                DiagnosticsLog.shared.record(
+                    "Bulk image download skipped session \(entry.sessionId): \(error.localizedDescription)",
+                    category: .error
+                )
             }
+            bulkImageProgress = (index + 1, entries.count)
         }
         bulkImageURLs = urls
-        errorMessage = urls.isEmpty ? "No floor plan images were available to download." :
-            (skipped > 0 ? "Downloaded \(urls.count) image(s); skipped \(skipped) session(s) with no capture yet." : nil)
+        if urls.isEmpty {
+            errorMessage = "No floor plan images were available to download."
+        } else if skipped > 0 {
+            errorMessage = "Downloaded \(urls.count) image(s); skipped \(skipped) session(s)."
+        } else {
+            errorMessage = nil
+        }
     }
 
     @MainActor
     private func downloadAllPDFs() async {
+        guard !isBulkFetchingPDFs else { return }
         isBulkFetchingPDFs = true
-        defer { isBulkFetchingPDFs = false }
+        bulkPDFProgress = (0, entries.count)
+        defer {
+            isBulkFetchingPDFs = false
+            bulkPDFProgress = nil
+        }
+
         var urls: [URL] = []
         var skipped = 0
-        for entry in entries {
+        for (index, entry) in entries.enumerated() {
             do {
-                let data = try await client.fetchFloorPlanPDF(sessionId: entry.sessionId, accessToken: entry.accessToken)
-                let url = FileManager.default.temporaryDirectory.appendingPathComponent("floorplan-\(entry.sessionId).pdf")
-                try data.write(to: url)
+                let data = try await client.fetchFloorPlanPDF(
+                    sessionId: entry.sessionId,
+                    accessToken: entry.accessToken,
+                    unit: currentExportUnit,
+                    label: entry.nickname
+                )
+                let url = try ExportNaming.url(
+                    sessionId: entry.sessionId,
+                    property: entry.propertyId,
+                    unit: entry.unitId,
+                    room: nil,
+                    date: entry.createdAt,
+                    suffix: "floorplan",
+                    ext: "pdf"
+                )
+                try data.write(to: url, options: .atomic)
                 urls.append(url)
+            } catch is CancellationError {
+                DiagnosticsLog.shared.record(
+                    "Bulk PDF download cancelled after \(urls.count) PDF(s)",
+                    category: .info
+                )
+                return
             } catch {
                 skipped += 1
+                DiagnosticsLog.shared.record(
+                    "Bulk PDF download skipped session \(entry.sessionId): \(error.localizedDescription)",
+                    category: .error
+                )
             }
+            bulkPDFProgress = (index + 1, entries.count)
         }
         bulkPDFURLs = urls
-        errorMessage = urls.isEmpty ? "No floor plan PDFs were available to download." :
-            (skipped > 0 ? "Downloaded \(urls.count) PDF(s); skipped \(skipped) session(s) with no capture yet." : nil)
+        if urls.isEmpty {
+            errorMessage = "No floor plan PDFs were available to download."
+        } else if skipped > 0 {
+            errorMessage = "Downloaded \(urls.count) PDF(s); skipped \(skipped) session(s)."
+        } else {
+            errorMessage = nil
+        }
+    }
+
+    private func cleanUpTempFiles() {
+        let all = Array(perEntryImageURLs.values)
+            + Array(perEntryPDFURLs.values)
+            + bulkImageURLs
+            + bulkPDFURLs
+        for url in all {
+            try? FileManager.default.removeItem(at: url)
+        }
+        perEntryImageURLs = [:]
+        perEntryPDFURLs = [:]
+        bulkImageURLs = []
+        bulkPDFURLs = []
+    }
+
+    private var currentExportUnit: MeasurementUnit {
+        MeasurementUnit(rawValue: UserDefaults.standard.string(forKey: "scanExportMeasurementUnit") ?? "")
+            ?? .metric
+    }
+}
+
+enum HistoryViewMode: String, CaseIterable, Identifiable {
+    case scans
+    case homes
+    var id: String { rawValue }
+}
+
+enum HistoryFilter: String, CaseIterable, Identifiable {
+    case all
+    case listing
+    case checkIn
+    case checkOut
+    case renovation
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .all: return "All"
+        case .listing: return "Listing"
+        case .checkIn: return "Check-in"
+        case .checkOut: return "Check-out"
+        case .renovation: return "Renovation"
+        }
+    }
+
+    func matches(_ purpose: ScanPurpose) -> Bool {
+        switch self {
+        case .all: return true
+        case .listing: return purpose == .listing
+        case .checkIn: return purpose == .checkIn
+        case .checkOut: return purpose == .checkOut
+        case .renovation: return purpose == .renovation
+        }
+    }
+}
+
+enum HistoryCardAction {
+    case openReport
+    case rename
+    case scanAnotherRoom
+    case attachPhoto
+    case shareImage
+    case sharePDF
+    case shareCode
+    case revokeShares
+    case accessLog
+    case forget
+    case deleteFromServer
+}
+
+private struct HistoryCard: View {
+    let entry: ScanHistoryEntry
+    let onTap: () -> Void
+    let onAction: (HistoryCardAction) -> Void
+
+    private static func metaFormatter() -> DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy · h:mm a"
+        formatter.locale = AppLanguageSettings.effectiveLocale
+        return formatter
+    }
+
+    private var displayName: String {
+        if let nickname = entry.nickname, !nickname.isEmpty {
+            return nickname
+        }
+        return "\(entry.propertyId) — \(entry.unitId)"
+    }
+
+    private var metaLine: String {
+        if let floor = entry.floor, !floor.isEmpty {
+            return "\(floor) · \(entry.purpose.displayName) · \(Self.metaFormatter().string(from: entry.lastActivityAt))"
+        }
+        return "\(entry.purpose.displayName) · \(Self.metaFormatter().string(from: entry.lastActivityAt))"
+    }
+
+    private var pills: ([String], Int) {
+        RoomSummary.pills(for: entry.cachedRoomSummary)
+    }
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(displayName)
+                            .font(.system(size: 16, weight: .bold))
+                            .tracking(-0.3)
+                            .foregroundStyle(VuuroColor.textPrimary)
+                            .multilineTextAlignment(.leading)
+                        Text(metaLine)
+                            .font(.system(size: 13))
+                            .foregroundStyle(VuuroColor.textSecondary)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    VuuroBadge("Ready", style: .good)
+                }
+
+                let parsed = pills
+                if !parsed.0.isEmpty || parsed.1 > 0 {
+                    Rectangle()
+                        .fill(VuuroColor.borderSoft)
+                        .frame(height: 1)
+                        .padding(.top, 12)
+
+                    HStack(spacing: 6) {
+                        ForEach(parsed.0, id: \.self) { pill in
+                            Text(pill)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(VuuroColor.neutralText)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(VuuroColor.bgInset, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                        if parsed.1 > 0 {
+                            Text("+\(parsed.1)")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(VuuroColor.textSecondary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(VuuroColor.bgInset, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                    }
+                    .padding(.top, 12)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(VuuroColor.bgCard)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .shadow(color: VuuroMetrics.cardShadowTightColor, radius: VuuroMetrics.cardShadowTightRadius, x: 0, y: 1)
+            .shadow(color: VuuroMetrics.cardShadowColor, radius: VuuroMetrics.cardShadowRadius, x: 0, y: 4)
+        }
+        .accessibilityIdentifier("history.card.\(entry.sessionId)")
+        .buttonStyle(.plain)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 10)
+        .contextMenu {
+            Button {
+                onAction(.rename)
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            .accessibilityIdentifier("history.card.rename")
+            Button {
+                onAction(.scanAnotherRoom)
+            } label: {
+                Label("Scan another room", systemImage: "plus.viewfinder")
+            }
+            .accessibilityIdentifier("history.card.scanAnotherRoom")
+            Button {
+                onAction(.attachPhoto)
+            } label: {
+                Label("Add photo or note", systemImage: "camera")
+            }
+            .accessibilityIdentifier("history.card.attachPhoto")
+            Divider()
+            Button {
+                onAction(.shareImage)
+            } label: {
+                Label("Share image", systemImage: "square.and.arrow.up")
+            }
+            .accessibilityIdentifier("history.card.shareImage")
+            Button {
+                onAction(.sharePDF)
+            } label: {
+                Label("Share PDF", systemImage: "doc")
+            }
+            .accessibilityIdentifier("history.card.sharePDF")
+            Button {
+                onAction(.shareCode)
+            } label: {
+                Label("Share access (view and continue)", systemImage: "person.badge.plus")
+            }
+            .accessibilityIdentifier("history.card.shareAccess")
+            Button {
+                onAction(.revokeShares)
+            } label: {
+                Label("Revoke previous shares", systemImage: "person.badge.minus")
+            }
+            .accessibilityIdentifier("history.card.revokeShares")
+            Divider()
+            Button {
+                onAction(.forget)
+            } label: {
+                Label("Forget (device only)", systemImage: "eye.slash")
+            }
+            .accessibilityIdentifier("history.card.forget")
+            Button(role: .destructive) {
+                onAction(.deleteFromServer)
+            } label: {
+                Label("Delete from server", systemImage: "trash")
+            }
+            .accessibilityIdentifier("history.card.deleteFromServer")
+        }
+    }
+}
+
+private struct ImportScanView: View {
+    let onCancel: () -> Void
+    let onImported: (ScanHistoryEntry) -> Void
+
+    @State private var code = ""
+    @State private var error: String?
+    @State private var pendingEntry: ScanHistoryEntry?
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VuuroNavBar(
+                title: "Add shared scan",
+                leading: {
+                    VuuroNavButton("Cancel", action: onCancel)
+                        .accessibilityIdentifier("importScan.cancel")
+                },
+                trailing: { VuuroNavSpacer() }
+            )
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    VuuroHero(
+                        greeting: nil,
+                        title: "Paste a share code",
+                        subtitle: "Ask the other person for the code in their History. Then you can view, export and continue the scan."
+                    )
+
+                    ZStack(alignment: .topLeading) {
+                        TextEditor(text: $code)
+                            .accessibilityIdentifier("importScan.code")
+                            .font(.system(size: 12, design: .monospaced))
+                            .frame(minHeight: 140)
+                            .padding(12)
+                            .scrollContentBackground(.hidden)
+                            .focused($isFocused)
+                        if code.isEmpty {
+                            Text("VUURO-SCAN-1:...")
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(VuuroColor.textTertiary)
+                                .padding(.top, 20)
+                                .padding(.leading, 17)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .background(VuuroColor.bgCard)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .shadow(color: VuuroMetrics.cardShadowTightColor, radius: VuuroMetrics.cardShadowTightRadius, x: 0, y: 1)
+                    .shadow(color: VuuroMetrics.cardShadowColor, radius: VuuroMetrics.cardShadowRadius, x: 0, y: 4)
+                    .padding(.horizontal, 20)
+
+                    PasteButton(payloadType: String.self) { strings in
+                        guard let pasted = strings.first else { return }
+                        code = pasted
+                        error = nil
+                    }
+                    .accessibilityIdentifier("importScan.paste")
+                    .buttonBorderShape(.capsule)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+
+                    if let error {
+                        Text(error)
+                            .font(.system(size: 12))
+                            .foregroundStyle(VuuroColor.danger)
+                            .padding(.horizontal, 20)
+                            .padding(.top, 8)
+                    }
+
+                    Button("Add this scan") {
+                        importScan()
+                    }
+                    .accessibilityIdentifier("importScan.add")
+                    .buttonStyle(.vuuroPrimary)
+                    .disabled(trimmedCode.isEmpty)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+
+                    Spacer().frame(height: 32)
+                }
+            }
+            .scrollIndicators(.hidden)
+        }
+        .background(VuuroColor.bgApp)
+        .toolbar(.hidden, for: .navigationBar)
+        .onAppear { isFocused = true }
+        .alert("Add this scan?", isPresented: pendingEntryBinding, presenting: pendingEntry) { entry in
+            Button("Add") {
+                pendingEntry = nil
+                onImported(entry)
+            }
+            .accessibilityIdentifier("importScan.confirm")
+            Button("Cancel", role: .cancel) { pendingEntry = nil }
+        } message: { entry in
+            Text(verbatim: importSummary(for: entry))
+        }
+    }
+
+    private var pendingEntryBinding: Binding<Bool> {
+        Binding(
+            get: { pendingEntry != nil },
+            set: { if !$0 { pendingEntry = nil } }
+        )
+    }
+
+    private func importSummary(for entry: ScanHistoryEntry) -> String {
+        let place = [entry.propertyId, entry.unitId].filter { !$0.isEmpty }.joined(separator: " / ")
+        let date = entry.lastActivityAt.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted).locale(AppLanguageSettings.effectiveLocale))
+        return "\(place)\n\(vuuroLocalized(entry.purpose.displayName)) · \(date)"
+    }
+
+    private var trimmedCode: String {
+        code.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func importScan() {
+        guard let decoded = ScanShareCode.decode(code) else {
+            error = "That code doesn't look right — check that you copied the whole thing."
+            return
+        }
+        error = nil
+        isFocused = false
+        pendingEntry = decoded
     }
 }

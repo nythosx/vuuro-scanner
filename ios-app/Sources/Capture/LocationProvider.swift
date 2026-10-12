@@ -1,9 +1,3 @@
-//
-//  LocationProvider.swift
-//  VuuroScan
-//
-//  WRITTEN, NOT COMPILED OR RUN — see ../Models/ScanIdentity.swift header.
-//
 
 import CoreLocation
 
@@ -11,9 +5,6 @@ struct CaptureLocation: Codable {
     let lat: Double
     let lon: Double
     let accuracyM: Double
-    // Optional: the server allows capture_location.captured_at to be null
-    // (floorplan.schema.json), so decoding a fetched session must tolerate
-    // it even though a freshly-captured CaptureLocation always sets it.
     let capturedAt: String?
 
     enum CodingKeys: String, CodingKey {
@@ -27,6 +18,9 @@ struct CaptureLocation: Codable {
 final class LocationProvider: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     private var continuation: CheckedContinuation<CaptureLocation?, Never>?
+    private var timeoutTask: Task<Void, Never>?
+    private var callToken = 0
+    private var pendingLocationRequest = false
 
     override init() {
         super.init()
@@ -40,16 +34,37 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
         if status == .denied || status == .restricted {
             return nil
         }
-        if status == .notDetermined {
-            manager.requestWhenInUseAuthorization()
-        }
 
+        callToken += 1
+        let token = callToken
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
-            manager.requestLocation()
-            Task {
+            if status == .notDetermined {
+                pendingLocationRequest = true
+                manager.requestWhenInUseAuthorization()
+            } else {
+                manager.requestLocation()
+            }
+            timeoutTask = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 8_000_000_000)
+                guard let self, token == self.callToken else { return }
                 self.finish(nil)
+            }
+        }
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        Task { @MainActor in
+            guard self.pendingLocationRequest else { return }
+            switch manager.authorizationStatus {
+            case .authorizedWhenInUse, .authorizedAlways:
+                self.pendingLocationRequest = false
+                manager.requestLocation()
+            case .denied, .restricted:
+                self.pendingLocationRequest = false
+                self.finish(nil)
+            default:
+                break
             }
         }
     }
@@ -74,6 +89,9 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
     }
 
     private func finish(_ result: CaptureLocation?) {
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        pendingLocationRequest = false
         guard let continuation else { return }
         self.continuation = nil
         continuation.resume(returning: result)

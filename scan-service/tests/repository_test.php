@@ -2,18 +2,6 @@
 
 declare(strict_types=1);
 
-/**
- * Fast in-process unit tests for ScanSessionRepository — specifically the
- * enterprise-hardening logic (token expiry/rotation, idempotency, rate-limit
- * counting) added on top of the original Phase 1-3 repository. Same spirit
- * as tests/adapter_test.php: quick dev-loop feedback against an in-memory
- * SQLite DB, NOT the independent net (net/verify_enterprise_hardening.php
- * owns that — HTTP only, no import of this class). Both must be green
- * before a merge; neither substitutes for the other.
- *
- * Usage: php tests/repository_test.php
- */
-
 require __DIR__ . '/../src/autoload.php';
 
 use VuuroScan\ScanSessionRepository;
@@ -39,8 +27,6 @@ function r_approx(float $a, float $b, float $tol = 2.0): bool
     return abs($a - $b) <= $tol;
 }
 
-// Fresh in-memory DB per run — fast, isolated, no leftover state between runs
-// (unlike the shared local scan_service.sqlite the net scripts talk to).
 $db = Database::connect(':memory:');
 $repo = new ScanSessionRepository($db);
 
@@ -77,12 +63,47 @@ r_check(
     r_approx((float) strtotime($rotated['expires_at']), (float) (time() + 7200), 5.0)
 );
 
-// Adjacent case: the OLD token must no longer authorize this session — this
-// is the entire point of rotation. tokenMatches() is what public/index.php
-// actually calls, so exercise that, not just "the column changed."
 $refetched = $repo->find($rotSession['id']);
 r_check('the OLD token no longer matches after rotation', !$repo->tokenMatches($refetched, $oldToken));
 r_check('the NEW token matches after rotation', $repo->tokenMatches($refetched, $rotated['access_token']));
+echo "\n";
+
+echo "== Access tokens are stored only as a sha256 hash ==\n";
+$hashSession = fresh_session($repo);
+$hashRow = $db->query('SELECT access_token, access_token_hash FROM scan_sessions WHERE id = ' . $db->quote($hashSession['id']))->fetch(PDO::FETCH_ASSOC);
+r_check('the plaintext access_token column is blank after create()', $hashRow['access_token'] === '', 'got: ' . $hashRow['access_token']);
+r_check('access_token_hash is sha256 of the token returned to the caller', hash_equals($hashRow['access_token_hash'], hash('sha256', $hashSession['access_token'])));
+r_check('create() does not return the stored hash to the caller', !array_key_exists('access_token_hash', $hashSession));
+$rotRow = $db->query('SELECT access_token, access_token_hash FROM scan_sessions WHERE id = ' . $db->quote($rotSession['id']))->fetch(PDO::FETCH_ASSOC);
+r_check('the plaintext column stays blank after rotateToken()', $rotRow['access_token'] === '');
+r_check('rotateToken() stores the hash of the NEW token', hash_equals($rotRow['access_token_hash'], hash('sha256', $rotated['access_token'])));
+r_check('the stored hash itself is not accepted as a token', !$repo->tokenMatches($repo->find($hashSession['id']), $hashRow['access_token_hash']));
+r_check('an empty presented token is rejected', !$repo->tokenMatches($repo->find($hashSession['id']), ''));
+r_check('a null presented token is rejected', !$repo->tokenMatches($repo->find($hashSession['id']), null));
+echo "\n";
+
+echo "== Legacy plaintext tokens are hashed in place on connect ==\n";
+$legacyPath = tempnam(sys_get_temp_dir(), 'vuuro-legacy-');
+$legacyDb = Database::connect($legacyPath);
+$legacyToken = '11111111-2222-3333-4444-555555555555';
+$legacyDb->exec("INSERT INTO scan_sessions (id, property_id, unit_id, organisation_id, purpose, created_at, access_token, access_token_hash) VALUES ('legacy-1', 'p', 'u', 'o', 'listing', '2026-01-01T00:00:00+00:00', '$legacyToken', '')");
+$legacyDb = null;
+$migratedDb = Database::connect($legacyPath);
+$migratedRow = $migratedDb->query("SELECT access_token, access_token_hash FROM scan_sessions WHERE id = 'legacy-1'")->fetch(PDO::FETCH_ASSOC);
+r_check('the legacy plaintext column is blanked on the next connect', $migratedRow['access_token'] === '');
+r_check('the legacy token is hashed with sha256', hash_equals($migratedRow['access_token_hash'], hash('sha256', $legacyToken)));
+$migratedRepo = new ScanSessionRepository($migratedDb);
+r_check('the legacy token still authenticates after migration', $migratedRepo->tokenMatches($migratedRepo->find('legacy-1'), $legacyToken));
+Database::connect($legacyPath);
+$afterSecondConnect = $migratedDb->query("SELECT access_token_hash FROM scan_sessions WHERE id = 'legacy-1'")->fetchColumn();
+r_check('a second connect does not re-hash an already-migrated row', $afterSecondConnect === hash('sha256', $legacyToken));
+$migratedDb = null;
+$migratedRepo = null;
+foreach ([$legacyPath, "$legacyPath-wal", "$legacyPath-shm"] as $leftover) {
+    if (is_file($leftover)) {
+        @unlink($leftover);
+    }
+}
 echo "\n";
 
 echo "== isTokenExpired() ==\n";
@@ -92,23 +113,12 @@ $noExpirySession = ['expires_at' => ''];
 
 r_check('a future expires_at is NOT expired', $repo->isTokenExpired($futureSession) === false);
 r_check('a past expires_at IS expired', $repo->isTokenExpired($pastSession) === true);
-// Adjacent case, not the happy path: a session created before this column
-// existed has expires_at = '' (Database.php's ALTER TABLE migration default).
-// That must read as "no expiry recorded," never as "already expired" — the
-// opposite bug (silently locking out every pre-existing session) would be
-// far worse than the one this feature closes.
 r_check(
     'an empty expires_at (pre-migration session) reads as NOT expired, not as expired',
     $repo->isTokenExpired($noExpirySession) === false
 );
 echo "\n";
 
-// Closes the permanent-lockout gap: rotate-token now accepts an expired
-// token within ScanSessionRepository::ROTATE_GRACE_PERIOD_SECONDS of the
-// original expiry. isBeyondRotateGracePeriod() is the hard cutoff even
-// rotate-token cannot cross — tested directly against synthetic sessions,
-// same technique as isTokenExpired() above, so this doesn't depend on
-// actually waiting out a real TTL.
 echo "== isBeyondRotateGracePeriod() ==\n";
 $grace = ScanSessionRepository::ROTATE_GRACE_PERIOD_SECONDS;
 $justExpiredSession = ['expires_at' => gmdate('c', time() - 1)];
@@ -119,20 +129,32 @@ $notYetExpiredSession = ['expires_at' => gmdate('c', time() + 3600)];
 
 r_check('a token that JUST expired is NOT beyond the grace period', $repo->isBeyondRotateGracePeriod($justExpiredSession) === false);
 r_check('a token expired well within the grace window is NOT beyond it', $repo->isBeyondRotateGracePeriod($withinGraceSession) === false);
-// Adjacent case: the boundary itself, not just "clearly inside" (above) and
-// "clearly outside" (below) — an off-by-one here would only show up exactly
-// at the edge, same reasoning as net/verify_enterprise_hardening.php's TTL
-// boundary checks.
 r_check('a token expired just PAST the grace window IS beyond it', $repo->isBeyondRotateGracePeriod($exactlyAtGraceEdgeSession) === true);
 r_check('a token expired well past the grace window IS beyond it', $repo->isBeyondRotateGracePeriod($wayBeyondGraceSession) === true);
-// Adjacent case, the opposite direction: a token that hasn't even expired
-// yet must not be reported as "beyond" any grace period — this function
-// only ever widens rotate-token's acceptance window, never narrows anything
-// that was already valid.
 r_check('a token that has not expired at all is NOT beyond the grace period', $repo->isBeyondRotateGracePeriod($notYetExpiredSession) === false);
-// Same "no expiry recorded" case isTokenExpired() protects — must not
-// suddenly become "beyond grace" for a pre-migration session.
 r_check('an empty expires_at reads as NOT beyond the grace period', $repo->isBeyondRotateGracePeriod($noExpirySession) === false);
+echo "\n";
+
+echo "== findEarlyPurgeCandidates() ==\n";
+$oldCheckoutSession = $repo->create('prop-purge-test', 'unit-purge-test', 'org-purge-test', 'check_out', false, false);
+$db->prepare("UPDATE scan_sessions SET created_at = :created_at WHERE id = :id")->execute([
+    'created_at' => gmdate('c', time() - 40 * 86400),
+    'id' => $oldCheckoutSession['id'],
+]);
+$recentCheckoutSession = $repo->create('prop-purge-test', 'unit-purge-test', 'org-purge-test', 'check_out', false, false);
+$oldListingSession = $repo->create('prop-purge-test', 'unit-purge-test', 'org-purge-test', 'listing', false, false);
+$db->prepare("UPDATE scan_sessions SET created_at = :created_at WHERE id = :id")->execute([
+    'created_at' => gmdate('c', time() - 40 * 86400),
+    'id' => $oldListingSession['id'],
+]);
+
+$checkoutCandidates = $repo->findEarlyPurgeCandidates('check_out', 30);
+r_check('a check_out session older than the retention window is a purge candidate', in_array($oldCheckoutSession['id'], $checkoutCandidates, true));
+r_check('a check_out session within the retention window is NOT a purge candidate', !in_array($recentCheckoutSession['id'], $checkoutCandidates, true));
+r_check('an old session of a DIFFERENT purpose is not returned when querying check_out', !in_array($oldListingSession['id'], $checkoutCandidates, true));
+
+$listingCandidates = $repo->findEarlyPurgeCandidates('listing', 30);
+r_check('an old listing session is a purge candidate when queried under its own purpose', in_array($oldListingSession['id'], $listingCandidates, true));
 echo "\n";
 
 echo "== Idempotency key storage ==\n";
@@ -154,27 +176,16 @@ $repo->completeIdempotencyKey($idemSession['id'], 'key-a', ['rooms' => ['room-1'
 $stored = $repo->findIdempotentResponse($idemSession['id'], 'key-a');
 r_check('a completed claim is returned verbatim for the same (session, key)', $stored === ['rooms' => ['room-1']]);
 
-// Adjacent case: a DIFFERENT key on the SAME session must not accidentally
-// match — this is the exact bug that would make every retry (with a fresh
-// key) look like a duplicate of the first capture.
 r_check(
     'a different idempotency key on the same session is NOT treated as a match',
     $repo->findIdempotentResponse($idemSession['id'], 'key-b') === null
 );
 
-// Adjacent case, the other direction: the SAME key on a DIFFERENT session
-// must not leak the first session's stored response — this is the exact bug
-// that would let one caller's cached capture bleed into an unrelated session
-// that happens to reuse an idempotency key.
 r_check(
     'the same idempotency key on a DIFFERENT session is NOT treated as a match',
     $repo->findIdempotentResponse($otherSession['id'], 'key-a') === null
 );
 
-// Claiming an already-completed key again must not throw or overwrite —
-// mirrors ON CONFLICT DO NOTHING in the SQL; the caller is expected to check
-// findIdempotentResponse() first (the capture route does), so reaching this
-// again means a very tight race, and losing the claim must be silent + safe.
 r_check('re-claiming an already-completed key returns false, not true', $repo->claimIdempotencyKey($idemSession['id'], 'key-a', 'fp-a') === false);
 $stillOriginal = $repo->findIdempotentResponse($idemSession['id'], 'key-a');
 r_check(
@@ -183,11 +194,6 @@ r_check(
 );
 echo "\n";
 
-// Adjacent case to the whole feature: a key REUSED with a genuinely
-// different request must be distinguishable from a true retry, or the
-// second, different capture silently vanishes behind the first one's cached
-// response. idempotencyKeyFingerprint() is what public/index.php checks
-// before ever trusting a cache hit or a claim.
 echo "== Idempotency fingerprint mismatch detection ==\n";
 r_check(
     'fingerprint for a never-seen key is null (caller may claim freely)',
@@ -206,15 +212,6 @@ r_check(
 );
 echo "\n";
 
-// Found by deliberately probing the adjacent case to the sequential-retry
-// test above: the OLD implementation (findIdempotentResponse, then later
-// recordIdempotentResponse — no claim step) let two concurrent requests for
-// the SAME key both see "no cached response yet" and both proceed to
-// capture, double-appending the room. This is exactly the scenario
-// public/index.php's capture route now guards against with
-// claimIdempotencyKey(); this test proves the atomic primitive itself is
-// correct, deterministically — no real thread timing needed, since a
-// UNIQUE-constrained INSERT resolves the "who goes first" question for us.
 echo "== The race: only one concurrent claim for the same key can win ==\n";
 $raceSession = fresh_session($repo);
 $firstClaim = $repo->claimIdempotencyKey($raceSession['id'], 'race-key', 'fp-race');
@@ -233,33 +230,25 @@ $repo->recordEvent('bucket-a');
 $repo->recordEvent('bucket-a');
 r_check('two recorded events count as 2 within the window', $repo->countRecentEvents('bucket-a', 600) === 2);
 
-// Adjacent case: a different bucket must have its own independent count —
-// the exact bug that would make one caller's IP share a budget with an
-// unrelated caller (or one route's limit bleed into another's).
 r_check('a different, unused bucket is unaffected by bucket-a\'s events', $repo->countRecentEvents('bucket-b', 600) === 0);
 
-// Adjacent case, the one a naive "just COUNT(*) for this bucket" implementation
-// would get wrong: an event recorded outside the window must not count.
-// Inserted directly since recordEvent() always stamps "now" — this is
-// testing the window filter itself, not the insert path.
+r_check(
+    'recordAndCountRecentEvents() records then returns the up-to-date count atomically',
+    $repo->recordAndCountRecentEvents('bucket-a', 600) === 3
+);
+r_check('recordAndCountRecentEvents() actually persisted the event', $repo->countRecentEvents('bucket-a', 600) === 3);
+
 $db->exec("INSERT INTO rate_limit_events (bucket, occurred_at) VALUES ('bucket-a', '" . gmdate('c', time() - 3600) . "')");
 r_check(
     'an event from an hour ago does NOT count within a 10-minute (600s) window',
-    $repo->countRecentEvents('bucket-a', 600) === 2 // still 2, the old event doesn't add a 3rd
+    $repo->countRecentEvents('bucket-a', 600) === 3
 );
 r_check(
     'the same old event DOES count within a window wide enough to include it',
-    $repo->countRecentEvents('bucket-a', 7200) === 3
+    $repo->countRecentEvents('bucket-a', 7200) === 4
 );
 echo "\n";
 
-// ACL-surface scan finding: recordEvent() inserts one row per call, on every
-// single rate-limit check across the service's lifetime, and nothing ever
-// deleted old ones — the table grows forever even though no row outside its
-// own bucket's window is ever read again. Fixed with a deterministic prune
-// (every 100th insert, keyed off SQLite's AUTOINCREMENT id, which is
-// monotonic and never reused even across deletes) rather than a
-// probabilistic one, so this test isn't itself flaky.
 echo "== Rate-limit events are pruned periodically, without disturbing live windows ==\n";
 $db->exec("INSERT INTO rate_limit_events (bucket, occurred_at) VALUES ('prune-test-old', '" . gmdate('c', time() - ScanSessionRepository::RATE_LIMIT_EVENT_RETENTION_SECONDS - 60) . "')");
 $db->exec("INSERT INTO rate_limit_events (bucket, occurred_at) VALUES ('prune-test-recent', '" . gmdate('c') . "')");
@@ -282,14 +271,10 @@ r_check('a recent row is NOT pruned', (int) $recentStmt->fetchColumn() === 1);
 
 r_check(
     'pruning older buckets does not disturb an unrelated live window still being counted (bucket-a)',
-    $repo->countRecentEvents('bucket-a', 600) === 2
+    $repo->countRecentEvents('bucket-a', 600) === 3
 );
 echo "\n";
 
-// Found by deliberately probing past the existing "must have a captured
-// FloorPlan first" (409/RuntimeException) guard: nothing checked that a
-// caller-supplied room_id, once a FloorPlan DOES exist, actually names one
-// of ITS rooms. A typo'd or unrelated room_id used to be stored verbatim.
 echo "== room_id validation on appendPhoto/appendNote ==\n";
 $roomIdSession = fresh_session($repo);
 $repo->appendCapture($roomIdSession['id'], [
@@ -327,8 +312,121 @@ $withNullRoomId = $repo->appendNote($roomIdSession['id'], ['note_id' => 'n3', 't
 r_check('appendNote() still accepts room_id: null (session-wide note) — this fix must not make room_id required', count($withNullRoomId['notes']) === 2);
 echo "\n";
 
+echo "== updateNote(): in-place edit for the per-room auto-saving note field ==\n";
+$afterUpdate = $repo->updateNote($roomIdSession['id'], 'n2', 'edited text');
+$updatedNote = null;
+foreach ($afterUpdate['notes'] as $note) {
+    if ($note['note_id'] === 'n2') {
+        $updatedNote = $note;
+    }
+}
+r_check('updateNote() changes the matching note\'s text', $updatedNote !== null && $updatedNote['text'] === 'edited text');
+r_check('updateNote() does not touch other notes', count($afterUpdate['notes']) === 2);
+r_check('updateNote() stamps updated_at', isset($updatedNote['updated_at']));
+
+try {
+    $repo->updateNote($roomIdSession['id'], 'note-does-not-exist', 'x');
+    r_check('updateNote() rejects an unknown note_id', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    r_check('updateNote() rejects an unknown note_id', true);
+}
+echo "\n";
+
+echo "== updateNote(): #21 inspection tags ride along with the same edit endpoint ==\n";
+$withTagUpdate = $repo->updateNote($roomIdSession['id'], 'n2', 'edited text again', ['damage', 'safety_issue']);
+$taggedNote = null;
+foreach ($withTagUpdate['notes'] as $note) {
+    if ($note['note_id'] === 'n2') {
+        $taggedNote = $note;
+    }
+}
+r_check('updateNote() with tags sets them on the matching note', $taggedNote !== null && $taggedNote['tags'] === ['damage', 'safety_issue']);
+
+$withoutTagUpdate = $repo->updateNote($roomIdSession['id'], 'n2', 'edited text a third time');
+$untouchedTagsNote = null;
+foreach ($withoutTagUpdate['notes'] as $note) {
+    if ($note['note_id'] === 'n2') {
+        $untouchedTagsNote = $note;
+    }
+}
+r_check('updateNote() called with no tags argument leaves the existing tags untouched', $untouchedTagsNote !== null && $untouchedTagsNote['tags'] === ['damage', 'safety_issue']);
+echo "\n";
+
+echo "== updateRoomType(): post-capture room-type correction ==\n";
+$afterCorrection = $repo->updateRoomType($roomIdSession['id'], 'room-real-1', 'kitchen');
+r_check('updateRoomType() sets confirmed on the matching room', $afterCorrection['rooms'][0]['room_type']['confirmed'] === 'kitchen');
+
+$afterClear = $repo->updateRoomType($roomIdSession['id'], 'room-real-1', null);
+r_check('updateRoomType() can clear a previously-set confirmation back to null', $afterClear['rooms'][0]['room_type']['confirmed'] === null);
+
+try {
+    $repo->updateRoomType($roomIdSession['id'], 'room-does-not-exist', 'bedroom');
+    r_check('updateRoomType() rejects a room_id that matches no real room', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    r_check('updateRoomType() rejects a room_id that matches no real room', true);
+}
+
+$noFloorPlanSession = fresh_session($repo);
+try {
+    $repo->updateRoomType($noFloorPlanSession['id'], 'any-room', 'bedroom');
+    r_check('updateRoomType() rejects a session with no captured FloorPlan yet', false, 'no exception was thrown');
+} catch (\RuntimeException) {
+    r_check('updateRoomType() rejects a session with no captured FloorPlan yet', true);
+}
+
+$noGuessSession = fresh_session($repo);
+$repo->appendCapture($noGuessSession['id'], [
+    'scan_session_id' => $noGuessSession['id'],
+    'property_id' => 'p', 'unit_id' => 'u', 'organisation_id' => 'o',
+    'capture_provider' => 'test', 'captured_at' => gmdate('c'),
+    'measurement_basis' => 'indicative_nen2580_inspired', 'purpose' => 'listing',
+    'rooms' => [[
+        'room_id' => 'room-no-guess', 'label' => 'Room 1', 'floor_area_m2' => 10.0,
+        'perimeter_m' => 12.0, 'bounding_dimensions_m' => ['width_m' => 3, 'length_m' => 3],
+        'confidence' => 'high', 'outline_m' => [[0, 0], [3, 0], [3, 3], [0, 3]],
+        'coverage' => ['score' => 90, 'confidence_counts' => ['high' => 1, 'medium' => 0, 'low' => 0], 'usable' => true, 'message' => null],
+    ]],
+    'photos' => [], 'notes' => [],
+]);
+$afterNoGuessConfirm = $repo->updateRoomType($noGuessSession['id'], 'room-no-guess', 'kitchen');
+r_check(
+    'updateRoomType() on a room with no prior guess does not fabricate guess/guess_source as JSON null',
+    !array_key_exists('guess', $afterNoGuessConfirm['rooms'][0]['room_type'])
+        && !array_key_exists('guess_source', $afterNoGuessConfirm['rooms'][0]['room_type'])
+);
+r_check(
+    'that same call still sets confirmed correctly',
+    $afterNoGuessConfirm['rooms'][0]['room_type']['confirmed'] === 'kitchen'
+);
+
+$afterCustomType = $repo->updateRoomType($roomIdSession['id'], 'room-real-1', 'Home office');
+r_check(
+    'updateRoomType() accepts a free-text custom value (not just the fixed whitelist)',
+    $afterCustomType['rooms'][0]['room_type']['confirmed'] === 'Home office'
+);
+echo "\n";
+
+echo "== updateRoomLabel(): renaming a captured room ==\n";
+$afterRename = $repo->updateRoomLabel($roomIdSession['id'], 'room-real-1', 'Master bedroom');
+r_check('updateRoomLabel() sets the label on the matching room', $afterRename['rooms'][0]['label'] === 'Master bedroom');
+
+try {
+    $repo->updateRoomLabel($roomIdSession['id'], 'room-does-not-exist', 'x');
+    r_check('updateRoomLabel() rejects a room_id that matches no real room', false, 'no exception was thrown');
+} catch (\InvalidArgumentException) {
+    r_check('updateRoomLabel() rejects a room_id that matches no real room', true);
+}
+
+try {
+    $repo->updateRoomLabel($noFloorPlanSession['id'], 'any-room', 'x');
+    r_check('updateRoomLabel() rejects a session with no captured FloorPlan yet', false, 'no exception was thrown');
+} catch (\RuntimeException) {
+    r_check('updateRoomLabel() rejects a session with no captured FloorPlan yet', true);
+}
+echo "\n";
+
 echo "== capture_location: session-wide, set once, never nulled back out ==\n";
-function build_capture_for_location(string $sessionId, ?array $location): array
+function build_capture_for_location(string $sessionId, ?array $location, string $roomId = 'room-loc-1'): array
 {
     return [
         'scan_session_id' => $sessionId,
@@ -336,7 +434,7 @@ function build_capture_for_location(string $sessionId, ?array $location): array
         'capture_provider' => 'test', 'captured_at' => gmdate('c'),
         'measurement_basis' => 'indicative_nen2580_inspired', 'purpose' => 'listing',
         'rooms' => [[
-            'room_id' => 'room-loc-1', 'label' => 'Room 1', 'floor_area_m2' => 10.0,
+            'room_id' => $roomId, 'label' => 'Room 1', 'floor_area_m2' => 10.0,
             'perimeter_m' => 12.0, 'bounding_dimensions_m' => ['width_m' => 3, 'length_m' => 3],
             'confidence' => 'high', 'outline_m' => [[0, 0], [3, 0], [3, 3], [0, 3]],
             'coverage' => ['score' => 90, 'confidence_counts' => ['high' => 1, 'medium' => 0, 'low' => 0], 'usable' => true, 'message' => null],
@@ -350,26 +448,24 @@ $locSession = fresh_session($repo);
 $afterFirstLoc = $repo->appendCapture($locSession['id'], build_capture_for_location($locSession['id'], ['lat' => 52.09, 'lon' => 5.12, 'accuracy_m' => 8.5, 'captured_at' => gmdate('c')]));
 r_check('first capture with a location stores it', $afterFirstLoc['capture_location']['lat'] === 52.09);
 
-$afterSecondNoLoc = $repo->appendCapture($locSession['id'], build_capture_for_location($locSession['id'], null));
+$afterSecondNoLoc = $repo->appendCapture($locSession['id'], build_capture_for_location($locSession['id'], null, 'room-loc-2'));
 r_check('a later capture with no location does not null out the session\'s stored location', $afterSecondNoLoc['capture_location']['lat'] === 52.09);
 
 $noLocSession = fresh_session($repo);
 $afterFirstNoLoc = $repo->appendCapture($noLocSession['id'], build_capture_for_location($noLocSession['id'], null));
 r_check('a session that never got a location stays null, not fabricated', $afterFirstNoLoc['capture_location'] === null);
 
-$afterSecondWithLoc = $repo->appendCapture($noLocSession['id'], build_capture_for_location($noLocSession['id'], ['lat' => 1.0, 'lon' => 2.0, 'accuracy_m' => 5.0, 'captured_at' => gmdate('c')]));
+try {
+    $repo->appendCapture($locSession['id'], build_capture_for_location($locSession['id'], null, 'room-loc-1'));
+    r_check('appendCapture() rejects a retry that reuses an existing room_id', false, 'no exception was thrown');
+} catch (\RuntimeException) {
+    r_check('appendCapture() rejects a retry that reuses an existing room_id', true);
+}
+
+$afterSecondWithLoc = $repo->appendCapture($noLocSession['id'], build_capture_for_location($noLocSession['id'], ['lat' => 1.0, 'lon' => 2.0, 'accuracy_m' => 5.0, 'captured_at' => gmdate('c')], 'room-loc-2'));
 r_check('a later capture CAN fill in a location the first capture missed', $afterSecondWithLoc['capture_location']['lat'] === 1.0);
 echo "\n";
 
-// ACL-surface scan finding: every other repeatable client-supplied array in
-// this codebase has a cap (MAX_SURFACES_PER_GROUP, PDF MAX_PAGES), but
-// photos[]/notes[] never did — only a per-5-minute rate limit on the attach
-// routes, which bounds pace, not total. Not net-tested (net/ is HTTP-only by
-// hard rule, and driving 500 real HTTP calls needs far more than the
-// 60-per-5-min attach rate limit allows without weakening it just for this
-// test — same tradeoff already made and documented for the PDF MAX_PAGES
-// finding). Verified here instead, at the repository layer, well below the
-// cap and one entry over it.
 echo "== photos/notes are capped per session (MAX_PHOTOS_PER_SESSION / MAX_NOTES_PER_SESSION) ==\n";
 $capSession = fresh_session($repo);
 $repo->appendCapture($capSession['id'], [
@@ -415,18 +511,6 @@ try {
 }
 echo "\n";
 
-// Capture-surface scan finding: appendCapture()'s array_merge of rooms had
-// no session-wide cap at all -- MAX_FLOORS=50 bounds a single capture() call,
-// but nothing bounded the total across repeated calls, unlike
-// photos[]/notes[] just above. Reproduced live: 11 real HTTP capture calls
-// (50 rooms each, well inside the 60-per-5-min capture rate limit) pushed a
-// session to 550 rooms with no rejection, and the actual overflow point
-// used to surface as a raw 500 (see public/index.php's own comment on that)
-// because \OverflowException fell into the generic \Throwable catch and got
-// rethrown instead of answered with a clean 422. Verified at the repository
-// layer, same tradeoff as the photos/notes cap test above (net/ is HTTP-only
-// and 500 real capture calls needs far more volume than is worth driving
-// through a live server just for this).
 echo "== rooms are capped per session across appendCapture() calls (MAX_ROOMS_PER_SESSION) ==\n";
 $roomCapSession = fresh_session($repo);
 $roomCapFloorPlan = null;
@@ -470,13 +554,6 @@ try {
 echo "\n";
 
 echo "== access_log has an index on scan_session_id, not just implicit table order ==\n";
-// Confirmed live before this fix (EXPLAIN QUERY PLAN): GET .../access-log's
-// WHERE scan_session_id = :id was a full table SCAN across every session's
-// rows, not just the requested session's, because access_log — unlike
-// rate_limit_events — had no index at all. It's also the one table that's
-// deliberately never pruned, so that scan only gets worse over the
-// service's lifetime. This check fails red if the index is ever dropped
-// from migrations/schema.sql without anyone noticing.
 $planStmt = $db->prepare("EXPLAIN QUERY PLAN SELECT action, outcome, occurred_at FROM access_log WHERE scan_session_id = :id ORDER BY id ASC");
 $planStmt->execute(['id' => 'irrelevant-for-plan-shape']);
 $planDetail = implode(' | ', array_column($planStmt->fetchAll(PDO::FETCH_ASSOC), 'detail'));
@@ -485,6 +562,19 @@ r_check(
     str_contains($planDetail, 'SEARCH access_log') && str_contains($planDetail, 'idx_access_log_session'),
     "query plan was: $planDetail"
 );
+
+echo "\n== Recent identities put the newest session first even within the same second ==\n";
+$sameSecondDb = Database::connect(':memory:');
+$sameSecondRepo = new ScanSessionRepository($sameSecondDb);
+for ($i = 0; $i < 30; $i++) {
+    $sameSecondRepo->create("prop-older-$i", 'unit-1', 'org-1', 'listing', false, false);
+}
+$newest = $sameSecondRepo->create('prop-newest', 'unit-1', 'org-1', 'listing', false, false);
+$sameSecondDb->exec("UPDATE scan_sessions SET created_at = '2026-09-29T00:00:00+00:00'");
+$recent = $sameSecondRepo->findRecentIdentities();
+r_check('the newest property is listed first', ($recent['property_ids'][0] ?? null) === 'prop-newest', 'got ' . json_encode(array_slice($recent['property_ids'], 0, 3)));
+$byFilter = $sameSecondRepo->findByFilters('prop-', null, null, 5);
+r_check('the newest session comes first in a filtered lookup', ($byFilter[0]['id'] ?? null) === $newest['id'], 'got ' . ($byFilter[0]['property_id'] ?? 'none'));
 
 echo count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {

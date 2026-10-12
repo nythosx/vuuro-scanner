@@ -14,6 +14,7 @@ on:
   pull_request:
     paths:
       - "ios-app/**"
+      - ".github/workflows/ios-build.yml"
   workflow_dispatch: {}
 
 jobs:
@@ -24,7 +25,7 @@ jobs:
     # run" — it does not require the decisions below.
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
@@ -50,11 +51,162 @@ jobs:
       # good for a manual UI smoke test, but has no camera/LiDAR access, so
       # RoomPlan capture itself still can't be exercised there.
       - name: Upload .app build for manual smoke-testing
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: VuuroScan-simulator-app
           path: ios-app/build/Build/Products/Debug-iphonesimulator/VuuroScan.app
           if-no-files-found: error
+
+  device-compile-check:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios-app
+        run: xcodegen generate
+
+      - name: Build for generic iOS device (no signing required)
+        working-directory: ios-app
+        run: |
+          xcodebuild build \
+            -project VuuroScan.xcodeproj \
+            -scheme VuuroScan \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-device \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+  simulator-tests:
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: iPhone 16 Pro
+            fallback: '^iPhone \d+ Pro$'
+            slug: iphone-16-pro
+          - device: iPhone SE (3rd generation)
+            fallback: '^iPhone SE'
+            slug: iphone-se-3
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up PHP for the Scan Service
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: pdo_sqlite, gd
+
+      - name: Start the Scan Service
+        working-directory: scan-service
+        env:
+          SCAN_SERVICE_DB_PATH: ${{ runner.temp }}/scan_service.sqlite
+          SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX: "1000"
+          SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_MAX: "4000"
+        run: |
+          nohup php -d post_max_size=30M -d upload_max_filesize=26M -d display_errors=0 \
+            -S 127.0.0.1:8089 public/index.php > "$RUNNER_TEMP/scan-service.log" 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8089/health > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/scan-service.log"
+          exit 1
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios-app
+        run: xcodegen generate
+
+      - name: Pick a simulator for ${{ matrix.device }}
+        id: simulator
+        env:
+          WANTED: ${{ matrix.device }}
+          FALLBACK: ${{ matrix.fallback }}
+        run: |
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/devices.json"
+          python3 - "$RUNNER_TEMP/devices.json" <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, re, sys
+          wanted = os.environ["WANTED"]
+          fallback = re.compile(os.environ["FALLBACK"])
+          data = json.load(open(sys.argv[1]))
+          candidates = []
+          for runtime, devices in data["devices"].items():
+              if "iOS" not in runtime:
+                  continue
+              version = tuple(int(p) for p in re.findall(r"\d+", runtime.split("iOS")[-1]))
+              for device in devices:
+                  candidates.append((version, device["name"], device["udid"]))
+          for version, name, udid in sorted(candidates, reverse=True):
+              print(f"available: {name} iOS {'.'.join(map(str, version))}", file=sys.stderr)
+          exact = [c for c in candidates if c[1] == wanted]
+          similar = [c for c in candidates if fallback.search(c[1])]
+          pool = exact or similar
+          if not pool:
+              import subprocess
+              def simctl_json(kind):
+                  return json.loads(subprocess.check_output(["xcrun", "simctl", "list", kind, "-j"]))[kind]
+              runtimes = [r for r in simctl_json("runtimes") if r.get("isAvailable") and r.get("platform", "iOS") == "iOS" and "iOS" in r["name"]]
+              if not runtimes:
+                  sys.exit("No iOS simulator runtime is installed on this runner")
+              runtime = max(runtimes, key=lambda r: tuple(int(p) for p in re.findall(r"\d+", r["version"])))
+              supported = {d["name"]: d["identifier"] for d in runtime.get("supportedDeviceTypes", [])}
+              if not supported:
+                  supported = {d["name"]: d["identifier"] for d in simctl_json("devicetypes")}
+              names = [n for n in supported if n == wanted] or sorted((n for n in supported if fallback.search(n)), reverse=True)
+              if not names:
+                  sys.exit(f"No simulator or device type matches {wanted!r} or {fallback.pattern!r}")
+              udid = subprocess.check_output(["xcrun", "simctl", "create", names[0], supported[names[0]], runtime["identifier"]], text=True).strip()
+              version = tuple(int(p) for p in re.findall(r"\d+", runtime["version"]))
+              pool = [(version, names[0], udid)]
+              print(f"created: {names[0]} on {runtime['name']}", file=sys.stderr)
+          version, name, udid = max(pool, key=lambda c: (c[0], c[1]))
+          print(f"picked: {name} iOS {'.'.join(map(str, version))}", file=sys.stderr)
+          print(f"udid={udid}")
+          print(f"name={name}")
+          PY
+
+      - name: Run unit and UI tests on ${{ steps.simulator.outputs.name }}
+        working-directory: ios-app
+        env:
+          TEST_RUNNER_SCAN_SERVICE_BASE_URL: http://127.0.0.1:8089
+        run: |
+          xcodebuild test \
+            -project VuuroScan.xcodeproj \
+            -scheme VuuroScan \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.udid }}" \
+            -derivedDataPath build-tests \
+            -resultBundlePath "TestResults-${{ matrix.slug }}.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: test-results-${{ matrix.slug }}
+          path: ios-app/TestResults-${{ matrix.slug }}.xcresult
+          if-no-files-found: ignore
+
+      - name: Upload Scan Service log
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: scan-service-log-${{ matrix.slug }}
+          path: ${{ runner.temp }}/scan-service.log
+          if-no-files-found: ignore
 
   signed-archive:
     # Only runs once an Apple Developer Team ID and a distribution
@@ -63,11 +215,11 @@ jobs:
     # account this should sign under), not something this workflow can
     # decide on its own. Until those secrets exist this job is skipped, not
     # failed, so it never blocks compile-check.
-    needs: compile-check
+    needs: [compile-check, device-compile-check]
     if: ${{ vars.IOS_SIGNING_CONFIGURED == 'true' }}
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
@@ -126,7 +278,7 @@ jobs:
             -exportOptionsPlist ExportOptions.plist
 
       - name: Upload IPA artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: VuuroScan-adhoc
           path: ios-app/build/export/VuuroScan.ipa

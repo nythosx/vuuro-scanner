@@ -1,155 +1,375 @@
-//
-//  CaptureCoordinator.swift
-//  VuuroScan
-//
-//  Real-device confirmed through Mark's 2026-09-01 test (feature/vuuro-scan
-//  @ a3c6284): start()/attach() and the didEndWith error path both ran for
-//  real (a genuine ARKit CaptureError.worldTrackingFailure). stop() and the
-//  partial-capture-recovery branch added after that test are compiled-via-CI
-//  only so far — not yet run on real hardware. See
-//  ../Models/ScanIdentity.swift header for what that distinction means
-//  generally.
-//
-//  Owns one RoomPlan capture session end to end and hands the finished
-//  CapturedRoom to the exporter/network layer. Deliberately holds nothing
-//  about Vuuro identity — that's threaded through by the caller — so this
-//  class stays a pure RoomPlan wrapper, keeping "the scanner is a
-//  pluggable provider, not the product" true on the client side too,
-//  matching the provider-neutral adapter boundary on the service side
-//  (RoomPlanSimulatorAdapter).
-//
-
+import ARKit
 import Combine
+import Foundation
 import RoomPlan
+import UIKit
+import simd
+
+struct CaptureLiveStats: Equatable {
+    var walls: Int
+    var areaM2: Double
+    var heightM: Double?
+    var doors: Int = 0
+    var windows: Int = 0
+    var openings: Int = 0
+
+    static let empty = CaptureLiveStats(walls: 0, areaM2: 0, heightM: nil)
+
+    enum MissingOpenings: Equatable {
+        case doorsAndWindows
+        case doors
+        case windows
+
+        var alertTitle: String {
+            switch self {
+            case .doorsAndWindows: return vuuroLocalized("No doors or windows found")
+            case .doors: return vuuroLocalized("No door found")
+            case .windows: return vuuroLocalized("No window found")
+            }
+        }
+
+        var alertMessage: String {
+            switch self {
+            case .doorsAndWindows:
+                return vuuroLocalized("The plan will show this room without doors or windows. Slowly pan across door frames and windows first. If this room really has none, you can go ahead.")
+            case .doors:
+                return vuuroLocalized("Almost every room has a door. Slowly pan across the door frame first. If this room only has an open passage, you can go ahead.")
+            case .windows:
+                return vuuroLocalized("If this room has a window, slowly pan across it first. Bathrooms and hallways often have none, then you can go ahead.")
+            }
+        }
+
+        var finishNote: String {
+            switch self {
+            case .doorsAndWindows: return vuuroLocalized("No doors or windows were found in this room yet.")
+            case .doors: return vuuroLocalized("No door was found in this room yet.")
+            case .windows: return vuuroLocalized("No window was found in this room yet.")
+            }
+        }
+    }
+
+    var missingOpenings: MissingOpenings? {
+        guard walls > 0 else { return nil }
+        let hasDoor = doors + openings > 0
+        let hasWindow = windows > 0
+        switch (hasDoor, hasWindow) {
+        case (false, false): return .doorsAndWindows
+        case (false, true): return .doors
+        case (true, false): return .windows
+        case (true, true): return nil
+        }
+    }
+}
 
 @MainActor
 final class CaptureCoordinator: NSObject, ObservableObject {
     enum State: Equatable {
         case scanning
         case finished(roomAvailable: Bool)
-        // partialRoomAvailable distinguishes "RoomBuilder still reconstructed
-        // something from what was captured before the error" from "genuinely
-        // nothing to salvage" — see didEndWith below for why this is knowable
-        // at all.
         case failed(String, partialRoomAvailable: Bool)
     }
 
-    // didSet, not a wrapper around every assignment site, so no future state
-    // change can silently skip logging.
     @Published private(set) var state: State = .scanning {
         didSet {
-            #if DEBUG
             DiagnosticsLog.shared.record("Capture state -> \(state)", category: .state)
-            #endif
         }
     }
 
+    @Published private(set) var liveStats: CaptureLiveStats = .empty
+
     private(set) var capturedRoom: CapturedRoom?
+    private(set) var capturedRoomWalkPath: [[Double]] = []
+
+    let arSession = ARSession()
+    nonisolated(unsafe) private var walkPathTask: Task<Void, Never>?
+    private static let walkPathSampleIntervalNanoseconds: UInt64 = 500_000_000
+    private static let walkPathMaxPoints = 400
+
+    deinit {
+        walkPathTask?.cancel()
+    }
 
     @Published private(set) var isApproachingSizeLimit = false {
         didSet {
             guard oldValue != isApproachingSizeLimit else { return }
-            #if DEBUG
             DiagnosticsLog.shared.record("Room size warning -> \(isApproachingSizeLimit)", category: .state)
-            #endif
         }
     }
 
     @Published private(set) var liveRoomTypeGuess: RoomTypeClassifier.Guess?
+    @Published private(set) var hasAnsweredRoomType: Bool = false
     private(set) var roomTypeConfirmation: String?
     private(set) var roomTypeConfirmedForGuessType: String?
+    private(set) var roomCustomName: String?
 
     var roomTypeConfirmationForExport: RoomTypeConfirmation? {
-        roomTypeConfirmation.map { RoomTypeConfirmation(value: $0, answeredForGuessType: roomTypeConfirmedForGuessType) }
+        roomTypeConfirmation.map { RoomTypeConfirmation(value: $0, answeredForGuessType: roomTypeConfirmedForGuessType, customName: roomCustomName) }
+    }
+
+    func nameRoom(_ name: String) {
+        let trimmed = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        guard !trimmed.isEmpty else { return }
+        roomTypeConfirmation = "other"
+        roomCustomName = trimmed
+        roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
+        liveUpdateThrottle.markRoomTypeAnswered()
+        hasAnsweredRoomType = true
+        DiagnosticsLog.shared.record("Room named: \(trimmed)", category: .info)
     }
 
     func confirmRoomTypeGuess() {
+        roomCustomName = nil
         roomTypeConfirmation = liveRoomTypeGuess?.type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
-        #if DEBUG
+        liveUpdateThrottle.markRoomTypeAnswered()
+        hasAnsweredRoomType = true
         DiagnosticsLog.shared.record("Room type confirmed: \(liveRoomTypeGuess?.type ?? "nil")", category: .info)
-        #endif
     }
 
     func rejectRoomTypeGuess(correctedTo type: String?) {
+        roomCustomName = nil
         roomTypeConfirmation = type
         roomTypeConfirmedForGuessType = liveRoomTypeGuess?.type
-        #if DEBUG
+        liveUpdateThrottle.markRoomTypeAnswered()
+        hasAnsweredRoomType = true
         DiagnosticsLog.shared.record("Room type corrected: guess=\(liveRoomTypeGuess?.type ?? "nil") -> \(type ?? "nil")", category: .info)
-        #endif
     }
 
-    /// RoomCaptureView.captureSession is get-only — confirmed live via the
-    /// GitHub Actions simulator compile-check — so this class can't own its
-    /// own RoomCaptureSession the way this file originally assumed. Instead
-    /// RoomCaptureScreen.makeUIView hands over the view's own session here
-    /// once the view exists.
     private var captureSession: RoomCaptureSession?
+    private let liveUpdateThrottle = RoomLiveUpdateThrottle()
+    private let viewDelegate = RoomCaptureScreenViewDelegate()
+    private var pendingRun = false
+    private var isRunning = false
+    private var cameraWatchdog: Task<Void, Never>?
+    @Published private(set) var cameraFeedMissing = false
 
-    func attach(to session: RoomCaptureSession) {
-        captureSession = session
-        session.delegate = self
+    lazy var captureView: RoomCaptureView = {
+        let view = RoomCaptureView(frame: .zero, arSession: arSession)
+        view.delegate = viewDelegate
+        view.captureSession.delegate = self
+        captureSession = view.captureSession
+        return view
+    }()
+
+    func captureViewWindowDidChange() {
+        runIfReady()
+    }
+
+    func tearDownIfDetached() {
+        guard captureView.window == nil else { return }
+        cameraWatchdog?.cancel()
+        pendingRun = false
+        stopWalkPathTracking()
+        if isRunning {
+            isRunning = false
+            captureSession?.stop()
+        }
+        arSession.pause()
+        UIApplication.shared.isIdleTimerDisabled = false
+        DiagnosticsLog.shared.record("Capture view left the screen — capture session stopped and AR session paused", category: .state)
+    }
+
+    private func runIfReady() {
+        guard pendingRun, captureView.window != nil, let captureSession else { return }
+        pendingRun = false
+        isRunning = true
+        DiagnosticsLog.shared.record("Capture session running (view is on screen)", category: .state)
+        captureSession.run(configuration: RoomCaptureSession.Configuration())
+        startCameraWatchdog()
+    }
+
+    private func startCameraWatchdog() {
+        cameraWatchdog?.cancel()
+        cameraWatchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled, let self, self.isRunning, self.state == .scanning else { return }
+            if self.arSession.currentFrame == nil {
+                DiagnosticsLog.shared.record("No camera frame 8s after the capture session started — surfacing an error", category: .error)
+                self.cameraFeedMissing = true
+            }
+        }
     }
 
     func start() {
-        guard let captureSession else { return }
+        _ = captureView
+        UIApplication.shared.isIdleTimerDisabled = true
         state = .scanning
         liveRoomTypeGuess = nil
         roomTypeConfirmation = nil
         roomTypeConfirmedForGuessType = nil
+        roomCustomName = nil
+        hasAnsweredRoomType = false
         isApproachingSizeLimit = false
-        // RoomCaptureSession.Configuration() with defaults matches Apple's
-        // documented single-room guided capture. Multi-room stitching
-        // (Phase 2) needs a real look at RoomCaptureSession's multi-room
-        // support once Xcode access exists — not assumed here.
-        let configuration = RoomCaptureSession.Configuration()
-        captureSession.run(configuration: configuration)
+        liveStats = .empty
+        liveUpdateThrottle.resetRoomTypeAnswered()
+        startWalkPathTracking()
+
+        pendingRun = true
+        runIfReady()
     }
 
     func stop() {
+        cameraWatchdog?.cancel()
+        pendingRun = false
+        isRunning = false
+        stopWalkPathTracking()
         captureSession?.stop()
+        UIApplication.shared.isIdleTimerDisabled = false
+    }
+
+    private func startWalkPathTracking() {
+        stopWalkPathTracking()
+        capturedRoomWalkPath = []
+        walkPathTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                if let transform = self.arSession.currentFrame?.camera.transform,
+                   self.capturedRoomWalkPath.count < Self.walkPathMaxPoints {
+                    let t = transform.columns.3
+                    self.capturedRoomWalkPath.append([Double(t.x), Double(t.y), Double(t.z)])
+                }
+                try? await Task.sleep(nanoseconds: Self.walkPathSampleIntervalNanoseconds)
+            }
+        }
+    }
+
+    private func stopWalkPathTracking() {
+        walkPathTask?.cancel()
+        walkPathTask = nil
+        DiagnosticsLog.shared.record("Walk path tracking stopped — \(capturedRoomWalkPath.count) point(s) recorded", category: .info)
+    }
+
+    nonisolated static func computeStats(_ room: CapturedRoom) -> CaptureLiveStats {
+        let walls = room.walls.count
+        let floorsArea = computeLiveAreaFromFloors(room)
+        let area = floorsArea > 0 ? floorsArea : computeLiveAreaFromWalls(room)
+        let height = room.walls.map { Double($0.dimensions.y) }.max()
+        return CaptureLiveStats(walls: walls, areaM2: area, heightM: height, doors: room.doors.count, windows: room.windows.count, openings: room.openings.count)
+    }
+
+    nonisolated private static func computeLiveAreaFromFloors(_ room: CapturedRoom) -> Double {
+        guard !room.floors.isEmpty else { return 0 }
+
+        var total = 0.0
+        for floor in room.floors {
+            guard floor.polygonCorners.count >= 3 else { return 0 }
+            let worldCorners = floor.polygonCorners.map { corner -> (x: Double, z: Double) in
+                let world = floor.transform * simd_float4(corner, 1)
+                return (Double(world.x), Double(world.z))
+            }
+            var area = 0.0
+            for i in worldCorners.indices {
+                let a = worldCorners[i]
+                let b = worldCorners[(i + 1) % worldCorners.count]
+                area += a.x * b.z - b.x * a.z
+            }
+            total += abs(area) / 2.0
+        }
+        return total
+    }
+
+    nonisolated private static func computeLiveAreaFromWalls(_ room: CapturedRoom) -> Double {
+        guard !room.walls.isEmpty else { return 0 }
+
+        var points: [SIMD2<Double>] = []
+        points.reserveCapacity(room.walls.count * 4)
+
+        for wall in room.walls {
+            for corner in wall.polygonCorners {
+                let world = wall.transform * simd_float4(corner, 1)
+                let x = Double(world.x)
+                let z = Double(world.z)
+                guard x.isFinite, z.isFinite else { continue }
+                points.append(SIMD2<Double>(x, z))
+            }
+        }
+
+        guard points.count >= 3 else { return 0 }
+
+        let hull = convexHull(points)
+        guard hull.count >= 3 else { return 0 }
+
+        var area = 0.0
+        for i in hull.indices {
+            let a = hull[i]
+            let b = hull[(i + 1) % hull.count]
+            area += a.x * b.y - b.x * a.y
+        }
+        return abs(area) / 2.0
+    }
+
+    nonisolated private static func convexHull(_ points: [SIMD2<Double>]) -> [SIMD2<Double>] {
+        let unique = Array(Set(points.map { PointKey(x: $0.x, y: $0.y) }))
+            .map { SIMD2<Double>($0.x, $0.y) }
+
+        guard unique.count >= 3 else { return unique }
+
+        let sorted = unique.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+
+        func cross(_ o: SIMD2<Double>, _ a: SIMD2<Double>, _ b: SIMD2<Double>) -> Double {
+            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+        }
+
+        var lower: [SIMD2<Double>] = []
+        lower.reserveCapacity(sorted.count)
+        for p in sorted {
+            while lower.count >= 2 && cross(lower[lower.count - 2], lower[lower.count - 1], p) <= 0 {
+                lower.removeLast()
+            }
+            lower.append(p)
+        }
+
+        var upper: [SIMD2<Double>] = []
+        upper.reserveCapacity(sorted.count)
+        for p in sorted.reversed() {
+            while upper.count >= 2 && cross(upper[upper.count - 2], upper[upper.count - 1], p) <= 0 {
+                upper.removeLast()
+            }
+            upper.append(p)
+        }
+
+        lower.removeLast()
+        upper.removeLast()
+
+        let hull = lower + upper
+
+        return hull
+    }
+
+    private struct PointKey: Hashable {
+        private static let precision: Double = 1000
+
+        let x: Double
+        let y: Double
+
+        init(x: Double, y: Double) {
+            self.x = (x * Self.precision).rounded() / Self.precision
+            self.y = (y * Self.precision).rounded() / Self.precision
+        }
+
+        static func == (lhs: PointKey, rhs: PointKey) -> Bool {
+            lhs.x == rhs.x && lhs.y == rhs.y
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(x)
+            hasher.combine(y)
+        }
     }
 }
 
 extension CaptureCoordinator: RoomCaptureSessionDelegate {
-    // RoomCaptureSessionDelegate has exactly one session-end callback —
-    // didEndWith(data:error:) — confirmed against Apple's own docs/forums
-    // (developer.apple.com/documentation/roomplan/roomcapturesessiondelegate;
-    // forum thread 726971 lists the full method set). There is no separate
-    // didFailWith(error:)-style member: this file previously declared one
-    // anyway, which compiled cleanly (an extension can always add extra
-    // methods) but RoomCaptureSession itself never calls anything but
-    // didEndWith, on success AND on a fatal error like
-    // CaptureError.worldTrackingFailure — so that method was dead code that
-    // never actually ran, removed here.
-    //
-    // The real, verified consequence: `data` is still delivered alongside a
-    // non-nil `error` (Apple's own error-handling example does the same —
-    // stores the error without ever discarding `data`), so a world-tracking
-    // failure does not by itself mean nothing was captured. Always
-    // attempting RoomBuilder, rather than returning early on `error != nil`,
-    // is what actually answers "is there a sensible 'use what was captured'
-    // option": if RoomBuilder can still reconstruct a room from the partial
-    // data, there is one; if RoomBuilder itself throws, there genuinely
-    // isn't, and discard-and-retry is the honest answer.
     nonisolated func captureSession(_ session: RoomCaptureSession, didEndWith data: CapturedRoomData, error: Error?) {
         Task { @MainActor in
-            // CapturedRoomData -> CapturedRoom normally goes through
-            // RoomBuilder in Apple's sample code. Modeled that way here;
-            // unverified against the real SDK signature until this is built
-            // in Xcode (see docs/adr/0001-scan-service-stack.md follow-up).
+            self.isRunning = false
             do {
                 let room = try await RoomBuilder(options: [.beautifyObjects]).capturedRoom(from: data)
                 self.capturedRoom = room
+                let hasUsableGeometry = !room.walls.isEmpty || !room.floors.isEmpty
                 if let error {
-                    // RoomBuilder not throwing doesn't mean there's anything
-                    // worth offering — a near-instant failure can still
-                    // produce a technically-valid but empty room. Only call
-                    // it a real partial capture if it actually has geometry.
-                    let hasUsableGeometry = !room.walls.isEmpty || !room.floors.isEmpty
-                    self.state = .failed(error.localizedDescription, partialRoomAvailable: hasUsableGeometry)
+                    self.state = .failed(CaptureErrorText.message(for: error, partialAvailable: hasUsableGeometry, isUnitScan: false), partialRoomAvailable: hasUsableGeometry)
                 } else {
-                    self.state = .finished(roomAvailable: true)
+                    self.state = .finished(roomAvailable: hasUsableGeometry)
                 }
             } catch {
                 self.state = .failed(error.localizedDescription, partialRoomAvailable: false)
@@ -157,26 +377,26 @@ extension CaptureCoordinator: RoomCaptureSessionDelegate {
         }
     }
 
-    // RoomPlan's own real-time guidance (e.g. "move closer to a wall",
-    // "turn on more light") — logged so a report like Mark's world-tracking
-    // failure comes with what RoomPlan was actually telling him right before
-    // it happened, not just the final error with no lead-up.
     nonisolated func captureSession(_ session: RoomCaptureSession, didProvide instruction: RoomCaptureSession.Instruction) {
-        #if DEBUG
         Task { @MainActor in
             DiagnosticsLog.shared.record("RoomPlan instruction: \(instruction)", category: .instruction)
         }
-        #endif
     }
 
     nonisolated func captureSession(_ session: RoomCaptureSession, didUpdate room: CapturedRoom) {
+        let decision = liveUpdateThrottle.decideUpdate()
+        guard decision.shouldProcess else { return }
         let exceedsSizeLimit = RoomSizeGuard.exceedsPracticalLimit(room)
+        let guess = RoomTypeGuessSettings.isEnabled ? RoomTypeClassifier.guess(for: room) : nil
+        let stats = Self.computeStats(room)
         Task { @MainActor in
-            self.isApproachingSizeLimit = exceedsSizeLimit
-        }
-        guard RoomTypeGuessSettings.isEnabled, let guess = RoomTypeClassifier.guess(for: room) else { return }
-        Task { @MainActor in
-            if self.liveRoomTypeGuess?.type != guess.type {
+            if self.isApproachingSizeLimit != exceedsSizeLimit {
+                self.isApproachingSizeLimit = exceedsSizeLimit
+            }
+            if self.liveStats != stats {
+                self.liveStats = stats
+            }
+            if let guess, !self.liveUpdateThrottle.isRoomTypeAnswered(), self.liveRoomTypeGuess?.type != guess.type {
                 self.liveRoomTypeGuess = guess
             }
         }

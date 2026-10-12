@@ -114,7 +114,7 @@ final class FusionOverlapDetector
                 }
             }
             if (!$earFound) {
-                break; // numerically degenerate input; stop rather than loop forever
+                break;
             }
         }
         if (count($indices) === 3) {
@@ -123,9 +123,9 @@ final class FusionOverlapDetector
         return $triangles;
     }
 
-    // Sutherland-Hodgman: clips $subject against convex polygon $clip.
-    // Exact for any subject as long as $clip is convex — both inputs here
-    // are always triangles, so that always holds.
+
+
+
     private static function clipConvex(array $subject, array $clip): array
     {
         $output = $subject;
@@ -178,7 +178,7 @@ final class FusionOverlapDetector
         return !($hasNeg && $hasPos);
     }
 
-    // Cross product of (b - a) x (p - a): positive when p is left of a->b.
+
     private static function cross(array $a, array $b, array $p): float
     {
         return ($b[0] - $a[0]) * ($p[1] - $a[1]) - ($b[1] - $a[1]) * ($p[0] - $a[0]);

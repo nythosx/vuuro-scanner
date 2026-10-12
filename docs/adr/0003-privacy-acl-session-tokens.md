@@ -58,3 +58,14 @@ Does **not** solve, on purpose, for this build's window:
 - No server-side session listing exists by design — history is local-only
   (`ScanHistoryStore`), so there is no "list all sessions for this org" endpoint that
   would need its own access-control model.
+
+## Addendum (2026-09-25): plaintext-UserDefaults token storage has been closed
+
+The "Consequences" section above lists, as a known limit, that
+`ios-app/Sources/History/ScanHistoryStore.swift` stores each remembered session's
+access token in plaintext `UserDefaults`, not the Keychain. That limit has since
+been closed: `ScanHistoryStore` now writes the token to the iOS Keychain via
+`KeychainTokenStore` and blanks the `accessToken` field in the UserDefaults blob
+it persists, re-hydrating from the Keychain on read. The paragraph above is kept
+as-is for history; read it as the state that existed at the time this ADR was
+written, not as current behaviour.

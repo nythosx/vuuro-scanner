@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS scan_sessions (
     -- rotation/expiry" as a known limit). expires_at is set at creation from
     -- either a caller-supplied access_token_ttl_seconds or a 90-day default,
     -- and refreshed on every POST .../rotate-token call.
-    expires_at TEXT NOT NULL DEFAULT ''
+    expires_at TEXT NOT NULL DEFAULT '',
+    access_token_hash TEXT NOT NULL DEFAULT ''
 );
 
 -- Idempotency for POST .../capture (enterprise reliability hardening): a
@@ -82,3 +83,39 @@ CREATE TABLE IF NOT EXISTS access_log (
 -- access_log USING INDEX ... after). Composite on (scan_session_id, id) to
 -- also satisfy the query's ORDER BY id ASC directly from the index.
 CREATE INDEX IF NOT EXISTS idx_access_log_session ON access_log(scan_session_id, id);
+
+-- Admin imports: bundles imported from other Scan Service instances.
+-- Each row is one .vuuroscan bundle the admin has uploaded, kept alongside
+-- native sessions in this same database. De-duplication is deliberately
+-- not enforced: re-importing the same bundle creates a new row, and the
+-- admin panel shows every import so duplicates are visible and can be
+-- cleaned up explicitly.
+CREATE TABLE IF NOT EXISTS imported_scans (
+    import_id TEXT PRIMARY KEY,
+    format TEXT NOT NULL,
+    exported_at TEXT NOT NULL,
+    imported_at TEXT NOT NULL,
+    scan_service_base_url TEXT,
+    session_id TEXT NOT NULL,
+    property_id TEXT NOT NULL,
+    unit_id TEXT NOT NULL,
+    organisation_id TEXT NOT NULL,
+    purpose TEXT NOT NULL,
+    signature_status TEXT NOT NULL,
+    signature_algorithm TEXT,
+    payload_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_imported_scans_filters ON imported_scans(property_id, unit_id, organisation_id);
+CREATE INDEX IF NOT EXISTS idx_imported_scans_imported_at ON imported_scans(imported_at DESC);
+CREATE TABLE IF NOT EXISTS app_settings (
+    setting_key TEXT PRIMARY KEY,
+    value_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS app_settings_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    changed_at TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    before_json TEXT NOT NULL,
+    after_json TEXT NOT NULL
+);

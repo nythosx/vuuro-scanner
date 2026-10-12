@@ -2,31 +2,13 @@
 
 declare(strict_types=1);
 
-/**
- * Fast in-process unit tests for the export renderers, specifically
- * FloorPlanPdfRenderer's MAX_PAGES boundary (private const, kept at 200 in
- * the renderer itself). Neither net/verify_exports.php nor any other
- * automated check exercises this boundary directly — reproducing 201 real
- * pages over real HTTP needs ~8,800 rooms in one session, well past the
- * capture rate limit, and that limit isn't allowed to be weakened just for
- * this test (same call already made and documented for
- * MAX_PHOTOS_PER_SESSION/MAX_NOTES_PER_SESSION in repository_test.php).
- * FloorPlanPdfRenderer::render() takes a plain array and has no DB/HTTP
- * dependency, so the boundary is cheap to hit directly here instead.
- *
- * The equivalent PNG bound (MAX_CANVAS_DIMENSION_PX) is NOT duplicated here
- * — it's already covered end-to-end over real HTTP in
- * net/verify_exports.php (a 40-room capture is enough to exceed the
- * canvas width bound, unlike the PDF case which needs orders of magnitude
- * more rooms).
- *
- * Usage: php tests/export_renderer_test.php
- */
-
 require __DIR__ . '/../src/autoload.php';
+require __DIR__ . '/lib/pdf_object_graph.php';
 
+use VuuroScan\Export\FloorGroups;
 use VuuroScan\Export\FloorPlanImageRenderer;
 use VuuroScan\Export\FloorPlanPdfRenderer;
+use VuuroScan\Export\FloorPlanSvgRenderer;
 use VuuroScan\Export\FusionOverlapDetector;
 
 $failures = [];
@@ -44,7 +26,13 @@ function x_check(string $label, bool $pass, string $detail = ''): void
     }
 }
 
-/** @return array<int, array{label: string, floor_area_m2: float, perimeter_m: float, confidence: string}> */
+function x_check_pdf_graph(string $label, string $pdfBytes): void
+{
+    $problems = pdf_validate_object_graph($pdfBytes);
+    x_check("$label: object graph is fully valid", $problems === [], implode('; ', $problems));
+}
+
+
 function build_many_rooms(int $n): array
 {
     $rooms = [];
@@ -81,6 +69,7 @@ echo "== Sanity: a single-room floor plan renders a real one-page PDF ==\n";
 $single = $renderer->render(build_floor_plan(build_many_rooms(1)));
 x_check('output starts with a PDF header', str_starts_with($single, '%PDF-1.4'));
 x_check('output contains the room label', str_contains($single, 'Room 0'));
+x_check_pdf_graph('single-room PDF', $single);
 
 echo "\n== LIDAR-5/11: PDF metrics include height/m3/openings when known ==\n";
 $roomWithMetrics = [
@@ -100,28 +89,32 @@ $pdfWithMetrics = $renderer->render(build_floor_plan([$roomWithMetrics]));
 x_check('PDF text includes the room height', str_contains($pdfWithMetrics, '2.60 m height'));
 x_check('PDF text includes the indicative m3 capacity', str_contains($pdfWithMetrics, '31.20 m3'));
 x_check('PDF text includes the door/window opening summary', str_contains($pdfWithMetrics, '1 door') && str_contains($pdfWithMetrics, '2 windows'));
+x_check_pdf_graph('PDF with height/volume/openings metrics', $pdfWithMetrics);
 
 $roomWithoutMetrics = ['label' => 'Room Plain', 'floor_area_m2' => 12.0, 'perimeter_m' => 14.0, 'confidence' => 'high'];
 $pdfWithoutMetrics = $renderer->render(build_floor_plan([$roomWithoutMetrics]));
 x_check('a room with no height_m/openings keys at all still renders, no fabricated metrics line', !str_contains($pdfWithoutMetrics, 'm height'));
+x_check_pdf_graph('PDF with no metrics', $pdfWithoutMetrics);
 
-// Review finding: height_m present but volume_m3_indicative null used to
-// print a fabricated "0.00 m3 indicative capacity" instead of omitting it.
+
+
 $roomHeightNoVolume = ['label' => 'Room HeightOnly', 'floor_area_m2' => 12.0, 'perimeter_m' => 14.0, 'confidence' => 'high', 'height_m' => 2.5, 'volume_m3_indicative' => null];
 $pdfHeightNoVolume = $renderer->render(build_floor_plan([$roomHeightNoVolume]));
 x_check('height with no volume still prints the height line', str_contains($pdfHeightNoVolume, '2.50 m height'));
 x_check('height with no volume does NOT fabricate a 0.00 m3 line', !str_contains($pdfHeightNoVolume, 'm3'));
+x_check_pdf_graph('PDF with height but no volume', $pdfHeightNoVolume);
 
-// buildTextLines() emits 13 fixed lines (header/disclaimer/totals/footer)
-// plus one line per room; paginate() fits 44 lines per page
-// (intdiv(740-50, 16) + 1). 8787 rooms -> 8800 lines -> exactly 200 pages,
-// the last one allowed by MAX_PAGES. 8788 rooms -> 8801 lines -> 201 pages,
-// one past it. If either constant ever changes, this test's math has to
-// change with it — that coupling is intentional, not fragile: it proves
-// the boundary is really being hit, not just "a big number".
+
+
+
+
+
+
+
+
 $linesPerPage = 44;
-$fixedLineCount = 13;
-$maxPages = 200; // mirrors FloorPlanPdfRenderer::MAX_PAGES (private)
+$fixedLineCount = 10;
+$maxPages = 200;
 
 $roomsAtBoundary = $maxPages * $linesPerPage - $fixedLineCount;
 $roomsOverBoundary = $roomsAtBoundary + 1;
@@ -135,6 +128,7 @@ try {
     );
     $pageObjectCount = preg_match_all('/\/Type \/Page\b/', $pdf);
     x_check("the rendered PDF actually has $maxPages /Type /Page objects, not a different count", $pageObjectCount === $maxPages, "got $pageObjectCount");
+    x_check_pdf_graph("$maxPages-page PDF (object-count stress test)", $pdf);
 } catch (\InvalidArgumentException $e) {
     x_check("a floor plan producing exactly $maxPages PDF pages renders without throwing", false, $e->getMessage());
 }
@@ -153,7 +147,7 @@ try {
 
 $imageRenderer = new FloorPlanImageRenderer();
 
-function build_room_with_outline(string $label, array $outlineM, ?array $structureOriginM, array $openings = [], ?float $heightM = null, ?string $roomId = null, ?array $roomType = null): array
+function build_room_with_outline(string $label, array $outlineM, ?array $structureOriginM, array $openings = [], ?float $heightM = null, ?string $roomId = null, ?array $roomType = null, ?float $headingDeg = null): array
 {
     return [
         'room_id' => $roomId ?? strtolower(str_replace(' ', '-', $label)),
@@ -167,12 +161,11 @@ function build_room_with_outline(string $label, array $outlineM, ?array $structu
         'openings' => $openings,
         'height_m' => $heightM,
         'room_type' => $roomType,
+        'heading_deg' => $headingDeg,
     ];
 }
 
-/** Scans every pixel of a decoded PNG for an exact RGB match — avoids
- * coupling to the renderer's internal layout math (unlike the MAX_PAGES
- * boundary math above, which is deliberately coupled to it). */
+
 function png_contains_color(string $pngBytes, int $r, int $g, int $b): bool
 {
     $img = imagecreatefromstring($pngBytes);
@@ -239,16 +232,30 @@ x_check('a fused plan with door/window openings and room height renders without 
 x_check('the door/window/height drawing adds real bytes over the same plan with no openings',
     strlen($fusedWithJoinPng) > strlen($fusedPng));
 
+echo "\n== Doors/windows actually draw as pixels, not just text (LIDAR-10 regressed silently once already) ==\n";
+
+$doorColor = [255, 130, 18];
+$windowColor = [46, 195, 255];
+
+x_check('the fused PNG contains the door marker color as real pixels', png_contains_color($fusedWithJoinPng, ...$doorColor));
+x_check('the fused PNG contains the window marker color as real pixels', png_contains_color($fusedWithJoinPng, ...$windowColor));
+
+$tiledWithOpeningsPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, null, [
+        ['opening_id' => 'o1', 'category' => 'door', 'position_m' => [4.0, 1.5], 'confidence' => 'high'],
+        ['opening_id' => 'o2', 'category' => 'window', 'position_m' => [0.0, 1.5], 'confidence' => 'high'],
+    ]),
+]);
+$tiledWithOpeningsPng = $imageRenderer->render($tiledWithOpeningsPlan);
+x_check('the per-room tile sheet (layout=tiles path) contains the door marker color as real pixels', png_contains_color($tiledWithOpeningsPng, ...$doorColor));
+x_check('the per-room tile sheet contains the window marker color as real pixels', png_contains_color($tiledWithOpeningsPng, ...$windowColor));
+
 echo "\n== Room-type coloring, legend, and label text ==\n";
 
-// Mirrors FloorPlanImageRenderer::ROOM_TYPE_PALETTE (private) — the fill
-// colors bedroom/bathroom/kitchen actually render with. If that palette
-// ever regresses back to two types sharing a color (as bedroom/bathroom
-// once did), this test catches it directly rather than relying on a manual
-// visual check.
-$bedroomFill = [199, 194, 224];
-$bathroomFill = [214, 224, 194];
-$kitchenFill = [199, 236, 239];
+$bedroomFill = [243, 217, 166];
+$bathroomFill = [223, 243, 255];
+$kitchenFill = [223, 243, 255];
+$livingFill = [251, 227, 199];
 
 $roomTypedPlan = build_floor_plan([
     build_room_with_outline('Room A', $squareOutline, [0.0, 0.0], [], null, null, ['guess' => 'bedroom', 'guess_source' => 'roomplan_section', 'confirmed' => 'bedroom']),
@@ -258,7 +265,7 @@ $roomTypedPng = $imageRenderer->render($roomTypedPlan);
 x_check('bedroom fill color actually appears in the rendered PNG', png_contains_color($roomTypedPng, ...$bedroomFill));
 x_check('bathroom fill color actually appears in the rendered PNG', png_contains_color($roomTypedPng, ...$bathroomFill));
 x_check('bedroom and bathroom do not share the same fill color', $bedroomFill !== $bathroomFill);
-x_check('kitchen fill color does NOT appear when no room is a kitchen', !png_contains_color($roomTypedPng, ...$kitchenFill));
+x_check('living-room fill color does NOT appear when no room is a living/dining/office room', !png_contains_color($roomTypedPng, ...$livingFill));
 
 $untypedPlan = build_floor_plan([
     build_room_with_outline('Room A', $squareOutline, [0.0, 0.0]),
@@ -278,6 +285,7 @@ $roomTypedPdf = $renderer->render(build_floor_plan([
     build_room_with_outline('Room A', $squareOutline, null, [], null, null, ['guess' => 'dining_room', 'guess_source' => 'roomplan_section', 'confirmed' => 'dining_room']),
 ]));
 x_check('room_type also reaches the PDF metrics table, not just the PNG', str_contains($roomTypedPdf, 'Dining room'));
+x_check_pdf_graph('room-typed PDF', $roomTypedPdf);
 
 echo "\n== FusionOverlapDetector: catches a mispositioned room, not a shared wall ==\n";
 
@@ -314,8 +322,13 @@ $cleanFusedPng = $imageRenderer->render($cleanFusedPlan);
 echo "\n== FloorPlanPdfRenderer: same overlap warning surfaces in the text export ==\n";
 $overlapPdf = $renderer->render($overlapPlan);
 x_check('PDF text includes the overlap warning when rooms overlap', str_contains($overlapPdf, 'WARNING: some rooms below overlap'));
+x_check_pdf_graph('overlap-warning PDF', $overlapPdf);
 $cleanFusedPdf = $renderer->render($cleanFusedPlan);
 x_check('PDF text has no overlap warning when rooms are merely adjacent', !str_contains($cleanFusedPdf, 'WARNING'));
+x_check_pdf_graph('clean fused PDF', $cleanFusedPdf);
+$overlapPdfTiles = $renderer->render($overlapPlan, layout: 'tiles');
+x_check('PDF layout=tiles suppresses the overlap warning, same as PNG layout=tiles', !str_contains($overlapPdfTiles, 'WARNING'));
+x_check_pdf_graph('overlap PDF, layout=tiles', $overlapPdfTiles);
 
 echo "\n== Viewing one room individually: ?layout=tiles and ?room_id ==\n";
 $forcedTilesPng = $imageRenderer->render($fusedPlan, 'tiles');
@@ -332,8 +345,485 @@ try {
     x_check('an unknown room_id is rejected, not silently ignored', str_contains($e->getMessage(), 'no-such-room'));
 }
 
-$oneRoomPdf = $renderer->render(build_floor_plan([$fusedPlan['rooms'][0], $fusedPlan['rooms'][1]]), 'room-a');
+$oneRoomPdf = $renderer->render(build_floor_plan([$fusedPlan['rooms'][0], $fusedPlan['rooms'][1]]), roomId: 'room-a');
 x_check('room_id narrows the PDF metrics table to that room\'s label only', str_contains($oneRoomPdf, 'Room A') && !str_contains($oneRoomPdf, 'Room B'));
+x_check_pdf_graph('room_id-narrowed PDF', $oneRoomPdf);
+
+echo "\n== Unit-level total area on the PDF and PNG exports ==\n";
+$twoRoomPlan = build_floor_plan([
+    [...build_room_with_outline('Room A', $squareOutline, null), 'floor_area_m2' => 10.0],
+    [...build_room_with_outline('Room B', $squareOutline, null), 'floor_area_m2' => 15.5],
+]);
+$totalPdf = $renderer->render($twoRoomPlan);
+x_check('PDF prints the unit-level total across both rooms', str_contains($totalPdf, 'Total indicative area: 25.50 sqm across 2 room'));
+x_check_pdf_graph('two-room total-area PDF', $totalPdf);
+$totalPngTiled = $imageRenderer->render($twoRoomPlan);
+x_check('PNG (tiled path) renders without throwing now that a total-area line is drawn', str_contains($totalPngTiled, "\x89PNG"));
+
+echo "\n== Metric/imperial unit toggle ==\n";
+$imperialPdf = $renderer->render($twoRoomPlan, unit: \VuuroScan\Export\UnitFormatter::IMPERIAL);
+x_check('imperial PDF converts the total area to sqft, not sqm', str_contains($imperialPdf, 'sqft') && !str_contains($imperialPdf, '25.50 sqm'));
+x_check_pdf_graph('imperial-unit PDF', $imperialPdf);
+$metricPdf = $renderer->render($twoRoomPlan, unit: \VuuroScan\Export\UnitFormatter::METRIC);
+x_check('metric (default) PDF still says sqm', str_contains($metricPdf, 'sqm'));
+x_check_pdf_graph('metric-unit PDF', $metricPdf);
+$imperialPng = $imageRenderer->render($twoRoomPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::IMPERIAL);
+x_check('imperial PNG renders without throwing', str_contains($imperialPng, "\x89PNG"));
+x_check('imperial PNG produces different bytes than the metric render (unit text actually changed)', $imperialPng !== $totalPngTiled);
+
+echo "\n== Optional branding/label line on the export ==\n";
+$labeledPdf = $renderer->render($twoRoomPlan, unit: \VuuroScan\Export\UnitFormatter::METRIC, label: 'Prepared for Acme Rentals');
+x_check('PDF includes the caller-supplied label line', str_contains($labeledPdf, 'Prepared for Acme Rentals'));
+x_check_pdf_graph('labeled PDF', $labeledPdf);
+$unlabeledPdf = $renderer->render($twoRoomPlan);
+x_check('PDF omits the label line entirely when none is given', !str_contains($unlabeledPdf, 'Prepared for'));
+x_check_pdf_graph('unlabeled PDF', $unlabeledPdf);
+$labeledPng = $imageRenderer->render($twoRoomPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, 'Prepared for Acme Rentals');
+x_check('PNG with a label renders without throwing and differs from the unlabeled render', str_contains($labeledPng, "\x89PNG") && $labeledPng !== $totalPngTiled);
+$labeledFusedPng = $imageRenderer->render($fusedPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, 'Prepared for Acme Rentals');
+$unlabeledFusedPng = $imageRenderer->render($fusedPlan);
+x_check('fused PNG with a label renders without throwing and differs from the unlabeled render', str_contains($labeledFusedPng, "\x89PNG") && $labeledFusedPng !== $unlabeledFusedPng);
+
+echo "\n== A real attached photo embeds as a valid, walkable JPEG XObject ==\n";
+$photoJpegBytes = (static function (): string {
+    $img = imagecreatetruecolor(1200, 900);
+    imagefilledrectangle($img, 0, 0, 1200, 900, imagecolorallocate($img, 60, 120, 180));
+    ob_start();
+    imagejpeg($img, null, 90);
+    imagedestroy($img);
+    return (string) ob_get_clean();
+})();
+$photoPlan = [...build_floor_plan([build_room_with_outline('Room With Photo', $squareOutline, null)]), 'photos' => [['url' => 'https://example.invalid/photo.jpg', 'caption' => 'Test photo']]];
+$photoPdf = $renderer->render($photoPlan, photoLoader: static fn (string $url): ?string => $url === 'https://example.invalid/photo.jpg' ? $photoJpegBytes : null);
+x_check('PDF with a real attached photo has at least 3 pages (floor plan drawing + photo + metrics table)', preg_match_all('/\/Type \/Page\b/', $photoPdf) >= 3);
+x_check_pdf_graph('PDF with a real attached photo', $photoPdf);
+
+echo "\n== FloorPlanSvgRenderer: tiles and fused layouts ==\n";
+
+$svgRenderer = new FloorPlanSvgRenderer();
+
+$tiledSvg = $svgRenderer->render($tiledPlan);
+x_check('tiled SVG starts with an <svg> root element', str_starts_with($tiledSvg, '<svg '));
+x_check('tiled SVG contains both room labels', str_contains($tiledSvg, 'Room A') && str_contains($tiledSvg, 'Room B'));
+
+$fusedSvg = $svgRenderer->render($fusedPlan);
+x_check('fused SVG starts with an <svg> root element', str_starts_with($fusedSvg, '<svg '));
+x_check('fused SVG differs from the tiled SVG for the same rooms once positions are known', $fusedSvg !== $tiledSvg);
+x_check('fused SVG uses cream #f2f1ec background', str_contains($fusedSvg, '#f2f1ec'));
+x_check('fused SVG has no wall drop-shadow filter applied', !str_contains($fusedSvg, 'wall-shadow'));
+x_check('fused SVG walls are rendered pure black #000000', str_contains($fusedSvg, 'fill="#000000"'));
+x_check('fused SVG uses the updated grid line color #e7e6e0', str_contains($fusedSvg, '#e7e6e0'));
+
+$forcedTilesSvg = $svgRenderer->render($fusedPlan, 'tiles');
+x_check('layout=tiles forces the per-room SVG sheet even when fusion is available', $forcedTilesSvg !== $fusedSvg);
+
+$oneRoomSvg = $svgRenderer->render($fusedPlan, 'auto', 'room-a');
+x_check('room_id isolates a single room\'s SVG without throwing', str_contains($oneRoomSvg, 'Room A') && !str_contains($oneRoomSvg, 'Room B'));
+
+try {
+    $svgRenderer->render($fusedPlan, 'auto', 'no-such-room');
+    x_check('SVG: an unknown room_id is rejected, not silently ignored', false, 'no exception was thrown');
+} catch (\InvalidArgumentException $e) {
+    x_check('SVG: an unknown room_id is rejected, not silently ignored', str_contains($e->getMessage(), 'no-such-room'));
+}
+
+echo "\n== FloorPlanSvgRenderer: doors/windows draw real symbols, not just text ==\n";
+
+$svgWithJoin = $svgRenderer->render($fusedWithJoinPlan);
+x_check('the fused SVG draws a door swing arc path', str_contains($svgWithJoin, '<path d="M') && str_contains($svgWithJoin, 'A '));
+x_check('the fused SVG draws a window tick line group', substr_count($svgWithJoin, 'stroke="#2ec3ff"') >= 1);
+x_check('door/window drawing adds real bytes over the same plan with no openings', strlen($svgWithJoin) > strlen($fusedSvg));
+
+echo "\n== FloorPlanSvgRenderer: room-type fill colors ==\n";
+
+$roomTypedSvg = $svgRenderer->render($roomTypedPlan);
+x_check('bedroom fill color appears in the rendered SVG', str_contains($roomTypedSvg, '#f3d9a6'));
+x_check('bathroom/kitchen fill color appears in the rendered SVG', str_contains($roomTypedSvg, '#dff3ff'));
+x_check('the room-type legend lists both types', str_contains($roomTypedSvg, 'Bedroom') && str_contains($roomTypedSvg, 'Bathroom'));
+
+echo "\n== FloorPlanSvgRenderer: fusion collides rooms to close small real-world gaps (no fill hack) ==\n";
+
+function svg_room_fill_polygons(string $svg): array
+{
+    preg_match('/<g id="room-fills">(.*?)<\/g>/s', $svg, $group);
+    preg_match_all('/<polygon[^>]*points="([^"]+)"[^>]*fill="#[0-9a-f]{6}"[^>]*\/>/', $group[1] ?? '', $m);
+    $polys = [];
+    foreach ($m[1] as $pointsStr) {
+        $pts = [];
+        foreach (explode(' ', trim($pointsStr)) as $pair) {
+            [$x, $y] = explode(',', $pair);
+            $pts[] = [(float) $x, (float) $y];
+        }
+        $polys[] = $pts;
+    }
+    return $polys;
+}
+
+function polygon_bbox(array $pts): array
+{
+    $xs = array_column($pts, 0);
+    return ['minX' => min($xs), 'maxX' => max($xs)];
+}
+
+x_check('the renderer no longer draws a separate seam-fill layer', !str_contains($svgRenderer->render($fusedPlan), 'id="fusion-seams"'));
+
+$wallGapPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0]),
+    build_room_with_outline('Room B', $squareOutline, [4.15, 0.0]),
+]);
+$wallGapSvg = $svgRenderer->render($wallGapPlan);
+$wallGapPolys = svg_room_fill_polygons($wallGapSvg);
+x_check('setup: both room fill polygons were found in the rendered SVG', count($wallGapPolys) === 2);
+if (count($wallGapPolys) === 2) {
+    $roomABox = polygon_bbox($wallGapPolys[0]);
+    $roomBBox = polygon_bbox($wallGapPolys[1]);
+    x_check('a small (wall-thickness-sized) gap is actually closed — Room A\'s right edge and Room B\'s left edge land on the same pixel, not filled over',
+        abs($roomABox['maxX'] - $roomBBox['minX']) < 0.5,
+        "Room A right edge at {$roomABox['maxX']}, Room B left edge at {$roomBBox['minX']}");
+}
+
+$farApartPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0]),
+    build_room_with_outline('Room B', $squareOutline, [10.0, 0.0]),
+]);
+$farApartSvg = $svgRenderer->render($farApartPlan);
+$farApartPolys = svg_room_fill_polygons($farApartSvg);
+if (count($farApartPolys) === 2) {
+    $roomABox = polygon_bbox($farApartPolys[0]);
+    $roomBBox = polygon_bbox($farApartPolys[1]);
+    x_check('a large gap (not plausibly one wall) is left alone, not force-collided',
+        $roomBBox['minX'] - $roomABox['maxX'] > 3.0,
+        "gap shrank to " . ($roomBBox['minX'] - $roomABox['maxX']) . "px");
+}
+
+$overlapPolysBefore = svg_room_fill_polygons($svgRenderer->render($overlapPlan));
+x_check('rooms already flagged as overlapping are excluded from collision-snapping entirely (left at their captured position)',
+    count($overlapPolysBefore) === 2 && abs(polygon_bbox($overlapPolysBefore[1])['minX'] - polygon_bbox($overlapPolysBefore[0])['minX'] - 60.0) < 0.5,
+    'Room A moved from its captured origin despite being flagged overlapping');
+
+echo "\n== FloorPlanSvgRenderer: collision works on non-axis-aligned (diagonal/\"pabalagbag\") walls too ==\n";
+
+$diagRoomA = build_room_with_outline('Diag A', [[0.0, 0.0], [3.2, 2.4], [1.4, 4.8], [-1.8, 2.4]], [0.0, 0.0]);
+$diagRoomB = build_room_with_outline('Diag B', [[3.32, 2.49], [6.52, 4.89], [4.72, 7.29], [1.52, 4.89]], [0.0, 0.0]);
+$diagPlan = build_floor_plan([$diagRoomA, $diagRoomB]);
+$diagSvg = $svgRenderer->render($diagPlan);
+$diagPolys = svg_room_fill_polygons($diagSvg);
+x_check('setup: both diagonal-walled room polygons were found', count($diagPolys) === 2);
+if (count($diagPolys) === 2) {
+    [$ax0, $ay0] = $diagPolys[0][1];
+    [$bx0, $by0] = $diagPolys[1][0];
+    [$ax1, $ay1] = $diagPolys[0][2];
+    [$bx1, $by1] = $diagPolys[1][3];
+    x_check('a diagonal wall\'s first shared corner is actually collided to the same pixel, not just close',
+        abs($ax0 - $bx0) < 0.5 && abs($ay0 - $by0) < 0.5,
+        "A=($ax0,$ay0) B=($bx0,$by0)");
+    x_check('a diagonal wall\'s second shared corner is also collided, not just one end',
+        abs($ax1 - $bx1) < 0.5 && abs($ay1 - $by1) < 0.5,
+        "A=($ax1,$ay1) B=($bx1,$by1)");
+}
+
+echo "\n== FloorPlanSvgRenderer: north arrow only appears when a real heading_deg was captured ==\n";
+
+$noHeadingPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, null),
+]);
+$noHeadingSvg = $svgRenderer->render($noHeadingPlan);
+x_check('no heading_deg on any room means no compass arrow, never a fabricated north', !str_contains($noHeadingSvg, '"N"') && !str_contains($noHeadingSvg, '>N<'));
+
+$headingTilePlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, null, [], null, null, null, 0.0),
+]);
+$headingTileSvg = $svgRenderer->render($headingTilePlan, 'tiles');
+x_check('a room with heading_deg = 0.0 (a real reading, not "absent") still draws the compass arrow', str_contains($headingTileSvg, '>N<'));
+x_check('heading_deg = 0.0 points the arrow straight up (rotate(180))', str_contains($headingTileSvg, 'rotate(180)'));
+
+$headingRotatedPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, null, [], null, null, null, 90.0),
+]);
+$headingRotatedSvg = $svgRenderer->render($headingRotatedPlan, 'tiles');
+x_check('heading_deg = 90 rotates the arrow 90 degrees, not left at the default', str_contains($headingRotatedSvg, 'rotate(90)'));
+
+$headingFusedPlan = build_floor_plan([
+    build_room_with_outline('Room A', $squareOutline, [0.0, 0.0], [], null, null, null, 45.0),
+    build_room_with_outline('Room B', $squareOutline, [4.0, 0.0]),
+]);
+$headingFusedSvg = $svgRenderer->render($headingFusedPlan);
+x_check('the fused layout draws one compass arrow using whichever room actually carries a heading_deg reading', str_contains($headingFusedSvg, '>N<'));
+
+echo "\n== FloorPlanSvgRenderer: overlap warning, units, and label ==\n";
+
+$overlapSvg = $svgRenderer->render($overlapPlan);
+x_check('overlapping rooms are flagged with the warning color in the SVG', str_contains($overlapSvg, '#d6453e'));
+$cleanFusedSvg = $svgRenderer->render($cleanFusedPlan);
+x_check('adjacent (non-overlapping) rooms are not flagged', !str_contains($cleanFusedSvg, '#d6453e'));
+
+$imperialSvg = $svgRenderer->render($twoRoomPlan, unit: \VuuroScan\Export\UnitFormatter::IMPERIAL);
+x_check('imperial SVG uses sqft, not sqm', str_contains($imperialSvg, 'sqft') && !str_contains($imperialSvg, 'sqm'));
+
+$labeledSvg = $svgRenderer->render($twoRoomPlan, label: 'Prepared for Acme Rentals');
+x_check('SVG includes the caller-supplied label line', str_contains($labeledSvg, 'Prepared for Acme Rentals'));
+$unlabeledSvg = $svgRenderer->render($twoRoomPlan);
+x_check('SVG omits the label line entirely when none is given', !str_contains($unlabeledSvg, 'Prepared for'));
+
+echo "\n== RoomFusionSolver: rotation drift between rooms (translation alone cannot fix this) ==\n";
+
+function rotate_point(float $x, float $z, float $thetaRad): array
+{
+    $cos = cos($thetaRad);
+    $sin = sin($thetaRad);
+    return [$x * $cos - $z * $sin, $x * $sin + $z * $cos];
+}
+
+function build_rotation_drift_rooms(float $driftDeg): array
+{
+    $baseOutline = [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]];
+    $thetaRad = deg2rad($driftDeg);
+    $roomBOutline = array_map(fn (array $p) => rotate_point($p[0], $p[1], $thetaRad), $baseOutline);
+    return [
+        build_room_with_outline('Room A', $baseOutline, [0.0, 0.0]),
+        build_room_with_outline('Room B', $roomBOutline, [4.0, 0.0]),
+    ];
+}
+
+[$roomA, $roomB] = build_rotation_drift_rooms(6.0);
+$rotationPlan = build_floor_plan([$roomA, $roomB]);
+$fusion = \VuuroScan\Export\RoomFusionSolver::solve($rotationPlan['rooms']);
+x_check('no room is flagged as overlapping just because it carries a rotation drift', $fusion['overlapping'] === []);
+
+$poseA = $fusion['poses'][0];
+$poseB = $fusion['poses'][1];
+[$roomBNearLocalX, $roomBNearLocalZ] = $roomB['outline_m'][0];
+[$roomBFarLocalX, $roomBFarLocalZ] = $roomB['outline_m'][3];
+[$sharedNearX, $sharedNearZ] = \VuuroScan\Export\RoomFusionSolver::transformPoint($poseA, 4.0, 0.0);
+[$driftedNearX, $driftedNearZ] = \VuuroScan\Export\RoomFusionSolver::transformPoint($poseB, $roomBNearLocalX, $roomBNearLocalZ);
+[$sharedFarX, $sharedFarZ] = \VuuroScan\Export\RoomFusionSolver::transformPoint($poseA, 4.0, 3.0);
+[$driftedFarX, $driftedFarZ] = \VuuroScan\Export\RoomFusionSolver::transformPoint($poseB, $roomBFarLocalX, $roomBFarLocalZ);
+
+$nearGap = sqrt(($sharedNearX - $driftedNearX) ** 2 + ($sharedNearZ - $driftedNearZ) ** 2);
+$farGap = sqrt(($sharedFarX - $driftedFarX) ** 2 + ($sharedFarZ - $driftedFarZ) ** 2);
+
+x_check(
+    'the near end of the shared wall is closed after solving',
+    $nearGap < 0.02,
+    "near-end gap is {$nearGap}m"
+);
+x_check(
+    'the far end of the shared wall is ALSO closed — a translation-only fix would leave this end open',
+    $farGap < 0.02,
+    "far-end gap is {$farGap}m"
+);
+x_check(
+    'the solver actually rotated Room B to correct the drift, not just translated it',
+    abs($poseB['rotationRad']) > 0.01,
+    'rotationRad = ' . $poseB['rotationRad']
+);
+
+[, $roomBNoFix] = build_rotation_drift_rooms(6.0);
+$rawFarGap = sqrt(
+    (($roomA['outline_m'][2][0] + 0.0) - ($roomBNoFix['outline_m'][3][0] + 4.0)) ** 2
+    + (($roomA['outline_m'][2][1] + 0.0) - ($roomBNoFix['outline_m'][3][1] + 0.0)) ** 2
+);
+x_check(
+    'setup sanity: before any correction, the far end really was open (proves this fixture actually exercises rotation, not a no-op)',
+    $rawFarGap > 0.2,
+    "raw far-end gap was only {$rawFarGap}m"
+);
+
+$rotationSvg = $svgRenderer->render($rotationPlan);
+$rotationPolys = svg_room_fill_polygons($rotationSvg);
+x_check('setup: both rotation-drift room polygons were found in the rendered SVG', count($rotationPolys) === 2);
+if (count($rotationPolys) === 2) {
+    [$svgNearAx, $svgNearAy] = $rotationPolys[0][1];
+    [$svgNearBx, $svgNearBy] = $rotationPolys[1][0];
+    [$svgFarAx, $svgFarAy] = $rotationPolys[0][2];
+    [$svgFarBx, $svgFarBy] = $rotationPolys[1][3];
+    x_check(
+        'rendered SVG: near corner of the rotated seam lands on the same pixel',
+        abs($svgNearAx - $svgNearBx) < 0.75 && abs($svgNearAy - $svgNearBy) < 0.75,
+        "A=($svgNearAx,$svgNearAy) B=($svgNearBx,$svgNearBy)"
+    );
+    x_check(
+        'rendered SVG: far corner of the rotated seam ALSO lands on the same pixel',
+        abs($svgFarAx - $svgFarBx) < 0.75 && abs($svgFarAy - $svgFarBy) < 0.75,
+        "A=($svgFarAx,$svgFarAy) B=($svgFarBx,$svgFarBy)"
+    );
+}
+
+$imageRotationBytes = $imageRenderer->render($rotationPlan);
+x_check('the PNG export also renders the same rotation-drift session without throwing', str_contains($imageRotationBytes, "\x89PNG"));
+
+echo "\n== RoomFusionSolver: three rooms in an L-shape, one drifted, anchor stays put ==\n";
+
+$lShapeA = build_room_with_outline('Anchor Room', [[0.0, 0.0], [5.0, 0.0], [5.0, 4.0], [0.0, 4.0]], [0.0, 0.0]);
+$lShapeA['floor_area_m2'] = 20.0;
+$driftedOutlineC = array_map(fn (array $p) => rotate_point($p[0], $p[1], deg2rad(4.0)), [[0.0, 0.0], [3.0, 0.0], [3.0, 3.0], [0.0, 3.0]]);
+$lShapeC = build_room_with_outline('Drifted Room', $driftedOutlineC, [5.0, 0.0]);
+$lShapeC['floor_area_m2'] = 9.0;
+$lShapePlan = build_floor_plan([$lShapeA, $lShapeC]);
+$lShapeFusion = \VuuroScan\Export\RoomFusionSolver::solve($lShapePlan['rooms']);
+x_check(
+    'the larger room is chosen as the fixed anchor (zero correction), not whichever room happens to be listed first as drifted',
+    abs($lShapeFusion['poses'][0]['rotationRad']) < 1e-9
+        && abs($lShapeFusion['poses'][0]['originX'] - 0.0) < 1e-9
+        && abs($lShapeFusion['poses'][0]['originZ'] - 0.0) < 1e-9
+);
+x_check('the smaller, drifted room is the one that actually gets corrected', abs($lShapeFusion['poses'][1]['rotationRad']) > 0.01);
+
+echo "\n== Multi-floor and multi-walkthrough plans are split into separate sections ==\n";
+$withGroup = static function (array $room, ?string $floor, ?string $group): array {
+    $room['floor'] = $floor;
+    $room['capture_group_id'] = $group;
+    return $room;
+};
+$groundA = $withGroup(build_room_with_outline('Ground A', $squareOutline, [0.0, 0.0], [], null, 'ground-a'), 'Ground floor', 'walk-1');
+$groundB = $withGroup(build_room_with_outline('Ground B', $squareOutline, [4.0, 0.0], [], null, 'ground-b'), 'Ground floor', 'walk-1');
+$upstairsA = $withGroup(build_room_with_outline('Upstairs A', $squareOutline, [0.5, 0.0], [], null, 'up-a'), '1st floor', 'walk-2');
+$upstairsB = $withGroup(build_room_with_outline('Upstairs B', $squareOutline, [4.5, 0.0], [], null, 'up-b'), '1st floor', 'walk-2');
+$atticRoom = $withGroup(build_room_with_outline('Attic', $squareOutline, null, [], null, 'attic'), 'Attic', null);
+$unsetRoom = $withGroup(build_room_with_outline('Unset', $squareOutline, null, [], null, 'unset'), null, null);
+
+$split = FloorGroups::split([$unsetRoom, $groundA, $upstairsA, $groundB, $atticRoom, $upstairsB]);
+x_check('rooms split into one section per floor and walkthrough', count($split) === 4, 'got ' . count($split));
+x_check('sections run from the top floor down, with no floor last', array_column($split, 'floor') === ['Attic', '1st floor', 'Ground floor', null], 'got ' . json_encode(array_column($split, 'floor')));
+x_check('rooms of one walkthrough stay together', array_column($split[2]['rooms'], 'room_id') === ['ground-a', 'ground-b']);
+
+$sameFloorTwoWalks = FloorGroups::split([$groundA, $groundB, $withGroup($upstairsA, 'Ground floor', 'walk-2')]);
+x_check('two walkthroughs on the same floor are kept apart', count($sameFloorTwoWalks) === 2, 'got ' . count($sameFloorTwoWalks));
+x_check('the second section on the same floor is labelled as a separate scan', FloorGroups::headings($sameFloorTwoWalks) === ['Ground floor', 'Ground floor (separate scan 2)'], 'got ' . json_encode(FloorGroups::headings($sameFloorTwoWalks)));
+
+$legacySplit = FloorGroups::split([
+    $withGroup($groundA, 'Ground floor', null),
+    $withGroup($upstairsA, '1st floor', null),
+]);
+x_check('older fused rooms without a walkthrough id are still split by floor', count($legacySplit) === 2, 'got ' . count($legacySplit));
+
+$twoFloorPlan = build_floor_plan([$groundA, $groundB, $upstairsA, $upstairsB]);
+x_check('the two floors overlap in raw position (the case that used to be flagged)', FusionOverlapDetector::detect($twoFloorPlan['rooms']) !== []);
+$twoFloorPdf = $renderer->render($twoFloorPlan);
+x_check('PDF has no overlap warning when the overlap is only between floors', !str_contains($twoFloorPdf, 'WARNING'));
+x_check('PDF lists the 1st floor section', str_contains($twoFloorPdf, '(1st floor) Tj'));
+x_check('PDF lists the ground floor section', str_contains($twoFloorPdf, '(Ground floor) Tj'));
+x_check('PDF has one drawing page per floor', str_contains($twoFloorPdf, 'Floor plan drawing - 1st floor') && str_contains($twoFloorPdf, 'Floor plan drawing - Ground floor'));
+x_check_pdf_graph('two-floor PDF', $twoFloorPdf);
+
+$twoFloorPng = $imageRenderer->render($twoFloorPlan);
+$singleFloorPng = $imageRenderer->render(build_floor_plan([$groundA, $groundB]));
+$twoFloorImage = imagecreatefromstring($twoFloorPng);
+$singleFloorImage = imagecreatefromstring($singleFloorPng);
+x_check('PNG stacks the floors into one taller image', $twoFloorImage !== false && $singleFloorImage !== false && imagesy($twoFloorImage) > imagesy($singleFloorImage) * 1.5);
+
+$twoFloorFundaPng = $imageRenderer->render($twoFloorPlan, style: 'funda');
+x_check('Funda PNG renders a multi-floor plan', str_starts_with($twoFloorFundaPng, "\x89PNG"));
+
+$twoFloorSvg = $svgRenderer->render($twoFloorPlan);
+x_check('SVG shows a heading for each floor', str_contains($twoFloorSvg, '>1st floor</text>') && str_contains($twoFloorSvg, '>Ground floor</text>'));
+x_check('SVG nests one drawing per floor', substr_count($twoFloorSvg, '<svg ') === 3, 'got ' . substr_count($twoFloorSvg, '<svg '));
+$svgDom = new DOMDocument();
+x_check('multi-floor SVG is well-formed XML', @$svgDom->loadXML($twoFloorSvg) === true);
+preg_match_all('/\bid="([^"]+)"/', $twoFloorSvg, $svgIds);
+x_check('every id in the multi-floor SVG is unique', count($svgIds[1]) === count(array_unique($svgIds[1])), 'duplicates: ' . json_encode(array_values(array_unique(array_diff_assoc($svgIds[1], array_unique($svgIds[1]))))));
+preg_match_all('/url\(#([^)]+)\)/', $twoFloorSvg, $svgRefs);
+x_check('every url(#...) in the multi-floor SVG points at an id that exists', array_diff(array_unique($svgRefs[1]), $svgIds[1]) === [], 'missing: ' . json_encode(array_values(array_diff(array_unique($svgRefs[1]), $svgIds[1]))));
+
+$upstairsOverlap = $withGroup(build_room_with_outline('Upstairs C', $squareOutline, [4.6, 0.0], [], null, 'up-c'), '1st floor', 'walk-2');
+$overlapOneFloorPdf = $renderer->render(build_floor_plan([$groundA, $groundB, $upstairsA, $upstairsB, $upstairsOverlap]));
+x_check('PDF overlap warning names the floor it belongs to', str_contains($overlapOneFloorPdf, 'WARNING: some rooms below overlap') && str_contains($overlapOneFloorPdf, '\(1st floor\)') && !str_contains($overlapOneFloorPdf, '\(Ground floor\)'));
+
+$oneWalkPng = $imageRenderer->render(build_floor_plan([$groundA, $groundB]));
+x_check('a single walkthrough on one floor renders exactly as before', $oneWalkPng === $singleFloorPng);
+
+echo "\n== Objects stay inside the room and follow its walls ==\n";
+$squareRoom = ['outline_m' => [[0, 0], [4, 0], [4, 3], [0, 3]]];
+[$fx, $fz, $fw, $fd, $frame] = \VuuroScan\Export\ObjectFootprint::fit($squareRoom, ['position_m' => [3.9, 0.1], 'dimensions_m' => [2.0, 0.5, 1.6]], 0.05);
+x_check('an object pushed into the corner is moved back inside the walls', abs($fx - 2.95) < 1e-6 && abs($fz - 0.85) < 1e-6, "$fx,$fz");
+x_check('an axis-aligned room has no frame rotation', abs($frame) < 1e-9);
+[, , $sw, $sd] = \VuuroScan\Export\ObjectFootprint::fit($squareRoom, ['position_m' => [2, 1.5], 'dimensions_m' => [2.0, 0.5, 1.6], 'yaw_deg' => 90.0], 0.05);
+x_check('a quarter-turned object swaps width and depth', abs($sw - 0.8) < 1e-6 && abs($sd - 1.0) < 1e-6, "$sw,$sd");
+[$bx, $bz] = \VuuroScan\Export\ObjectFootprint::fit($squareRoom, ['position_m' => [1, 1], 'dimensions_m' => [9.0, 0.5, 9.0]], 0.05);
+x_check('an object larger than the room is centred', abs($bx - 2.0) < 1e-6 && abs($bz - 1.5) < 1e-6, "$bx,$bz");
+$tilt = deg2rad(25);
+$tiltedOutline = array_map(fn (array $p) => rotate_point($p[0], $p[1], $tilt), [[0, 0], [4, 0], [4, 3], [0, 3]]);
+[$lx, $lz] = rotate_point(3.0, 1.5, $tilt);
+[$tx, $tz, $tw, $td, $tFrame] = \VuuroScan\Export\ObjectFootprint::fit(['outline_m' => $tiltedOutline], ['position_m' => [$lx, $lz], 'dimensions_m' => [2.0, 0.5, 1.6], 'yaw_deg' => 25.0 + 90.0], 0.05);
+x_check('a tilted room aligns objects to its longest wall', abs($tFrame - $tilt) < 1e-6, (string) $tFrame);
+x_check('yaw is measured against the wall, not the world axis', abs($tw - 0.8) < 1e-6 && abs($td - 1.0) < 1e-6, "$tw,$td");
+[$ux, $uz] = rotate_point($tx, $tz, -$tilt);
+x_check('a tilted object is clamped inside the tilted room', $ux + $tw <= 3.95 + 1e-6 && $uz - $td >= 0.05 - 1e-6, "$ux,$uz");
+$objectPose = \VuuroScan\Export\ObjectFootprint::objectPose(['rotationRad' => 0.3, 'originX' => 1.0, 'originZ' => 2.0], $tx, $tz, $tFrame);
+$centerA = \VuuroScan\Export\RoomFusionSolver::transformPoint($objectPose, $tx, $tz);
+$centerB = \VuuroScan\Export\RoomFusionSolver::transformPoint(['rotationRad' => 0.3, 'originX' => 1.0, 'originZ' => 2.0], $tx, $tz);
+x_check('the object pose keeps the object centre where the room pose puts it', abs($centerA[0] - $centerB[0]) < 1e-9 && abs($centerA[1] - $centerB[1]) < 1e-9);
+
+echo "\n== No orange top bar in any style ==\n";
+$barPlan = build_floor_plan([build_room_with_outline('Kitchen', [[0, 0], [3, 0], [3, 3], [0, 3]], null)]);
+foreach (['default', 'funda'] as $barStyle) {
+    $barSvg = $svgRenderer->render($barPlan, 'auto', null, 'metric', null, \VuuroScan\Export\FloorPlanStyle::from($barStyle));
+    x_check("$barStyle SVG has no orange header bar", stripos($barSvg, '#ff8212') === false);
+}
+$barPdf = (new FloorPlanPdfRenderer())->render($barPlan);
+x_check('PDF has no full-width bar at the top of the page', preg_match('/\n0 [0-9.]+ [56][0-9][0-9](\.[0-9]+)? 4 re\nf\n/', $barPdf) !== 1);
+$fundaSvg = $svgRenderer->render($barPlan, 'auto', null, 'metric', null, \VuuroScan\Export\FloorPlanStyle::from('funda'));
+x_check('Funda SVG has a white canvas with the grid over it', str_contains($fundaSvg, 'fill="#ffffff"') && str_contains($fundaSvg, 'fill="url(#grid)"'));
+x_check('Funda SVG has no Vuuro Scan header', !str_contains($fundaSvg, 'Vuuro Scan'));
+x_check('Funda SVG shows the total floor area title', str_contains($fundaSvg, 'Total floor area'));
+
+echo "\n== Listing plan room colors ==\n";
+$fill = static fn (?string $type, string $key = 'room-x') => \VuuroScan\Export\FloorPlanPalette::fundaFillFor($type, $key);
+x_check('living room, bedroom, bathroom and hallway each get their own color', count(array_unique([$fill('living_room'), $fill('bedroom'), $fill('bathroom'), $fill('hallway')])) === 4);
+x_check('kitchen and bathroom share the wet-room color', $fill('kitchen') === $fill('bathroom'));
+x_check('an untyped room keeps the same color every time it is drawn', $fill(null, 'room-07-abc') === $fill(null, 'room-07-abc'));
+$untypedFills = array_unique(array_map(static fn (int $i) => $fill(null, "room-$i"), range(1, 40)));
+x_check('untyped rooms are spread over more than one color', count($untypedFills) > 1, json_encode(array_values($untypedFills)));
+x_check('an untyped room never looks like a wet room', !in_array($fill('bathroom'), $untypedFills, true));
+x_check('a room confirmed as other is treated as untyped', $fill('other', 'room-3') === $fill(null, 'room-3'));
+$untypedRoom = build_room_with_outline('Loft', [[0, 0], [4, 0], [4, 3], [0, 3]], null, [], null, 'room-loft-1');
+$untypedPng = $imageRenderer->render(build_floor_plan([$untypedRoom]), 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, \VuuroScan\Export\FloorPlanStyle::from('funda'));
+x_check('the PNG draws an untyped room in its own color, same as the SVG', png_contains_color($untypedPng, ...\VuuroScan\Export\FloorPlanPalette::hexToRgb($fill(null, 'room-loft-1'))));
+$untypedSvg = (new FloorPlanSvgRenderer())->render(build_floor_plan([$untypedRoom]), 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, \VuuroScan\Export\FloorPlanStyle::from('funda'));
+x_check('the SVG uses the same color for that room', str_contains(strtolower($untypedSvg), $fill(null, 'room-loft-1')));
+
+echo "\n== Long room names at the edge of the plan are not cut off ==\n";
+$edgePlan = build_floor_plan([
+    build_room_with_outline('Slaapkamer met inloopkast', [[0, 0], [0.9, 0], [0.9, 3], [0, 3]], [0.0, 0.0], [], null, 'edge-left'),
+    build_room_with_outline('Woonkamer', [[0, 0], [12, 0], [12, 3], [0, 3]], [0.9, 0.0], [], null, 'edge-main'),
+    build_room_with_outline('Badkamer met ligbad en douche', [[0, 0], [0.9, 0], [0.9, 3], [0, 3]], [12.9, 0.0], [], null, 'edge-right'),
+]);
+$edgeImage = imagecreatefromstring($imageRenderer->render($edgePlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, \VuuroScan\Export\FloorPlanStyle::from('full')));
+$edgeBackground = imagecolorat($edgeImage, 0, 0);
+$edgeInk = 0;
+foreach ([0, 1, imagesx($edgeImage) - 2, imagesx($edgeImage) - 1] as $edgeX) {
+    for ($edgeY = 0; $edgeY < imagesy($edgeImage); $edgeY++) {
+        if (imagecolorat($edgeImage, $edgeX, $edgeY) !== $edgeBackground) {
+            $edgeInk++;
+        }
+    }
+}
+x_check('a long name in a narrow room at the left or right edge stays inside the PNG', $edgeInk === 0, "$edgeInk pixel(s) drawn on the outer columns");
+
+echo "\n== Dutch letters in plan text ==\n";
+$wrapped = \VuuroScan\Export\TextWrap::lines(str_repeat('é', 200), 95);
+x_check('a long accented word wraps into whole characters', count($wrapped) === 3 && array_filter($wrapped, static fn (string $l): bool => !mb_check_encoding($l, 'UTF-8') || mb_strlen($l) > 95) === [], json_encode(array_map('mb_strlen', $wrapped)));
+x_check('wrapping keeps every character', implode('', $wrapped) === str_repeat('é', 200));
+$dutchLine = trim(str_repeat('één ', 23)) . ' é';
+x_check('wrapping counts letters, not bytes', mb_strlen($dutchLine) <= 95 && \VuuroScan\Export\TextWrap::lines($dutchLine, 95) === [$dutchLine], (string) mb_strlen($dutchLine));
+x_check('a line break in a note stays a line break', \VuuroScan\Export\TextWrap::lines("regel één\nregel twee", 95) === ['regel één', 'regel twee']);
+x_check('an empty note still gives one empty line', \VuuroScan\Export\TextWrap::lines('', 95) === ['']);
+
+$dutchRoom = build_room_with_outline('Slaapkamer één', [[0, 0], [4, 0], [4, 3], [0, 3]], null, [], null, 'room-nl-1');
+$dutchNote = ['room_id' => 'room-nl-1', 'text' => 'Slaapkamer één – vochtige hoek, café', 'tags' => []];
+$notesLines = (new ReflectionMethod($imageRenderer, 'buildNotesLines'))->invoke($imageRenderer, [$dutchRoom], [$dutchNote, ['room_id' => null, 'text' => "Lekkage 💧 bij raam ✓ 中\nTweede regel", 'tags' => []]]);
+x_check('a Dutch note keeps its accents in the PNG', ($notesLines[1] ?? null) === '  [Slaapkamer één] Slaapkamer één – vochtige hoek, café', json_encode($notesLines));
+x_check('emoji and symbols the font cannot draw are left out, other missing letters show as ?', ($notesLines[2] ?? null) === '  [Whole unit] Lekkage bij raam ?', json_encode($notesLines));
+x_check('a second line of a unit note is kept', ($notesLines[3] ?? null) === '        Tweede regel', json_encode($notesLines));
+$summaryLines = (new ReflectionMethod($imageRenderer, 'roomSummaryLines'))->invoke($imageRenderer, [$dutchRoom], \VuuroScan\Export\UnitFormatter::METRIC);
+x_check('the room summary keeps the Dutch room name', str_starts_with($summaryLines[1] ?? '', '  [Slaapkamer één] '), json_encode($summaryLines));
+$withDutch = $imageRenderer->render(array_merge(build_floor_plan([$dutchRoom]), ['notes' => [$dutchNote]]));
+$withDashes = $imageRenderer->render(array_merge(build_floor_plan([$dutchRoom]), ['notes' => [array_merge($dutchNote, ['text' => 'Slaapkamer ----n --- vochtige hoek, caf--'])]]));
+x_check('the PNG draws the accented note, not dashes', $withDutch !== $withDashes);
+$pdfRenderer = new FloorPlanPdfRenderer();
+$pdfLines = (new ReflectionMethod($pdfRenderer, 'wrapTextLines'))->invoke($pdfRenderer, str_repeat('é', 120), 85);
+$pdfEncoded = array_map(static fn (string $l): string => (new ReflectionMethod($pdfRenderer, 'toWinAnsi'))->invoke($pdfRenderer, $l), $pdfLines);
+x_check('a long accented word in the PDF is not turned into dashes', !str_contains(implode('', $pdfEncoded), '-') && implode('', $pdfEncoded) === str_repeat("\xE9", 120), json_encode(array_map('bin2hex', $pdfEncoded)));
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {

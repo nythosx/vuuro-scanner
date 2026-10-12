@@ -1,7 +1,3 @@
-//
-//  DeviceCapability.swift
-//  VuuroScan
-
 
 import RoomPlan
 
@@ -9,6 +5,14 @@ enum DeviceCapability {
 
     static var isRoomPlanSupported: Bool {
         RoomCaptureSession.isSupported
+    }
+
+    static var canCaptureRooms: Bool {
+        #if DEBUG
+        isRoomPlanSupported || FakeLidarMode.isEnabled
+        #else
+        isRoomPlanSupported
+        #endif
     }
 
     static var unsupportedReason: String {

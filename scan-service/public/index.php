@@ -5,16 +5,19 @@ declare(strict_types=1);
 require __DIR__ . '/../src/autoload.php';
 
 use VuuroScan\Adapters\RoomPlanSimulatorAdapter;
+use VuuroScan\Export\ExportLanguage;
 use VuuroScan\Export\FloorPlanImageRenderer;
+use VuuroScan\Export\FloorPlanStyle;
 use VuuroScan\Export\FloorPlanPdfRenderer;
+use VuuroScan\Export\FloorPlanSvgRenderer;
+use VuuroScan\ScanComparison;
 use VuuroScan\ScanSessionRepository;
 use VuuroScan\Storage\Database;
 
-// Route every uncaught Throwable through one place: no stack trace, no
-// server paths, and an honest 500 with the status code actually set.
 ini_set('display_errors', '0');
 error_reporting(E_ALL);
 set_exception_handler(static function (\Throwable $e): void {
+    error_log("VuuroScan UNCAUGHT " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
     http_response_code(500);
     header('Content-Type: application/json');
     echo json_encode([
@@ -23,31 +26,74 @@ set_exception_handler(static function (\Throwable $e): void {
     ], JSON_PRETTY_PRINT);
 });
 
-// Stop a browser from MIME-sniffing a response (JSON, PNG, or PDF here)
-// into something it decides to execute as HTML/JS.
+const DEFAULT_ADMIN_API_KEY = 'change-me-local-dev';
+const DEFAULT_EXPORT_SECRET = 'change-me-local-dev-signing';
+const MIN_PRODUCTION_APP_KEY_LENGTH = 24;
+
+$scanServiceEnv = getenv('SCAN_SERVICE_ENV') ?: 'development';
+if ($scanServiceEnv === 'production') {
+    $adminKey = getenv('SCAN_SERVICE_ADMIN_API_KEY');
+    $exportSecret = getenv('SCAN_SERVICE_EXPORT_SECRET');
+    if ($adminKey === false || $adminKey === '' || $adminKey === DEFAULT_ADMIN_API_KEY) {
+        throw new \RuntimeException('SCAN_SERVICE_ENV=production requires SCAN_SERVICE_ADMIN_API_KEY to be set to a real, non-default value.');
+    }
+    if ($exportSecret === false || $exportSecret === '' || $exportSecret === DEFAULT_EXPORT_SECRET) {
+        throw new \RuntimeException('SCAN_SERVICE_ENV=production requires SCAN_SERVICE_EXPORT_SECRET to be set to a real, non-default value.');
+    }
+    $appKey = getenv('SCAN_SERVICE_APP_KEY');
+    if (!is_string($appKey) || strlen(trim($appKey)) < MIN_PRODUCTION_APP_KEY_LENGTH) {
+        throw new \RuntimeException('SCAN_SERVICE_ENV=production requires SCAN_SERVICE_APP_KEY to be set to a random value of at least ' . MIN_PRODUCTION_APP_KEY_LENGTH . ' characters.');
+    }
+}
+
 header('X-Content-Type-Options: nosniff');
 
-// CORS: local-dev-only, scoped to a single origin (default: the
-// web-viewer's own dev server), not a wildcard. Override via
-// SCAN_SERVICE_CORS_ORIGIN when the Scan Service or its web-viewer runs on
-// a different host/port than the 127.0.0.1:8089/:8090 pairing this repo
-// ships with — same env-var-with-a-default pattern as SCAN_SERVICE_DB_PATH
-// in Database.php.
 $corsOrigin = getenv('SCAN_SERVICE_CORS_ORIGIN') ?: 'http://127.0.0.1:8090';
 if (($_SERVER['HTTP_ORIGIN'] ?? null) === $corsOrigin) {
     header("Access-Control-Allow-Origin: $corsOrigin");
     header('Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, X-Scan-Access-Token, Idempotency-Key');
+    header('Access-Control-Allow-Headers: Content-Type, X-Scan-Access-Token, Idempotency-Key, X-Admin-Api-Key, X-Scan-App-Key, X-Scan-Compare-Token');
 }
+
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
     return;
 }
 
+$adminStaticPath = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+if (in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true) && $adminStaticPath !== false && !in_array(rtrim((string) $adminStaticPath, '/'), ['/admin/recent-identities', '/admin/settings', '/admin/settings/history'], true) && ($adminStaticPath === '/admin' || str_starts_with($adminStaticPath, '/admin/'))) {
+    $relative = $adminStaticPath === '/admin' ? 'index.html' : ltrim(substr($adminStaticPath, strlen('/admin/')), '/');
+    if ($relative === '') {
+        $relative = 'index.html';
+    }
+    $adminDir = realpath(__DIR__ . '/admin');
+    $adminFile = $adminDir !== false ? realpath($adminDir . DIRECTORY_SEPARATOR . $relative) : false;
+    if ($adminDir !== false && $adminFile !== false && str_starts_with($adminFile, $adminDir) && is_file($adminFile)) {
+        $ext = strtolower(pathinfo($adminFile, PATHINFO_EXTENSION));
+        $mimeMap = [
+            'html' => 'text/html; charset=utf-8',
+            'css' => 'text/css; charset=utf-8',
+            'js' => 'application/javascript; charset=utf-8',
+            'svg' => 'image/svg+xml',
+            'png' => 'image/png',
+            'jpg' => 'image/jpeg',
+            'ico' => 'image/x-icon',
+        ];
+        header('Content-Type: ' . ($mimeMap[$ext] ?? 'application/octet-stream'));
+        if ($ext === 'html') {
+            header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none';");
+        }
+        readfile($adminFile);
+        return;
+    }
+    http_response_code(404);
+    header('Content-Type: text/plain; charset=utf-8');
+    echo 'Admin asset not found.';
+    return;
+}
+
 header('Content-Type: application/json');
 
-// GET /health — deliberately unauthenticated and touches nothing but the DB
-// connection itself.
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && rtrim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/') === '/health') {
     try {
         Database::connect();
@@ -69,17 +115,9 @@ function json_body(string $raw): array
     return is_array($decoded) ? $decoded : [];
 }
 
-/**
- * Fixed-window rate limiter shared by every route that calls it. `$bucket`
- * should combine the caller's IP or session with the route so unrelated
- * endpoints don't share a budget. Sends 429 + Retry-After and returns true
- * if the caller is over budget; records this call as an event either way,
- * since even a rejected attempt counts against the window.
- */
 function rateLimited(ScanSessionRepository $repo, string $bucket, int $max, int $windowSeconds): bool
 {
-    $repo->recordEvent($bucket);
-    $count = $repo->countRecentEvents($bucket, $windowSeconds);
+    $count = $repo->recordAndCountRecentEvents($bucket, $windowSeconds);
     if ($count > $max) {
         header("Retry-After: $windowSeconds");
         $windowMinutes = max(1, (int) round($windowSeconds / 60));
@@ -89,9 +127,6 @@ function rateLimited(ScanSessionRepository $repo, string $bucket, int $max, int 
     return false;
 }
 
-// Bounded wait for a concurrent request that already won the idempotency
-// claim to finish. 20 x 50ms = 1s max. If it never resolves in that window,
-// the caller gets a clean 409 rather than this looping forever.
 function pollForIdempotentResponse(ScanSessionRepository $repo, string $sessionId, string $idempotencyKey): ?array
 {
     for ($attempt = 0; $attempt < 20; $attempt++) {
@@ -104,18 +139,12 @@ function pollForIdempotentResponse(ScanSessionRepository $repo, string $sessionI
     return null;
 }
 
-/**
- * Fingerprints "is this the same request" for Idempotency-Key reuse
- * detection. Deliberately only the fields that define a distinct capture.
- * Falls back to serialize() when the payload can't be JSON-encoded (e.g. a
- * coordinate that overflowed to INF/NaN during decode) — serialize() has no
- * such restriction and is just as deterministic for fingerprinting purposes.
- */
 function idempotencyFingerprint(array $body): string
 {
     $relevant = [
         'raw_capture' => $body['raw_capture'] ?? null,
         'capture_provider' => $body['capture_provider'] ?? null,
+        'capture_location' => $body['capture_location'] ?? null,
     ];
     try {
         return hash('sha256', json_encode($relevant, JSON_THROW_ON_ERROR));
@@ -138,12 +167,156 @@ function deleteSessionPhotoDir(string $sessionId): void
     rmdir($photoDir);
 }
 
+function backupDatabaseIfDue(PDO $db): void
+{
+    \VuuroScan\Storage\DatabaseBackup::create($db, \VuuroScan\Storage\Database::resolvePath());
+}
+
+function ownedPhotoFilePath(string $sessionId, ?string $url): ?string
+{
+    if ($url === null) {
+        return null;
+    }
+    $path = parse_url($url, PHP_URL_PATH);
+    if (!is_string($path)) {
+        return null;
+    }
+    $prefix = "/scan-sessions/$sessionId/photo-uploads/";
+    if (!str_starts_with($path, $prefix)) {
+        return null;
+    }
+    $filename = substr($path, strlen($prefix));
+    if (!preg_match('#^[a-f0-9\-]+\.(?:jpg|png|heic|webp)$#', $filename)) {
+        return null;
+    }
+    $filePath = __DIR__ . '/../data/photos/' . $sessionId . '/' . $filename;
+    return is_file($filePath) ? $filePath : null;
+}
+
+function deleteUploadedPhotoFileIfOwned(string $sessionId, ?string $url): void
+{
+    $filePath = ownedPhotoFilePath($sessionId, $url);
+    if ($filePath !== null) {
+        unlink($filePath);
+    }
+}
+
+function canonicalSortRecursive(array $data): array
+{
+    if (array_is_list($data)) {
+        return array_map(static fn ($v) => is_array($v) ? canonicalSortRecursive($v) : $v, $data);
+    }
+    ksort($data);
+    foreach ($data as $key => $value) {
+        if (is_array($value)) {
+            $data[$key] = canonicalSortRecursive($value);
+        }
+    }
+    return $data;
+}
+
+function canonicalJson(array $data): string
+{
+    $sorted = canonicalSortRecursive($data);
+    return json_encode($sorted, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+}
+
+function verifyBundleSignature(array $bundle, ?string $secret): array
+{
+    $signatureBlock = $bundle['signature'] ?? null;
+    if (!is_array($signatureBlock)) {
+        return ['status' => 'unsigned', 'algorithm' => null];
+    }
+    $algorithm = $signatureBlock['algorithm'] ?? null;
+    $received = $signatureBlock['value'] ?? null;
+
+    if (!is_string($algorithm) || $algorithm !== 'hmac-sha256' || !is_string($received) || $received === '') {
+        return ['status' => 'unsigned', 'algorithm' => null];
+    }
+
+    if (!is_string($secret) || $secret === '') {
+        return ['status' => 'unverified', 'algorithm' => $algorithm];
+    }
+
+    $payloadForVerification = $bundle;
+    unset($payloadForVerification['signature']);
+    unset($payloadForVerification['signature_note']);
+
+    try {
+        $canonical = canonicalJson($payloadForVerification);
+    } catch (\JsonException $e) {
+        return ['status' => 'invalid', 'algorithm' => $algorithm];
+    }
+
+    $expected = hash_hmac('sha256', $canonical, $secret);
+    if (hash_equals($expected, $received)) {
+        return ['status' => 'valid', 'algorithm' => $algorithm];
+    }
+    return ['status' => 'invalid', 'algorithm' => $algorithm];
+}
+
+function ipInCidr(string $ip, string $cidr): bool
+{
+    if (!str_contains($cidr, '/')) {
+        return $ip === $cidr;
+    }
+    [$subnet, $bits] = explode('/', $cidr, 2);
+    $ipBin = @inet_pton($ip);
+    $subnetBin = @inet_pton($subnet);
+    if ($ipBin === false || $subnetBin === false || strlen($ipBin) !== strlen($subnetBin)) {
+        return false;
+    }
+    $bits = (int) $bits;
+    $bytes = intdiv($bits, 8);
+    $remainderBits = $bits % 8;
+    if ($bytes > 0 && substr($ipBin, 0, $bytes) !== substr($subnetBin, 0, $bytes)) {
+        return false;
+    }
+    if ($remainderBits === 0) {
+        return true;
+    }
+    $mask = ~(0xFF >> $remainderBits) & 0xFF;
+    return (ord($ipBin[$bytes]) & $mask) === (ord($subnetBin[$bytes]) & $mask);
+}
+
+function isTrustedProxy(string $ip): bool
+{
+    static $trustedProxies = null;
+    if ($trustedProxies === null) {
+        $configured = getenv('SCAN_SERVICE_TRUSTED_PROXIES');
+        $trustedProxies = is_string($configured) && $configured !== ''
+            ? array_map('trim', explode(',', $configured))
+            : ['127.0.0.1', '::1', '172.16.0.0/12'];
+    }
+    foreach ($trustedProxies as $cidr) {
+        if (ipInCidr($ip, $cidr)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function clientIp(): string
 {
-    // No reverse proxy / load balancer in front of this local-dev service
-    // today, so REMOTE_ADDR is trustworthy — deliberately NOT trusting
-    // X-Forwarded-For, since that header is caller-supplied.
-    return $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    $remote = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
+    if ($remote === 'unknown' || !isTrustedProxy($remote)) {
+        return $remote;
+    }
+    $forwarded = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? '';
+    if (!is_string($forwarded) || $forwarded === '') {
+        return $remote;
+    }
+    $client = $remote;
+    foreach (array_reverse(array_map('trim', explode(',', $forwarded))) as $hop) {
+        if (filter_var($hop, FILTER_VALIDATE_IP) === false) {
+            break;
+        }
+        $client = $hop;
+        if (!isTrustedProxy($hop)) {
+            break;
+        }
+    }
+    return $client;
 }
 
 function respond(int $status, array $body): void
@@ -152,11 +325,31 @@ function respond(int $status, array $body): void
     echo json_encode($body, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR);
 }
 
-/**
- * Every error response goes through here so `message` is never missing.
- * `error` is the stable, machine-readable code for client-side branching;
- * `message` is the sentence a UI can put in front of a user directly.
- */
+function requestScheme(): string
+{
+    $remote = $_SERVER['REMOTE_ADDR'] ?? '';
+    if (is_string($remote) && $remote !== '' && isTrustedProxy($remote)) {
+        $forwarded = $_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '';
+        if (is_string($forwarded) && $forwarded !== '') {
+            $first = strtolower(trim(explode(',', $forwarded)[0]));
+            if ($first === 'https' || $first === 'http') {
+                return $first;
+            }
+        }
+    }
+    $https = $_SERVER['HTTPS'] ?? '';
+    return (is_string($https) && $https !== '' && $https !== 'off') ? 'https' : 'http';
+}
+
+function publicBaseUrl(): string
+{
+    $configured = getenv('SCAN_SERVICE_PUBLIC_BASE_URL');
+    if (is_string($configured) && $configured !== '') {
+        return rtrim($configured, '/');
+    }
+    return requestScheme() . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost');
+}
+
 function respondError(int $status, string $errorCode, string $message, array $extra = []): void
 {
     respond($status, ['error' => $errorCode, 'message' => $message, ...$extra]);
@@ -168,10 +361,6 @@ function require_fields(array $body, array $fields): ?array
     return $missing === [] ? null : $missing;
 }
 
-/**
- * Returns [field, max] for the first field that's too long, or null if all
- * are fine.
- */
 function first_not_string(array $body, array $fields): ?string
 {
     foreach ($fields as $field) {
@@ -186,9 +375,9 @@ function first_too_long(array $body, array $maxLengths): ?array
 {
     foreach ($maxLengths as $field => $max) {
         $value = $body[$field] ?? null;
-        // mb_strlen(), not strlen(): every caller of this function tells the
-        // client the limit is in "characters," and strlen() counts bytes.
-        // json_body() already guarantees valid UTF-8.
+
+
+
         if (is_string($value) && mb_strlen($value, 'UTF-8') > $max) {
             return [$field, $max];
         }
@@ -207,24 +396,216 @@ function presented_token(): ?string
     return is_string($header) && $header !== '' ? $header : null;
 }
 
-/**
- * Privacy by design gate (hard constraint #3): every session-scoped
- * endpoint below other than creation must call this before touching
- * session data. Returns the session row if authorized, or null after
- * already sending a 401 response — callers just check for null and
- * `return;`.
- *
- * Deliberately returns the SAME 401 whether the session doesn't exist at
- * all or the token presented is wrong, never a distinguishing 404 — that
- * would let a caller holding a leaked scan_session_id use the distinction
- * as a confirmation oracle. hash_equals() always runs against a
- * same-length dummy token when there's no real session to check against,
- * so a nonexistent session doesn't resolve measurably faster.
- */
+function adminAuthorized(): bool
+{
+    $configuredKey = getenv('SCAN_SERVICE_ADMIN_API_KEY');
+    if (!is_string($configuredKey) || $configuredKey === '') {
+        return false;
+    }
+    $presentedKey = $_SERVER['HTTP_X_ADMIN_API_KEY'] ?? '';
+    return is_string($presentedKey) && $presentedKey !== '' && hash_equals($configuredKey, $presentedKey);
+}
+
+function appKeyAuthorized(): bool
+{
+    $configuredKey = getenv('SCAN_SERVICE_APP_KEY');
+    if (!is_string($configuredKey) || trim($configuredKey) === '') {
+        return true;
+    }
+    $presentedKey = $_SERVER['HTTP_X_SCAN_APP_KEY'] ?? '';
+    return is_string($presentedKey) && $presentedKey !== '' && hash_equals(trim($configuredKey), $presentedKey);
+}
+
+function exportLanguageFromQuery(\VuuroScan\ServiceSettings $settings): string
+{
+    if (!isset($_GET['lang'])) {
+        return $settings->exportLanguage();
+    }
+    $lang = $_GET['lang'];
+    if (!ExportLanguage::isSupported($lang)) {
+        respondError(422, 'invalid_lang', "'lang' must be 'en' or 'nl' if given.");
+        exit;
+    }
+    return $lang;
+}
+
+function parseFloorPlanStyleFromQuery(string $automaticStyle = 'default'): FloorPlanStyle
+{
+    $style = $_GET['style'] ?? 'default';
+    if (!in_array($style, ['default', 'funda', 'auto'], true)) {
+        respondError(422, 'invalid_style', "'style' must be 'default', 'funda' or 'auto' if given.");
+        exit;
+    }
+    if ($style === 'auto') {
+        $style = $automaticStyle;
+    }
+    $walkPathParam = $_GET['walk_path'] ?? null;
+    if ($walkPathParam !== null && !in_array((string) $walkPathParam, ['0', '1'], true)) {
+        respondError(422, 'invalid_walk_path', "'walk_path' must be '0' or '1' if given.");
+        exit;
+    }
+    $furnitureParam = $_GET['furniture'] ?? null;
+    if ($furnitureParam !== null && !in_array($furnitureParam, ['all', 'none', 'fixtures'], true)) {
+        $cats = array_values(array_filter(array_map('trim', explode(',', $furnitureParam))));
+        foreach ($cats as $cat) {
+            if (!\VuuroScan\Export\FurnitureCatalog::isKnown($cat)) {
+                respondError(422, 'invalid_furniture', "'furniture' must be 'all', 'none', 'fixtures', or a comma-separated list of known categories.", ['unknown' => $cat, 'allowed' => \VuuroScan\Export\FurnitureCatalog::ALL]);
+                exit;
+            }
+        }
+    }
+    $orientationParam = $_GET['orientation'] ?? null;
+    if ($orientationParam !== null && !in_array($orientationParam, FloorPlanStyle::ORIENTATIONS, true)) {
+        respondError(422, 'invalid_orientation', "'orientation' must be one of: as_captured, longest_horizontal.");
+        exit;
+    }
+    $roomFillParam = $_GET['room_fill'] ?? null;
+    if ($roomFillParam !== null && !in_array($roomFillParam, FloorPlanStyle::ROOM_FILLS, true)) {
+        respondError(422, 'invalid_room_fill', "'room_fill' must be one of: default, white.");
+        exit;
+    }
+    $titleParam = isset($_GET['title']) ? trim((string) $_GET['title']) : null;
+    if ($titleParam !== null && mb_strlen($titleParam, 'UTF-8') > 120) {
+        respondError(422, 'field_too_long', "'title' is too long — please keep it to 120 characters or fewer.", ['field' => 'title', 'max_length' => 120]);
+        exit;
+    }
+    return FloorPlanStyle::from($style, $walkPathParam, $furnitureParam, $orientationParam, $roomFillParam, $titleParam);
+}
+
+
+function deletionStatus(array $session, \VuuroScan\ServiceSettings $settings): array
+{
+    $requestedAt = (string) ($session['deletion_requested_at'] ?? '');
+    $requestedTs = $requestedAt === '' ? false : strtotime($requestedAt);
+    $graceDays = $settings->tenantGraceDays();
+    return [
+        'requested' => $requestedAt !== '',
+        'deletion_requested_at' => $requestedAt,
+        'purge_after' => $requestedTs === false ? '' : gmdate('c', $requestedTs + $graceDays * 86400),
+        'grace_period_days' => $graceDays,
+        'requests_enabled' => $settings->tenantDeletionEnabled(),
+    ];
+}
+
+function purgeExpiredSessions(ScanSessionRepository $repo, \VuuroScan\ServiceSettings $settings, int $limit): int
+{
+    $purged = 0;
+    foreach ($repo->findTenantDeletionCandidates($settings->tenantGraceDays(), $limit) as $tenantRequestedId) {
+        $repo->deleteSession($tenantRequestedId);
+        deleteSessionPhotoDir($tenantRequestedId);
+        $purged++;
+    }
+    foreach ($repo->findExpiredBeyondGracePeriod($limit) as $expiredId) {
+        $repo->deleteSession($expiredId);
+        deleteSessionPhotoDir($expiredId);
+        $purged++;
+    }
+    foreach ($settings->activeRetentionDays() as $purpose => $days) {
+        foreach ($repo->findEarlyPurgeCandidates($purpose, $days, $limit) as $expiredId) {
+            $repo->deleteSession($expiredId);
+            deleteSessionPhotoDir($expiredId);
+            $purged++;
+        }
+    }
+    return $purged;
+}
+
+const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload', 'compare'];
+const ADMIN_WRITE_ACTIONS = ['publish_to_platform'];
+
+function compareRequested(): bool
+{
+    $token = $_SERVER['HTTP_X_SCAN_COMPARE_TOKEN'] ?? '';
+    return (is_string($token) && $token !== '') || trim((string) ($_GET['with'] ?? '')) !== '';
+}
+
+function resolveComparison(ScanSessionRepository $repo, array $session): ?array
+{
+    $withId = trim((string) ($_GET['with'] ?? ''));
+    if ($withId !== '') {
+        if ($withId === $session['id']) {
+            respondError(422, 'compare_with_itself', 'Pick a different scan of the same unit to compare with.');
+            return null;
+        }
+        $other = $repo->find($withId);
+    } else {
+        $counterpartPurpose = match ((string) $session['purpose']) {
+            'check_out' => 'check_in',
+            'check_in' => 'check_out',
+            default => null,
+        };
+        if ($counterpartPurpose === null) {
+            respondError(422, 'compare_needs_with', 'Only check-in and check-out scans have a default comparison. Add ?with=<scan id> to compare this scan with another scan of the same unit.');
+            return null;
+        }
+        $other = $repo->findLatestForUnit((string) $session['property_id'], (string) $session['unit_id'], (string) $session['organisation_id'], $counterpartPurpose, (string) $session['id']);
+        if ($other === null) {
+            $purposeLabel = $counterpartPurpose === 'check_in' ? 'check-in' : 'check-out';
+            respondError(404, 'no_scan_to_compare', "There is no {$purposeLabel} scan of this unit to compare with yet.");
+            return null;
+        }
+    }
+
+    $compareToken = $_SERVER['HTTP_X_SCAN_COMPARE_TOKEN'] ?? '';
+    $isAdmin = adminAuthorized();
+    $granted = $other !== null && ($isAdmin || (is_string($compareToken) && $repo->tokenMatches($other, $compareToken) && !$repo->isTokenExpired($other)));
+    if (!$granted) {
+        if ($other !== null) {
+            if (rateLimited($repo, $other['id'] . ':denied_auth', 20, 300)) {
+                return null;
+            }
+            $repo->logAccess($other['id'], 'compare', 'denied');
+        } elseif (rateLimited($repo, clientIp() . ':session_not_found', 30, 300)) {
+            return null;
+        }
+        respondError(401, 'invalid_or_missing_compare_token', "Comparing two scans needs a valid access token for both. Send the other scan's token in the X-Scan-Compare-Token header.");
+        return null;
+    }
+    foreach (['property_id', 'unit_id', 'organisation_id'] as $identityField) {
+        if ((string) $other[$identityField] !== (string) $session[$identityField]) {
+            respondError(403, 'not_same_unit', 'Only scans of the same property, unit and organisation can be compared.');
+            return null;
+        }
+    }
+    $repo->logAccess($other['id'], 'compare', $isAdmin ? 'granted_admin_read' : 'granted');
+
+    [$earlier, $later] = $repo->createdBefore($other, $session) ? [$other, $session] : [$session, $other];
+    $earlierPlan = $repo->findFloorPlan($earlier['id']);
+    $laterPlan = $repo->findFloorPlan($later['id']);
+    if ($earlierPlan === null || $laterPlan === null) {
+        respondError(404, 'no_floor_plan_yet', 'Both scans need at least one captured room before they can be compared.');
+        return null;
+    }
+    return [$earlier, $later, $earlierPlan, $laterPlan];
+}
+
+function comparisonScanSummary(array $session, array $floorPlan): array
+{
+    return [
+        'id' => $session['id'],
+        'purpose' => $session['purpose'],
+        'created_at' => $session['created_at'],
+        'captured_at' => $floorPlan['captured_at'] ?? null,
+    ];
+}
+
 function authorizeSession(ScanSessionRepository $repo, string $sessionId, string $action): ?array
 {
     $session = $repo->find($sessionId);
     $token = presented_token() ?? '';
+
+    $adminAllowedActions = array_merge(ADMIN_READ_ACTIONS, ADMIN_WRITE_ACTIONS);
+    if ($session !== null && adminAuthorized() && in_array($action, $adminAllowedActions, true)) {
+        $isWrite = in_array($action, ADMIN_WRITE_ACTIONS, true);
+        $bucket = $isWrite ? 'admin_session_write' : 'admin_session_read';
+        $bucketLimit = $isWrite ? 30 : 120;
+        if (rateLimited($repo, clientIp() . ':' . $bucket, $bucketLimit, 300)) {
+            return null;
+        }
+        $outcome = $isWrite ? 'granted_admin_write' : 'granted_admin_read';
+        $repo->logAccess($session['id'], $action, $outcome);
+        return $session;
+    }
 
     if ($session !== null) {
         $granted = $repo->tokenMatches($session, $token);
@@ -233,24 +614,6 @@ function authorizeSession(ScanSessionRepository $repo, string $sessionId, string
         $granted = false;
     }
 
-    // Two independent buckets: real-session-wrong-token is bounded per
-    // session (an attacker can't fabricate a valid session id to dodge
-    // this), session-not-found is bounded per caller IP. Only DENIED
-    // attempts count — a legitimate client presenting the correct token
-    // repeatedly never touches either bucket.
-    //
-    // ACL-surface scan finding: this check must run BEFORE logAccess()
-    // below, not after. It used to run after, so a runaway client hammering
-    // a session with a wrong token kept writing a 'denied' row to
-    // access_log on every single request even once past the throttle —
-    // rate-limiting the HTTP responses (401 -> 429) but not the underlying
-    // audit-log growth it exists to bound. access_log has no cap and isn't
-    // pruned (unlike rate_limit_events), so that was an unbounded-growth
-    // vector through the very feature meant to stop one. Confirmed live
-    // before the fix: 60 wrong-token requests against one session produced
-    // 60 'denied' rows despite only the first 20 getting a real 401 (the
-    // other 40 got 429). granted attempts are unaffected — they never reach
-    // this branch, so they still log every single time as before.
     if ($session !== null && !$granted) {
         if (rateLimited($repo, $session['id'] . ':denied_auth', 20, 300)) {
             return null;
@@ -261,10 +624,6 @@ function authorizeSession(ScanSessionRepository $repo, string $sessionId, string
         }
     }
 
-    // upload_photo always logs its own, more specific outcome below
-    // (stored/rejected_*/failed_*) once granted, so logging a generic
-    // 'granted' row here too would double-count every successful attempt.
-    // Denials still log here — they never reach that downstream log.
     if ($session !== null && !($granted && $action === 'upload_photo')) {
         $repo->logAccess($session['id'], $action, $granted ? 'granted' : 'denied');
     }
@@ -274,12 +633,8 @@ function authorizeSession(ScanSessionRepository $repo, string $sessionId, string
         return null;
     }
 
-    // Checked only after the token has already matched, so a caller who
-    // doesn't hold the right token learns nothing new here.
     if ($repo->isTokenExpired($session)) {
-        // Scoped narrowly — ONLY the rotate_token action gets this
-        // exception, and only within ROTATE_GRACE_PERIOD_SECONDS of the
-        // original expiry. Every other action stays hard-blocked at expiry.
+
         if ($action === 'rotate_token' && !$repo->isBeyondRotateGracePeriod($session)) {
             $repo->logAccess($session['id'], $action, 'granted_grace_rotation');
             return $session;
@@ -301,37 +656,29 @@ function authorizeSession(ScanSessionRepository $repo, string $sessionId, string
 
 $db = Database::connect();
 $repo = new ScanSessionRepository($db);
+$settings = new \VuuroScan\ServiceSettings($db);
 
 $method = $_SERVER['REQUEST_METHOD'];
 $path = rtrim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
 
 $rawRequestBody = '';
 if ($method === 'POST') {
-    // Scan finding: every route below this point rate-limits its own
-    // work, but ALL of them — including a request to a path that doesn't
-    // even match a route — pass through this same up-to-8MB
-    // file_get_contents() first, and nothing bounded how often THAT could
-    // run. Confirmed live: 10 back-to-back 1MB POSTs to a nonexistent,
-    // unauthenticated path were each fully read into memory before their
-    // 404, with zero throttling anywhere on that path — the exact
-    // resource-exhaustion shape the per-route limits below exist to
-    // prevent, just reachable one layer earlier where none of them apply
-    // yet (create_session's own rate limit doesn't even run until after
-    // this read finishes). Generic per-IP cap here, checked BEFORE the
-    // read so an over-limit caller is rejected without ever having 8MB
-    // buffered on their behalf. 500/300s is generous next to any real
-    // client's combined traffic (well above this repo's own net suite's
-    // peak burst) while still bounding sustained flooding.
-    if (rateLimited($repo, clientIp() . ':post_body_read', 500, 300)) {
+    $postBodyReadMax = (int) (getenv('SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_MAX') ?: 500);
+    $postBodyReadWindowSeconds = (int) (getenv('SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_WINDOW_SECONDS') ?: 300);
+    if (rateLimited($repo, clientIp() . ':post_body_read', $postBodyReadMax, $postBodyReadWindowSeconds)) {
         return;
     }
 
-    // Bounds the ACTUAL bytes read off php://input (the 5th
-    // file_get_contents() argument caps how many bytes are pulled from the
-    // stream), independent of any client-supplied header — Content-Length
-    // alone isn't trustworthy since chunked Transfer-Encoding omits it.
-    // Read exactly once here and threaded through to every route's
-    // json_body($rawRequestBody) call below.
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+    $isMultipart = is_string($contentType) && stripos($contentType, 'multipart/form-data') === 0;
+
+    $declaredLength = $_SERVER['CONTENT_LENGTH'] ?? null;
+    if (!$isMultipart && is_string($declaredLength) && ctype_digit($declaredLength) && (int) $declaredLength > MAX_REQUEST_BODY_BYTES) {
+        $maxMb = round(MAX_REQUEST_BODY_BYTES / (1024 * 1024), 1);
+        respondError(413, 'payload_too_large', "This request is larger than the {$maxMb}MB limit. If this is a real capture, check for an unexpectedly large field rather than retrying as-is.", ['max_bytes' => MAX_REQUEST_BODY_BYTES]);
+        return;
+    }
+
     $rawRequestBody = file_get_contents('php://input', false, null, 0, MAX_REQUEST_BODY_BYTES + 1);
     if ($rawRequestBody === false) {
         $rawRequestBody = '';
@@ -344,9 +691,13 @@ if ($method === 'POST') {
 }
 
 if ($method === 'POST' && $path === '/scan-sessions') {
-    // Session creation is the one endpoint with no token to gate it.
-    // Bounded per caller IP; overridable via env for a pilot deployment
-    // behind one shared IP range.
+    if (!appKeyAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_app_key', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_app_key', "This app isn't allowed to start scans on this Scan Service. Update Vuuro Scan to the latest version, or check that the app points at the right server.");
+        return;
+    }
     $createSessionMax = (int) (getenv('SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX') ?: 60);
     $createSessionWindowSeconds = (int) (getenv('SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_WINDOW_SECONDS') ?: 600);
     if (rateLimited($repo, clientIp() . ':create_session', $createSessionMax, $createSessionWindowSeconds)) {
@@ -359,9 +710,6 @@ if ($method === 'POST' && $path === '/scan-sessions') {
             $body[$identityField] = trim($body[$identityField]);
         }
     }
-    // Hard constraint #1: identity-native captures. A session cannot be
-    // created without property/unit/organisation — no orphan captures by
-    // construction, not by convention.
     $missing = require_fields($body, ['property_id', 'unit_id', 'organisation_id', 'purpose', 'occupied']);
     if ($missing !== null) {
         $fieldList = implode(', ', $missing);
@@ -393,9 +741,6 @@ if ($method === 'POST' && $path === '/scan-sessions') {
         respondError(422, 'consent_obtained_must_be_boolean', "Please specify 'consent_obtained' as true or false.");
         return;
     }
-    // Hard constraint #3: an occupied unit cannot be scanned without
-    // recorded consent — checked at the earliest possible point (session
-    // creation), not left for capture time or later cleanup.
     if ($body['occupied'] === true && $consentObtained !== true) {
         respondError(403, 'consent_required', 'This unit is marked occupied, so tenant consent must be recorded (consent_obtained: true) before a scan session can be created.');
         return;
@@ -412,6 +757,24 @@ if ($method === 'POST' && $path === '/scan-sessions') {
         return;
     }
 
+    $defaultFloor = '';
+    if (array_key_exists('floor', $body) && $body['floor'] !== null) {
+        if (!is_string($body['floor'])) {
+            respondError(422, 'field_must_be_string', "'floor' must be a plain string.", ['field' => 'floor']);
+            return;
+        }
+        $trimmed = trim($body['floor']);
+        if (mb_strlen($trimmed, 'UTF-8') > 60) {
+            respondError(422, 'field_too_long', "'floor' is too long — please keep it to 60 characters or fewer.", ['field' => 'floor', 'max_length' => 60]);
+            return;
+        }
+        if (preg_match('/[\x00-\x1f\x7f]/', $trimmed) === 1) {
+            respondError(422, 'invalid_floor', "'floor' must not contain control characters.");
+            return;
+        }
+        $defaultFloor = $trimmed;
+    }
+
     $session = $repo->create(
         $body['property_id'],
         $body['unit_id'],
@@ -419,22 +782,182 @@ if ($method === 'POST' && $path === '/scan-sessions') {
         $body['purpose'],
         $body['occupied'],
         $consentObtained,
-        $tokenTtlSeconds
+        $tokenTtlSeconds,
+        $defaultFloor
     );
 
+    backupDatabaseIfDue($db);
+
     if ($repo->lastInsertRowId() % 10 === 0) {
-        foreach ($repo->findExpiredBeyondGracePeriod() as $expiredId) {
-            $repo->deleteSession($expiredId);
-            deleteSessionPhotoDir($expiredId);
-        }
+        purgeExpiredSessions($repo, $settings, 20);
     }
-    // access_token is returned here and only here — the one moment a client
-    // is expected to learn it. Every later call must present it explicitly.
     respond(201, [
         ...$session,
         'occupied' => (bool) $session['occupied'],
         'consent_obtained' => (bool) $session['consent_obtained'],
+        'default_floor' => $session['default_floor'] ?? '',
     ]);
+    return;
+}
+
+if ($method === 'POST' && $path === '/scan-sessions/activity') {
+    if (rateLimited($repo, clientIp() . ':activity', 30, 60)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    $entries = $body['sessions'] ?? null;
+    if (!is_array($entries) || !array_is_list($entries)) {
+        respondError(422, 'missing_sessions', "Please include a 'sessions' array of {id, token} entries.");
+        return;
+    }
+    if (count($entries) > 100) {
+        respondError(422, 'too_many_sessions', 'At most 100 sessions can be checked at once.');
+        return;
+    }
+
+    $results = [];
+    foreach ($entries as $entry) {
+        if (!is_array($entry)) {
+            continue;
+        }
+        $id = $entry['id'] ?? null;
+        $token = $entry['token'] ?? null;
+        if (!is_string($id) || $id === '' || !is_string($token) || $token === '') {
+            continue;
+        }
+        $session = $repo->find($id);
+        if ($session === null || !$repo->tokenMatches($session, $token) || $repo->isTokenExpired($session)) {
+            continue;
+        }
+        $floorPlan = $repo->findFloorPlan($id);
+        if ($floorPlan === null || !is_string($floorPlan['captured_at'] ?? null)) {
+            continue;
+        }
+        $results[] = [
+            'id' => $id,
+            'captured_at' => $floorPlan['captured_at'],
+            'rooms' => array_map(static fn (array $room): array => [
+                'label' => (string) ($room['label'] ?? ''),
+                'floor' => $room['floor'] ?? null,
+                'floor_area_m2' => (float) ($room['floor_area_m2'] ?? 0),
+                'room_type' => $room['room_type'] ?? null,
+            ], array_values(array_filter($floorPlan['rooms'] ?? [], 'is_array'))),
+        ];
+    }
+
+    respond(200, ['sessions' => $results]);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/note-only$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'mark_note_only');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':mark_note_only', 5, 300)) {
+        return;
+    }
+    $floorPlan = $repo->createNoteOnlyFloorPlan($session['id']);
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/request-deletion$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'request_deletion');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':request_deletion', 3, 3600)) {
+        return;
+    }
+    if (!$settings->tenantDeletionEnabled()) {
+        respondError(403, 'tenant_deletion_disabled', 'Deletion requests are switched off for this Scan Service. Ask the property manager to delete this scan instead.');
+        return;
+    }
+    respond(200, deletionStatus($repo->requestDeletion($session['id']), $settings));
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/deletion-request$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'read_deletion_request');
+    if ($session === null) {
+        return;
+    }
+    respond(200, deletionStatus($session, $settings));
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/cancel-deletion$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'cancel_deletion');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':cancel_deletion', 5, 3600)) {
+        return;
+    }
+    respond(200, deletionStatus($repo->cancelDeletion($session['id']), $settings));
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/default-floor$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'set_default_floor');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':set_default_floor', 30, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    if (!array_key_exists('floor', $body)) {
+        respondError(422, 'missing_required_fields', "Please include a 'floor' field (empty string clears it).", ['fields' => ['floor']]);
+        return;
+    }
+    if ($body['floor'] !== null && !is_string($body['floor'])) {
+        respondError(422, 'field_must_be_string', "'floor' must be a plain string or null.", ['field' => 'floor']);
+        return;
+    }
+    $floor = is_string($body['floor']) ? trim($body['floor']) : '';
+    if (mb_strlen($floor, 'UTF-8') > 60) {
+        respondError(422, 'field_too_long', "'floor' is too long — please keep it to 60 characters or fewer.", ['field' => 'floor', 'max_length' => 60]);
+        return;
+    }
+    if (preg_match('/[\x00-\x1f\x7f]/', $floor) === 1) {
+        respondError(422, 'invalid_floor', "'floor' must not contain control characters.");
+        return;
+    }
+
+    $updated = $repo->setDefaultFloor($session['id'], $floor);
+    respond(200, [
+        'id' => $updated['id'],
+        'default_floor' => $updated['default_floor'] ?? '',
+    ]);
+    return;
+}
+
+if ($method === 'GET' && $path === '/scan-sessions') {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:list_sessions', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header, and set SCAN_SERVICE_ADMIN_API_KEY on the server to enable this endpoint at all.');
+        return;
+    }
+    $adminListKeyHash = substr(hash('sha256', (string) ($_SERVER['HTTP_X_ADMIN_API_KEY'] ?? '')), 0, 16);
+    if (rateLimited($repo, 'list_sessions:' . $adminListKeyHash, 60, 300)) {
+        return;
+    }
+
+    $propertyId = isset($_GET['property_id']) && is_string($_GET['property_id']) && $_GET['property_id'] !== '' ? $_GET['property_id'] : null;
+    $unitId = isset($_GET['unit_id']) && is_string($_GET['unit_id']) && $_GET['unit_id'] !== '' ? $_GET['unit_id'] : null;
+    $organisationId = isset($_GET['organisation_id']) && is_string($_GET['organisation_id']) && $_GET['organisation_id'] !== '' ? $_GET['organisation_id'] : null;
+    if ($propertyId === null && $unitId === null && $organisationId === null) {
+        respondError(422, 'missing_filter', 'Please provide at least one of property_id, unit_id, or organisation_id to look up sessions.');
+        return;
+    }
+
+    respond(200, ['sessions' => $repo->findByFilters($propertyId, $unitId, $organisationId)]);
     return;
 }
 
@@ -443,10 +966,6 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rotate-token$#', 
     if ($session === null) {
         return;
     }
-
-    // Each rotation is a real DB write and immediately invalidates the
-    // token just used, so unbounded rotation is also a self-inflicted
-    // lockout risk for a legitimate caller racing itself.
     if (rateLimited($repo, $session['id'] . ':rotate_token', 10, 300)) {
         return;
     }
@@ -464,8 +983,6 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rotate-token$#', 
     }
 
     $updated = $repo->rotateToken($session['id'], $tokenTtlSeconds);
-    // The OLD token presented on this very request is now invalid — this
-    // response is the only place the client learns the new one.
     respond(200, [
         'id' => $updated['id'],
         'access_token' => $updated['access_token'],
@@ -479,16 +996,10 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
     if ($session === null) {
         return;
     }
-
-    // Bounds a runaway client (or a compromised token) from hammering the
-    // adapter/renderer pipeline indefinitely.
     if (rateLimited($repo, $session['id'] . ':capture', 60, 300)) {
         return;
     }
 
-    // Idempotent retry support: a client resubmitting the exact same
-    // capture after a dropped response gets back the stored result instead
-    // of appending the room a second time.
     $body = json_body($rawRequestBody);
     $idempotencyKey = $_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? null;
     $holdsIdempotencyClaim = false;
@@ -500,10 +1011,6 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
 
         $fingerprint = idempotencyFingerprint($body);
 
-        // A key reused with a DIFFERENT body must not silently replay a
-        // stale response for the wrong capture. Checked against the
-        // fingerprint recorded at claim time even while another request's
-        // capture is still pending.
         $existingFingerprint = $repo->idempotencyKeyFingerprint($session['id'], $idempotencyKey);
         if ($existingFingerprint !== null && $existingFingerprint !== $fingerprint) {
             respondError(
@@ -520,10 +1027,6 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
             return;
         }
 
-        // Two requests with the SAME key can both reach this point with
-        // $cached === null if they arrive close enough together. Only the
-        // request that wins this atomic claim may actually run the capture
-        // below — see ScanSessionRepository::claimIdempotencyKey.
         $holdsIdempotencyClaim = $repo->claimIdempotencyKey($session['id'], $idempotencyKey, $fingerprint);
         if (!$holdsIdempotencyClaim) {
             $result = pollForIdempotentResponse($repo, $session['id'], $idempotencyKey);
@@ -541,8 +1044,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
     }
 
     if (empty($body['raw_capture']) || !is_array($body['raw_capture'])) {
-        // Releasing here (and at the two other 422 exits below) makes the
-        // SAME key usable again on a corrected retry.
+
         if ($holdsIdempotencyClaim) {
             $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
         }
@@ -558,17 +1060,6 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         return;
     }
 
-    // Exports-surface scan finding: capture_provider had a type check but no
-    // length cap, unlike every other client-suppliable string field
-    // (property_id/unit_id/organisation_id at 200, url/caption at 2000, note
-    // text at 5000, Idempotency-Key at 200). Confirmed live: a 500,000-char
-    // capture_provider was accepted (still well under the 8MB whole-request
-    // cap) and flowed straight into the stored FloorPlan, inflating a normal
-    // ~1.3KB PDF export to ~500KB on every export call — a client-controlled
-    // amplification path through storage and every later export/render,
-    // capped nowhere along the way. 200 chars matches the identity-field cap
-    // above; capture_provider is an identifier ("roomplan_simulator_fixture"
-    // etc.), not free text, so the same bound fits.
     $tooLongCaptureProvider = first_too_long($body, ['capture_provider' => 200]);
     if ($tooLongCaptureProvider !== null) {
         if ($holdsIdempotencyClaim) {
@@ -578,7 +1069,6 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         return;
     }
 
-    // capture_location: honest null when not sent; malformed is rejected, same bar as capture_provider.
     if (array_key_exists('capture_location', $body) && $body['capture_location'] !== null) {
         $loc = $body['capture_location'];
         $locValid = is_array($loc)
@@ -596,11 +1086,46 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         }
     }
 
+    $floorForThisCapture = null;
+    if (array_key_exists('floor', $body) && $body['floor'] !== null) {
+        if (!is_string($body['floor'])) {
+            if ($holdsIdempotencyClaim) {
+                $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+            }
+            respondError(422, 'field_must_be_string', "'floor' must be a plain string.", ['field' => 'floor']);
+            return;
+        }
+        $trimmedFloor = trim($body['floor']);
+        if (mb_strlen($trimmedFloor, 'UTF-8') > 60) {
+            if ($holdsIdempotencyClaim) {
+                $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+            }
+            respondError(422, 'field_too_long', "'floor' is too long — please keep it to 60 characters or fewer.", ['field' => 'floor', 'max_length' => 60]);
+            return;
+        }
+        if (preg_match('/[\x00-\x1f\x7f]/', $trimmedFloor) === 1) {
+            if ($holdsIdempotencyClaim) {
+                $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+            }
+            respondError(422, 'invalid_floor', "'floor' must not contain control characters.");
+            return;
+        }
+        $floorForThisCapture = $trimmedFloor === '' ? null : $trimmedFloor;
+    } else {
+        $sessionDefault = trim((string) ($session['default_floor'] ?? ''));
+        $floorForThisCapture = $sessionDefault === '' ? null : $sessionDefault;
+    }
+
+    if ($floorForThisCapture === null) {
+        if ($holdsIdempotencyClaim) {
+            $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+        }
+        respondError(422, 'floor_required', "Every room needs a floor. Set a default floor for this session first, or include a non-empty 'floor' on this capture.");
+        return;
+    }
+
     $adapter = new RoomPlanSimulatorAdapter();
     try {
-        // Offset by rooms already captured this session, so a second or
-        // third guided RoomPlan capture in the same session continues room
-        // numbering instead of restarting at "Room 1".
         $roomIndexOffset = $repo->roomCount($session['id']);
         $capturedFloorPlan = $adapter->adapt($body['raw_capture'], [
             'scan_session_id' => $session['id'],
@@ -608,51 +1133,65 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
             'unit_id' => $session['unit_id'],
             'organisation_id' => $session['organisation_id'],
             'purpose' => $session['purpose'],
-            'capture_provider' => $body['capture_provider'] ?? 'roomplan_simulator_fixture',
+            'capture_provider' => $body['capture_provider'] ?? 'roomplan',
             'capture_location' => $body['capture_location'] ?? null,
+            'floor' => $floorForThisCapture,
         ], $roomIndexOffset);
+        $openingWarning = RoomPlanSimulatorAdapter::openingWarning($body['raw_capture'], $capturedFloorPlan);
+        if ($openingWarning !== null) {
+            error_log("VuuroScan WARNING session {$session['id']}: $openingWarning");
+        }
     } catch (\InvalidArgumentException $e) {
         if ($holdsIdempotencyClaim) {
             $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
         }
         respondError(422, 'unprocessable_capture', "This capture couldn't be processed: " . $e->getMessage() . ' Please rescan this room.');
         return;
+    } catch (\Throwable $e) {
+        if ($holdsIdempotencyClaim) {
+            $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+        }
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
     }
-
-    // Capture-surface scan finding: appendCapture() can genuinely throw
-    // (BEGIN IMMEDIATE can hit SQLite's own busy_timeout under real write
-    // contention from an overlapping request — see
-    // tests/concurrency_test.php's own doc comment on this mechanism), but
-    // this block used to run uncaught. The global exception handler still
-    // turns that into a clean 500 with no stack trace, so the HTTP response
-    // was never the problem — but with $holdsIdempotencyClaim true, nothing
-    // released the claim first, so it stayed in IDEMPOTENCY_PENDING_MARKER
-    // forever: a retry with that SAME Idempotency-Key would get
-    // capture_in_progress on every future attempt, permanently, with no
-    // visible link back to the original 500. Same silent-lockout shape as
-    // the "idempotency claims stuck on validation failure" bug fixed
-    // earlier, just triggered by a genuine transient failure instead of a
-    // 422. Reproduced live under real multi-process lock contention (the
-    // same technique tests/concurrency_test.php uses) before this fix:
-    // appendCapture() threw SQLSTATE[HY000] "database is locked" while
-    // holding a claim, and the claim was still stuck afterward.
-    // Capture-surface scan finding: appendCapture() enforces
-    // MAX_ROOMS_PER_SESSION with an \OverflowException (same cap style as
-    // photos/notes), but that used to fall into the generic \Throwable catch
-    // below and get rethrown into the global handler's raw 500 instead of a
-    // clean 422 like every other overflow response
-    // (too_many_photos/too_many_notes). Confirmed live: the 11th capture
-    // call past the cap returned a bare "internal_error" 500 with no
-    // actionable message. Caught here first, same pattern as photos/notes.
     try {
-        $floorPlan = $repo->appendCapture($session['id'], $capturedFloorPlan);
+        if (RoomPlanSimulatorAdapter::replacesRoomId($body['raw_capture']) !== null) {
+            $floorPlan = $repo->replaceRoomInPlace($session['id'], $capturedFloorPlan['rooms'][0], (string) $capturedFloorPlan['captured_at']);
+        } else {
+            $floorPlan = $repo->appendCapture($session['id'], $capturedFloorPlan);
+        }
         $repo->markCaptured($session['id']);
+    } catch (\VuuroScan\UnknownRoomException $e) {
+        if ($holdsIdempotencyClaim) {
+            $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+        }
+        respondError(422, 'unknown_room_id', 'The room this scan should replace no longer exists on this session.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        if ($holdsIdempotencyClaim) {
+            $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+        }
+        if ($e->getMessage() !== 'replace_floor_mismatch') {
+            throw $e;
+        }
+        respondError(409, 'replace_floor_mismatch', 'A room can only be replaced by a scan on the same floor.');
+        return;
     } catch (\OverflowException $e) {
         if ($holdsIdempotencyClaim) {
             $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
         }
         respondError(422, 'too_many_rooms', $e->getMessage() . ' Start a new scan session to continue capturing rooms.');
         return;
+    } catch (\RuntimeException $e) {
+        if ($holdsIdempotencyClaim) {
+            $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
+        }
+        if (str_contains($e->getMessage(), 'room_id(s) already present')) {
+            respondError(409, 'room_id_conflict', 'One or more room IDs in this capture already exist on this session. Regenerate the room_id(s) and retry.', ['retry_after_ms' => 250]);
+            return;
+        }
+        throw $e;
     } catch (\Throwable $e) {
         if ($holdsIdempotencyClaim) {
             $repo->releaseIdempotencyKey($session['id'], $idempotencyKey);
@@ -662,6 +1201,124 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
     if ($holdsIdempotencyClaim) {
         $repo->completeIdempotencyKey($session['id'], $idempotencyKey, $floorPlan);
     }
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'replace_rooms');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':replace_rooms', 20, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    if (empty($body['captures']) || !is_array($body['captures']) || !array_is_list($body['captures'])) {
+        respondError(422, 'missing_captures', "Please include a 'captures' field with one raw_capture entry per fused room.");
+        return;
+    }
+    if (count($body['captures']) > ScanSessionRepository::MAX_ROOMS_PER_SESSION) {
+        respondError(422, 'too_many_rooms', 'captures[] has ' . count($body['captures']) . ' entries, exceeding the ' . ScanSessionRepository::MAX_ROOMS_PER_SESSION . '-room limit.');
+        return;
+    }
+
+    $replaceGroups = [];
+    foreach ($body['captures'] as $index => $capture) {
+        if (!is_array($capture) || empty($capture['raw_capture']) || !is_array($capture['raw_capture'])) {
+            respondError(422, 'missing_raw_capture', "captures[$index] must include a 'raw_capture' field with the RoomPlan capture data for this room.");
+            return;
+        }
+        $group = $capture['raw_capture']['capture_group_id'] ?? null;
+        if (!is_string($group) || $group === '') {
+            respondError(422, 'missing_capture_group', "captures[$index].raw_capture must include the 'capture_group_id' of the walkthrough it replaces, so rooms from other scans are kept.");
+            return;
+        }
+        $replaceGroups[$group] = true;
+    }
+    $replaceGroups = array_keys($replaceGroups);
+    $replacedRoomIds = [];
+    foreach ($body['captures'] as $capture) {
+        $replacedId = RoomPlanSimulatorAdapter::replacesRoomId($capture['raw_capture']);
+        if ($replacedId !== null) {
+            $replacedRoomIds[] = $replacedId;
+        }
+    }
+    $existingPlan = $repo->findFloorPlan($session['id']);
+    $keptRoomCount = 0;
+    foreach ($existingPlan['rooms'] ?? [] as $existingRoom) {
+        if (!in_array($existingRoom['capture_group_id'] ?? null, $replaceGroups, true) && !in_array($existingRoom['room_id'] ?? null, $replacedRoomIds, true)) {
+            $keptRoomCount++;
+        }
+    }
+
+    $adapter = new RoomPlanSimulatorAdapter();
+    $rooms = [];
+    $captureProvider = 'roomplan';
+    $capturedAt = gmdate('c');
+    $sessionDefault = trim((string) ($session['default_floor'] ?? ''));
+    foreach ($body['captures'] as $index => $capture) {
+        if (isset($capture['capture_provider']) && !is_string($capture['capture_provider'])) {
+            respondError(422, 'field_must_be_string', "captures[$index].capture_provider must be a plain string.");
+            return;
+        }
+        $floorForCapture = null;
+        if (array_key_exists('floor', $capture) && $capture['floor'] !== null) {
+            if (!is_string($capture['floor'])) {
+                respondError(422, 'field_must_be_string', "captures[$index].floor must be a plain string.");
+                return;
+            }
+            $trimmedFloor = trim($capture['floor']);
+            if (mb_strlen($trimmedFloor, 'UTF-8') > 60) {
+                respondError(422, 'field_too_long', "captures[$index].floor is too long.", ['field' => "captures[$index].floor", 'max_length' => 60]);
+                return;
+            }
+            $floorForCapture = $trimmedFloor === '' ? null : $trimmedFloor;
+        } else {
+            $floorForCapture = $sessionDefault === '' ? null : $sessionDefault;
+        }
+        if ($floorForCapture === null) {
+            respondError(422, 'floor_required', "captures[$index] needs a floor. Set a default floor for this session first, or include a non-empty 'floor' on each capture.");
+            return;
+        }
+        try {
+            $adapted = $adapter->adapt($capture['raw_capture'], [
+                'scan_session_id' => $session['id'],
+                'property_id' => $session['property_id'],
+                'unit_id' => $session['unit_id'],
+                'organisation_id' => $session['organisation_id'],
+                'purpose' => $session['purpose'],
+                'capture_provider' => $capture['capture_provider'] ?? 'roomplan',
+                'capture_location' => $capture['capture_location'] ?? null,
+                'floor' => $floorForCapture,
+            ], $keptRoomCount + count($rooms));
+        } catch (\InvalidArgumentException $e) {
+            respondError(422, 'unprocessable_capture', "captures[$index] couldn't be processed: " . $e->getMessage());
+            return;
+        } catch (\Throwable $e) {
+            error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+            respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+            return;
+        }
+        $rooms = array_merge($rooms, $adapted['rooms']);
+        $captureProvider = $adapted['capture_provider'];
+        $capturedAt = $adapted['captured_at'];
+    }
+
+    try {
+        $floorPlan = $repo->replaceRooms($session['id'], $rooms, $captureProvider, $capturedAt, $replaceGroups, $replacedRoomIds);
+    } catch (\OverflowException $e) {
+        respondError(422, 'too_many_rooms', $e->getMessage());
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(409, 'room_id_conflict', $e->getMessage());
+        return;
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', $e->getMessage());
+        return;
+    }
+
     respond(200, $floorPlan);
     return;
 }
@@ -692,10 +1349,18 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
         respondError(422, 'invalid_url_scheme', "The photo 'url' must start with http:// or https://.");
         return;
     }
-    $tooLong = first_too_long($body, ['url' => 2000, 'caption' => 2000]);
+    $tooLong = first_too_long($body, ['url' => 2000, 'caption' => 2000, 'taken_at' => 100]);
     if ($tooLong !== null) {
         [$tooLongField, $tooLongMax] = $tooLong;
         respondError(422, 'field_too_long', "'$tooLongField' is too long — please keep it to $tooLongMax characters or fewer.", ['field' => $tooLongField, 'max_length' => $tooLongMax]);
+        return;
+    }
+    if (array_key_exists('room_id', $body) && $body['room_id'] !== null && !is_string($body['room_id'])) {
+        respondError(422, 'field_must_be_string', "'room_id' must be a string.", ['field' => 'room_id']);
+        return;
+    }
+    if (array_key_exists('tags', $body) && (!is_array($body['tags']) || !\VuuroScan\InspectionTag::isValidList($body['tags']))) {
+        respondError(422, 'invalid_tags', "'tags' must be an array of valid inspection tag values.", ['allowed' => \VuuroScan\InspectionTag::VALUES]);
         return;
     }
 
@@ -705,13 +1370,14 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
         'caption' => $body['caption'] ?? '',
         'room_id' => $body['room_id'] ?? null,
         'taken_at' => $body['taken_at'] ?? gmdate('c'),
+        'tags' => array_values($body['tags'] ?? []),
     ];
 
     try {
         $floorPlan = $repo->appendPhoto($sessionId, $photo);
     } catch (\OverflowException $e) {
-        // Caught BEFORE \RuntimeException below — \OverflowException
-        // extends \RuntimeException in PHP's SPL hierarchy.
+
+
         respondError(422, 'too_many_photos', $e->getMessage() . ' Start a new scan session to continue attaching photos.');
         return;
     } catch (\RuntimeException $e) {
@@ -720,20 +1386,16 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos$#', $path,
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unknown_room_id', $e->getMessage() . ' Omit room_id to attach this photo to the session generally, or check it against a room_id already returned by a capture call.');
         return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
     }
 
     respond(201, $floorPlan);
     return;
 }
 
-// The brief lists "photos" as a first-class listing asset, but the /photos
-// route above only ever accepted a URL to an image already hosted
-// somewhere else — this repo never actually stored image bytes (see
-// scan-service/README.md's former "Known limits" entry). These two routes
-// close that gap: upload real bytes here, get back a URL, then call
-// POST /scan-sessions/{id}/photos with that URL exactly as before — the
-// existing photos contract is unchanged, this just gives it something real
-// to point at.
 const MAX_PHOTO_UPLOAD_BYTES = 25 * 1024 * 1024;
 const PHOTO_UPLOAD_MIME_EXTENSIONS = [
     'image/jpeg' => 'jpg',
@@ -753,11 +1415,6 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#',
         return;
     }
 
-    // Multipart bodies bypass the generic php://input size gate near the top
-    // of this file entirely (php://input is empty for multipart/form-data —
-    // a PHP SAPI-level limitation, not something this app controls), so this
-    // route needs its own explicit size check rather than relying on that
-    // gate having already run.
     if (!isset($_FILES['photo']) || !is_array($_FILES['photo'])) {
         $repo->logAccess($sessionId, 'upload_photo', 'rejected_missing_file');
         respondError(422, 'missing_photo_file', "Please include a 'photo' file field (multipart/form-data) with the image to upload.");
@@ -767,11 +1424,12 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#',
     $file = $_FILES['photo'];
     if ($file['error'] !== UPLOAD_ERR_OK) {
         $tooLarge = in_array($file['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true);
-        $repo->logAccess($sessionId, 'upload_photo', $tooLarge ? 'rejected_too_large' : 'rejected_upload_error');
+        $repo->logAccess($sessionId, 'upload_photo', $tooLarge ? 'rejected_too_large' : 'rejected_upload_error_' . (int) $file['error']);
         respondError(
             422,
             $tooLarge ? 'photo_too_large' : 'photo_upload_failed',
-            $tooLarge ? 'The uploaded photo is too large.' : 'The photo upload failed — please try again.'
+            $tooLarge ? 'The uploaded photo is too large.' : 'The photo upload failed — please try again.',
+            ['upload_error_code' => (int) $file['error']]
         );
         return;
     }
@@ -783,9 +1441,9 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#',
         return;
     }
 
-    // Sniffs the actual bytes rather than trusting the client-supplied
-    // filename/Content-Type — same "don't trust the client's own label"
-    // principle as is_http_url()'s scheme check above.
+
+
+
     $mime = (new \finfo(FILEINFO_MIME_TYPE))->file($file['tmp_name']);
     if (!isset(PHOTO_UPLOAD_MIME_EXTENSIONS[$mime])) {
         $repo->logAccess($sessionId, 'upload_photo', 'rejected_unsupported_type');
@@ -813,8 +1471,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#',
     }
 
     $repo->logAccess($sessionId, 'upload_photo', 'stored');
-    $scheme = (($_SERVER['HTTPS'] ?? 'off') !== 'off') ? 'https' : 'http';
-    $url = "{$scheme}://{$_SERVER['HTTP_HOST']}/scan-sessions/{$sessionId}/photo-uploads/{$filename}";
+    $url = publicBaseUrl() . "/scan-sessions/{$sessionId}/photo-uploads/{$filename}";
     respond(201, ['url' => $url, 'photo_upload_id' => $photoUploadId]);
     return;
 }
@@ -850,7 +1507,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, 
     }
     $sessionId = $session['id'];
 
-    if (rateLimited($repo, $sessionId . ':attach_note', 60, 300)) {
+    if (rateLimited($repo, $sessionId . ':attach_note', 600, 300)) {
         return;
     }
 
@@ -870,12 +1527,21 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, 
         respondError(422, 'field_too_long', "'$tooLongField' is too long — please keep it to $tooLongMax characters or fewer.", ['field' => $tooLongField, 'max_length' => $tooLongMax]);
         return;
     }
+    if (array_key_exists('room_id', $body) && $body['room_id'] !== null && !is_string($body['room_id'])) {
+        respondError(422, 'field_must_be_string', "'room_id' must be a string.", ['field' => 'room_id']);
+        return;
+    }
+    if (array_key_exists('tags', $body) && (!is_array($body['tags']) || !\VuuroScan\InspectionTag::isValidList($body['tags']))) {
+        respondError(422, 'invalid_tags', "'tags' must be an array of valid inspection tag values.", ['allowed' => \VuuroScan\InspectionTag::VALUES]);
+        return;
+    }
 
     $note = [
         'note_id' => ScanSessionRepository::uuid(),
         'text' => $body['text'],
         'room_id' => $body['room_id'] ?? null,
         'created_at' => gmdate('c'),
+        'tags' => array_values($body['tags'] ?? []),
     ];
 
     try {
@@ -889,9 +1555,464 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, 
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unknown_room_id', $e->getMessage() . ' Omit room_id to attach this note to the session generally, or check it against a room_id already returned by a capture call.');
         return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
     }
 
     respond(201, $floorPlan);
+    return;
+}
+
+if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)/photos/([^/]+)$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'delete_photo');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':delete_photo', 60, 300)) {
+        return;
+    }
+
+    $photoUrl = null;
+    $existingFloorPlan = $repo->findFloorPlan($session['id']);
+    foreach (($existingFloorPlan !== null ? $existingFloorPlan['photos'] : []) as $existingPhoto) {
+        if ($existingPhoto['photo_id'] === $m[2]) {
+            $photoUrl = $existingPhoto['url'];
+            break;
+        }
+    }
+
+    try {
+        $floorPlan = $repo->deletePhoto($session['id'], $m[2]);
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(404, 'photo_not_found', $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
+    }
+
+    $stillReferenced = false;
+    foreach ($floorPlan['photos'] as $remainingPhoto) {
+        if ($remainingPhoto['url'] === $photoUrl) {
+            $stillReferenced = true;
+            break;
+        }
+    }
+    if (!$stillReferenced) {
+        deleteUploadedPhotoFileIfOwned($session['id'], $photoUrl);
+    }
+
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)/notes/([^/]+)$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'delete_note');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':delete_note', 60, 300)) {
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->deleteNote($session['id'], $m[2]);
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(404, 'note_not_found', $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
+    }
+
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes/([^/]+)$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'update_note');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+    $noteId = $m[2];
+
+    if (rateLimited($repo, $sessionId . ':update_note', 600, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    $missing = require_fields($body, ['text']);
+    if ($missing !== null) {
+        respondError(422, 'missing_required_fields', "Please include a 'text' field with the note's new content.", ['fields' => $missing]);
+        return;
+    }
+    if (!is_string($body['text'])) {
+        respondError(422, 'field_must_be_string', "'text' must be a plain string.", ['field' => 'text']);
+        return;
+    }
+    $tooLong = first_too_long($body, ['text' => 5000]);
+    if ($tooLong !== null) {
+        [$tooLongField, $tooLongMax] = $tooLong;
+        respondError(422, 'field_too_long', "'$tooLongField' is too long — please keep it to $tooLongMax characters or fewer.", ['field' => $tooLongField, 'max_length' => $tooLongMax]);
+        return;
+    }
+    $tags = null;
+    if (array_key_exists('tags', $body)) {
+        if (!is_array($body['tags']) || !\VuuroScan\InspectionTag::isValidList($body['tags'])) {
+            respondError(422, 'invalid_tags', "'tags' must be an array of valid inspection tag values.", ['allowed' => \VuuroScan\InspectionTag::VALUES]);
+            return;
+        }
+        $tags = array_values($body['tags']);
+    }
+
+    try {
+        $floorPlan = $repo->updateNote($sessionId, $noteId, $body['text'], $tags);
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(404, 'note_not_found', $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
+    }
+
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)/room-type$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'update_room_type');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+    $roomId = $m[2];
+
+    if (rateLimited($repo, $sessionId . ':update_room_type', 60, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    if (!array_key_exists('room_type', $body)) {
+        respondError(422, 'missing_required_fields', "Please include a 'room_type' field (or null to clear it).", ['fields' => ['room_type']]);
+        return;
+    }
+    $confirmed = $body['room_type'];
+    if ($confirmed !== null) {
+        if (!is_string($confirmed) || !\VuuroScan\RoomType::isValidConfirmedValue($confirmed)) {
+            respondError(422, 'invalid_room_type', 'room_type must be a non-empty value of at most ' . \VuuroScan\RoomType::CUSTOM_MAX_LENGTH . ' characters, or null to clear it.', ['suggested' => \VuuroScan\RoomType::CONFIRMED_VALUES]);
+            return;
+        }
+        $confirmed = trim($confirmed);
+    }
+
+    try {
+        $floorPlan = $repo->updateRoomType($sessionId, $roomId, $confirmed);
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unknown_room_id', $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
+    }
+
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)/label$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'update_room_label');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+    $roomId = $m[2];
+
+    if (rateLimited($repo, $sessionId . ':update_room_label', 60, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    if (!array_key_exists('label', $body) || !is_string($body['label'])) {
+        respondError(422, 'missing_required_fields', "Please include a non-empty 'label' string field.", ['fields' => ['label']]);
+        return;
+    }
+    $label = trim($body['label']);
+    if ($label === '' || mb_strlen($label) > 60) {
+        respondError(422, 'invalid_room_label', 'label must be non-empty and at most 60 characters.');
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->updateRoomLabel($sessionId, $roomId, $label);
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unknown_room_id', $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
+    }
+
+    respond(200, $floorPlan);
+    return;
+}
+
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/groups/([^/]+)/placement$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'place_group');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+    $groupId = $m[2];
+    if (rateLimited($repo, $sessionId . ':place_group', 30, 300)) {
+        return;
+    }
+    $body = json_body($rawRequestBody);
+    $rotationDeg = $body['rotation_deg'] ?? 0.0;
+    $translationM = $body['translation_m'] ?? [0.0, 0.0];
+    $joinToGroupId = array_key_exists('join_to_group_id', $body) ? $body['join_to_group_id'] : null;
+    $floorForPlacement = null;
+    $limitToFloor = array_key_exists('floor', $body);
+    if ($limitToFloor && $body['floor'] !== null) {
+        if (!is_string($body['floor'])) {
+            respondError(422, 'invalid_floor', 'floor must be a string or null.');
+            return;
+        }
+        $trimmedFloor = trim($body['floor']);
+        $floorForPlacement = $trimmedFloor === '' ? null : $trimmedFloor;
+    }
+    if (!is_int($rotationDeg) && !is_float($rotationDeg)) {
+        respondError(422, 'invalid_rotation', 'rotation_deg must be a number.');
+        return;
+    }
+    if (!is_array($translationM) || !array_is_list($translationM) || count($translationM) !== 2) {
+        respondError(422, 'invalid_translation', 'translation_m must be a two-element array.');
+        return;
+    }
+    foreach ($translationM as $tElement) {
+        if (!is_int($tElement) && !is_float($tElement)) {
+            respondError(422, 'invalid_translation', 'translation_m elements must be numbers.');
+            return;
+        }
+    }
+    if ($joinToGroupId !== null && !is_string($joinToGroupId)) {
+        respondError(422, 'invalid_join_target', 'join_to_group_id must be a string or null.');
+        return;
+    }
+    try {
+        $floorPlan = $repo->placeGroup($sessionId, $groupId, $joinToGroupId, (float) $rotationDeg, [(float) $translationM[0], (float) $translationM[1]], $floorForPlacement, $limitToFloor);
+    } catch (\VuuroScan\UnknownRoomException $e) {
+        $code = $e->getMessage() === 'join_target_not_found' ? 'group_not_found' : 'group_not_found';
+        respondError(404, $code, 'That group does not exist on this session.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        $msg = $e->getMessage();
+        $map = [
+            'group_has_splits' => [409, 'group_has_splits', 'This group has room splits. Undo the splits before placing it.'],
+            'group_missing_origin' => [409, 'group_missing_origin', 'This group has no structure origin and cannot be placed.'],
+            'floor_mismatch' => [409, 'floor_mismatch', 'The group and its join target are on different floors.'],
+            'floor_required' => [409, 'floor_required', 'This group spans several floors. Send the floor to place one floor at a time.'],
+            'cannot_join_to_self' => [409, 'cannot_join_to_self', 'A group cannot join itself.'],
+            'group_too_far' => [409, 'group_too_far', 'The group is too far from the join target.'],
+            'invalid_rotation' => [422, 'invalid_rotation', 'rotation_deg is out of range.'],
+            'invalid_translation' => [422, 'invalid_translation', 'translation_m is out of range.'],
+        ];
+        if (isset($map[$msg])) {
+            [$status, $code, $text] = $map[$msg];
+            respondError($status, $code, $text);
+        } else {
+            respondError(422, 'invalid_placement', 'The placement request was rejected.');
+        }
+        return;
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured FloorPlan yet.');
+        return;
+    }
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)/floor$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'update_room_floor');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+    if (rateLimited($repo, $sessionId . ':update_room_floor', 60, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    if (!array_key_exists('floor', $body) || ($body['floor'] !== null && !is_string($body['floor']))) {
+        respondError(422, 'missing_required_fields', "Please include a 'floor' field: a floor name, or null to clear it.", ['fields' => ['floor']]);
+        return;
+    }
+    $floor = $body['floor'] === null ? null : trim($body['floor']);
+    if ($floor === '') {
+        $floor = null;
+    }
+    if ($floor !== null && (mb_strlen($floor, 'UTF-8') > 60 || preg_match('/[\x00-\x1f\x7f]/', $floor) === 1)) {
+        respondError(422, 'invalid_floor', 'floor must be at most 60 characters with no control characters.');
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->updateRoomFloor($sessionId, $m[2], $floor);
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unknown_room_id', $e->getMessage());
+        return;
+    }
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'delete_room');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+    if (rateLimited($repo, $sessionId . ':delete_room', 30, 300)) {
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->deleteRoom($sessionId, $m[2]);
+    } catch (\LengthException $e) {
+        respondError(409, 'last_room', $e->getMessage());
+        return;
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unknown_room_id', $e->getMessage());
+        return;
+    }
+    $repo->logAccess($sessionId, 'delete_room', 'deleted');
+    respond(200, $floorPlan);
+    return;
+}
+
+function split_point(mixed $value): ?array
+{
+    if (!is_array($value) || !array_is_list($value) || count($value) !== 2) {
+        return null;
+    }
+    foreach ($value as $coordinate) {
+        if ((!is_int($coordinate) && !is_float($coordinate)) || !is_finite((float) $coordinate) || abs((float) $coordinate) > 1000) {
+            return null;
+        }
+    }
+    return [(float) $value[0], (float) $value[1]];
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms/([^/]+)/split$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'split_room');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+    $roomId = $m[2];
+
+    if (rateLimited($repo, $sessionId . ':split_room', 30, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    $line = $body['line_m'] ?? null;
+    $start = is_array($line) && array_is_list($line) && count($line) === 2 ? split_point($line[0]) : null;
+    $end = is_array($line) && array_is_list($line) && count($line) === 2 ? split_point($line[1]) : null;
+    if ($start === null || $end === null) {
+        respondError(422, 'invalid_split_line', "'line_m' must be two [x, z] points in the room's own metres, e.g. [[0, 2.5], [6, 2.5]].");
+        return;
+    }
+    $keepPoint = split_point($body['keep_point_m'] ?? null);
+    if ($keepPoint === null) {
+        respondError(422, 'invalid_keep_point', "'keep_point_m' must be one [x, z] point inside the part that keeps the room's name.");
+        return;
+    }
+    $mode = $body['mode'] ?? null;
+    if ($mode !== 'split' && $mode !== 'trim') {
+        respondError(422, 'invalid_split_mode', "'mode' must be 'split' (make two rooms) or 'trim' (keep one part, drop the other).");
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->splitRoom($sessionId, $roomId, [$start, $end], $keepPoint, $mode);
+    } catch (\VuuroScan\UnknownRoomException $e) {
+        respondError(422, 'unknown_room_id', $e->getMessage());
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'invalid_split', $e->getMessage());
+        return;
+    } catch (\OverflowException $e) {
+        respondError(422, 'too_many_rooms', $e->getMessage());
+        return;
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
+    }
+
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/room-splits/undo$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'undo_room_split');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+
+    if (rateLimited($repo, $sessionId . ':undo_room_split', 30, 300)) {
+        return;
+    }
+
+    try {
+        $floorPlan = $repo->undoLastSplit($sessionId);
+    } catch (\VuuroScan\UnknownRoomException $e) {
+        respondError(409, 'nothing_to_undo', $e->getMessage());
+        return;
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
+    }
+
+    respond(200, $floorPlan);
     return;
 }
 
@@ -901,10 +2022,147 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         return;
     }
 
-    // Rendering is expensive (FloorPlanImageRenderer can allocate up to a
-    // 4000x4000 truecolor canvas per call) — bounded generously per
-    // session, well above any real workflow.
-    if (rateLimited($repo, $session['id'] . ':export_png', 30, 300)) {
+
+
+
+    if (rateLimited($repo, $session['id'] . ':export_png', 120, 300)) {
+        return;
+    }
+
+    $floorPlan = $repo->findFloorPlan($session['id']);
+    if ($floorPlan === null) {
+        respondError(404, 'no_floor_plan_yet', 'This session doesn\'t have a captured floor plan yet — capture at least one room before exporting.');
+        return;
+    }
+    if ($floorPlan['rooms'] === []) {
+        respondError(422, 'no_floor_plan_geometry', 'This is a notes-only session, so there is no floor plan to draw. Export the PDF instead to get the notes and photos.');
+        return;
+    }
+
+    $layout = $_GET['layout'] ?? 'auto';
+    if (!in_array($layout, ['auto', 'tiles'], true)) {
+        respondError(422, 'invalid_layout', "'layout' must be 'auto' or 'tiles' if given.");
+        return;
+    }
+    $roomId = isset($_GET['room_id']) ? (string) $_GET['room_id'] : null;
+    $unit = $_GET['unit'] ?? \VuuroScan\Export\UnitFormatter::METRIC;
+    if (!in_array($unit, \VuuroScan\Export\UnitFormatter::VALID, true)) {
+        respondError(422, 'invalid_unit', "'unit' must be 'metric' or 'imperial' if given.");
+        return;
+    }
+    $label = isset($_GET['label']) ? trim((string) $_GET['label']) : null;
+    if ($label !== null && mb_strlen($label, 'UTF-8') > 120) {
+        respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
+        return;
+    }
+    if (isset($_GET['floor'])) {
+        $wantedFloor = mb_strtolower(trim((string) $_GET['floor']), 'UTF-8');
+        $floorRooms = array_values(array_filter(
+            $floorPlan['rooms'],
+            static fn (array $room) => mb_strtolower(trim((string) ($room['floor'] ?? '')), 'UTF-8') === $wantedFloor
+        ));
+        if ($floorRooms === []) {
+            respondError(404, 'no_rooms_on_floor', 'This scan has no rooms on that floor.');
+            return;
+        }
+        $floorPlan = [...$floorPlan, 'rooms' => $floorRooms];
+    }
+    if (isset($_GET['group'])) {
+        $wantedGroup = (string) $_GET['group'];
+        $groupRooms = array_values(array_filter(
+            $floorPlan['rooms'],
+            static function (array $room) use ($wantedGroup): bool {
+                $block = $room['joined_to_group_id'] ?? $room['capture_group_id'] ?? null;
+                return $wantedGroup === 'none' ? $block === null : $block === $wantedGroup;
+            }
+        ));
+        if ($groupRooms === []) {
+            respondError(404, 'no_rooms_in_group', 'This scan has no rooms in that group.');
+            return;
+        }
+        $floorPlan = [...$floorPlan, 'rooms' => $groupRooms];
+    }
+    $planStyle = parseFloorPlanStyleFromQuery($settings->planStyleFor((string) $session['purpose']) === 'full' ? 'default' : 'funda');
+    $exportLanguage = exportLanguageFromQuery($settings);
+
+    try {
+        $png = ExportLanguage::run($exportLanguage, static fn () => (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $planStyle));
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
+    }
+    header('Content-Type: image/png');
+    echo $png;
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.svg$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'export_svg');
+    if ($session === null) {
+        return;
+    }
+
+    if (rateLimited($repo, $session['id'] . ':export_svg', 30, 300)) {
+        return;
+    }
+
+    $floorPlan = $repo->findFloorPlan($session['id']);
+    if ($floorPlan === null) {
+        respondError(404, 'no_floor_plan_yet', 'This session doesn\'t have a captured floor plan yet — capture at least one room before exporting.');
+        return;
+    }
+    if ($floorPlan['rooms'] === []) {
+        respondError(422, 'no_floor_plan_geometry', 'This is a notes-only session, so there is no floor plan to draw. Export the PDF instead to get the notes and photos.');
+        return;
+    }
+
+    $layout = $_GET['layout'] ?? 'auto';
+    if (!in_array($layout, ['auto', 'tiles'], true)) {
+        respondError(422, 'invalid_layout', "'layout' must be 'auto' or 'tiles' if given.");
+        return;
+    }
+    $roomId = isset($_GET['room_id']) ? (string) $_GET['room_id'] : null;
+    $unit = $_GET['unit'] ?? \VuuroScan\Export\UnitFormatter::METRIC;
+    if (!in_array($unit, \VuuroScan\Export\UnitFormatter::VALID, true)) {
+        respondError(422, 'invalid_unit', "'unit' must be 'metric' or 'imperial' if given.");
+        return;
+    }
+    $label = isset($_GET['label']) ? trim((string) $_GET['label']) : null;
+    if ($label !== null && mb_strlen($label, 'UTF-8') > 120) {
+        respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
+        return;
+    }
+    $planStyle = parseFloorPlanStyleFromQuery($settings->planStyleFor((string) $session['purpose']) === 'full' ? 'default' : 'funda');
+    $exportLanguage = exportLanguageFromQuery($settings);
+
+    try {
+        $svg = ExportLanguage::run($exportLanguage, static fn () => (new FloorPlanSvgRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $planStyle));
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
+    }
+    header('Content-Type: image/svg+xml');
+    echo $svg;
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.pdf$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'export_pdf');
+    if ($session === null) {
+        return;
+    }
+
+
+
+    if (rateLimited($repo, $session['id'] . ':export_pdf', 30, 300)) {
         return;
     }
 
@@ -920,46 +2178,77 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         return;
     }
     $roomId = isset($_GET['room_id']) ? (string) $_GET['room_id'] : null;
+    $unit = $_GET['unit'] ?? \VuuroScan\Export\UnitFormatter::METRIC;
+    if (!in_array($unit, \VuuroScan\Export\UnitFormatter::VALID, true)) {
+        respondError(422, 'invalid_unit', "'unit' must be 'metric' or 'imperial' if given.");
+        return;
+    }
+    $label = isset($_GET['label']) ? trim((string) $_GET['label']) : null;
+    if ($label !== null && mb_strlen($label, 'UTF-8') > 120) {
+        respondError(422, 'field_too_long', "'label' is too long — please keep it to 120 characters or fewer.", ['field' => 'label', 'max_length' => 120]);
+        return;
+    }
+    $planStyle = parseFloorPlanStyleFromQuery($settings->planStyleFor((string) $session['purpose']) === 'full' ? 'default' : 'funda');
+    $exportLanguage = exportLanguageFromQuery($settings);
+
+    $photoLoader = static function (string $url) use ($session): ?string {
+        $filePath = ownedPhotoFilePath($session['id'], $url);
+        return $filePath !== null ? file_get_contents($filePath) : null;
+    };
+
+    $changes = null;
+    if (compareRequested()) {
+        $pair = resolveComparison($repo, $session);
+        if ($pair === null) {
+            return;
+        }
+        [$earlier, $later, $earlierPlan, $laterPlan] = $pair;
+        if ($later['id'] === $session['id'] && !$planStyle->isFunda && $roomId === null) {
+            [$areaChangeM2, $areaChangePercent] = $settings->areaChangeThresholds();
+            $changes = [
+                'earlier' => comparisonScanSummary($earlier, $earlierPlan),
+                ...ScanComparison::compare($earlierPlan, $laterPlan, $areaChangeM2, $areaChangePercent),
+            ];
+        }
+    }
 
     try {
-        $png = (new FloorPlanImageRenderer())->render($floorPlan, $layout, $roomId);
+        $pdf = ExportLanguage::run($exportLanguage, static fn () => (new FloorPlanPdfRenderer())->render($floorPlan, $layout, $roomId, $unit, $label, $photoLoader, $planStyle, $changes));
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
         return;
-    }
-    header('Content-Type: image/png');
-    echo $png;
-    return;
-}
-
-if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.pdf$#', $path, $m)) {
-    $session = authorizeSession($repo, $m[1], 'export_pdf');
-    if ($session === null) {
-        return;
-    }
-
-    // PDF rendering can walk up to MAX_PAGES (200) pages per call, an
-    // independent and comparably expensive cost to PNG export.
-    if (rateLimited($repo, $session['id'] . ':export_pdf', 30, 300)) {
-        return;
-    }
-
-    $floorPlan = $repo->findFloorPlan($session['id']);
-    if ($floorPlan === null) {
-        respondError(404, 'no_floor_plan_yet', 'This session doesn\'t have a captured floor plan yet — capture at least one room before exporting.');
-        return;
-    }
-
-    $roomId = isset($_GET['room_id']) ? (string) $_GET['room_id'] : null;
-
-    try {
-        $pdf = (new FloorPlanPdfRenderer())->render($floorPlan, $roomId);
-    } catch (\InvalidArgumentException $e) {
-        respondError(422, 'unrenderable_floor_plan', "This floor plan couldn't be rendered: " . $e->getMessage());
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
         return;
     }
     header('Content-Type: application/pdf');
     echo $pdf;
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/compare$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'compare');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':compare', 60, 300)) {
+        return;
+    }
+    $pair = resolveComparison($repo, $session);
+    if ($pair === null) {
+        return;
+    }
+    [$earlier, $later, $earlierPlan, $laterPlan] = $pair;
+    [$areaChangeM2, $areaChangePercent] = $settings->areaChangeThresholds();
+    respond(200, [
+        'property_id' => $session['property_id'],
+        'unit_id' => $session['unit_id'],
+        'organisation_id' => $session['organisation_id'],
+        'earlier' => comparisonScanSummary($earlier, $earlierPlan),
+        'later' => comparisonScanSummary($later, $laterPlan),
+        ...ScanComparison::compare($earlierPlan, $laterPlan, $areaChangeM2, $areaChangePercent),
+    ]);
     return;
 }
 
@@ -1011,6 +2300,477 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)$#', $path, $m)) {
     }
 
     respond(200, $floorPlan);
+    return;
+}
+
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/publish-to-platform$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'publish_to_platform');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':publish_to_platform', 10, 300)) {
+        return;
+    }
+
+    $webhookUrl = getenv('SCAN_SERVICE_PLATFORM_WEBHOOK_URL');
+    if (!is_string($webhookUrl) || $webhookUrl === '') {
+        respondError(503, 'platform_webhook_not_configured', 'Push-to-platform is not configured on this server. Set SCAN_SERVICE_PLATFORM_WEBHOOK_URL to enable it.');
+        return;
+    }
+    if (!preg_match('#^https?://#i', $webhookUrl)) {
+        respondError(500, 'invalid_platform_webhook_url', 'The configured platform webhook URL is not a valid HTTP(S) URL.');
+        return;
+    }
+
+    $floorPlan = $repo->findFloorPlan($session['id']);
+    if ($floorPlan === null) {
+        respondError(404, 'no_floor_plan_yet', 'This session has no captured floor plan yet - nothing to publish.');
+        return;
+    }
+
+    $selfBase = publicBaseUrl();
+
+    $payload = [
+        'event' => 'scan.published',
+        'published_at' => gmdate('c'),
+        'scan_service_base_url' => $selfBase,
+        'session' => [
+            'id' => $session['id'],
+            'property_id' => $session['property_id'],
+            'unit_id' => $session['unit_id'],
+            'organisation_id' => $session['organisation_id'],
+            'purpose' => $session['purpose'],
+            'created_at' => $session['created_at'],
+            'occupied' => (bool) $session['occupied'],
+            'consent_obtained' => (bool) $session['consent_obtained'],
+        ],
+        'floor_plan' => $floorPlan,
+        'exports' => [
+            'png' => "{$selfBase}/scan-sessions/{$session['id']}/export/floorplan.png",
+            'pdf' => "{$selfBase}/scan-sessions/{$session['id']}/export/floorplan.pdf",
+            'svg' => "{$selfBase}/scan-sessions/{$session['id']}/export/floorplan.svg",
+        ],
+        'api' => [
+            'get_session' => "{$selfBase}/scan-sessions/{$session['id']}",
+            'auth_header' => 'X-Admin-Api-Key',
+        ],
+    ];
+
+    try {
+        $payloadJson = json_encode($payload, JSON_THROW_ON_ERROR);
+    } catch (\JsonException $e) {
+        $repo->logAccess($session['id'], 'publish_to_platform', 'failed_encoding');
+        respondError(500, 'publish_encoding_failed', 'Could not encode the scan payload for delivery.');
+        return;
+    }
+
+    $context = stream_context_create([
+        'http' => [
+            'method' => 'POST',
+            'header' => "Content-Type: application/json\r\n" .
+                        "X-Vuuro-Scan-Session: {$session['id']}\r\n" .
+                        "Content-Length: " . strlen($payloadJson) . "\r\n",
+            'content' => $payloadJson,
+            'timeout' => 15,
+            'ignore_errors' => true,
+        ],
+    ]);
+
+    $responseBody = @file_get_contents($webhookUrl, false, $context);
+    $responseCode = 0;
+    if (isset($http_response_header[0]) && preg_match('#^HTTP/\S+\s+(\d+)#', $http_response_header[0], $statusMatch)) {
+        $responseCode = (int) $statusMatch[1];
+    }
+
+    if ($responseBody === false && $responseCode === 0) {
+        $repo->logAccess($session['id'], 'publish_to_platform', 'failed_transport');
+        respondError(502, 'platform_unreachable', 'Could not reach the platform webhook URL. Check that the URL is correct and reachable from the Scan Service host.');
+        return;
+    }
+
+    if ($responseCode < 200 || $responseCode >= 300) {
+        $repo->logAccess($session['id'], 'publish_to_platform', 'failed_status_' . $responseCode);
+        respondError(502, 'platform_rejected', 'The platform returned HTTP ' . $responseCode . '. The scan was NOT published.', [
+            'platform_status' => $responseCode,
+            'platform_response' => substr((string) $responseBody, 0, 500),
+        ]);
+        return;
+    }
+
+    $repo->logAccess($session['id'], 'publish_to_platform', 'published');
+    respond(200, [
+        'published' => true,
+        'platform_status' => $responseCode,
+        'platform_response' => substr((string) $responseBody, 0, 500),
+    ]);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/objects/batch$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'update_objects');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+
+    if (rateLimited($repo, $sessionId . ':update_objects', 60, 300)) {
+        return;
+    }
+
+    $body = json_body($rawRequestBody);
+    if (!isset($body['changes']) || !is_array($body['changes']) || !array_is_list($body['changes'])) {
+        respondError(422, 'missing_changes', "Please include a 'changes' array of object updates.");
+        return;
+    }
+    if (count($body['changes']) === 0) {
+        respondError(422, 'empty_changes', "The 'changes' array must contain at least one entry.");
+        return;
+    }
+    if (count($body['changes']) > 500) {
+        respondError(422, 'too_many_changes', 'A maximum of 500 changes per request is allowed.');
+        return;
+    }
+    foreach ($body['changes'] as $i => $change) {
+        if (!is_array($change) || !isset($change['room_id']) || !is_string($change['room_id']) || $change['room_id'] === '') {
+            respondError(422, 'invalid_change', "changes[$i].room_id is required and must be a non-empty string.");
+            return;
+        }
+        if (!isset($change['object_id']) || !is_string($change['object_id']) || $change['object_id'] === '') {
+            respondError(422, 'invalid_change', "changes[$i].object_id is required and must be a non-empty string.");
+            return;
+        }
+        if (array_key_exists('custom_name', $change) && $change['custom_name'] !== null && !is_string($change['custom_name'])) {
+            respondError(422, 'invalid_change', "changes[$i].custom_name must be a string or null.");
+            return;
+        }
+        if (array_key_exists('excluded', $change) && !is_bool($change['excluded'])) {
+            respondError(422, 'invalid_change', "changes[$i].excluded must be a boolean.");
+            return;
+        }
+        if (array_key_exists('delete', $change) && !is_bool($change['delete'])) {
+            respondError(422, 'invalid_change', "changes[$i].delete must be a boolean.");
+            return;
+        }
+    }
+
+    try {
+        $floorPlan = $repo->batchUpdateObjects($sessionId, $body['changes']);
+    } catch (\RuntimeException $e) {
+        respondError(409, 'no_floor_plan_yet', $e->getMessage());
+        return;
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'invalid_object_change', $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
+        return;
+    }
+
+    respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/vuuroscan$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'export_vuuroscan');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':export_vuuroscan', 30, 300)) {
+        return;
+    }
+
+    $floorPlan = $repo->findFloorPlan($session['id']);
+    if ($floorPlan === null) {
+        respondError(404, 'no_floor_plan_yet', 'This session doesn\'t have a captured floor plan yet — capture at least one room before exporting.');
+        return;
+    }
+
+    $bundleStyle = FloorPlanStyle::from($settings->planStyleFor((string) $session['purpose']) === 'full' ? 'default' : 'funda');
+    $pngBytes = null;
+    try {
+        $pngBytes = ExportLanguage::run($settings->exportLanguage(), static fn () => (new FloorPlanImageRenderer())->render($floorPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, $bundleStyle));
+    } catch (\Throwable $e) {
+        $pngBytes = null;
+    }
+
+    $pdfBytes = null;
+    try {
+        $photoLoader = static function (string $url) use ($session): ?string {
+            $filePath = ownedPhotoFilePath($session['id'], $url);
+            return $filePath !== null ? file_get_contents($filePath) : null;
+        };
+        $pdfBytes = ExportLanguage::run($settings->exportLanguage(), static fn () => (new FloorPlanPdfRenderer())->render($floorPlan, 'auto', null, \VuuroScan\Export\UnitFormatter::METRIC, null, $photoLoader, $bundleStyle));
+    } catch (\Throwable $e) {
+        $pdfBytes = null;
+    }
+
+    $maxEmbedBytes = 20 * 1024 * 1024;
+    $pngOmitted = false;
+    $pdfOmitted = false;
+    if ($pngBytes !== null && strlen($pngBytes) > $maxEmbedBytes) {
+        $pngBytes = null;
+        $pngOmitted = true;
+    }
+    if ($pdfBytes !== null && strlen($pdfBytes) > $maxEmbedBytes) {
+        $pdfBytes = null;
+        $pdfOmitted = true;
+    }
+
+    $selfBase = publicBaseUrl();
+
+    $payload = [
+        'format' => 'vuuroscan/1',
+        'exported_at' => gmdate('c'),
+        'scan_service_base_url' => $selfBase,
+        'session' => [
+            'id' => $session['id'],
+            'property_id' => $session['property_id'],
+            'unit_id' => $session['unit_id'],
+            'organisation_id' => $session['organisation_id'],
+            'purpose' => $session['purpose'],
+            'created_at' => $session['created_at'],
+            'occupied' => (bool) $session['occupied'],
+            'consent_obtained' => (bool) $session['consent_obtained'],
+        ],
+        'floor_plan' => $floorPlan,
+        'exports' => [
+            'png_base64' => $pngBytes !== null ? base64_encode($pngBytes) : null,
+            'pdf_base64' => $pdfBytes !== null ? base64_encode($pdfBytes) : null,
+            'png_omitted_too_large' => $pngOmitted,
+            'pdf_omitted_too_large' => $pdfOmitted,
+        ],
+    ];
+
+    $secret = getenv('SCAN_SERVICE_EXPORT_SECRET');
+    $bundle = $payload;
+    if (is_string($secret) && $secret !== '') {
+        $canonical = canonicalJson($payload);
+        $bundle['signature'] = [
+            'algorithm' => 'hmac-sha256',
+            'value' => hash_hmac('sha256', $canonical, $secret),
+        ];
+    } else {
+        $bundle['signature'] = null;
+        $bundle['signature_note'] = 'No SCAN_SERVICE_EXPORT_SECRET configured on this Scan Service — this bundle is unsigned.';
+    }
+
+    $safeProp = preg_replace('/[^A-Za-z0-9_\-]/', '-', (string) $session['property_id']);
+    $safeUnit = preg_replace('/[^A-Za-z0-9_\-]/', '-', (string) $session['unit_id']);
+    $filename = 'scan-' . $safeProp . '-' . $safeUnit . '.vuuroscan';
+
+    header('Content-Type: application/json; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    echo json_encode($bundle, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    return;
+}
+
+if ($method === 'POST' && $path === '/imported-scans') {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:import', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':admin_import', 30, 300)) {
+        return;
+    }
+
+    if (!isset($_FILES['file']) || !is_array($_FILES['file'])) {
+        respondError(422, 'missing_file', "Please include a 'file' field (multipart/form-data) with the .vuuroscan bundle.");
+        return;
+    }
+
+    $upload = $_FILES['file'];
+    if ($upload['error'] !== UPLOAD_ERR_OK) {
+        respondError(422, 'upload_failed', 'The upload failed. Please try again.');
+        return;
+    }
+
+    $raw = @file_get_contents($upload['tmp_name']);
+    if ($raw === false || $raw === '') {
+        respondError(422, 'empty_file', 'The uploaded file was empty.');
+        return;
+    }
+
+    $bundle = json_decode($raw, true);
+    if (!is_array($bundle)) {
+        respondError(422, 'invalid_json', 'The uploaded file is not valid JSON.');
+        return;
+    }
+
+    if (($bundle['format'] ?? null) !== 'vuuroscan/1') {
+        respondError(422, 'unsupported_format', "Only .vuuroscan bundles with format 'vuuroscan/1' are accepted.");
+        return;
+    }
+
+    $secret = getenv('SCAN_SERVICE_EXPORT_SECRET');
+    $signature = verifyBundleSignature($bundle, is_string($secret) ? $secret : null);
+
+    if ($signature['status'] === 'invalid') {
+        respondError(422, 'signature_invalid', "The bundle's HMAC signature does not match. The file may have been tampered with, or it was signed with a different export secret than the one configured on this server.");
+        return;
+    }
+
+    $sessionBlock = $bundle['session'] ?? null;
+    $floorPlan = $bundle['floor_plan'] ?? null;
+    if (!is_array($sessionBlock) || !is_array($floorPlan)) {
+        respondError(422, 'malformed_bundle', 'The bundle is missing the session or floor_plan section.');
+        return;
+    }
+
+    foreach (['id', 'property_id', 'unit_id', 'organisation_id', 'purpose'] as $field) {
+        if (!isset($sessionBlock[$field]) || !is_string($sessionBlock[$field]) || $sessionBlock[$field] === '') {
+            respondError(422, 'malformed_bundle', "The bundle's session.$field is missing or invalid.");
+            return;
+        }
+    }
+
+    if (!isset($floorPlan['rooms']) || !is_array($floorPlan['rooms'])) {
+        respondError(422, 'malformed_bundle', "The bundle's floor_plan.rooms is missing or invalid.");
+        return;
+    }
+
+    $importId = \VuuroScan\ScanSessionRepository::uuid();
+    $record = [
+        'import_id' => $importId,
+        'format' => (string) $bundle['format'],
+        'exported_at' => is_string($bundle['exported_at'] ?? null) ? $bundle['exported_at'] : gmdate('c'),
+        'imported_at' => gmdate('c'),
+        'scan_service_base_url' => is_string($bundle['scan_service_base_url'] ?? null) ? $bundle['scan_service_base_url'] : '',
+        'session_id' => (string) $sessionBlock['id'],
+        'property_id' => (string) $sessionBlock['property_id'],
+        'unit_id' => (string) $sessionBlock['unit_id'],
+        'organisation_id' => (string) $sessionBlock['organisation_id'],
+        'purpose' => (string) $sessionBlock['purpose'],
+        'signature_status' => $signature['status'],
+        'signature_algorithm' => $signature['algorithm'],
+        'payload_json' => json_encode($bundle, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+    ];
+
+    try {
+        $stored = $repo->insertImportedScan($record);
+    } catch (\Throwable $e) {
+        error_log('Import failed: ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+        respondError(500, 'import_failed', 'Could not save the imported scan.');
+        return;
+    }
+
+    respond(201, $stored);
+    return;
+}
+
+if ($method === 'GET' && $path === '/imported-scans') {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:imports_list', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':admin_imports_list', 60, 300)) {
+        return;
+    }
+
+    $propertyId = isset($_GET['property_id']) && is_string($_GET['property_id']) && $_GET['property_id'] !== '' ? $_GET['property_id'] : null;
+    $unitId = isset($_GET['unit_id']) && is_string($_GET['unit_id']) && $_GET['unit_id'] !== '' ? $_GET['unit_id'] : null;
+    $organisationId = isset($_GET['organisation_id']) && is_string($_GET['organisation_id']) && $_GET['organisation_id'] !== '' ? $_GET['organisation_id'] : null;
+
+    respond(200, ['imports' => $repo->findImportedScans($propertyId, $unitId, $organisationId)]);
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/imported-scans/([^/]+)$#', $path, $m)) {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:imports_read', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':admin_imports_read', 120, 300)) {
+        return;
+    }
+
+    $import = $repo->findImportedScan($m[1]);
+    if ($import === null) {
+        respondError(404, 'import_not_found', 'No imported scan with that id exists on this server.');
+        return;
+    }
+
+    respond(200, $import);
+    return;
+}
+
+if ($method === 'GET' && $path === '/admin/recent-identities') {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:recent_identities', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':recent_identities', 30, 300)) {
+        return;
+    }
+    respond(200, $repo->findRecentIdentities());
+    return;
+}
+
+if ($method === 'POST' && $path === '/admin/run-retention') {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:run_retention', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':admin_run_retention', 10, 300)) {
+        return;
+    }
+
+    respond(200, ['purged' => purgeExpiredSessions($repo, $settings, 100)]);
+    return;
+}
+
+if ($method === 'GET' && $path === '/admin/settings/history') {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:settings', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':admin_settings_history', 30, 300)) {
+        return;
+    }
+    respond(200, ['changes' => $settings->history()]);
+    return;
+}
+
+if (($method === 'GET' || $method === 'POST') && $path === '/admin/settings') {
+    if (!adminAuthorized()) {
+        if (rateLimited($repo, clientIp() . ':denied_admin_auth:settings', 20, 300)) {
+            return;
+        }
+        respondError(401, 'invalid_or_missing_admin_api_key', 'This request needs a valid admin key. Include the X-Admin-Api-Key header.');
+        return;
+    }
+    if (rateLimited($repo, clientIp() . ':admin_settings', 60, 300)) {
+        return;
+    }
+    if ($method === 'GET') {
+        respond(200, $settings->all());
+        return;
+    }
+    $body = json_body($rawRequestBody);
+    try {
+        respond(200, $settings->update($body, 'admin key ' . substr(hash('sha256', (string) ($_SERVER['HTTP_X_ADMIN_API_KEY'] ?? '')), 0, 8) . ' from ' . clientIp()));
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'invalid_settings', $e->getMessage());
+    }
     return;
 }
 
