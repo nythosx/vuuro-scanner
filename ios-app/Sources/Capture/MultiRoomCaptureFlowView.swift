@@ -823,7 +823,8 @@ struct MultiRoomCaptureFlowView: View {
             roomKey: roomKey,
             captureGroupId: captureGroupId,
             structureOriginM: origin,
-            initialCompassHeadingDeg: heading
+            initialCompassHeadingDeg: heading,
+            store: .shared
         )
         photoCaptureContext = PhotoCaptureContext(coordinator: photoCoordinator)
     }
@@ -1009,7 +1010,8 @@ struct MultiRoomCaptureFlowView: View {
             await RoomPhotoUploader.uploadAll(
                 captureGroupId: captureGroupId,
                 session: finishedSession,
-                floorPlan: floorPlan
+                floorPlan: floorPlan,
+                store: .shared
             )
             onFinished(finishedSession, floorPlan)
         } catch is CancellationError {

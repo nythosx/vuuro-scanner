@@ -37,7 +37,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         captureGroupId: String,
         structureOriginM: [Double]?,
         initialCompassHeadingDeg: Double?,
-        store: RoomPhotoStore = .shared,
+        store: RoomPhotoStore,
         minimumPhotos: Int = 15,
         maximumPhotos: Int = 30
     ) {

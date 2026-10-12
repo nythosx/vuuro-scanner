@@ -1,3 +1,4 @@
+import SceneKit
 import SwiftUI
 
 struct DollhouseFullScreenView: View {

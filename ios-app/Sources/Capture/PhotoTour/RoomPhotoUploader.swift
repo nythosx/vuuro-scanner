@@ -6,7 +6,7 @@ enum RoomPhotoUploader {
         captureGroupId: String,
         session: ScanSessionResponse,
         floorPlan: FloorPlan,
-        store: RoomPhotoStore = .shared,
+        store: RoomPhotoStore,
         client: ScanServiceClient = ScanServiceClient()
     ) async {
         let batches: [RoomPhotoManifest]
