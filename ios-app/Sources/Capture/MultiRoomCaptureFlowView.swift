@@ -145,280 +145,295 @@ struct MultiRoomCaptureFlowView: View {
     }
 
     var body: some View {
-        Group {
-            if !DeviceCapability.isRoomPlanSupported && !debugFakeCaptureActive {
-                UnsupportedDeviceScreen(onGoBack: onGoBack)
-            } else if DeviceCapability.isRoomPlanSupported && cameraDenied {
-                CameraAccessDeniedScreen(onGoBack: onGoBack, onAccessRestored: { cameraDenied = false })
-            } else if !DeviceCapability.isRoomPlanSupported && !isUploading {
-                #if DEBUG
-                VuuroCenterView {
-                    VuuroIconBadge(systemName: "wand.and.stars", tint: VuuroColor.accent, background: VuuroColor.accentSoft)
-                    Text("Debug: fake multi-room capture")
-                        .font(.system(size: 20, weight: .bold))
-                        .tracking(-0.4)
-                        .foregroundStyle(VuuroColor.textPrimary)
-                    Text("This device/simulator has no LiDAR. Tap Scan to generate 2-4 synthetic rooms and upload them to the configured Scan Service.")
-                        .font(.system(size: 14))
-                        .lineSpacing(4)
-                        .foregroundStyle(VuuroColor.textSecondary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 300)
-                    Button("Scan (fake data)") {
-                        uploadTask = Task {
-                            let exports = FakeCaptureGenerator.unit(roomCount: Int.random(in: 3...7))
-                            if let result = await submitExports(exports) {
-                                onFinished(result.session, result.floorPlan)
-                            }
+        captureAlertsAndSheets(
+            content
+                .overlay {
+                    if let storedChoice = storedRescanResume?.pendingRescan {
+                        resolutionOverlay {
+                            RescanChoiceSheet(
+                                choice: PendingRescanChoice(candidates: storedChoice.candidates),
+                                onReplace: { roomId in resolveRescan(replacing: roomId) },
+                                onAddNew: { resolveRescan(replacing: nil) }
+                            )
                         }
                     }
-                    .accessibilityIdentifier("multiCapture.fakeScan")
-                    .buttonStyle(.vuuroPrimary)
-                    .padding(.top, 12)
-                    .frame(maxWidth: 340)
                 }
-                #else
-                EmptyView()
-                #endif
-            } else if isFinishingUnit {
-                MergingView(
-                    title: "Combining your rooms",
-                    subtitle: "Aligning floors and removing duplicate walls.",
-                    steps: mergeSteps,
-                    onCancel: { coordinator.cancelMerge() }
-                )
-            } else if isUploading {
-                UploadingView(
-                    coordinator: uploadProgress,
-                    onPause: { uploadTask?.cancel() }
-                )
-            } else {
-                ZStack {
-                    Color.black.ignoresSafeArea()
-                    VStack(spacing: 0) {
-                        ZStack {
-                            MultiRoomCaptureScreen(coordinator: coordinator)
-                                .ignoresSafeArea(edges: .top)
-
-                            if isDegenerateCapture {
-                                resolutionOverlay {
-                                    DegenerateCaptureView {
-                                        isDegenerateCapture = false
-                                        coordinator.start()
-                                    }
-                                }
-                            } else if let partialRoomFailureMessage {
-                                resolutionOverlay {
-                                    PartialRoomChoiceView(
-                                        message: partialRoomFailureMessage,
-                                        onKeep: {
-                                            self.partialRoomFailureMessage = nil
-                                            let kept = coordinator.keepPendingPartialRoom()
-                                            if !kept {
-                                                VuuroToast.shared.show(vuuroLocalized("This room's outline was too small or flat to keep — discarding it."))
-                                            }
-                                            continueAfterRoomResolved()
-                                        },
-                                        onDiscard: {
-                                            self.partialRoomFailureMessage = nil
-                                            coordinator.discardPendingPartialRoom()
-                                            continueAfterRoomResolved()
-                                        }
-                                    )
-                                }
-                            } else if didRequestStopRoom {
-                                ProgressView("Finishing room…")
-                                    .padding()
-                                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-                            } else if coordinator.state == .scanning {
-                                multiCaptureOverlay
-                            }
-                        }
-                        multiCaptureBottomChrome
-                            .opacity(showsMultiCaptureChrome ? 1 : 0)
-                            .allowsHitTesting(showsMultiCaptureChrome)
-                    }
+                .onChange(of: coordinator.state) { _, state in
+                    handle(state)
                 }
-                if let photoCaptureContext {
-                    RoomPhotoCaptureOverlay(
-                        coordinator: photoCaptureContext.coordinator,
-                        onSkip: {
-                            Task { await finishPhotoStepAndContinue() }
-                        },
-                        onFinish: {
-                            Task { await finishPhotoStepAndContinue() }
-                        }
-                    )
-                    .transition(.opacity)
+                .onChange(of: capturedFloor, initial: true) { _, newValue in
+                    coordinator.currentFloor = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
                 }
-                .onAppear {
-                    guard !didStart else { return }
-                    didStart = true
-                    capturedFloor = (existingSession?.defaultFloor ?? identity.floor ?? "")
-                    Task { capturedLocation = await locationProvider.currentLocation() }
-                    Task { capturedHeadingDeg = await headingProvider.currentHeadingDeg() }
-                    if let stored = WalkthroughStore.load(),
-                       stored.identity == identity,
-                       stored.session?.id == existingSession?.id,
-                       !stored.rooms.isEmpty {
-                        resumeOffer = stored
-                        showResumePrompt = true
-                    } else {
-                        Task { await attemptContinueOrStart() }
-                    }
+                .onChange(of: coordinator.capturedRooms.count) { _, _ in
+                    persistWalkthroughProgress()
                 }
-                .onChange(of: coordinator.cameraFeedMissing) { _, missing in
-                    guard missing else { return }
-                    onError(AppError(site: .captureFailed, underlying: PlainError(message: vuuroLocalized("The camera didn't start. Close any other app using the camera, then tap Try again. Rooms you already finished are kept."))), existingSession)
+                .onChange(of: coordinator.relocalizationState) { _, _ in
+                    handleRelocalizationState()
                 }
-                .task(id: didRequestStopRoom) {
-                    guard didRequestStopRoom else { return }
-                    try? await Task.sleep(nanoseconds: 45_000_000_000)
-                    guard !Task.isCancelled, didRequestStopRoom, coordinator.state == .scanning else { return }
-                    DiagnosticsLog.shared.record("Save & next / Finish got no result from RoomPlan within 45s — surfacing an error instead of spinning", category: .error)
-                    didRequestStopRoom = false
-                    onError(AppError(site: .captureFailed, underlying: PlainError(message: vuuroLocalized("Finishing this room took too long. Rooms you already finished are kept — tap Try again to pick up from there."))), existingSession)
-                }
-                .onChange(of: scenePhase) { _, newPhase in
-                    if newPhase == .background, coordinator.state == .scanning {
-                        DiagnosticsLog.shared.record(
-                            "App backgrounded mid-scan (multi-room) — ARKit/RoomPlan behavior here is unverified.",
-                            category: .state
+                .overlay {
+                    if continueState.showsRelocalizeOverlay {
+                        RelocalizeCountdownView(
+                            status: relocalizeStatus,
+                            totalSeconds: 45,
+                            onSkip: { apply(.skip) },
+                            onRetry: { apply(.retry) }
                         )
                     }
                 }
-            }
-        }
-        .overlay {
-            if let storedChoice = storedRescanResume?.pendingRescan {
-                resolutionOverlay {
-                    RescanChoiceSheet(
-                        choice: PendingRescanChoice(candidates: storedChoice.candidates),
-                        onReplace: { roomId in resolveRescan(replacing: roomId) },
-                        onAddNew: { resolveRescan(replacing: nil) }
-                    )
+        )
+        .portraitLocked()
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if !DeviceCapability.isRoomPlanSupported && !debugFakeCaptureActive {
+            UnsupportedDeviceScreen(onGoBack: onGoBack)
+        } else if DeviceCapability.isRoomPlanSupported && cameraDenied {
+            CameraAccessDeniedScreen(onGoBack: onGoBack, onAccessRestored: { cameraDenied = false })
+        } else if !DeviceCapability.isRoomPlanSupported && !isUploading {
+            #if DEBUG
+            VuuroCenterView {
+                VuuroIconBadge(systemName: "wand.and.stars", tint: VuuroColor.accent, background: VuuroColor.accentSoft)
+                Text("Debug: fake multi-room capture")
+                    .font(.system(size: 20, weight: .bold))
+                    .tracking(-0.4)
+                    .foregroundStyle(VuuroColor.textPrimary)
+                Text("This device/simulator has no LiDAR. Tap Scan to generate 2-4 synthetic rooms and upload them to the configured Scan Service.")
+                    .font(.system(size: 14))
+                    .lineSpacing(4)
+                    .foregroundStyle(VuuroColor.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 300)
+                Button("Scan (fake data)") {
+                    uploadTask = Task {
+                        let exports = FakeCaptureGenerator.unit(roomCount: Int.random(in: 3...7))
+                        if let result = await submitExports(exports) {
+                            onFinished(result.session, result.floorPlan)
+                        }
+                    }
                 }
+                .accessibilityIdentifier("multiCapture.fakeScan")
+                .buttonStyle(.vuuroPrimary)
+                .padding(.top, 12)
+                .frame(maxWidth: 340)
             }
-        }
-        .onChange(of: coordinator.state) { _, state in
-            handle(state)
-        }
-        .onChange(of: capturedFloor, initial: true) { _, newValue in
-            coordinator.currentFloor = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        .onChange(of: coordinator.capturedRooms.count) { _, _ in
-            persistWalkthroughProgress()
-        }
-        .onChange(of: coordinator.relocalizationState) { _, _ in
-            handleRelocalizationState()
-        }
-        .alert("Resume your walkthrough?", isPresented: $showResumePrompt, presenting: resumeOffer) { offer in
-            Button("Upload \(offer.rooms.count) saved room\(offer.rooms.count == 1 ? "" : "s")") {
-                resumeFromStoredState(offer)
-            }
-            .accessibilityIdentifier("multiCapture.resumeStored")
-            Button("Discard and start new scan", role: .destructive) {
-                WalkthroughStore.clear()
-                resumeOffer = nil
-                coordinator.start()
-            }
-            .accessibilityIdentifier("multiCapture.startFresh")
-        } message: { offer in
-            Text("\(offer.rooms.count) room\(offer.rooms.count == 1 ? " was" : "s were") saved from a walkthrough that was interrupted. Upload them as they are, or discard them to start a new scan.")
-        }
-        .sheet(isPresented: $showHowToScan) {
-            ScanInstructionsView(
-                type: .multi,
-                primaryLabel: "Back to scanning",
-                onPrimary: { showHowToScan = false },
-                onClose: { showHowToScan = false }
+            #else
+            EmptyView()
+            #endif
+        } else if isFinishingUnit {
+            MergingView(
+                title: "Combining your rooms",
+                subtitle: "Aligning floors and removing duplicate walls.",
+                steps: mergeSteps,
+                onCancel: { coordinator.cancelMerge() }
             )
-            .presentationDetents([.large])
-            .presentationDragIndicator(.hidden)
-            .presentationCornerRadius(VuuroMetrics.sheetRadius)
+        } else if isUploading {
+            UploadingView(
+                coordinator: uploadProgress,
+                onPause: { uploadTask?.cancel() }
+            )
+        } else {
+            captureScreen
         }
-        .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
-            Button("Discard", role: .destructive) {
-                WalkthroughStore.clear()
-                onGoBack()
+    }
+
+    @ViewBuilder
+    private var captureScreen: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            VStack(spacing: 0) {
+                ZStack {
+                    MultiRoomCaptureScreen(coordinator: coordinator)
+                        .ignoresSafeArea(edges: .top)
+
+                    if isDegenerateCapture {
+                        resolutionOverlay {
+                            DegenerateCaptureView {
+                                isDegenerateCapture = false
+                                coordinator.start()
+                            }
+                        }
+                    } else if let partialRoomFailureMessage {
+                        resolutionOverlay {
+                            PartialRoomChoiceView(
+                                message: partialRoomFailureMessage,
+                                onKeep: {
+                                    self.partialRoomFailureMessage = nil
+                                    let kept = coordinator.keepPendingPartialRoom()
+                                    if !kept {
+                                        VuuroToast.shared.show(vuuroLocalized("This room's outline was too small or flat to keep — discarding it."))
+                                    }
+                                    continueAfterRoomResolved()
+                                },
+                                onDiscard: {
+                                    self.partialRoomFailureMessage = nil
+                                    coordinator.discardPendingPartialRoom()
+                                    continueAfterRoomResolved()
+                                }
+                            )
+                        }
+                    } else if didRequestStopRoom {
+                        ProgressView("Finishing room…")
+                            .padding()
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    } else if coordinator.state == .scanning {
+                        multiCaptureOverlay
+                    }
+                }
+                multiCaptureBottomChrome
+                    .opacity(showsMultiCaptureChrome ? 1 : 0)
+                    .allowsHitTesting(showsMultiCaptureChrome)
             }
-            .accessibilityIdentifier("multiCapture.discardConfirm")
-            Button("Keep scanning", role: .cancel) {}
-                .accessibilityIdentifier("multiCapture.keepScanning")
-        } message: {
-            Text("\(coordinator.capturedRooms.count) room(s) captured so far will be lost.")
         }
-        .alert("Finish this unit?", isPresented: $showFinishConfirmation) {
-            Button("Finish") {
-                pendingFinishUnit = true
-                didRequestStopRoom = true
-                coordinator.stopCurrentRoom()
+        .onAppear {
+            guard !didStart else { return }
+            didStart = true
+            capturedFloor = (existingSession?.defaultFloor ?? identity.floor ?? "")
+            Task { capturedLocation = await locationProvider.currentLocation() }
+            Task { capturedHeadingDeg = await headingProvider.currentHeadingDeg() }
+            if let stored = WalkthroughStore.load(),
+               stored.identity == identity,
+               stored.session?.id == existingSession?.id,
+               !stored.rooms.isEmpty {
+                resumeOffer = stored
+                showResumePrompt = true
+            } else {
+                Task { await attemptContinueOrStart() }
             }
-            .accessibilityIdentifier("multiCapture.finishConfirm")
-            Button("Keep scanning", role: .cancel) {}
-                .accessibilityIdentifier("multiCapture.finishKeepScanning")
-        } message: {
-            Text(verbatim: finishUnitMessage)
         }
-        .alert(missingOpenings.alertTitle, isPresented: $showMissingOpeningsPrompt) {
-            Button("Scan more", role: .cancel) {}
-                .accessibilityIdentifier("multiCapture.missingOpenings.scanMore")
-            Button("Save anyway") {
-                saveCurrentRoom()
-            }
-            .accessibilityIdentifier("multiCapture.missingOpenings.saveAnyway")
-        } message: {
-            Text(verbatim: missingOpenings.alertMessage)
+        .onChange(of: coordinator.cameraFeedMissing) { _, missing in
+            guard missing else { return }
+            onError(AppError(site: .captureFailed, underlying: PlainError(message: vuuroLocalized("The camera didn't start. Close any other app using the camera, then tap Try again. Rooms you already finished are kept."))), existingSession)
         }
-        .sheet(isPresented: $showCapturedRoomsList) {
-            CapturedRoomsListView(coordinator: coordinator)
+        .task(id: didRequestStopRoom) {
+            guard didRequestStopRoom else { return }
+            try? await Task.sleep(nanoseconds: 45_000_000_000)
+            guard !Task.isCancelled, didRequestStopRoom, coordinator.state == .scanning else { return }
+            DiagnosticsLog.shared.record("Save & next / Finish got no result from RoomPlan within 45s — surfacing an error instead of spinning", category: .error)
+            didRequestStopRoom = false
+            onError(AppError(site: .captureFailed, underlying: PlainError(message: vuuroLocalized("Finishing this room took too long. Rooms you already finished are kept — tap Try again to pick up from there."))), existingSession)
         }
-        .alert("Which floor?", isPresented: $showMultiFloorPrompt) {
-            TextField("e.g. Attic, 1st floor", text: $capturedFloor)
-                .accessibilityIdentifier("multiCapture.floorField")
-                .textInputAutocapitalization(.words)
-                .autocorrectionDisabled()
-            Button("Save") {
-                guard FloorValidation.isValid(capturedFloor) else { return }
-                Task { await persistMultiFloor() }
-            }
-            .accessibilityIdentifier("multiCapture.floorSave")
-            Button("Cancel", role: .cancel) {
-                capturedFloor = floorBeforePrompt
-            }
-            .accessibilityIdentifier("multiCapture.floorCancel")
-        } message: {
-            Text("Applies to this room and to the next rooms you scan in this session, until you change it.")
-        }
-        .overlay {
-            if continueState.showsRelocalizeOverlay {
-                RelocalizeCountdownView(
-                    status: relocalizeStatus,
-                    totalSeconds: 45,
-                    onSkip: { apply(.skip) },
-                    onRetry: { apply(.retry) }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .background, coordinator.state == .scanning {
+                DiagnosticsLog.shared.record(
+                    "App backgrounded mid-scan (multi-room) — ARKit/RoomPlan behavior here is unverified.",
+                    category: .state
                 )
             }
         }
-        .sheet(item: $pendingRescan) { choice in
-            RescanChoiceSheet(
-                choice: choice,
-                onReplace: { roomId in resolveRescan(replacing: roomId) },
-                onAddNew: { resolveRescan(replacing: nil) }
+        if let photoCaptureContext {
+            RoomPhotoCaptureOverlay(
+                coordinator: photoCaptureContext.coordinator,
+                onSkip: {
+                    Task { await finishPhotoStepAndContinue() }
+                },
+                onFinish: {
+                    Task { await finishPhotoStepAndContinue() }
+                }
             )
+            .transition(.opacity)
         }
-        .alert("This phone doesn't have the map of the first scan", isPresented: Binding(
-            get: { continueState.showsNoMapNotice },
-            set: { _ in }
-        )) {
-            Button("Start scanning") {
-                apply(.noMapAcknowledged)
+    }
+
+    @ViewBuilder
+    private func captureAlertsAndSheets<Content: View>(_ base: Content) -> some View {
+        base
+            .alert("Resume your walkthrough?", isPresented: $showResumePrompt, presenting: resumeOffer) { offer in
+                Button("Upload \(offer.rooms.count) saved room\(offer.rooms.count == 1 ? "" : "s")") {
+                    resumeFromStoredState(offer)
+                }
+                .accessibilityIdentifier("multiCapture.resumeStored")
+                Button("Discard and start new scan", role: .destructive) {
+                    WalkthroughStore.clear()
+                    resumeOffer = nil
+                    coordinator.start()
+                }
+                .accessibilityIdentifier("multiCapture.startFresh")
+            } message: { offer in
+                Text("\(offer.rooms.count) room\(offer.rooms.count == 1 ? " was" : "s were") saved from a walkthrough that was interrupted. Upload them as they are, or discard them to start a new scan.")
             }
-            .accessibilityIdentifier("multiCapture.noMapStart")
-        } message: {
-            Text("It was scanned on another phone, or the app was reinstalled. New rooms will be added as their own section and you can place them by hand afterwards.")
-        }
-        .portraitLocked()
+            .sheet(isPresented: $showHowToScan) {
+                ScanInstructionsView(
+                    type: .multi,
+                    primaryLabel: "Back to scanning",
+                    onPrimary: { showHowToScan = false },
+                    onClose: { showHowToScan = false }
+                )
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
+                .presentationCornerRadius(VuuroMetrics.sheetRadius)
+            }
+            .alert("Discard this scan?", isPresented: $showDiscardConfirmation) {
+                Button("Discard", role: .destructive) {
+                    WalkthroughStore.clear()
+                    onGoBack()
+                }
+                .accessibilityIdentifier("multiCapture.discardConfirm")
+                Button("Keep scanning", role: .cancel) {}
+                    .accessibilityIdentifier("multiCapture.keepScanning")
+            } message: {
+                Text("\(coordinator.capturedRooms.count) room(s) captured so far will be lost.")
+            }
+            .alert("Finish this unit?", isPresented: $showFinishConfirmation) {
+                Button("Finish") {
+                    pendingFinishUnit = true
+                    didRequestStopRoom = true
+                    coordinator.stopCurrentRoom()
+                }
+                .accessibilityIdentifier("multiCapture.finishConfirm")
+                Button("Keep scanning", role: .cancel) {}
+                    .accessibilityIdentifier("multiCapture.finishKeepScanning")
+            } message: {
+                Text(verbatim: finishUnitMessage)
+            }
+            .alert(missingOpenings.alertTitle, isPresented: $showMissingOpeningsPrompt) {
+                Button("Scan more", role: .cancel) {}
+                    .accessibilityIdentifier("multiCapture.missingOpenings.scanMore")
+                Button("Save anyway") {
+                    saveCurrentRoom()
+                }
+                .accessibilityIdentifier("multiCapture.missingOpenings.saveAnyway")
+            } message: {
+                Text(verbatim: missingOpenings.alertMessage)
+            }
+            .sheet(isPresented: $showCapturedRoomsList) {
+                CapturedRoomsListView(coordinator: coordinator)
+            }
+            .alert("Which floor?", isPresented: $showMultiFloorPrompt) {
+                TextField("e.g. Attic, 1st floor", text: $capturedFloor)
+                    .accessibilityIdentifier("multiCapture.floorField")
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                Button("Save") {
+                    guard FloorValidation.isValid(capturedFloor) else { return }
+                    Task { await persistMultiFloor() }
+                }
+                .accessibilityIdentifier("multiCapture.floorSave")
+                Button("Cancel", role: .cancel) {
+                    capturedFloor = floorBeforePrompt
+                }
+                .accessibilityIdentifier("multiCapture.floorCancel")
+            } message: {
+                Text("Applies to this room and to the next rooms you scan in this session, until you change it.")
+            }
+            .sheet(item: $pendingRescan) { choice in
+                RescanChoiceSheet(
+                    choice: choice,
+                    onReplace: { roomId in resolveRescan(replacing: roomId) },
+                    onAddNew: { resolveRescan(replacing: nil) }
+                )
+            }
+            .alert("This phone doesn't have the map of the first scan", isPresented: Binding(
+                get: { continueState.showsNoMapNotice },
+                set: { _ in }
+            )) {
+                Button("Start scanning") {
+                    apply(.noMapAcknowledged)
+                }
+                .accessibilityIdentifier("multiCapture.noMapStart")
+            } message: {
+                Text("It was scanned on another phone, or the app was reinstalled. New rooms will be added as their own section and you can place them by hand afterwards.")
+            }
     }
 
     @MainActor
