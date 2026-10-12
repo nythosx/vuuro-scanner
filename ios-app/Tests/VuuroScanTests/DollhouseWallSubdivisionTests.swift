@@ -69,7 +69,7 @@ final class DollhouseWallSubdivisionTests: XCTestCase {
 
     func testWindowIsSuspendedAboveFloorWithWallBelowAndAbove() throws {
         let window = "[{\"opening_id\":\"w1\",\"category\":\"window\",\"position_m\":[3,0],\"width_m\":1.2,\"confidence\":\"high\"}]"
-        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(roomJSON(openings: window))]"))
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(roomJSON(openings: window))]"), configuration: DollhouseBuildConfiguration(mode: .dollhouse))
         let walls = wallMeshes(scene, forRoom: "room-1")
         let bottomWallMeshes = walls.filter { $0.path.components.last?.hasPrefix("Wall-0-") == true }
         XCTAssertGreaterThanOrEqual(bottomWallMeshes.count, 3, "a window should produce wall below, wall above, plus the wall to its sides")

@@ -55,7 +55,7 @@ final class RoomPhotoStore {
                 captureGroupId: captureGroupId,
                 roomKey: roomKey,
                 structureOriginM: structureOriginM,
-                capturedAt: Date(),
+                capturedAt: metadata.capturedAt,
                 photos: []
             )
         }

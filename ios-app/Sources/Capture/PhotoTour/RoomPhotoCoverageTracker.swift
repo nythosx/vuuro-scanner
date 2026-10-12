@@ -10,9 +10,8 @@ struct RoomPhotoCoverageTracker: Equatable {
         let sectorWidth = 360.0 / Double(Self.headingSectors)
         var normalizedHeading = headingDeg.truncatingRemainder(dividingBy: 360)
         if normalizedHeading < 0 { normalizedHeading += 360 }
-        var sector = Int(normalizedHeading / sectorWidth)
-        if sector >= Self.headingSectors { sector = Self.headingSectors - 1 }
-        if sector < 0 { sector = 0 }
+        var sector = Int((normalizedHeading / sectorWidth).rounded()) % Self.headingSectors
+        if sector < 0 { sector += Self.headingSectors }
 
         let band: Int
         if pitchDeg < -15 {
