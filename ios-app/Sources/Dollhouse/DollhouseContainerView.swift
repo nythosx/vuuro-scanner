@@ -59,7 +59,7 @@ struct DollhouseContainerView: View {
             if isLoading {
                 DollhousePlaceholderView(kind: .loading)
             } else if let scene, let scnScene, !scene.isEmpty {
-                DollhouseSceneView(scene: scene, scnScene: scnScene)
+                DollhouseSceneView(scene: scene, scnScene: scnScene, theme: .light)
                     .frame(minHeight: 320)
                     .background(VuuroColor.bgInset)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))

@@ -45,7 +45,7 @@ struct DollhouseFullScreenView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            theme.backgroundColor.ignoresSafeArea()
+            Color(uiColor: theme.backgroundColor).ignoresSafeArea()
 
             viewport
 
