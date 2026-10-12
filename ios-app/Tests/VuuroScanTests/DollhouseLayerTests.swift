@@ -31,8 +31,8 @@ final class DollhouseLayerTests: XCTestCase {
 
     func testEveryMeshIsTaggedWithALayer() throws {
         let roomWithFurniture = roomJSON(
-            objects: "[{\"object_id\":\"o1\",\"category\":\"sofa\",\"position_m\":[2,1.5],\"dimensions_m\":[2,0.8,0.9],\"confidence\":\"high\",\"custom_name\":null,\"excluded\":false}]",
-            openings: "[{\"opening_id\":\"d1\",\"category\":\"door\",\"position_m\":[2,0],\"width_m\":0.9,\"confidence\":\"high\"}]"
+            openings: "[{\"opening_id\":\"d1\",\"category\":\"door\",\"position_m\":[2,0],\"width_m\":0.9,\"confidence\":\"high\"}]",
+            objects: "[{\"object_id\":\"o1\",\"category\":\"sofa\",\"position_m\":[2,1.5],\"dimensions_m\":[2,0.8,0.9],\"confidence\":\"high\",\"custom_name\":null,\"excluded\":false}]"
         )
         let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(roomWithFurniture)]"))
         XCTAssertFalse(scene.meshes.isEmpty)
