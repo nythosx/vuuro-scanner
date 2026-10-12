@@ -31,6 +31,9 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     @Published private(set) var liveStats: CaptureLiveStats = .empty
     @Published private(set) var capturedRooms: [CapturedRoom] = []
     @Published private(set) var roomTypeConfirmations: [RoomTypeConfirmation?] = []
+    @Published private(set) var completionStatus: RoomCompletionStatus = .scanning
+
+    private var completionEstimator = RoomCompletionEstimator()
 
     @Published private(set) var isApproachingSizeLimit = false {
         didSet {
@@ -270,6 +273,8 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         hasAnsweredRoomType = false
         isApproachingSizeLimit = false
         liveStats = .empty
+        completionStatus = .scanning
+        completionEstimator = RoomCompletionEstimator()
         liveUpdateThrottle.resetRoomTypeAnswered()
         startWalkPathTracking()
         PerfTrace.begin(.scanStartToReady)
@@ -595,6 +600,10 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
             }
             if self.liveStats != stats {
                 self.liveStats = stats
+            }
+            let completion = self.completionEstimator.update(stats: stats, isApproachingSizeLimit: exceedsSizeLimit)
+            if self.completionStatus != completion {
+                self.completionStatus = completion
             }
             if let guess, !self.liveUpdateThrottle.isRoomTypeAnswered(), self.liveRoomTypeGuess?.type != guess.type {
                 self.liveRoomTypeGuess = guess

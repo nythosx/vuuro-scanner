@@ -378,9 +378,17 @@ struct ScanServiceClient {
         return response.sessions
     }
 
+    private static let activityBatchLimit = 20
+
     func noteActivity(_ entries: [ScanHistoryEntry]) async {
-        let pairs = entries.filter { !$0.accessToken.isEmpty }.map { (id: $0.sessionId, token: $0.accessToken) }
-        guard !pairs.isEmpty else { return }
+        let top = entries
+            .filter { !$0.accessToken.isEmpty }
+            .sorted { $0.lastActivityAt > $1.lastActivityAt }
+            .prefix(Self.activityBatchLimit)
+        guard !top.isEmpty else { return }
+        let pairs: [(id: String, token: String)] = top.map { entry in
+            (id: entry.sessionId, token: entry.accessToken)
+        }
         do {
             let results = try await fetchActivity(entries: pairs)
             ScanHistoryStore.shared.applyServerActivity(results)
@@ -578,6 +586,78 @@ struct ScanServiceClient {
             body: Body(changes: changes),
             accessToken: accessToken
         )
+    }
+
+    struct Photo360UploadResponse: Decodable {
+        let photoId: String
+        let roomId: String
+        let url: String
+        let positionM: [Double]
+        let headingDeg: Double
+        let capturedAt: String
+
+        enum CodingKeys: String, CodingKey {
+            case photoId = "photo_id"
+            case roomId = "room_id"
+            case url
+            case positionM = "position_m"
+            case headingDeg = "heading_deg"
+            case capturedAt = "captured_at"
+        }
+    }
+
+    func uploadPhoto360(
+        sessionId: String,
+        accessToken: String,
+        roomId: String,
+        imageData: Data,
+        positionM: [Double],
+        headingDeg: Double,
+        idempotencyKey: String
+    ) async throws -> Photo360UploadResponse {
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var request = URLRequest(url: baseURL.appendingPathComponent("/scan-sessions/\(sessionId)/photos-360"))
+        request.httpMethod = "POST"
+        request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
+        request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        let crlf = "\r\n"
+        var body = Data()
+        func append(_ string: String) {
+            if let data = string.data(using: .utf8) { body.append(data) }
+        }
+
+        append("--\(boundary)\(crlf)")
+        append("Content-Disposition: form-data; name=\"photo\"; filename=\"photo.jpg\"\(crlf)")
+        append("Content-Type: image/jpeg\(crlf)\(crlf)")
+        body.append(imageData)
+        append(crlf)
+
+        append("--\(boundary)\(crlf)")
+        append("Content-Disposition: form-data; name=\"room_id\"\(crlf)\(crlf)")
+        append(roomId)
+        append(crlf)
+
+        append("--\(boundary)\(crlf)")
+        append("Content-Disposition: form-data; name=\"position_x\"\(crlf)\(crlf)")
+        append(String(format: "%.4f", positionM.count > 0 ? positionM[0] : 0.0))
+        append(crlf)
+
+        append("--\(boundary)\(crlf)")
+        append("Content-Disposition: form-data; name=\"position_z\"\(crlf)\(crlf)")
+        append(String(format: "%.4f", positionM.count > 1 ? positionM[1] : 0.0))
+        append(crlf)
+
+        append("--\(boundary)\(crlf)")
+        append("Content-Disposition: form-data; name=\"heading_deg\"\(crlf)\(crlf)")
+        append(String(format: "%.2f", headingDeg))
+        append(crlf)
+
+        append("--\(boundary)--\(crlf)")
+
+        request.httpBody = body
+        return try await send(request, timeoutSeconds: 90)
     }
 
     func uploadPhoto(sessionId: String, accessToken: String, imageData: Data, filename: String, mimeType: String) async throws -> PhotoUploadResponse {

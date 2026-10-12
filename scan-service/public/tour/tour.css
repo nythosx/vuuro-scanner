@@ -1,0 +1,18 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; background: #f2f1ec; color: #272729;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased; }
+.tour-header { display: flex; align-items: center; height: 52px; padding: 0 20px;
+  background: #fff; border-bottom: 1px solid #ececee; }
+.tour-header .brand { font-weight: 700; letter-spacing: -0.3px; }
+#tour-app { padding: 24px 20px 40px; max-width: 720px; margin: 0 auto; }
+.status { color: #87878a; font-size: 14px; }
+.status.error { color: #d6453e; font-weight: 600; }
+.summary { font-size: 14px; color: #87878a; margin: 0 0 14px; }
+.plan { max-width: 100%; height: auto; border-radius: 12px; background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06); display: block; margin: 0 0 18px; }
+.rooms { list-style: none; padding: 0; margin: 0; }
+.rooms li { padding: 12px 14px; background: #fff; border-radius: 10px; margin-bottom: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.rooms li strong { display: block; font-size: 15px; font-weight: 700; letter-spacing: -0.2px; }
+.rooms li span { font-size: 13px; color: #87878a; }

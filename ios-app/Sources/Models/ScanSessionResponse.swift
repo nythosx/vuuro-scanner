@@ -14,6 +14,7 @@ struct ScanSessionResponse: Codable {
     let accessToken: String
     let expiresAt: String
     let defaultFloor: String?
+    let tour: TourMetadata?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -28,6 +29,7 @@ struct ScanSessionResponse: Codable {
         case accessToken = "access_token"
         case expiresAt = "expires_at"
         case defaultFloor = "default_floor"
+        case tour
     }
 
     init(from decoder: Decoder) throws {
@@ -44,6 +46,7 @@ struct ScanSessionResponse: Codable {
         accessToken = try c.decode(String.self, forKey: .accessToken)
         expiresAt = try c.decode(String.self, forKey: .expiresAt)
         defaultFloor = try c.decodeIfPresent(String.self, forKey: .defaultFloor)
+        tour = try c.decodeIfPresent(TourMetadata.self, forKey: .tour)
     }
 
     init(
@@ -58,7 +61,8 @@ struct ScanSessionResponse: Codable {
         consentObtained: Bool,
         accessToken: String,
         expiresAt: String,
-        defaultFloor: String? = nil
+        defaultFloor: String? = nil,
+        tour: TourMetadata? = nil
     ) {
         self.id = id
         self.propertyId = propertyId
@@ -72,6 +76,19 @@ struct ScanSessionResponse: Codable {
         self.accessToken = accessToken
         self.expiresAt = expiresAt
         self.defaultFloor = defaultFloor
+        self.tour = tour
+    }
+}
+
+struct TourMetadata: Codable, Equatable {
+    let viewerUrl: String
+    let planImageUrl: String
+    let dollhouseGlbUrl: String?
+
+    enum CodingKeys: String, CodingKey {
+        case viewerUrl = "viewer_url"
+        case planImageUrl = "plan_image_url"
+        case dollhouseGlbUrl = "dollhouse_glb_url"
     }
 }
 
@@ -90,6 +107,26 @@ struct FloorPlan: Codable {
     let captureLocation: CaptureLocation?
     let roomSplits: [RoomSplit]?
     let roomSplitWarnings: [RoomSplitWarning]?
+    let photos360: [Photo360]?
+    let tour: TourMetadata?
+
+    struct Photo360: Codable, Equatable {
+        let photoId: String
+        let roomId: String
+        let url: String
+        let positionM: [Double]
+        let headingDeg: Double
+        let capturedAt: String
+
+        enum CodingKeys: String, CodingKey {
+            case photoId = "photo_id"
+            case roomId = "room_id"
+            case url
+            case positionM = "position_m"
+            case headingDeg = "heading_deg"
+            case capturedAt = "captured_at"
+        }
+    }
 
     struct RoomSplitWarning: Codable {
         let roomLabel: String
@@ -338,5 +375,7 @@ struct FloorPlan: Codable {
         case captureLocation = "capture_location"
         case roomSplits = "room_splits"
         case roomSplitWarnings = "room_split_warnings"
+        case photos360 = "photos_360"
+        case tour
     }
 }

@@ -38,6 +38,7 @@ struct ResultSummaryView: View {
     @AppStorage("resultUses3D") private var resultUses3D: Bool = false
     @State private var isExportingUSDZ = false
     @State private var usdzURL: URL?
+    @State private var showFullScreen3D = false
 
     private var exportUnit: MeasurementUnit {
         MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
@@ -163,6 +164,7 @@ struct ResultSummaryView: View {
                         unitAttachmentsCard
                     }
 
+                    openFullScreen3DButton
                     accessLogLink
                     actionButtons
 
@@ -291,6 +293,14 @@ struct ResultSummaryView: View {
             Text("You have unsaved edits on this scan.")
         }
         .dynamicTypeSize(...DynamicTypeSize.accessibility3)
+        .fullScreenCover(isPresented: $showFullScreen3D) {
+            DollhouseFullScreenView(
+                rooms: currentFloorPlan.rooms,
+                title: session.propertyId,
+                photos360: currentFloorPlan.photos360 ?? [],
+                onClose: { showFullScreen3D = false }
+            )
+        }
         .sheet(item: $placementTarget) { target in
             GroupPlacementView(
                 session: session,
@@ -738,6 +748,20 @@ struct ResultSummaryView: View {
         }
     }
 
+    private var openFullScreen3DButton: some View {
+        Button {
+            showFullScreen3D = true
+        } label: {
+            Label("Open full 3D view", systemImage: "cube.transparent")
+                .frame(maxWidth: .infinity)
+        }
+        .accessibilityIdentifier("result.openFullScreen3D")
+        .buttonStyle(.vuuroOutline)
+        .disabled(currentFloorPlan.rooms.isEmpty)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 12)
+    }
+
     private var actionButtons: some View {
         VStack(spacing: 10) {
             Button("Save & return home") {
@@ -771,6 +795,13 @@ struct ResultSummaryView: View {
         PerfTrace.begin(.resultPlanImage)
         isLoadingImage = true
         let revision = planRevision
+
+        if let stale = FloorPlanImageCache.shared.staleData(sessionId: session.id, unit: exportUnit),
+           let staleImage = await ImageDecoding.decoded(stale),
+           revision == planRevision {
+            floorPlanImage = staleImage
+        }
+
         var source = "cache"
         var data = FloorPlanImageCache.shared.cachedData(sessionId: session.id, unit: exportUnit)
         if data == nil {
@@ -796,7 +827,9 @@ struct ResultSummaryView: View {
         }
         guard let image = decodedImage else {
             PerfTrace.cancel(.resultPlanImage)
-            imageFailed = true
+            if floorPlanImage == nil {
+                imageFailed = true
+            }
             return
         }
         floorPlanImage = image
@@ -895,7 +928,7 @@ struct ResultSummaryView: View {
 
     @MainActor
     private func discardRenderedExports() {
-        FloorPlanImageCache.shared.invalidate(sessionId: session.id)
+        FloorPlanImageCache.shared.invalidateSoft(sessionId: session.id)
         ExportNaming.removeExports(sessionId: session.id)
         planRevision += 1
         floorPlanImage = nil

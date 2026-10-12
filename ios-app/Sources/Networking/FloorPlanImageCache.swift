@@ -14,6 +14,7 @@ final class FloorPlanImageCache {
     private var inFlightTasks: [String: Task<Data?, Never>] = [:]
     private var lastErrors: [String: Error] = [:]
     private var generations: [String: Int] = [:]
+    private var staleEntries: [String: Data] = [:]
 
     private init() {}
 
@@ -78,10 +79,32 @@ final class FloorPlanImageCache {
         lastErrors[key(sessionId: sessionId, unit: unit)]
     }
 
+    func staleData(sessionId: String, unit: MeasurementUnit) -> Data? {
+        staleEntries[key(sessionId: sessionId, unit: unit)]
+    }
+
     func invalidate(sessionId: String) {
         generations[sessionId, default: 0] += 1
         let prefix = "\(sessionId)|"
         for cacheKey in knownKeys where cacheKey.hasPrefix(prefix) {
+            entries.removeObject(forKey: cacheKey as NSString)
+        }
+        knownKeys = knownKeys.filter { !$0.hasPrefix(prefix) }
+        for (cacheKey, task) in inFlightTasks where cacheKey.hasPrefix(prefix) {
+            task.cancel()
+        }
+        inFlightTasks = inFlightTasks.filter { !$0.key.hasPrefix(prefix) }
+        lastErrors = lastErrors.filter { !$0.key.hasPrefix(prefix) }
+        staleEntries = staleEntries.filter { !$0.key.hasPrefix(prefix) }
+    }
+
+    func invalidateSoft(sessionId: String) {
+        generations[sessionId, default: 0] += 1
+        let prefix = "\(sessionId)|"
+        for cacheKey in knownKeys where cacheKey.hasPrefix(prefix) {
+            if let data = entries.object(forKey: cacheKey as NSString) as Data? {
+                staleEntries[cacheKey] = data
+            }
             entries.removeObject(forKey: cacheKey as NSString)
         }
         knownKeys = knownKeys.filter { !$0.hasPrefix(prefix) }
@@ -100,5 +123,6 @@ final class FloorPlanImageCache {
         knownKeys.removeAll()
         inFlightTasks.removeAll()
         lastErrors.removeAll()
+        staleEntries.removeAll()
     }
 }

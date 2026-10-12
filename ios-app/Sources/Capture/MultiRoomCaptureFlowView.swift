@@ -47,6 +47,7 @@ struct MultiRoomCaptureFlowView: View {
     @State private var floorBeforePrompt: String = ""
     @State private var resumeOffer: WalkthroughState?
     @State private var showResumePrompt = false
+    @State private var photoCaptureContext: PhotoCaptureContext?
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
@@ -237,6 +238,18 @@ struct MultiRoomCaptureFlowView: View {
                             .opacity(showsMultiCaptureChrome ? 1 : 0)
                             .allowsHitTesting(showsMultiCaptureChrome)
                     }
+                }
+                if let photoCaptureContext {
+                    RoomPhotoCaptureOverlay(
+                        coordinator: photoCaptureContext.coordinator,
+                        onSkip: {
+                            Task { await finishPhotoStepAndContinue() }
+                        },
+                        onFinish: {
+                            Task { await finishPhotoStepAndContinue() }
+                        }
+                    )
+                    .transition(.opacity)
                 }
                 .onAppear {
                     guard !didStart else { return }
@@ -627,6 +640,10 @@ struct MultiRoomCaptureFlowView: View {
 
             VuuroScanHint(text: roomHintText)
 
+            Spacer().frame(height: 8)
+
+            VuuroCompletionPill(status: coordinator.completionStatus)
+
             if let guess = coordinator.liveRoomTypeGuess, !coordinator.hasAnsweredRoomType {
                 Spacer().frame(height: 20)
                 multiGuessPill(for: guess)
@@ -735,7 +752,7 @@ struct MultiRoomCaptureFlowView: View {
             break
         case .roomFinished(roomAvailable: true):
             didRequestStopRoom = false
-            Task { await checkRescanThenContinue() }
+            Task { await beginPhotoStepOrContinue() }
         case .roomFinished(roomAvailable: false):
             didRequestStopRoom = false
             if pendingFinishUnit {
@@ -775,6 +792,46 @@ struct MultiRoomCaptureFlowView: View {
         } else {
             onError(error, existingSession)
         }
+    }
+
+    @MainActor
+    private func beginPhotoStepOrContinue() async {
+        guard let room = coordinator.capturedRooms.last, let floor = room.floors.first else {
+            await checkRescanThenContinue()
+            return
+        }
+
+        let roomNumber = coordinator.capturedRooms.count
+        let roomKey = room.identifier.uuidString
+
+        let worldCorners = floor.polygonCorners.map { floor.transform * simd_float4($0, 1) }
+        let origin: [Double]?
+        if let minX = worldCorners.map({ Double($0.x) }).min(),
+           let minZ = worldCorners.map({ Double($0.z) }).min() {
+            origin = [minX, minZ]
+        } else {
+            origin = nil
+        }
+
+        let headingProvider = HeadingProvider()
+        let heading = await headingProvider.currentHeadingDeg()
+
+        let photoCoordinator = RoomPhotoCaptureCoordinator(
+            arSession: self.coordinator.arSession,
+            room: room,
+            roomNumber: roomNumber,
+            roomKey: roomKey,
+            captureGroupId: captureGroupId,
+            structureOriginM: origin,
+            initialCompassHeadingDeg: heading
+        )
+        photoCaptureContext = PhotoCaptureContext(coordinator: photoCoordinator)
+    }
+
+    @MainActor
+    private func finishPhotoStepAndContinue() async {
+        photoCaptureContext = nil
+        await checkRescanThenContinue()
     }
 
     @MainActor
@@ -947,8 +1004,14 @@ struct MultiRoomCaptureFlowView: View {
             }
             try? await Task.sleep(nanoseconds: 250_000_000)
             WalkthroughStore.clear()
+            let finishedSession = preUploadedSession.session
             self.preUploadedSession = nil
-            onFinished(preUploadedSession.session, floorPlan)
+            await RoomPhotoUploader.uploadAll(
+                captureGroupId: captureGroupId,
+                session: finishedSession,
+                floorPlan: floorPlan
+            )
+            onFinished(finishedSession, floorPlan)
         } catch is CancellationError {
             self.preUploadedSession = nil
             DiagnosticsLog.shared.record(
@@ -1125,6 +1188,11 @@ struct MultiRoomCaptureFlowView: View {
             return "Room \(index + 1)"
         }
     }
+}
+
+private struct PhotoCaptureContext: Identifiable {
+    let id = UUID()
+    let coordinator: RoomPhotoCaptureCoordinator
 }
 
 struct PartialRoomChoiceView: View {

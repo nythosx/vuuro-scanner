@@ -396,6 +396,16 @@ function presented_token(): ?string
     return is_string($header) && $header !== '' ? $header : null;
 }
 
+function presented_token_with_query_fallback(): ?string
+{
+    $header = presented_token();
+    if ($header !== null) {
+        return $header;
+    }
+    $query = $_GET['token'] ?? null;
+    return is_string($query) && $query !== '' ? $query : null;
+}
+
 function adminAuthorized(): bool
 {
     $configuredKey = getenv('SCAN_SERVICE_ADMIN_API_KEY');
@@ -510,7 +520,7 @@ function purgeExpiredSessions(ScanSessionRepository $repo, \VuuroScan\ServiceSet
     return $purged;
 }
 
-const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload', 'compare'];
+const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload', 'compare', 'read_tour'];
 const ADMIN_WRITE_ACTIONS = ['publish_to_platform'];
 
 function compareRequested(): bool
@@ -589,10 +599,10 @@ function comparisonScanSummary(array $session, array $floorPlan): array
     ];
 }
 
-function authorizeSession(ScanSessionRepository $repo, string $sessionId, string $action): ?array
+function authorizeSession(ScanSessionRepository $repo, string $sessionId, string $action, bool $allowQueryToken = false): ?array
 {
     $session = $repo->find($sessionId);
-    $token = presented_token() ?? '';
+    $token = ($allowQueryToken ? presented_token_with_query_fallback() : presented_token()) ?? '';
 
     $adminAllowedActions = array_merge(ADMIN_READ_ACTIONS, ADMIN_WRITE_ACTIONS);
     if ($session !== null && adminAuthorized() && in_array($action, $adminAllowedActions, true)) {
@@ -688,6 +698,58 @@ if ($method === 'POST') {
         respondError(413, 'payload_too_large', "This request is larger than the {$maxMb}MB limit. If this is a real capture, check for an unexpectedly large field rather than retrying as-is.", ['max_bytes' => MAX_REQUEST_BODY_BYTES]);
         return;
     }
+}
+
+
+if ($method === 'GET' && ($path === '/tour' || str_starts_with($path, '/tour/'))) {
+    $tourDir = realpath(__DIR__ . '/tour');
+    if ($tourDir === false || !is_dir($tourDir)) {
+        http_response_code(404);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'Tour viewer is not installed on this server.';
+        return;
+    }
+    $relative = $path === '/tour' ? '' : substr($path, strlen('/tour/'));
+    $extension = $relative === '' ? '' : strtolower((string) pathinfo($relative, PATHINFO_EXTENSION));
+    if ($extension !== '') {
+        $target = realpath($tourDir . DIRECTORY_SEPARATOR . $relative);
+        if ($target === false || !str_starts_with($target, $tourDir . DIRECTORY_SEPARATOR) || !is_file($target)) {
+            http_response_code(404);
+            header('Content-Type: text/plain; charset=utf-8');
+            echo 'Tour asset not found.';
+            return;
+        }
+        $mimeMap = [
+            'html' => 'text/html; charset=utf-8',
+            'js' => 'application/javascript; charset=utf-8',
+            'css' => 'text/css; charset=utf-8',
+            'svg' => 'image/svg+xml',
+            'png' => 'image/png',
+            'jpg' => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'ico' => 'image/x-icon',
+            'json' => 'application/json; charset=utf-8',
+        ];
+        header('Content-Type: ' . ($mimeMap[$extension] ?? 'application/octet-stream'));
+        header('Cache-Control: public, max-age=300');
+        if ($extension === 'html') {
+            header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none';");
+        }
+        readfile($target);
+        return;
+    }
+    $indexFile = $tourDir . DIRECTORY_SEPARATOR . 'index.html';
+    if (!is_file($indexFile)) {
+        http_response_code(404);
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'Tour viewer is not installed on this server.';
+        return;
+    }
+    header('Content-Type: text/html; charset=utf-8');
+    header('Cache-Control: no-store');
+    header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none';");
+    readfile($indexFile);
+    return;
 }
 
 if ($method === 'POST' && $path === '/scan-sessions') {
@@ -1500,6 +1562,147 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads/([a-
     return;
 }
 
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'upload_photo_360');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+
+    if (rateLimited($repo, $sessionId . ':upload_photo_360', 60, 300)) {
+        return;
+    }
+
+    $idempotencyKey = $_SERVER['HTTP_IDEMPOTENCY_KEY'] ?? '';
+    if (!is_string($idempotencyKey) || $idempotencyKey === '') {
+        respondError(422, 'missing_idempotency_key', "Please include the Idempotency-Key header so a retry cannot store the same tour photo twice.");
+        return;
+    }
+    if (mb_strlen($idempotencyKey, 'UTF-8') > 200) {
+        respondError(422, 'idempotency_key_too_long', 'The Idempotency-Key header is too long — please keep it to 200 characters or fewer.', ['max_length' => 200]);
+        return;
+    }
+
+    $photoRepo = new Photo360Repository($db);
+    $existing = $photoRepo->findByIdempotencyKey($sessionId, $idempotencyKey);
+    if ($existing !== null) {
+        respond(200, $photoRepo->serialize($existing));
+        return;
+    }
+
+    if (!isset($_FILES['photo']) || !is_array($_FILES['photo'])) {
+        $repo->logAccess($sessionId, 'upload_photo_360', 'rejected_missing_file');
+        respondError(422, 'missing_photo_file', "Please include a 'photo' file field (multipart/form-data) with the image to upload.");
+        return;
+    }
+
+    $file = $_FILES['photo'];
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        $tooLarge = in_array($file['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true);
+        $repo->logAccess($sessionId, 'upload_photo_360', $tooLarge ? 'rejected_too_large' : 'rejected_upload_error_' . (int) $file['error']);
+        respondError(
+            422,
+            $tooLarge ? 'photo_too_large' : 'photo_upload_failed',
+            $tooLarge ? 'The uploaded photo is too large.' : 'The photo upload failed — please try again.',
+            ['upload_error_code' => (int) $file['error']]
+        );
+        return;
+    }
+
+    if ($file['size'] > MAX_PHOTO_UPLOAD_BYTES) {
+        $maxMb = round(MAX_PHOTO_UPLOAD_BYTES / (1024 * 1024), 1);
+        $repo->logAccess($sessionId, 'upload_photo_360', 'rejected_too_large');
+        respondError(422, 'photo_too_large', "Photos are limited to {$maxMb}MB.", ['max_bytes' => MAX_PHOTO_UPLOAD_BYTES]);
+        return;
+    }
+
+    $mime = (new \finfo(FILEINFO_MIME_TYPE))->file($file['tmp_name']);
+    if (!isset(PHOTO_UPLOAD_MIME_EXTENSIONS[$mime])) {
+        $repo->logAccess($sessionId, 'upload_photo_360', 'rejected_unsupported_type');
+        respondError(422, 'unsupported_photo_type', 'Photos must be JPEG, PNG, HEIC, or WebP.', ['allowed' => array_values(PHOTO_UPLOAD_MIME_EXTENSIONS)]);
+        return;
+    }
+
+    $roomId = isset($_POST['room_id']) && is_string($_POST['room_id']) ? trim($_POST['room_id']) : '';
+    if ($roomId === '') {
+        $repo->logAccess($sessionId, 'upload_photo_360', 'rejected_missing_room');
+        respondError(422, 'missing_room_id', "A tour photo must be attached to a room — include a 'room_id' field.");
+        return;
+    }
+
+    $floorPlan = $repo->findFloorPlan($sessionId);
+    if ($floorPlan === null) {
+        respondError(409, 'no_floor_plan_yet', 'Please capture at least one room in this session before uploading tour photos.');
+        return;
+    }
+    $knownRoomIds = array_column($floorPlan['rooms'], 'room_id');
+    if (!in_array($roomId, $knownRoomIds, true)) {
+        respondError(422, 'unknown_room_id', "room_id '{$roomId}' does not match any room captured in this session.");
+        return;
+    }
+
+    $positionXRaw = $_POST['position_x'] ?? null;
+    $positionZRaw = $_POST['position_z'] ?? null;
+    $headingRaw = $_POST['heading_deg'] ?? null;
+    if (!is_string($positionXRaw) || !is_numeric($positionXRaw)
+        || !is_string($positionZRaw) || !is_numeric($positionZRaw)
+        || !is_string($headingRaw) || !is_numeric($headingRaw)) {
+        respondError(422, 'invalid_photo_360_fields', "'position_x', 'position_z' and 'heading_deg' must each be numeric form fields.");
+        return;
+    }
+    $positionX = (float) $positionXRaw;
+    $positionZ = (float) $positionZRaw;
+    $headingDeg = (float) $headingRaw;
+    if (!is_finite($positionX) || abs($positionX) > 1000 || !is_finite($positionZ) || abs($positionZ) > 1000) {
+        respondError(422, 'invalid_position', "'position_x' and 'position_z' must be finite numbers within ±1000 m.");
+        return;
+    }
+    if (!is_finite($headingDeg) || $headingDeg < 0 || $headingDeg >= 360) {
+        respondError(422, 'invalid_heading', "'heading_deg' must be a number in [0, 360).");
+        return;
+    }
+
+    $photoUploadId = ScanSessionRepository::uuid();
+    $filename = $photoUploadId . '.' . PHOTO_UPLOAD_MIME_EXTENSIONS[$mime];
+    $storageDir = __DIR__ . '/../data/photos/' . $sessionId;
+    if (!is_dir($storageDir) && !mkdir($storageDir, 0755, true) && !is_dir($storageDir)) {
+        $repo->logAccess($sessionId, 'upload_photo_360', 'failed_storage_error');
+        respondError(500, 'internal_error', 'Could not create photo storage for this session.');
+        return;
+    }
+    if (!move_uploaded_file($file['tmp_name'], $storageDir . '/' . $filename)) {
+        $repo->logAccess($sessionId, 'upload_photo_360', 'failed_storage_error');
+        respondError(500, 'internal_error', 'Could not save the uploaded photo.');
+        return;
+    }
+
+    $url = publicBaseUrl() . "/scan-sessions/{$sessionId}/photo-uploads/{$filename}";
+    try {
+        $row = $photoRepo->insert(
+            $sessionId,
+            $roomId,
+            $url,
+            $positionX,
+            $positionZ,
+            $headingDeg,
+            gmdate('c'),
+            $idempotencyKey
+        );
+    } catch (\PDOException $e) {
+        @unlink($storageDir . '/' . $filename);
+        $existing = $photoRepo->findByIdempotencyKey($sessionId, $idempotencyKey);
+        if ($existing !== null) {
+            respond(200, $photoRepo->serialize($existing));
+            return;
+        }
+        throw $e;
+    }
+
+    $repo->logAccess($sessionId, 'upload_photo_360', 'stored');
+    respond(201, $photoRepo->serialize($row));
+    return;
+}
+
 if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/notes$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'attach_note');
     if ($session === null) {
@@ -2017,7 +2220,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/room-splits/undo$
 }
 
 if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.png$#', $path, $m)) {
-    $session = authorizeSession($repo, $m[1], 'export_png');
+    $session = authorizeSession($repo, $m[1], 'export_png', true);
     if ($session === null) {
         return;
     }
@@ -2469,6 +2672,61 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/objects/batch$#',
     }
 
     respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'read_tour', true);
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+
+    if (rateLimited($repo, $sessionId . ':read_tour', 60, 300)) {
+        return;
+    }
+
+    $floorPlan = $repo->findFloorPlan($sessionId);
+    if ($floorPlan === null) {
+        respondError(404, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    }
+
+    $photoRepo = new Photo360Repository($db);
+    $photos = $photoRepo->serializedForSession($sessionId);
+    $photosByRoom = [];
+    foreach ($photos as $photo) {
+        $photosByRoom[(string) $photo['room_id']][] = $photo;
+    }
+
+    $base = publicBaseUrl();
+    $planImageUrl = $base . "/scan-sessions/{$sessionId}/export/floorplan.png?style=auto&lang=en&unit=metric";
+    $viewerUrl = $base . '/tour/' . rawurlencode($sessionId) . '?token=' . rawurlencode((string) (presented_token_with_query_fallback() ?? ''));
+
+    $rooms = [];
+    foreach ($floorPlan['rooms'] as $room) {
+        $rooms[] = [
+            'room_id' => (string) $room['room_id'],
+            'label' => (string) $room['label'],
+            'floor' => $room['floor'] ?? null,
+            'floor_area_m2' => (float) $room['floor_area_m2'],
+            'outline_m' => $room['outline_m'],
+            'structure_origin_m' => $room['structure_origin_m'] ?? null,
+            'heading_deg' => $room['heading_deg'] ?? null,
+            'photos' => $photosByRoom[(string) $room['room_id']] ?? [],
+        ];
+    }
+
+    respond(200, [
+        'session_id' => $sessionId,
+        'property_id' => (string) $session['property_id'],
+        'unit_id' => (string) $session['unit_id'],
+        'organisation_id' => (string) $session['organisation_id'],
+        'viewer_url' => $viewerUrl,
+        'plan_image_url' => $planImageUrl,
+        'dollhouse_glb_url' => null,
+        'rooms' => $rooms,
+    ]);
     return;
 }
 

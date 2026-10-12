@@ -46,6 +46,8 @@ $groups = [
             ['verify_compare.php'],
             ['verify_export_language.php'],
             ['verify_enterprise_hardening.php'],
+            ['verify_photo_360.php'],
+            ['verify_tour.php'],
         ],
     ],
     [

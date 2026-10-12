@@ -1,93 +1,207 @@
-Two follow-up concerns on the bug sprint you just completed. Review
-these carefully — one needs a small additional fix, one needs to be
-reverted and flagged for the product owner.
+# Vuuro Scan v1 - Walkable Spatial Tour
 
-────────────────────────────────────────────────────────────────────────
-CONCERN 1 — C3 live-area change may regress the exact UX Mark complained about
+Prepared for handoff. Target: iOS capture app plus web viewer. Scope is photos, hotspots, plan and dollhouse. No mesh, no splats.
 
-Context: On Sept 18, Mark reported: "AREA stayed 0.0 m2 the whole time
-while walls and height did update... After upload the same room is 53.5
-m2." The fix that shipped (commit f2dab2d) switched live area from
-transform+dimensions to wall.polygonCorners + convex hull specifically
-so the user sees a moving number during capture, before floors are fully
-detected.
+## Goal
 
-Your C3 fix replaced that with a direct shoelace over CapturedRoom.
-floors[].polygonCorners. Mathematically correct and matches the
-exporter, but if RoomPlan's floors array is empty or partial during
-the first 30-60 seconds of a scan (which is likely — walls usually
-register before floors), the live area will show 0.0 again. That
-reintroduces the exact complaint Mark made.
+A renter or buyer opens a URL, walks through the home online room to room using photos and hotspots, sees the floor plan and dollhouse as context, and gains enough trust in layout, condition and scale that an onsite viewing is often unnecessary.
 
-Fix needed in ios-app/Sources/Capture/CaptureCoordinator.swift,
-function computeLiveAreaFromWalls(\_:):
+Capture is iPhone only. RoomPlan provides geometry. HDR photos provide realism. No GPU server, no dense mesh, no splats.
 
-- Keep the new shoelace-over-floors logic as the primary computation.
-- If the floors-based result is 0 (no floors, or any floor with fewer
-  than 3 corners), fall back to the previous convex-hull-over-walls
-  computation, which you removed. Restore that helper and the PointKey
-  struct you deleted.
-- Return whichever is non-zero: floors shoelace when floors exist,
-  hull when they don't.
-- Do not add a comment explaining the fallback. It is self-evident.
-- Do not add a new "approximate" flag or alter CaptureLiveStats. The
-  downstream UI does not need to know the source.
+## What is in v1
 
-After the fix, the live number should move during early capture (hull),
-and settle on the accurate value once floors register (shoelace). Same
-observable behavior as f2dab2d, but with a more accurate final value.
+- RoomPlan capture, unchanged from today
+- New per room HDR photo capture step
+- New 360 hotspot navigation
+- Plan and dollhouse view with hotspot markers
+- Full screen 3D view with layer filter and theme toggle
+- Web viewer using Three.js
+- Embeddable on the listing site
 
-────────────────────────────────────────────────────────────────────────
-CONCERN 2 — E1 rotate-on-share is a product decision, not a bug fix.
-Revert it.
+## What is not in v1
 
-Context: E1 as implemented rotates the session access token every time
-a share code is encoded, invalidating any previously-shared code. This
-is correct from a pure security standpoint but introduces two UX
-regressions that the product owner has not signed off on:
+- Dense mesh output
+- Gaussian splats
+- Photo baked textures on walls
+- Server side GPU processing
+- Realistic 3D furniture models (see v1.1)
+- AR furniture placement
 
-1. Offline sharing is now impossible. The user must be online to share
-   a code (requires a network round trip to rotateToken). On-site
-   inspectors frequently have poor connectivity.
+## iOS capture flow
 
-2. Multi-share breaks the first recipient. If the user shares a code
-   with person A and then with person B, person A's access is silently
-   revoked with no warning to either party.
+Existing flow stays. RoomPlan room scanning, save and next, finish unit. One new step is added.
 
-Both of these are visible user-facing behavior changes with no
-accompanying UI explanation. They need a product call from Mark, not
-a unilateral technical decision in a bug sprint.
+After each room is saved, before the next room starts, the app prompts for photos.
 
-Revert needed in ios-app/Sources/History/ScanShareCode.swift and any
-touched file in History:
+### Photo capture step
 
-- Restore ScanShareCode.encode to its previous behavior: encode the
-  ScanHistoryEntry as-is, including accessToken, with no rotation.
-- Remove the rotatedAt field from ScanHistoryEntry if you added it,
-  including its CodingKeys entry and its decoder fallback. If any other
-  file references rotatedAt, remove those references too.
-- Do not remove the security concern itself. Instead, add a single
-  line to ios-app/README.md's "Verification status" section noting
-  that the share-code model currently embeds the full session token
-  and that revocation-on-share is a pending product decision.
-- Do not change the existing UI warning text ("Only send it somewhere
-  secure") — that warning is still accurate.
+- Screen title: Photos for this room
+- Instruction: Take 15 to 20 photos covering the whole room. Slow pan, one photo every two steps. Cover corners, walls, floor, ceiling.
+- Live counter shows photos taken and minimum required
+- A small minimap shows which directions have been covered and which are missing
+- User can skip and take photos later, but upload is blocked until minimum is met
+- Photos are stored locally with the room identifier until upload
 
-The security finding stands. It will be raised with Mark in the next
-Ready-to-test message, along with a note that the fix depends on his
-decision between three options: (a) accept current behavior, (b) add
-an explicit "revoke previous shares" action, or (c) rotate on every
-share with a clear UI explanation.
+### Photo requirements
 
-────────────────────────────────────────────────────────────────────────
-After both changes:
+- Minimum 15 photos per room
+- Maximum 30 photos per room
+- JPEG at highest quality the device offers
+- No file over 8 MB after compression
+- Each photo tagged with capture position from ARKit at the moment of shutter
+- Each photo tagged with camera orientation from ARKit
 
-- Run php -l on any PHP file touched. Do not touch PHP for these two
-  concerns — both are iOS-only.
-- Do not run xcodebuild.
-- Do not push.
-- Report: files changed, one-line summary each, and confirm that
-  ScanShareCode.encode is back to encoding accessToken without
-  rotation, and that computeLiveAreaFromWalls has both code paths.
-- If either revert or fallback turns out to require a larger change
-  than described here, stop and report before proceeding.
+### Upload
+
+Same upload flow as RoomPlan data. Photos go to Scan Service in the same session, tagged by room identifier. Idempotent per photo using a client side key.
+
+## Full screen 3D view
+
+A new full screen presentation of the dollhouse. Opened from the result screen by tapping the 3D preview or by a dedicated button.
+
+### Layout
+
+- Full screen canvas
+- Top bar, transparent, sits over the canvas
+  - Left: close button, returns to the result screen
+  - Center: room title or unit title
+  - Right: theme toggle, light or dark
+- Bottom bar, transparent, sits over the canvas
+  - Left: mode segment, Dollhouse or Cutaway
+  - Right: layer filter button, opens a side panel
+
+### Layer filter panel
+
+Slides in from the right. Same style as the Layers panel in the reference screenshot.
+
+Rows, each with an eye icon that toggles visibility:
+
+- 3D Floor Plan (walls and floors)
+- Doors
+- Windows
+- Openings
+- Furniture
+- Ceiling
+- Room labels
+- Hotspot markers
+
+Tapping an eye icon hides or shows that category. State is per session, not saved.
+
+### Camera
+
+- One finger drag rotates
+- Two finger drag pans
+- Pinch zooms
+- Double tap resets camera to default framing
+- Default framing is the same placeDefault angle used today, yaw at 45 degrees, pitch at 45 degrees, distance is max size times 0.9 plus 2
+
+### Theme toggle
+
+- Light theme: background is off white, walls are light grey, doors are orange, windows are blue, floor keeps room type colors. This matches the reference image sent by the client.
+- Dark theme: background is near black, walls are dark grey with subtle edges, doors and windows keep their colors, floor keeps room type colors. This matches the current app output.
+- Theme is a presentation choice, not a system preference. Default is light for the full screen view.
+- Toggle state persists across sessions using AppStorage
+
+### What is on the canvas
+
+- RoomPlan walls, floors, doors, windows, openings
+- Furniture bounding boxes from RoomPlan
+- Room labels floating over each room
+- Hotspot markers, small circles, one per captured photo position
+
+Tapping a hotspot marker opens the web viewer at that photo, or opens an in app preview if the web viewer is not reachable.
+
+## Fixes carried into v1
+
+### Corner gaps
+
+Current output shows visible gaps at corners where two walls meet. The fix is to weld outline vertices at shared points before mesh generation. Every outline point that is within one millimetre of another becomes one vertex. Both adjacent walls share the welded vertex.
+
+### Doors as holes
+
+Current output draws the full wall then places a door box on top. Doors are not cut through the wall. The fix is to subdivide the wall along its length into segments, one for each opening plus one for each solid span between openings. Each opening becomes a real hole in the wall.
+
+Same treatment applies to windows and other openings.
+
+### Multi floor merge
+
+Current output stacks floors vertically with a gap. No UI to select a floor. The fix is a floor selector in the full screen view, a small segmented control above the bottom bar. Default is All floors, which keeps the current stacked view. Selecting a floor isolates that floor and hides the others.
+
+## Web viewer
+
+A separate deliverable, hosted on the Scan Service.
+
+### Technology
+
+- Three.js for 3D
+- Pannellum or Marzipano for equirectangular panoramas
+- Single page, no framework, served as static assets plus a small JSON config per session
+
+### URL structure
+
+- One URL per session, for example `https://scan.vuuro.nl/tour/{session_id}?token={access_token}`
+- The URL is shareable and embeddable in an iframe
+
+### Layout
+
+- Full viewport canvas
+- Bottom left: minimap, top down floor plan, current position dot
+- Bottom right: room name and photo counter
+- Top right: menu with plan, dollhouse, and photo tour options
+- Hotspots are drawn on the panorama as small circles, tapping them moves to the next photo
+
+### Navigation
+
+- Primary: photo tour, room to room using hotspots
+- Secondary: minimap click, jumps to nearest photo in the target room
+- Tertiary: dollhouse overview, click a room to jump in
+
+### Loading
+
+- Low resolution floor plan loads first
+- Panoramas load per room, on demand
+- Adjacent rooms preload in the background
+
+### Embedding
+
+- Iframe friendly, no scrollbars, no branding inside the embed
+- Host site controls sizing
+- Session data comes from a JSON endpoint, no server rendering required
+
+## Data model additions
+
+### Photo set per room
+
+Add to the FloorPlan contract:
+photos_360: [
+{
+photo_id: string,
+room_id: string,
+url: string,
+position_m: [x, z],
+heading_deg: number,
+captured_at: string
+}
+]
+
+text
+
+### Session tour metadata
+
+Add to the session response:
+tour: {
+viewer_url: string,
+plan_image_url: string,
+dollhouse_glb_url: string
+}
+
+text
+
+## Out of scope for v1, planned for v1.1
+
+- Realistic 3D furniture via pre made model library
+- Photo texture projection on walls and floors
+- Room by room photo stitching into 360 panoramas (v1 can use flat photos in a sequence instead)
+- AR furniture placement in the scanned room
+- AI staging and renovation previews
+- AI property assistant using retrieval over listing data

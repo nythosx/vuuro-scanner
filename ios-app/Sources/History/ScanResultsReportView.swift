@@ -53,6 +53,7 @@ struct ScanResultsReportView: View {
     @AppStorage("reportUses3D") private var reportUses3D: Bool = false
     @State private var isExportingUSDZ = false
     @State private var usdzURL: URL?
+    @State private var showFullScreen3D = false
 
     private var exportUnit: MeasurementUnit {
         MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
@@ -128,6 +129,7 @@ struct ScanResultsReportView: View {
                         saveChangesBar
                     }
 
+                    openFullScreen3DButton
                     accessLogRow
                     actionButtons
 
@@ -256,6 +258,14 @@ struct ScanResultsReportView: View {
             onSaveFloor: { room, floor in Task { await moveRoom(room, toFloor: floor) } },
             onDelete: { room in Task { await deleteRoom(room) } }
         ))
+        .fullScreenCover(isPresented: $showFullScreen3D) {
+            DollhouseFullScreenView(
+                rooms: floorPlan?.rooms ?? [],
+                title: entry.nickname?.isEmpty == false ? entry.nickname! : entry.propertyId,
+                photos360: floorPlan?.photos360 ?? [],
+                onClose: { showFullScreen3D = false }
+            )
+        }
         .alert("Forget this scan?", isPresented: $showForgetConfirmation) {
             Button("Forget", role: .destructive) {
                 ScanHistoryStore.shared.remove(sessionId: entry.sessionId)
@@ -880,7 +890,7 @@ struct ScanResultsReportView: View {
 
     @MainActor
     private func discardRenderedExports() {
-        FloorPlanImageCache.shared.invalidate(sessionId: entry.sessionId)
+        FloorPlanImageCache.shared.invalidateSoft(sessionId: entry.sessionId)
         ExportNaming.removeExports(sessionId: entry.sessionId)
         planRevision += 1
         floorPlanImage = nil
@@ -970,6 +980,20 @@ struct ScanResultsReportView: View {
                 placementTarget = target
             }
         }
+    }
+
+    private var openFullScreen3DButton: some View {
+        Button {
+            showFullScreen3D = true
+        } label: {
+            Label("Open full 3D view", systemImage: "cube.transparent")
+                .frame(maxWidth: .infinity)
+        }
+        .accessibilityIdentifier("report.openFullScreen3D")
+        .buttonStyle(.vuuroOutline)
+        .disabled((floorPlan?.rooms.isEmpty ?? true))
+        .padding(.horizontal, 20)
+        .padding(.bottom, 12)
     }
 
     private var actionButtons: some View {
@@ -1169,6 +1193,14 @@ struct ScanResultsReportView: View {
 
         imageFailed = false
         PerfTrace.begin(.resultPlanImage)
+        let revision = planRevision
+
+        if let stale = FloorPlanImageCache.shared.staleData(sessionId: entry.sessionId, unit: exportUnit),
+           let staleImage = await ImageDecoding.decoded(stale),
+           revision == planRevision {
+            floorPlanImage = staleImage
+        }
+
         let alreadyCached = FloorPlanImageCache.shared.cachedData(
             sessionId: entry.sessionId,
             unit: exportUnit
@@ -1191,14 +1223,16 @@ struct ScanResultsReportView: View {
         }
         guard let image = decodedImage else {
             PerfTrace.cancel(.resultPlanImage)
-            appError = AppError(
-                site: .resultImageLoad,
-                underlying: FloorPlanImageCache.shared.lastError(
-                    sessionId: entry.sessionId,
-                    unit: exportUnit
+            if floorPlanImage == nil {
+                appError = AppError(
+                    site: .resultImageLoad,
+                    underlying: FloorPlanImageCache.shared.lastError(
+                        sessionId: entry.sessionId,
+                        unit: exportUnit
+                    )
                 )
-            )
-            imageFailed = true
+                imageFailed = true
+            }
             return
         }
         floorPlanImage = image

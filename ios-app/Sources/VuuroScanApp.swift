@@ -652,7 +652,7 @@ private struct RoomCaptureFlowStep: View {
 
             Spacer().frame(height: 14)
 
-            VuuroScanHint(text: vuuroLocalized("Slowly pan around the walls"))
+            VuuroCompletionPill(status: coordinator.completionStatus)
 
             if let guess = coordinator.liveRoomTypeGuess, !coordinator.hasAnsweredRoomType {
                 Spacer().frame(height: 20)

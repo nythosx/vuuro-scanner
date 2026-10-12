@@ -6,6 +6,8 @@ namespace VuuroScan;
 
 use PDO;
 
+require_once __DIR__ . '/../net/photo_360_repository.php';
+
 final class ScanSessionRepository
 {
 
@@ -377,7 +379,9 @@ final class ScanSessionRepository
         if (!$row) {
             return null;
         }
-        return json_decode($row['contract_json'], true, 512, JSON_THROW_ON_ERROR);
+        $floorPlan = json_decode($row['contract_json'], true, 512, JSON_THROW_ON_ERROR);
+        $floorPlan['photos_360'] = (new \Photo360Repository($this->db))->serializedForSession($sessionId);
+        return $floorPlan;
     }
 
     public function roomCount(string $sessionId): int

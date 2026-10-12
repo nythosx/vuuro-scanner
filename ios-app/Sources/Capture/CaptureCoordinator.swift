@@ -76,6 +76,9 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     }
 
     @Published private(set) var liveStats: CaptureLiveStats = .empty
+    @Published private(set) var completionStatus: RoomCompletionStatus = .scanning
+
+    private var completionEstimator = RoomCompletionEstimator()
 
     private(set) var capturedRoom: CapturedRoom?
     private(set) var capturedRoomWalkPath: [[Double]] = []
@@ -201,6 +204,8 @@ final class CaptureCoordinator: NSObject, ObservableObject {
         hasAnsweredRoomType = false
         isApproachingSizeLimit = false
         liveStats = .empty
+        completionStatus = .scanning
+        completionEstimator = RoomCompletionEstimator()
         liveUpdateThrottle.resetRoomTypeAnswered()
         startWalkPathTracking()
 
@@ -395,6 +400,10 @@ extension CaptureCoordinator: RoomCaptureSessionDelegate {
             }
             if self.liveStats != stats {
                 self.liveStats = stats
+            }
+            let completion = self.completionEstimator.update(stats: stats, isApproachingSizeLimit: exceedsSizeLimit)
+            if self.completionStatus != completion {
+                self.completionStatus = completion
             }
             if let guess, !self.liveUpdateThrottle.isRoomTypeAnswered(), self.liveRoomTypeGuess?.type != guess.type {
                 self.liveRoomTypeGuess = guess

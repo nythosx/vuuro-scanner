@@ -7856,6 +7856,70 @@
                     }
                 }
             }
+        },
+        "Almost there": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Almost there"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Bijna klaar"
+                    }
+                }
+            }
+        },
+        "Almost there · %.1f m²": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Almost there · %.1f m²"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Bijna klaar · %.1f m²"
+                    }
+                }
+            }
+        },
+        "Ready": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ready"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Gereed"
+                    }
+                }
+            }
+        },
+        "Ready · %.1f m²": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ready · %.1f m²"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Gereed · %.1f m²"
+                    }
+                }
+            }
         }
     },
     "version": "1.0"

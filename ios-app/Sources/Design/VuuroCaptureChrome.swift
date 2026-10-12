@@ -92,6 +92,62 @@ struct VuuroScanHint: View {
     }
 }
 
+struct VuuroCompletionPill: View {
+    let status: RoomCompletionStatus
+    @State private var pulse = false
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(indicatorColor)
+                .frame(width: 7, height: 7)
+                .shadow(color: indicatorColor, radius: 10)
+                .opacity(pulse ? 0.5 : 1)
+            Text(label)
+                .font(.system(size: 13, weight: .semibold))
+                .tracking(-0.1)
+                .foregroundStyle(.white)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.ultraThinMaterial, in: Capsule())
+        .background(Color.black.opacity(0.55), in: Capsule())
+        .accessibilityIdentifier("capture.completionPill")
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+    }
+
+    private var indicatorColor: Color {
+        switch status.stage {
+        case .keepScanning: return VuuroColor.lime
+        case .almostThere: return .orange
+        case .ready: return VuuroColor.lime
+        }
+    }
+
+    private var label: String {
+        switch status.stage {
+        case .keepScanning:
+            return vuuroLocalized("Slowly pan around the walls")
+        case .almostThere:
+            guard let area = status.stableAreaM2 else {
+                return vuuroLocalized("Almost there")
+            }
+            return String(format: vuuroLocalized("Almost there · %.1f m²"), area)
+        case .ready:
+            guard let area = status.stableAreaM2 else {
+                return vuuroLocalized("Ready")
+            }
+            return String(format: vuuroLocalized("Ready · %.1f m²"), area)
+        }
+    }
+}
+
+
 struct VuuroLiveStat: View {
     let value: String
     let unit: String?

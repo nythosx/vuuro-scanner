@@ -29,6 +29,38 @@ struct DollhouseMaterial: Equatable {
     }
 }
 
+enum DollhouseLayer: String, CaseIterable, Identifiable {
+    case wallsAndFloors
+    case doors
+    case windows
+    case openings
+    case furniture
+    case ceiling
+    case roomLabels
+    case hotspotMarkers
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .wallsAndFloors: return "3D floor plan"
+        case .doors: return "Doors"
+        case .windows: return "Windows"
+        case .openings: return "Openings"
+        case .furniture: return "Furniture"
+        case .ceiling: return "Ceiling"
+        case .roomLabels: return "Room labels"
+        case .hotspotMarkers: return "Hotspot markers"
+        }
+    }
+}
+
+struct DollhouseHotspot: Equatable, Identifiable {
+    let id: String
+    let roomId: String
+    let position: SIMD3<Float>
+}
+
 struct DollhouseNodePath: Equatable, Hashable {
     let components: [String]
 
@@ -47,6 +79,7 @@ struct DollhouseMesh: Equatable {
     let vertices: [DollhouseVertex]
     let indices: [UInt32]
     let material: DollhouseMaterial
+    let layer: DollhouseLayer
     let path: DollhouseNodePath
 
     var triangleCount: Int { indices.count / 3 }
@@ -72,6 +105,7 @@ struct DollhouseScene {
     let id: UUID = UUID()
     var headingDeg: Double? = nil
     var degenerateRoomCount: Int = 0
+    var hotspots: [DollhouseHotspot] = []
 
     var boundsCenter: SIMD3<Float> { (boundsMin + boundsMax) * 0.5 }
     var boundsSize: SIMD3<Float> { boundsMax - boundsMin }

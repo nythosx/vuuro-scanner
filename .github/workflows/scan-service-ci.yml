@@ -49,6 +49,7 @@ jobs:
           php tests/plan_orientation_test.php
           php tests/joined_openings_test.php
           php tests/floor_groups_join_test.php
+          php tests/photo_360_repository_test.php
 
       - name: The independent net (every suite, fresh servers and DBs)
         working-directory: scan-service
