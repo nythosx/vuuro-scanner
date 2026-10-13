@@ -30,7 +30,7 @@ struct MultiRoomCaptureFlowView: View {
     @State private var showDiscardConfirmation = false
     @State private var showMultiFloorPrompt = false
     @State private var showHowToScan = false
-    @State private var captureGroupId: String = ""
+    @State private var captureGroupId = UUID().uuidString
     @State private var capturedLocation: CaptureLocation?
     @State private var capturedHeadingDeg: Double?
     @State private var preUploadedSession: (session: ScanSessionResponse, floorPlan: FloorPlan)?
@@ -288,15 +288,11 @@ struct MultiRoomCaptureFlowView: View {
         .onAppear {
             guard !didStart else { return }
             didStart = true
-            if captureGroupId.isEmpty {
-                if let stored = WalkthroughStore.load(),
-                   stored.identity == identity,
-                   stored.session?.id == existingSession?.id,
-                   let storedGid = stored.captureGroupId {
-                    captureGroupId = storedGid
-                } else {
-                    captureGroupId = UUID().uuidString
-                }
+            if let stored = WalkthroughStore.load(),
+               stored.identity == identity,
+               stored.session?.id == existingSession?.id,
+               let storedGid = stored.captureGroupId {
+                captureGroupId = storedGid
             }
             capturedFloor = (existingSession?.defaultFloor ?? identity.floor ?? "")
             Task { capturedLocation = await locationProvider.currentLocation() }
