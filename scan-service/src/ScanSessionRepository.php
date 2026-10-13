@@ -367,7 +367,7 @@ final class ScanSessionRepository
             'capture_provider' => $floorPlan['capture_provider'],
             'captured_at' => $floorPlan['captured_at'],
             'measurement_basis' => $floorPlan['measurement_basis'],
-            'contract_json' => json_encode($floorPlan, JSON_THROW_ON_ERROR),
+            'contract_json' => json_encode($floorPlan, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR),
         ]);
     }
 
@@ -396,7 +396,7 @@ final class ScanSessionRepository
             $existing = $this->findFloorPlan($sessionId);
             if ($existing === null) {
                 $this->saveFloorPlan($sessionId, $newFloorPlan);
-                return $newFloorPlan;
+                return $this->findFloorPlan($sessionId);
             }
 
             $mergedRoomCount = count($existing['rooms']) + count($newFloorPlan['rooms']);
@@ -1298,7 +1298,7 @@ final class ScanSessionRepository
         $stmt->execute([
             'session_id' => $sessionId,
             'key' => $idempotencyKey,
-            'response_json' => json_encode($response, JSON_THROW_ON_ERROR),
+            'response_json' => json_encode($response, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR),
         ]);
     }
 

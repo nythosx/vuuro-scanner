@@ -323,7 +323,7 @@ function clientIp(): string
 function respond(int $status, array $body): void
 {
     http_response_code($status);
-    echo json_encode($body, JSON_PRETTY_PRINT | JSON_THROW_ON_ERROR);
+    echo json_encode($body, JSON_PRETTY_PRINT | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
 }
 
 function requestScheme(): string
@@ -2615,7 +2615,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/publish-to-platfo
     ];
 
     try {
-        $payloadJson = json_encode($payload, JSON_THROW_ON_ERROR);
+        $payloadJson = json_encode($payload, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
     } catch (\JsonException $e) {
         $repo->logAccess($session['id'], 'publish_to_platform', 'failed_encoding');
         respondError(500, 'publish_encoding_failed', 'Could not encode the scan payload for delivery.');
@@ -2896,7 +2896,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/vuuroscan$#
 
     header('Content-Type: application/json; charset=utf-8');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
-    echo json_encode($bundle, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    echo json_encode($bundle, JSON_PRETTY_PRINT | JSON_PRESERVE_ZERO_FRACTION | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     return;
 }
 
@@ -2981,7 +2981,7 @@ if ($method === 'POST' && $path === '/imported-scans') {
         'purpose' => (string) $sessionBlock['purpose'],
         'signature_status' => $signature['status'],
         'signature_algorithm' => $signature['algorithm'],
-        'payload_json' => json_encode($bundle, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+        'payload_json' => json_encode($bundle, JSON_PRESERVE_ZERO_FRACTION | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
     ];
 
     try {

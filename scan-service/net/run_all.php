@@ -7,6 +7,7 @@ $mainPort = (int) ($argv[1] ?? 18089);
 $standalonePort = (int) ($argv[2] ?? 19499);
 $appKeyPort = (int) ($argv[3] ?? 19509);
 $appKeyBootPort = (int) ($argv[4] ?? 19511);
+$enterprisePort = (int) ($argv[5] ?? 19521);
 $adminKey = 'ci-test-admin-key';
 
 $groups = [
@@ -45,9 +46,21 @@ $groups = [
             ['verify_continue_edges.php'],
             ['verify_compare.php'],
             ['verify_export_language.php'],
-            ['verify_enterprise_hardening.php'],
             ['verify_photo_360.php'],
             ['verify_tour.php'],
+        ],
+    ],
+    [
+        'name' => 'enterprise hardening server',
+        'port' => $enterprisePort,
+        'env' => [
+            'SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_MAX' => '2000',
+            'SCAN_SERVICE_RATE_LIMIT_CREATE_SESSION_WINDOW_SECONDS' => '600',
+            'SCAN_SERVICE_RATE_LIMIT_POST_BODY_READ_MAX' => '4000',
+            'SCAN_SERVICE_ADMIN_API_KEY' => $adminKey,
+        ],
+        'scripts' => [
+            ['verify_enterprise_hardening.php'],
         ],
     ],
     [

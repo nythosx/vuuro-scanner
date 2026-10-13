@@ -46,7 +46,8 @@ check('payload has organisation_id', ($tourBody['organisation_id'] ?? null) === 
 check('payload has viewer_url as a string', is_string($tourBody['viewer_url'] ?? null));
 check('viewer_url points at /tour/{session_id}', str_contains((string) ($tourBody['viewer_url'] ?? ''), "/tour/{$sessionId}"));
 check('payload has plan_image_url as a string', is_string($tourBody['plan_image_url'] ?? null));
-check('payload has dollhouse_glb_url explicitly null', array_key_exists('dollhouse_glb_url', $tourBody) && $tourBody['dollhouse_glb_url'] === null);
+check('payload has dollhouse_glb_url pointing at the export route',
+    is_string($tourBody['dollhouse_glb_url'] ?? null) && str_contains((string) $tourBody['dollhouse_glb_url'], "/scan-sessions/{$sessionId}/export/dollhouse.glb"));
 check('payload has a rooms array with one room', is_array($tourBody['rooms'] ?? null) && count($tourBody['rooms']) === 1);
 check('rooms[0].room_id matches the captured room', ($tourBody['rooms'][0]['room_id'] ?? null) === $roomId);
 check('rooms[0].photos is empty when none uploaded', ($tourBody['rooms'][0]['photos'] ?? null) === []);
