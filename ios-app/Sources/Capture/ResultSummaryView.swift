@@ -39,6 +39,7 @@ struct ResultSummaryView: View {
     @State private var isExportingUSDZ = false
     @State private var usdzURL: URL?
     @State private var showFullScreen3D = false
+    @State private var hotspotPhotoTarget: HotspotPhotoTarget?
 
     private var exportUnit: MeasurementUnit {
         MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
@@ -123,7 +124,14 @@ struct ResultSummaryView: View {
                         if resultUses3D {
                             DollhouseContainerView(
                                 rooms: currentFloorPlan.rooms,
-                                onShowPlan: { resultUses3D = false }
+                                photos360: currentFloorPlan.photos360 ?? [],
+                                onShowPlan: { resultUses3D = false },
+                                onHotspotTapped: { photoId in
+                                    if let photo = currentFloorPlan.photos360?.first(where: { $0.photoId == photoId }) {
+                                        resultUses3D = false
+                                        hotspotPhotoTarget = HotspotPhotoTarget(photo: photo)
+                                    }
+                                }
                             )
                             .padding(.bottom, 12)
                         } else {
@@ -293,12 +301,25 @@ struct ResultSummaryView: View {
             Text("You have unsaved edits on this scan.")
         }
         .dynamicTypeSize(...DynamicTypeSize.accessibility3)
+        .fullScreenCover(item: $hotspotPhotoTarget) { target in
+            HotspotPhotoViewer(
+                session: session,
+                photo: target.photo,
+                onClose: { hotspotPhotoTarget = nil }
+            )
+        }
         .fullScreenCover(isPresented: $showFullScreen3D) {
             DollhouseFullScreenView(
                 rooms: currentFloorPlan.rooms,
                 title: session.propertyId,
                 photos360: currentFloorPlan.photos360 ?? [],
-                onClose: { showFullScreen3D = false }
+                onClose: { showFullScreen3D = false },
+                onHotspotTapped: { photoId in
+                    if let photo = currentFloorPlan.photos360?.first(where: { $0.photoId == photoId }) {
+                        showFullScreen3D = false
+                        hotspotPhotoTarget = HotspotPhotoTarget(photo: photo)
+                    }
+                }
             )
         }
         .sheet(item: $placementTarget) { target in

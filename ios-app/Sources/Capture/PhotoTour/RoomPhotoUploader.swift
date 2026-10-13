@@ -1,5 +1,23 @@
 import Foundation
 
+struct RoomPhotoUploadOutcome: Equatable {
+    let batchesConsidered: Int
+    let photosUploaded: Int
+    let photosFailed: Int
+    let skipReason: String?
+
+    static let none = RoomPhotoUploadOutcome(
+        batchesConsidered: 0,
+        photosUploaded: 0,
+        photosFailed: 0,
+        skipReason: nil
+    )
+
+    var hadFailures: Bool {
+        photosFailed > 0 || skipReason != nil
+    }
+}
+
 @MainActor
 enum RoomPhotoUploader {
     static func uploadAll(
@@ -8,7 +26,7 @@ enum RoomPhotoUploader {
         floorPlan: FloorPlan,
         store: RoomPhotoStore,
         client: ScanServiceClient = ScanServiceClient()
-    ) async {
+    ) async -> RoomPhotoUploadOutcome {
         let batches: [RoomPhotoManifest]
         do {
             batches = try store.allBatches(captureGroupId: captureGroupId)
@@ -17,9 +35,14 @@ enum RoomPhotoUploader {
                 "Photo360: could not read local batches for \(captureGroupId): \(error.localizedDescription)",
                 category: .error
             )
-            return
+            return RoomPhotoUploadOutcome(
+                batchesConsidered: 0,
+                photosUploaded: 0,
+                photosFailed: 0,
+                skipReason: vuuroLocalized("Could not read local tour photos.")
+            )
         }
-        guard !batches.isEmpty else { return }
+        guard !batches.isEmpty else { return .none }
 
         let serverRooms = floorPlan.rooms.filter { $0.captureGroupId == captureGroupId }
         guard !serverRooms.isEmpty else {
@@ -27,7 +50,12 @@ enum RoomPhotoUploader {
                 "Photo360: no server rooms carry this capture group \(captureGroupId); leaving \(batches.count) batch(es) on disk",
                 category: .info
             )
-            return
+            return RoomPhotoUploadOutcome(
+                batchesConsidered: batches.count,
+                photosUploaded: 0,
+                photosFailed: 0,
+                skipReason: vuuroLocalized("Tour photos weren't attached to the captured rooms.")
+            )
         }
 
         guard batches.count == serverRooms.count else {
@@ -35,7 +63,12 @@ enum RoomPhotoUploader {
                 "Photo360: local batch count (\(batches.count)) does not match server room count (\(serverRooms.count)); leaving photos on disk",
                 category: .error
             )
-            return
+            return RoomPhotoUploadOutcome(
+                batchesConsidered: batches.count,
+                photosUploaded: 0,
+                photosFailed: 0,
+                skipReason: vuuroLocalized("Local tour photos don't match the captured rooms.")
+            )
         }
 
         let pairing: [(batch: RoomPhotoManifest, roomId: String)]?
@@ -56,15 +89,29 @@ enum RoomPhotoUploader {
                 "Photo360: could not pair local batches with server rooms in \(captureGroupId); leaving photos on disk",
                 category: .error
             )
-            return
+            return RoomPhotoUploadOutcome(
+                batchesConsidered: batches.count,
+                photosUploaded: 0,
+                photosFailed: 0,
+                skipReason: vuuroLocalized("Could not match tour photos to the captured rooms.")
+            )
         }
 
+        var uploaded = 0
+        var failed = 0
         for (batch, roomId) in matched {
             let photos = batch.photos.filter { isPlausiblePosition($0.positionM) }
             guard !photos.isEmpty else { continue }
             for photo in photos {
-                if Task.isCancelled { return }
-                await uploadOne(
+                if Task.isCancelled {
+                    return RoomPhotoUploadOutcome(
+                        batchesConsidered: batches.count,
+                        photosUploaded: uploaded,
+                        photosFailed: failed,
+                        skipReason: nil
+                    )
+                }
+                let ok = await uploadOne(
                     photo: photo,
                     batch: batch,
                     roomId: roomId,
@@ -72,10 +119,24 @@ enum RoomPhotoUploader {
                     store: store,
                     client: client
                 )
+                if ok {
+                    uploaded += 1
+                } else {
+                    failed += 1
+                }
             }
         }
 
-        store.clearAll(captureGroupId: captureGroupId)
+        if failed == 0 {
+            store.clearAll(captureGroupId: captureGroupId)
+        }
+
+        return RoomPhotoUploadOutcome(
+            batchesConsidered: batches.count,
+            photosUploaded: uploaded,
+            photosFailed: failed,
+            skipReason: nil
+        )
     }
 
     private static let originToleranceM: Double = 0.01
@@ -136,7 +197,7 @@ enum RoomPhotoUploader {
         session: ScanSessionResponse,
         store: RoomPhotoStore,
         client: ScanServiceClient
-    ) async {
+    ) async -> Bool {
         let data: Data
         do {
             data = try store.loadPhotoData(
@@ -149,7 +210,7 @@ enum RoomPhotoUploader {
                 "Photo360: photo file missing for \(photo.localId): \(error.localizedDescription)",
                 category: .error
             )
-            return
+            return false
         }
 
         do {
@@ -162,12 +223,15 @@ enum RoomPhotoUploader {
                 headingDeg: photo.headingDeg,
                 idempotencyKey: photo.localId
             )
+            return true
         } catch is CancellationError {
+            return false
         } catch {
             DiagnosticsLog.shared.record(
                 "Photo360: upload failed for \(photo.localId): \(error.localizedDescription)",
                 category: .error
             )
+            return false
         }
     }
 }

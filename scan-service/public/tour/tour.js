@@ -1,17 +1,62 @@
 (function () {
   'use strict';
 
-  var statusEl = document.getElementById('tour-status');
-  var appEl = document.getElementById('tour-app');
+  var state = {
+    sessionId: '',
+    token: '',
+    data: null,
+    mode: 'plan',
+    roomIndex: 0,
+    photoIndex: 0,
+    hasPhotos: false,
+    hasDollhouse: false,
+    roomsWithPhotos: [],
+    roomSequenceIndex: 0
+  };
 
-  function setStatus(text, isError) {
-    if (!statusEl) {
-      statusEl = document.createElement('p');
-      statusEl.id = 'tour-status';
-      appEl.appendChild(statusEl);
+  var els = {};
+
+  function boot() {
+    els.viewport = document.getElementById('tour-viewport');
+    els.menu = document.getElementById('tour-menu');
+    els.minimap = document.getElementById('tour-minimap');
+    els.info = document.getElementById('tour-info');
+    els.infoRoom = document.getElementById('tour-info-room');
+    els.infoCounter = document.getElementById('tour-info-counter');
+    els.roomNav = document.getElementById('tour-room-nav');
+    els.roomSequence = document.getElementById('tour-room-sequence');
+    els.roomPrev = document.getElementById('tour-room-prev');
+    els.roomNext = document.getElementById('tour-room-next');
+
+    if (els.roomPrev) {
+      els.roomPrev.addEventListener('click', function () { stepRoom(-1); });
     }
-    statusEl.textContent = text;
-    statusEl.className = isError ? 'status error' : 'status';
+    if (els.roomNext) {
+      els.roomNext.addEventListener('click', function () { stepRoom(1); });
+    }
+
+    state.sessionId = readSessionId();
+    state.token = readToken();
+
+    if (!state.sessionId) {
+      setStatus('Invalid tour URL \u2014 no session id.', true);
+      return;
+    }
+    if (!state.token) {
+      setStatus('Missing token in the URL. Add ?token=\u2026 to the link.', true);
+      return;
+    }
+
+    window.TourRoute.onPop(function (parsed) {
+      if (!state.data) {
+        return;
+      }
+      applyParsedUrl(parsed);
+      render();
+    });
+
+    setStatus('Loading tour\u2026', false);
+    fetchTour();
   }
 
   function readSessionId() {
@@ -23,72 +68,330 @@
     return new URLSearchParams(window.location.search).get('token') || '';
   }
 
-  var sessionId = readSessionId();
-  var token = readToken();
+  function withToken(url) {
+    var join = url.indexOf('?') === -1 ? '?' : '&';
+    return url + join + 'token=' + encodeURIComponent(state.token);
+  }
 
-  if (!sessionId) { setStatus('Invalid tour URL — no session id.', true); return; }
-  if (!token) { setStatus('Missing token in the URL. Add ?token=… to the link.', true); return; }
+  function setStatus(text, isError) {
+    clearNode(els.viewport);
+    var p = document.createElement('p');
+    p.className = 'tour-status' + (isError ? ' is-error' : '');
+    p.textContent = text;
+    els.viewport.appendChild(p);
+  }
 
-  setStatus('Loading tour…');
-
-  fetch('/scan-sessions/' + encodeURIComponent(sessionId) + '/tour.json', {
-    headers: { 'X-Scan-Access-Token': token },
-  })
-    .then(function (response) {
-      if (response.status === 401) { throw new Error('This link is no longer valid.'); }
-      if (!response.ok) { throw new Error('Server returned HTTP ' + response.status + '.'); }
-      return response.json();
-    })
-    .then(render)
-    .catch(function (err) {
-      setStatus(err && err.message ? err.message : 'Could not load the tour.', true);
-    });
-
-  function render(data) {
-    appEl.innerHTML = '';
-    var rooms = Array.isArray(data.rooms) ? data.rooms : [];
-
-    var summary = document.createElement('p');
-    summary.className = 'summary';
-    var roomCount = rooms.length;
-    var photoCount = rooms.reduce(function (n, r) {
-      return n + (Array.isArray(r.photos) ? r.photos.length : 0);
-    }, 0);
-    summary.textContent = roomCount + ' room' + (roomCount === 1 ? '' : 's')
-      + ' · ' + photoCount + ' tour photo' + (photoCount === 1 ? '' : 's');
-    appEl.appendChild(summary);
-
-    if (data.plan_image_url) {
-      var plan = document.createElement('img');
-      plan.className = 'plan';
-      plan.alt = 'Floor plan';
-      var joinChar = data.plan_image_url.indexOf('?') === -1 ? '?' : '&';
-      plan.src = data.plan_image_url + joinChar + 'token=' + encodeURIComponent(token);
-      appEl.appendChild(plan);
+  function clearNode(node) {
+    while (node.firstChild) {
+      node.removeChild(node.firstChild);
     }
+  }
 
-    if (roomCount === 0) {
-      var empty = document.createElement('p');
-      empty.className = 'summary';
-      empty.textContent = 'No rooms captured in this scan yet.';
-      appEl.appendChild(empty);
+  function fetchTour() {
+    fetch('/scan-sessions/' + encodeURIComponent(state.sessionId) + '/tour.json', {
+      headers: { 'X-Scan-Access-Token': state.token }
+    })
+      .then(function (response) {
+        if (response.status === 401) {
+          throw new Error('This link is no longer valid.');
+        }
+        if (!response.ok) {
+          throw new Error('Server returned HTTP ' + response.status + '.');
+        }
+        return response.json();
+      })
+      .then(onLoaded)
+      .catch(function (err) {
+        setStatus(err && err.message ? err.message : 'Could not load the tour.', true);
+      });
+  }
+
+  function onLoaded(data) {
+    var rawRooms = Array.isArray(data.rooms) ? data.rooms : [];
+    state.data = {
+      rooms: rawRooms,
+      dollhouse_glb_url: data.dollhouse_glb_url || null
+    };
+    state.roomsWithPhotos = computeRoomsWithPhotos(rawRooms);
+    state.hasPhotos = state.roomsWithPhotos.length > 0;
+    state.hasDollhouse = !!state.data.dollhouse_glb_url;
+    state.mode = 'plan';
+    state.roomIndex = 0;
+    state.photoIndex = 0;
+    state.roomSequenceIndex = 0;
+    applyParsedUrl(window.TourRoute.parse(window.location.hash));
+    window.TourRoute.replace(currentUrlState());
+    render();
+  }
+
+  function computeRoomsWithPhotos(rooms) {
+    var out = [];
+    for (var i = 0; i < rooms.length; i++) {
+      if (Array.isArray(rooms[i].photos) && rooms[i].photos.length > 0) {
+        out.push(i);
+      }
+    }
+    return out;
+  }
+
+  function applyParsedUrl(parsed) {
+    if (parsed.mode === window.TourRoute.MODES.PHOTOS && state.hasPhotos) {
+      var roomIdx = parsed.roomIndex;
+      if (state.roomsWithPhotos.indexOf(roomIdx) === -1) {
+        roomIdx = state.roomsWithPhotos[0];
+      }
+      state.mode = 'photos';
+      state.roomIndex = roomIdx;
+      state.photoIndex = clampPhotoIndex(roomIdx, parsed.photoIndex);
+      state.roomSequenceIndex = Math.max(0, state.roomsWithPhotos.indexOf(roomIdx));
       return;
     }
+    if (parsed.mode === window.TourRoute.MODES.DOLLHOUSE && state.hasDollhouse) {
+      state.mode = 'dollhouse';
+      return;
+    }
+    state.mode = 'plan';
+  }
 
-    var list = document.createElement('ul');
-    list.className = 'rooms';
-    rooms.forEach(function (room) {
-      var li = document.createElement('li');
-      var name = document.createElement('strong');
-      name.textContent = room.label || room.room_id;
-      var meta = document.createElement('span');
-      var count = Array.isArray(room.photos) ? room.photos.length : 0;
-      meta.textContent = count + ' tour photo' + (count === 1 ? '' : 's');
-      if (room.floor) { meta.textContent = room.floor + ' · ' + meta.textContent; }
-      li.appendChild(name);
-      li.appendChild(meta);
-      list.appendChild(li);
+  function clampPhotoIndex(roomIdx, idx) {
+    var room = state.data.rooms[roomIdx];
+    var len = room && Array.isArray(room.photos) ? room.photos.length : 0;
+    if (len === 0) {
+      return 0;
+    }
+    if (idx < 0) {
+      return 0;
+    }
+    if (idx >= len) {
+      return len - 1;
+    }
+    return idx;
+  }
+
+  function currentUrlState() {
+    if (state.mode === 'photos') {
+      return { mode: 'photos', roomIndex: state.roomIndex, photoIndex: state.photoIndex };
+    }
+    if (state.mode === 'dollhouse') {
+      return { mode: 'dollhouse' };
+    }
+    return { mode: 'plan' };
+  }
+
+  function syncUrl(replace) {
+    var s = currentUrlState();
+    if (replace) {
+      window.TourRoute.replace(s);
+    } else {
+      window.TourRoute.push(s);
+    }
+  }
+
+  function render() {
+    if (!state.data) {
+      return;
+    }
+    renderMenu();
+    renderViewport();
+    renderChrome();
+  }
+
+  function renderMenu() {
+    var menu = els.menu;
+    clearNode(menu);
+    menu.hidden = false;
+    appendMenuButton('plan', 'Plan');
+    if (state.hasPhotos) {
+      appendMenuButton('photos', 'Photo tour');
+    }
+    if (state.hasDollhouse) {
+      appendMenuButton('dollhouse', 'Dollhouse');
+    }
+  }
+
+  function appendMenuButton(mode, label) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tour-menu-btn' + (state.mode === mode ? ' is-active' : '');
+    btn.textContent = label;
+    btn.setAttribute('data-mode', mode);
+    btn.addEventListener('click', function () {
+      switchMode(mode);
     });
-    appEl.appendChild(list);
+    els.menu.appendChild(btn);
+  }
+
+  function switchMode(mode) {
+    if (mode === 'photos' && state.mode !== 'photos') {
+      if (!state.hasPhotos) {
+        return;
+      }
+      state.roomIndex = state.roomsWithPhotos[0];
+      state.roomSequenceIndex = 0;
+      state.photoIndex = 0;
+    }
+    if (mode === 'dollhouse' && !state.hasDollhouse) {
+      return;
+    }
+    state.mode = mode;
+    syncUrl(false);
+    render();
+  }
+
+  function renderViewport() {
+    clearNode(els.viewport);
+    if (state.mode === 'plan') {
+      renderPlan();
+    } else if (state.mode === 'photos') {
+      renderPhotoTour();
+    } else if (state.mode === 'dollhouse') {
+      renderDollhouse();
+    }
+  }
+
+  function renderChrome() {
+    els.minimap.hidden = state.mode !== 'photos';
+    els.info.hidden = state.mode !== 'photos';
+    var showRoomNav = state.mode === 'photos' && state.roomsWithPhotos.length > 1;
+    if (els.roomNav) {
+      els.roomNav.hidden = !showRoomNav;
+    }
+    if (state.mode !== 'photos') {
+      return;
+    }
+    var room = state.data.rooms[state.roomIndex];
+    if (!room) {
+      return;
+    }
+    els.infoRoom.textContent = room.label || '';
+    var photos = Array.isArray(room.photos) ? room.photos : [];
+    els.infoCounter.textContent = photos.length === 0
+      ? '0 / 0'
+      : (state.photoIndex + 1) + ' / ' + photos.length;
+    if (showRoomNav && els.roomSequence) {
+      els.roomSequence.textContent = (state.roomSequenceIndex + 1) + ' / ' + state.roomsWithPhotos.length;
+    }
+  }
+
+  function renderPlan() {
+    var drew = window.TourPlan.renderPlan(els.viewport, state.data.rooms, openRoom, openPhoto);
+    if (!drew) {
+      setStatus('No rooms have been captured yet.', false);
+    }
+  }
+
+  function openRoom(index) {
+    var room = state.data.rooms[index];
+    if (!room) {
+      return;
+    }
+    if (!Array.isArray(room.photos) || room.photos.length === 0) {
+      return;
+    }
+    state.roomIndex = index;
+    state.roomSequenceIndex = Math.max(0, state.roomsWithPhotos.indexOf(index));
+    state.photoIndex = 0;
+    state.mode = 'photos';
+    syncUrl(false);
+    render();
+  }
+
+  function openPhoto(roomIndex, photoIndex) {
+    var room = state.data.rooms[roomIndex];
+    if (!room) {
+      return;
+    }
+    var photos = Array.isArray(room.photos) ? room.photos : [];
+    if (photos.length === 0) {
+      return;
+    }
+    state.roomIndex = roomIndex;
+    state.roomSequenceIndex = Math.max(0, state.roomsWithPhotos.indexOf(roomIndex));
+    state.photoIndex = clampPhotoIndex(roomIndex, photoIndex);
+    state.mode = 'photos';
+    syncUrl(false);
+    render();
+  }
+
+  function renderPhotoTour() {
+    var room = state.data.rooms[state.roomIndex];
+    if (!room) {
+      backToPlan();
+      return;
+    }
+    window.TourPhoto.render(els.viewport, room, state.photoIndex, {
+      buildPhotoUrl: withToken,
+      onPrev: function () { stepPhoto(-1); },
+      onNext: function () { stepPhoto(1); },
+      onClose: backToPlan,
+      onBackToPlan: backToPlan
+    });
+  }
+
+  function stepPhoto(delta) {
+    var room = state.data.rooms[state.roomIndex];
+    if (!room) {
+      return;
+    }
+    var photos = Array.isArray(room.photos) ? room.photos : [];
+    if (photos.length === 0) {
+      return;
+    }
+    state.photoIndex = (state.photoIndex + delta + photos.length) % photos.length;
+    syncUrl(true);
+    render();
+  }
+
+  function stepRoom(delta) {
+    if (state.roomsWithPhotos.length < 2) {
+      return;
+    }
+    var len = state.roomsWithPhotos.length;
+    var next = (state.roomSequenceIndex + delta + len) % len;
+    state.roomSequenceIndex = next;
+    state.roomIndex = state.roomsWithPhotos[next];
+    state.photoIndex = 0;
+    state.mode = 'photos';
+    syncUrl(false);
+    render();
+  }
+
+  function backToPlan() {
+    state.mode = 'plan';
+    syncUrl(false);
+    render();
+  }
+
+  function renderDollhouse() {
+    window.TourDollhouse.render(els.viewport, state.data.dollhouse_glb_url, state.data.rooms, backToPlan, openPhoto, withToken);
+  }
+
+  document.addEventListener('keydown', function (event) {
+    if (state.mode !== 'photos') {
+      return;
+    }
+    if (event.key === 'ArrowLeft') {
+      stepPhoto(-1);
+    } else if (event.key === 'ArrowRight') {
+      stepPhoto(1);
+    } else if (event.key === 'ArrowUp') {
+      stepRoom(-1);
+    } else if (event.key === 'ArrowDown') {
+      stepRoom(1);
+    } else if (event.key === 'Escape') {
+      backToPlan();
+    }
+  });
+
+  window.addEventListener('resize', function () {
+    if (state.mode === 'plan' && state.data) {
+      renderViewport();
+    }
+  });
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
   }
 })();

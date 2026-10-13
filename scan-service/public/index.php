@@ -5,6 +5,7 @@ declare(strict_types=1);
 require __DIR__ . '/../src/autoload.php';
 
 use VuuroScan\Adapters\RoomPlanSimulatorAdapter;
+use VuuroScan\Export\DollhouseGltfWriter;
 use VuuroScan\Export\ExportLanguage;
 use VuuroScan\Export\FloorPlanImageRenderer;
 use VuuroScan\Export\FloorPlanStyle;
@@ -1539,7 +1540,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads$#',
 }
 
 if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads/([a-f0-9\-]+\.(?:jpg|png|heic|webp))$#', $path, $m)) {
-    $session = authorizeSession($repo, $m[1], 'read_photo_upload');
+    $session = authorizeSession($repo, $m[1], 'read_photo_upload', true);
     if ($session === null) {
         return;
     }
@@ -2357,6 +2358,38 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     return;
 }
 
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/dollhouse\.glb$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'export_dollhouse', true);
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':export_dollhouse', 30, 300)) {
+        return;
+    }
+    $floorPlan = $repo->findFloorPlan($session['id']);
+    if ($floorPlan === null) {
+        respondError(404, 'no_floor_plan_yet', 'This session doesn\'t have a captured floor plan yet — capture at least one room before exporting.');
+        return;
+    }
+    if ($floorPlan['rooms'] === []) {
+        respondError(422, 'no_floor_plan_geometry', 'This is a notes-only session, so there is no 3D geometry to draw.');
+        return;
+    }
+    try {
+        $glb = (new DollhouseGltfWriter())->write($floorPlan);
+    } catch (\InvalidArgumentException $e) {
+        respondError(422, 'unrenderable_dollhouse', "This floor plan couldn't be drawn in 3D: " . $e->getMessage());
+        return;
+    } catch (\Throwable $e) {
+        error_log("VuuroScan " . get_class($e) . ": " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+        respondError(500, 'internal_error', 'Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.');
+        return;
+    }
+    header('Content-Type: model/gltf-binary');
+    echo $glb;
+    return;
+}
+
 if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.pdf$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'export_pdf');
     if ($session === null) {
@@ -2724,7 +2757,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
         'organisation_id' => (string) $session['organisation_id'],
         'viewer_url' => $viewerUrl,
         'plan_image_url' => $planImageUrl,
-        'dollhouse_glb_url' => null,
+        'dollhouse_glb_url' => $floorPlan['rooms'] !== [] ? ($base . "/scan-sessions/{$sessionId}/export/dollhouse.glb") : null,
         'rooms' => $rooms,
     ]);
     return;

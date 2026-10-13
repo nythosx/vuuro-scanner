@@ -165,7 +165,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
         stopWalkPathTracking()
         if isRunning {
             isRunning = false
-            captureSession?.stop()
+            captureSession?.stop(pauseARSession: false)
         }
         arSession.pause()
         UIApplication.shared.isIdleTimerDisabled = false
@@ -218,7 +218,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
         pendingRun = false
         isRunning = false
         stopWalkPathTracking()
-        captureSession?.stop()
+        captureSession?.stop(pauseARSession: false)
         UIApplication.shared.isIdleTimerDisabled = false
     }
 

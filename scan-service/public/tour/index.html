@@ -3,16 +3,35 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Vuuro Scan — Tour</title>
+<title>Vuuro Scan - Tour</title>
 <link rel="stylesheet" href="/tour/tour.css">
 </head>
 <body>
-<header class="tour-header">
-  <span class="brand">Vuuro Scan</span>
-</header>
-<main id="tour-app">
-  <p class="status" id="tour-status">Loading tour…</p>
-</main>
+<div class="tour-app" id="tour-app">
+  <header class="tour-top">
+    <span class="tour-brand">Vuuro Scan</span>
+    <nav class="tour-menu" id="tour-menu" hidden aria-label="Tour view mode"></nav>
+  </header>
+  <main class="tour-viewport" id="tour-viewport">
+    <p class="tour-status">Loading tour...</p>
+  </main>
+  <div class="tour-minimap" id="tour-minimap" hidden aria-hidden="true"></div>
+  <div class="tour-info" id="tour-info" hidden>
+    <span class="tour-info-room" id="tour-info-room"></span>
+    <span class="tour-info-counter" id="tour-info-counter"></span>
+  </div>
+  <div class="tour-room-nav" id="tour-room-nav" hidden>
+    <button class="tour-room-step" id="tour-room-prev" type="button" aria-label="Previous room">&#x25B2;</button>
+    <span class="tour-room-sequence" id="tour-room-sequence"></span>
+    <button class="tour-room-step" id="tour-room-next" type="button" aria-label="Next room">&#x25BC;</button>
+  </div>
+</div>
+<script src="/tour/tour-route.js"></script>
+<script src="/tour/tour-plan.js"></script>
+<script src="/tour/tour-photo.js"></script>
+<script src="/tour/tour-dollhouse-math.js"></script>
+<script src="/tour/tour-dollhouse-glb.js"></script>
+<script src="/tour/tour-dollhouse.js"></script>
 <script src="/tour/tour.js"></script>
 </body>
 </html>

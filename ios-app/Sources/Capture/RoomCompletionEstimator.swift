@@ -43,10 +43,14 @@ struct RoomCompletionEstimator {
             return RoomCompletionStatus(stage: .almostThere, stableAreaM2: stableArea)
         }
 
+        guard stableArea != nil else {
+            return .scanning
+        }
+
         let wallsStable = recentWallCounts.count >= Self.windowSize && Set(recentWallCounts).count == 1
         let hasOpening = (stats.doors + stats.windows + stats.openings) >= 1
 
-        if wallsStable, stableArea != nil, hasOpening {
+        if wallsStable, hasOpening {
             return RoomCompletionStatus(stage: .ready, stableAreaM2: stableArea)
         }
 

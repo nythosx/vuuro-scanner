@@ -389,6 +389,8 @@ private struct RoomCaptureFlowStep: View {
     @State private var rescanExport: RoomPlanCaptureExport?
     @State private var capturedLocation: CaptureLocation?
     @State private var capturedHeadingDeg: Double?
+    @State private var photoCaptureContext: PhotoCaptureContext?
+    @State private var captureGroupId: String = ""
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
     @State private var didStart = false
     @State private var showCorrectionDialog = false
@@ -419,6 +421,16 @@ private struct RoomCaptureFlowStep: View {
                 UnsupportedDeviceScreen(onGoBack: onGoBack)
             } else if DeviceCapability.isRoomPlanSupported && cameraDenied {
                 CameraAccessDeniedScreen(onGoBack: onGoBack, onAccessRestored: { cameraDenied = false })
+            } else if let photoCaptureContext {
+                RoomPhotoCaptureOverlay(
+                    coordinator: photoCaptureContext.coordinator,
+                    onSkip: {
+                        Task { await finishPhotoStepOrSubmit() }
+                    },
+                    onFinish: {
+                        Task { await finishPhotoStepOrSubmit() }
+                    }
+                )
             } else if let justCaptured {
                 AnotherRoomPromptView(roomCount: justCaptured.floorPlan.rooms.count) { addAnother in
                     onRoomCaptured(justCaptured.session, justCaptured.floorPlan, addAnother)
@@ -537,6 +549,7 @@ private struct RoomCaptureFlowStep: View {
                 .onAppear {
                     guard !didStart else { return }
                     didStart = true
+                    captureGroupId = UUID().uuidString
                     captureFloor = (existingSession?.defaultFloor ?? identity.floor ?? "")
                     coordinator.start()
                     Task { capturedLocation = await locationProvider.currentLocation() }
@@ -798,7 +811,7 @@ private struct RoomCaptureFlowStep: View {
         switch state {
         case .finished(roomAvailable: true):
             guard let room = coordinator.capturedRoom else { return }
-            Task { await submit(CapturedRoomExporter.export(room, roomTypeConfirmation: coordinator.roomTypeConfirmationForExport, walkPath: coordinator.capturedRoomWalkPath, headingDeg: capturedHeadingDeg)) }
+            Task { await beginPhotoStep(for: room) }
         case .finished(roomAvailable: false):
             onError(AppError(site: .captureNoRoom, underlying: nil), existingSession)
         case .failed(let message, let partialRoomAvailable):
@@ -812,6 +825,52 @@ private struct RoomCaptureFlowStep: View {
         case .scanning:
             break
         }
+    }
+
+    @MainActor
+    private func beginPhotoStep(for room: CapturedRoom) async {
+        guard let floor = room.floors.first else {
+            await finishPhotoStepOrSubmit()
+            return
+        }
+
+        let roomKey = room.identifier.uuidString
+        let worldCorners = floor.polygonCorners.map { floor.transform * simd_float4($0, 1) }
+        let origin: [Double]?
+        if let minX = worldCorners.map({ Double($0.x) }).min(),
+           let minZ = worldCorners.map({ Double($0.z) }).min() {
+            origin = [minX, minZ]
+        } else {
+            origin = nil
+        }
+
+        let headingProvider = HeadingProvider()
+        let heading = await headingProvider.currentHeadingDeg()
+
+        let photoCoordinator = RoomPhotoCaptureCoordinator(
+            arSession: coordinator.arSession,
+            room: room,
+            roomNumber: 1,
+            roomKey: roomKey,
+            captureGroupId: captureGroupId,
+            structureOriginM: origin,
+            initialCompassHeadingDeg: heading,
+            store: .shared
+        )
+        photoCaptureContext = PhotoCaptureContext(coordinator: photoCoordinator)
+    }
+
+    @MainActor
+    private func finishPhotoStepOrSubmit() async {
+        photoCaptureContext = nil
+        guard let room = coordinator.capturedRoom else { return }
+        let export = CapturedRoomExporter.export(
+            room,
+            roomTypeConfirmation: coordinator.roomTypeConfirmationForExport,
+            walkPath: coordinator.capturedRoomWalkPath,
+            headingDeg: capturedHeadingDeg
+        )
+        await submit(export)
     }
 
     @MainActor
@@ -839,6 +898,11 @@ private struct RoomCaptureFlowStep: View {
 
     @MainActor
     private func submit(_ export: RoomPlanCaptureExport, rescanDecided: Bool = false) async {
+        var export = export
+        if !captureGroupId.isEmpty {
+            export.captureGroupId = captureGroupId
+        }
+
         defer { isUploadingPartialCapture = false }
         if !FloorValidation.isValid(captureFloor) {
             captureFloor = [existingSession?.defaultFloor, identity.floor].compactMap { $0 }.map(FloorValidation.sanitized).first { !$0.isEmpty } ?? ""
@@ -922,10 +986,22 @@ private struct RoomCaptureFlowStep: View {
                 sessionId: session.id,
                 roomsByFloor: CachedFloorSummary.buckets(from: floorPlan.rooms)
             )
+            await uploadPhotosIfNeeded(session: session, floorPlan: floorPlan, export: export)
             justCaptured = (session, floorPlan)
         } catch {
             uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)
         }
+    }
+
+    @MainActor
+    private func uploadPhotosIfNeeded(session: ScanSessionResponse, floorPlan: FloorPlan, export: RoomPlanCaptureExport) async {
+        guard let groupId = export.captureGroupId, !groupId.isEmpty else { return }
+        _ = await RoomPhotoUploader.uploadAll(
+            captureGroupId: groupId,
+            session: session,
+            floorPlan: floorPlan,
+            store: .shared
+        )
     }
 
     @MainActor
@@ -948,6 +1024,7 @@ private struct RoomCaptureFlowStep: View {
                 sessionId: session.id,
                 roomsByFloor: CachedFloorSummary.buckets(from: floorPlan.rooms)
             )
+            await uploadPhotosIfNeeded(session: session, floorPlan: floorPlan, export: export)
             justCaptured = (session, floorPlan)
         } catch {
             uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)

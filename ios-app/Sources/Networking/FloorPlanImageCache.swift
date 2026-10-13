@@ -63,6 +63,7 @@ final class FloorPlanImageCache {
             if let data {
                 self.entries.setObject(data as NSData, forKey: cacheKey as NSString, cost: data.count)
                 self.knownKeys.insert(cacheKey)
+                self.staleEntries[cacheKey] = nil
             }
             self.inFlightTasks[cacheKey] = nil
             return data

@@ -30,7 +30,7 @@ struct MultiRoomCaptureFlowView: View {
     @State private var showDiscardConfirmation = false
     @State private var showMultiFloorPrompt = false
     @State private var showHowToScan = false
-    @State private var captureGroupId = UUID().uuidString
+    @State private var captureGroupId: String = ""
     @State private var capturedLocation: CaptureLocation?
     @State private var capturedHeadingDeg: Double?
     @State private var preUploadedSession: (session: ScanSessionResponse, floorPlan: FloorPlan)?
@@ -288,6 +288,16 @@ struct MultiRoomCaptureFlowView: View {
         .onAppear {
             guard !didStart else { return }
             didStart = true
+            if captureGroupId.isEmpty {
+                if let stored = WalkthroughStore.load(),
+                   stored.identity == identity,
+                   stored.session?.id == existingSession?.id,
+                   let storedGid = stored.captureGroupId {
+                    captureGroupId = storedGid
+                } else {
+                    captureGroupId = UUID().uuidString
+                }
+            }
             capturedFloor = (existingSession?.defaultFloor ?? identity.floor ?? "")
             Task { capturedLocation = await locationProvider.currentLocation() }
             Task { capturedHeadingDeg = await headingProvider.currentHeadingDeg() }
@@ -498,7 +508,8 @@ struct MultiRoomCaptureFlowView: View {
             session: existingSession ?? preUploadedSession?.session,
             rooms: storedRooms,
             startedAt: Date(),
-            pendingRescan: storedRescan
+            pendingRescan: storedRescan,
+            captureGroupId: captureGroupId
         )
         WalkthroughStore.save(state)
     }
@@ -1022,12 +1033,19 @@ struct MultiRoomCaptureFlowView: View {
             WalkthroughStore.clear()
             let finishedSession = preUploadedSession.session
             self.preUploadedSession = nil
-            await RoomPhotoUploader.uploadAll(
+            let photoOutcome = await RoomPhotoUploader.uploadAll(
                 captureGroupId: captureGroupId,
                 session: finishedSession,
                 floorPlan: floorPlan,
                 store: .shared
             )
+            if let reason = photoOutcome.skipReason {
+                VuuroToast.shared.show(reason)
+            } else if photoOutcome.photosFailed > 0 {
+                VuuroToast.shared.show(
+                    String(format: vuuroLocalized("%lld tour photo(s) couldn't be uploaded"), photoOutcome.photosFailed)
+                )
+            }
             onFinished(finishedSession, floorPlan)
         } catch is CancellationError {
             self.preUploadedSession = nil
@@ -1207,7 +1225,7 @@ struct MultiRoomCaptureFlowView: View {
     }
 }
 
-private struct PhotoCaptureContext: Identifiable {
+struct PhotoCaptureContext: Identifiable {
     let id = UUID()
     let coordinator: RoomPhotoCaptureCoordinator
 }

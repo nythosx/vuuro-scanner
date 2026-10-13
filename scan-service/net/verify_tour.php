@@ -100,6 +100,121 @@ check('GET /tour/tour.css is CSS', stripos($cssContentType, 'text/css') !== fals
 [$missingStatus] = net_http_raw('GET', "$baseUrl/tour/does-not-exist.js", null, null);
 check('GET /tour/does-not-exist.js returns HTTP 404', $missingStatus === 404, "got HTTP $missingStatus");
 
+echo "\n== tour.json rooms[].photos[] shape ==\n";
+
+$shapePhotoPath = tempnam(sys_get_temp_dir(), 'tour_shape_photo_') . '.jpg';
+$shapePhotoImg = imagecreatetruecolor(48, 48);
+imagefilledrectangle($shapePhotoImg, 0, 0, 48, 48, imagecolorallocate($shapePhotoImg, 120, 160, 200));
+imagejpeg($shapePhotoImg, $shapePhotoPath, 90);
+imagedestroy($shapePhotoImg);
+
+$shapeUpload = curl_init("$baseUrl/scan-sessions/$sessionId/photos-360");
+curl_setopt_array($shapeUpload, [
+    CURLOPT_POST => true,
+    CURLOPT_RETURNTRANSFER => true,
+    CURLOPT_HTTPHEADER => [
+        "X-Scan-Access-Token: $accessToken",
+        "Idempotency-Key: tour-shape-photo-1",
+    ],
+    CURLOPT_POSTFIELDS => [
+        'photo' => new \CURLFile($shapePhotoPath, 'image/jpeg', basename($shapePhotoPath)),
+        'room_id' => (string) $roomId,
+        'position_x' => '1.25',
+        'position_z' => '2.5',
+        'heading_deg' => '90.0',
+    ],
+    CURLOPT_CONNECTTIMEOUT_MS => 3000,
+    CURLOPT_TIMEOUT => 30,
+]);
+$shapeUploadRaw = curl_exec($shapeUpload);
+$shapeUploadStatus = (int) curl_getinfo($shapeUpload, CURLINFO_HTTP_CODE);
+curl_close($shapeUpload);
+@unlink($shapePhotoPath);
+
+check('a tour photo uploads for the shape check (HTTP 201)', $shapeUploadStatus === 201, "got HTTP $shapeUploadStatus: " . substr((string) $shapeUploadRaw, 0, 200));
+
+if ($shapeUploadStatus === 201) {
+    [$shapeStatus, $shapeBody] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId/tour.json", null, $accessToken);
+    check('tour.json is still HTTP 200 with a photo present', $shapeStatus === 200, "got HTTP $shapeStatus");
+
+    $shapeRoom = null;
+    foreach ($shapeBody['rooms'] ?? [] as $shapeCandidate) {
+        if (is_array($shapeCandidate) && ($shapeCandidate['room_id'] ?? null) === $roomId) {
+            $shapeRoom = $shapeCandidate;
+            break;
+        }
+    }
+    check('the room that owns the photo is present in rooms[]', $shapeRoom !== null);
+
+    $shapePhotos = $shapeRoom !== null && is_array($shapeRoom['photos'] ?? null) ? $shapeRoom['photos'] : null;
+    check('the owning room carries a non-empty photos[]', is_array($shapePhotos) && count($shapePhotos) === 1, json_encode($shapePhotos));
+
+    if (is_array($shapePhotos) && $shapePhotos !== []) {
+        $shapeEntry = $shapePhotos[0];
+        $shapePhotoId = $shapeEntry['photo_id'] ?? null;
+        $shapePhotoUrl = $shapeEntry['url'] ?? null;
+        $shapePhotoPos = $shapeEntry['position_m'] ?? null;
+        $shapePhotoHeading = $shapeEntry['heading_deg'] ?? null;
+
+        check(
+            'photos[].photo_id is a non-empty string',
+            is_string($shapePhotoId) && $shapePhotoId !== '',
+            json_encode($shapePhotoId)
+        );
+        check(
+            'photos[].url is a non-empty string the viewer can load',
+            is_string($shapePhotoUrl) && $shapePhotoUrl !== '',
+            json_encode($shapePhotoUrl)
+        );
+        check(
+            'photos[].position_m is a 2-element array of finite numbers',
+            is_array($shapePhotoPos)
+                && count($shapePhotoPos) === 2
+                && is_numeric($shapePhotoPos[0])
+                && is_numeric($shapePhotoPos[1])
+                && is_finite((float) $shapePhotoPos[0])
+                && is_finite((float) $shapePhotoPos[1]),
+            json_encode($shapePhotoPos)
+        );
+        check(
+            'photos[].heading_deg is a finite number in [0, 360)',
+            is_numeric($shapePhotoHeading)
+                && is_finite((float) $shapePhotoHeading)
+                && (float) $shapePhotoHeading >= 0
+                && (float) $shapePhotoHeading < 360,
+            json_encode($shapePhotoHeading)
+        );
+
+        if (is_string($shapePhotoUrl) && $shapePhotoUrl !== '') {
+            $shapeJoin = str_contains($shapePhotoUrl, '?') ? '&' : '?';
+            [$shapeFetchStatus] = net_http_raw('GET', $shapePhotoUrl . $shapeJoin . 'token=' . rawurlencode($accessToken));
+            check(
+                'photos[].url is fetchable with a ?token= query parameter (the browser <img src> path)',
+                $shapeFetchStatus === 200,
+                "got HTTP $shapeFetchStatus"
+            );
+
+            [$shapeNoTokenStatus] = net_http_raw('GET', $shapePhotoUrl);
+            check(
+                'photos[].url with no token at all is still refused (regression guard)',
+                $shapeNoTokenStatus === 401,
+                "got HTTP $shapeNoTokenStatus"
+            );
+        }
+    }
+
+    $otherRooms = 0;
+    foreach ($shapeBody['rooms'] ?? [] as $otherCandidate) {
+        if (!is_array($otherCandidate)) {
+            continue;
+        }
+        if (($otherCandidate['room_id'] ?? null) !== $roomId && !empty($otherCandidate['photos'])) {
+            $otherRooms++;
+        }
+    }
+    check('photos[] entries are scoped to their own room only', $otherRooms === 0, "got $otherRooms other room(s) with photos");
+}
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nNET VERDICT: RED\n");

@@ -54,6 +54,7 @@ struct ScanResultsReportView: View {
     @State private var isExportingUSDZ = false
     @State private var usdzURL: URL?
     @State private var showFullScreen3D = false
+    @State private var hotspotPhotoTarget: HotspotPhotoTarget?
 
     private var exportUnit: MeasurementUnit {
         MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
@@ -91,7 +92,14 @@ struct ScanResultsReportView: View {
                             if reportUses3D {
                                 DollhouseContainerView(
                                     rooms: floorPlan.rooms,
-                                    onShowPlan: { reportUses3D = false }
+                                    photos360: floorPlan.photos360 ?? [],
+                                    onShowPlan: { reportUses3D = false },
+                                    onHotspotTapped: { photoId in
+                                        if let photo = floorPlan.photos360?.first(where: { $0.photoId == photoId }) {
+                                            reportUses3D = false
+                                            hotspotPhotoTarget = HotspotPhotoTarget(photo: photo)
+                                        }
+                                    }
                                 )
                                 .padding(.bottom, 12)
                             } else {
@@ -258,12 +266,25 @@ struct ScanResultsReportView: View {
             onSaveFloor: { room, floor in Task { await moveRoom(room, toFloor: floor) } },
             onDelete: { room in Task { await deleteRoom(room) } }
         ))
+        .fullScreenCover(item: $hotspotPhotoTarget) { target in
+            HotspotPhotoViewer(
+                session: entry.asResumableSession(),
+                photo: target.photo,
+                onClose: { hotspotPhotoTarget = nil }
+            )
+        }
         .fullScreenCover(isPresented: $showFullScreen3D) {
             DollhouseFullScreenView(
                 rooms: floorPlan?.rooms ?? [],
                 title: entry.nickname?.isEmpty == false ? entry.nickname! : entry.propertyId,
                 photos360: floorPlan?.photos360 ?? [],
-                onClose: { showFullScreen3D = false }
+                onClose: { showFullScreen3D = false },
+                onHotspotTapped: { photoId in
+                    if let photo = floorPlan?.photos360?.first(where: { $0.photoId == photoId }) {
+                        showFullScreen3D = false
+                        hotspotPhotoTarget = HotspotPhotoTarget(photo: photo)
+                    }
+                }
             )
         }
         .alert("Forget this scan?", isPresented: $showForgetConfirmation) {

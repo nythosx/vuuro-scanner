@@ -3,7 +3,9 @@ import SwiftUI
 
 struct DollhouseContainerView: View {
     let rooms: [FloorPlan.Room]
+    var photos360: [FloorPlan.Photo360] = []
     var onShowPlan: (() -> Void)? = nil
+    var onHotspotTapped: ((String) -> Void)? = nil
 
     @AppStorage("dollhouseMode") private var modeRaw: String = DollhouseMode.cutaway.rawValue
     @AppStorage("dollhouseShowFurniture") private var showFurniture: Bool = true
@@ -59,7 +61,7 @@ struct DollhouseContainerView: View {
             if isLoading {
                 DollhousePlaceholderView(kind: .loading)
             } else if let scene, let scnScene, !scene.isEmpty {
-                DollhouseSceneView(scene: scene, scnScene: scnScene, theme: .light)
+                DollhouseSceneView(scene: scene, scnScene: scnScene, theme: .light, onHotspotTap: onHotspotTapped)
                     .frame(minHeight: 320)
                     .background(VuuroColor.bgInset)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -108,6 +110,7 @@ struct DollhouseContainerView: View {
         scene = nil
         scnScene = nil
         let roomsSnapshot = rooms
+        let photos360Snapshot = photos360
         let configuration = DollhouseBuildConfiguration(
             mode: mode,
             showFurniture: showFurniture,
@@ -117,7 +120,7 @@ struct DollhouseContainerView: View {
         buildTask = Task {
             do {
                 let built = try await Task.detached(priority: .userInitiated) {
-                    let dollhouse = try DollhouseMeshBuilder.build(rooms: roomsSnapshot, configuration: configuration)
+                    let dollhouse = try DollhouseMeshBuilder.build(rooms: roomsSnapshot, configuration: configuration, photos360: photos360Snapshot)
                     return BuiltDollhouse(scene: dollhouse, scnScene: DollhouseSceneBuilder.buildScene(from: dollhouse))
                 }.value
                 guard !Task.isCancelled else { return }
