@@ -5,7 +5,7 @@
 
   function render(viewport, url, rooms, onBackToPlan, onHotspotTap, buildUrl) {
     if (!url) {
-      renderFallback(viewport, onBackToPlan, 'Dollhouse not available for this scan.');
+      renderFallback(viewport, onBackToPlan, window.TourStrings.t('dollhouse_unavailable'));
       return;
     }
     renderLoading(viewport, onBackToPlan);
@@ -25,7 +25,7 @@
         viewer.start();
       })
       .catch(function (err) {
-        renderFallback(viewport, onBackToPlan, 'Could not load the dollhouse: ' + (err && err.message ? err.message : 'unknown error') + '.');
+        renderFallback(viewport, onBackToPlan, window.TourStrings.t('dollhouse_load_failed', { reason: err && err.message ? err.message : 'unknown error' }));
       });
   }
 
@@ -35,7 +35,7 @@
     stage.className = 'tour-dollhouse';
     var p = document.createElement('p');
     p.className = 'tour-status';
-    p.textContent = 'Loading 3D view\u2026';
+    p.textContent = window.TourStrings.t('loading_3d');
     stage.appendChild(p);
     stage.appendChild(backButton(onBackToPlan));
     viewport.appendChild(stage);
@@ -76,7 +76,7 @@
     var back = document.createElement('button');
     back.type = 'button';
     back.className = 'tour-btn tour-btn-back tour-dollhouse-back';
-    back.textContent = 'Back to plan';
+    back.textContent = window.TourStrings.t('back_to_plan');
     back.addEventListener('click', onBackToPlan);
     return back;
   }
@@ -129,6 +129,7 @@
           roomIndex: i,
           photoIndex: p,
           world: [px + ox, height / 2, pz + oz],
+          roomHeight: height,
           label: (room.label || '') + ' photo ' + (p + 1)
         });
       }
@@ -140,7 +141,7 @@
     this.canvas = canvas;
     this.gl = canvas.getContext('webgl', { antialias: true, alpha: false });
     if (!this.gl) {
-      throw new Error('WebGL is not available in this browser');
+      throw new Error(window.TourStrings.t('webgl_unavailable'));
     }
     this.mesh = mesh;
     this.hotspots = hotspots;
@@ -154,6 +155,8 @@
     this.running = false;
     this.dragging = false;
     this.lastPointer = null;
+    this.activePointers = {};
+    this.pinchDistance = null;
     this.hotspotElements = [];
     this.initGl();
     this.frameToBounds();
@@ -255,11 +258,32 @@
     var canvas = this.canvas;
     canvas.style.touchAction = 'none';
     canvas.addEventListener('pointerdown', function (event) {
-      self.dragging = true;
-      self.lastPointer = { x: event.clientX, y: event.clientY, button: event.button };
+      self.activePointers[event.pointerId] = { x: event.clientX, y: event.clientY };
+      var ids = Object.keys(self.activePointers);
+      if (ids.length === 2) {
+        self.pinchDistance = self.pointerDistance();
+        self.lastPointer = null;
+      } else {
+        self.dragging = true;
+        self.lastPointer = { x: event.clientX, y: event.clientY, button: event.button };
+      }
       canvas.setPointerCapture(event.pointerId);
     });
     canvas.addEventListener('pointermove', function (event) {
+      if (self.activePointers[event.pointerId]) {
+        self.activePointers[event.pointerId].x = event.clientX;
+        self.activePointers[event.pointerId].y = event.clientY;
+      }
+      if (Object.keys(self.activePointers).length >= 2) {
+        var d = self.pointerDistance();
+        if (self.pinchDistance && d > 0) {
+          self.distance *= self.pinchDistance / d;
+          self.distance = Math.max(1, Math.min(500, self.distance));
+        }
+        self.pinchDistance = d;
+        self.render();
+        return;
+      }
       if (!self.dragging || !self.lastPointer) {
         return;
       }
@@ -277,11 +301,17 @@
       self.render();
     });
     canvas.addEventListener('pointerup', function (event) {
+      delete self.activePointers[event.pointerId];
+      if (Object.keys(self.activePointers).length < 2) {
+        self.pinchDistance = null;
+      }
       self.dragging = false;
       self.lastPointer = null;
       try { canvas.releasePointerCapture(event.pointerId); } catch (e) {}
     });
-    canvas.addEventListener('pointercancel', function () {
+    canvas.addEventListener('pointercancel', function (event) {
+      delete self.activePointers[event.pointerId];
+      self.pinchDistance = null;
       self.dragging = false;
       self.lastPointer = null;
     });
@@ -292,6 +322,18 @@
       self.render();
     }, { passive: false });
     canvas.addEventListener('contextmenu', function (event) { event.preventDefault(); });
+  };
+
+  Viewer.prototype.pointerDistance = function () {
+    var pts = Object.keys(this.activePointers).map(function (k) {
+      return this.activePointers[k];
+    }, this);
+    if (pts.length < 2) {
+      return 0;
+    }
+    var dx = pts[0].x - pts[1].x;
+    var dy = pts[0].y - pts[1].y;
+    return Math.sqrt(dx * dx + dy * dy);
   };
 
   Viewer.prototype.pan = function (dx, dy) {
@@ -374,8 +416,15 @@
   };
 
   Viewer.prototype.positionHotspots = function () {
+    var eye = this.eyePosition();
+    var eyeY = eye[1];
     for (var i = 0; i < this.hotspotElements.length; i++) {
       var entry = this.hotspotElements[i];
+      var ceilingY = entry.hotspot.roomHeight || (entry.hotspot.world[1] * 2);
+      if (eyeY > ceilingY) {
+        entry.el.style.display = 'none';
+        continue;
+      }
       var screen = this.projectToScreen(entry.hotspot.world);
       if (screen === null) {
         entry.el.style.display = 'none';

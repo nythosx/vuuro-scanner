@@ -73,7 +73,7 @@
     var svg = document.createElementNS(NS, 'svg');
     svg.classList.add('tour-plan-svg');
     svg.setAttribute('role', 'img');
-    svg.setAttribute('aria-label', 'Floor plan');
+    svg.setAttribute('aria-label', window.TourStrings.t('plan_aria'));
     viewport.appendChild(svg);
 
     var rect = viewport.getBoundingClientRect();
@@ -107,6 +107,9 @@
       var poly = document.createElementNS(NS, 'polygon');
       poly.setAttribute('points', points);
       poly.classList.add('tour-plan-room');
+      if (item.room.overlap === true) {
+        poly.classList.add('tour-plan-room-overlap');
+      }
       poly.setAttribute('tabindex', '0');
       poly.setAttribute('role', 'button');
       poly.setAttribute('aria-label', item.room.label || '');
@@ -147,6 +150,64 @@
       renderPhotoMarkers(svg, placed, toPx, onPhotoTap);
     }
 
+    return true;
+  }
+
+  function renderMinimap(container, rooms, activeRoomId) {
+    while (container.firstChild) {
+      container.removeChild(container.firstChild);
+    }
+    var placed = placedRooms(rooms);
+    if (placed.length === 0) {
+      return false;
+    }
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', window.TourStrings.t('minimap_aria'));
+    var rect = container.getBoundingClientRect();
+    var w = Math.max(rect.width || 130, 60);
+    var h = Math.max(rect.height || 96, 60);
+    var bounds = boundsOf(placed);
+    var planW = Math.max(bounds.maxX - bounds.minX, 0.1);
+    var planH = Math.max(bounds.maxZ - bounds.minZ, 0.1);
+    var scale = Math.min((w - 8) / planW, (h - 8) / planH);
+    function toPx(point) {
+      return [
+        (point[0] - bounds.minX) * scale + 4,
+        (point[1] - bounds.minZ) * scale + 4
+      ];
+    }
+    svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+    placed.forEach(function (item) {
+      var pts = item.points.map(function (p) {
+        var q = toPx(p);
+        return q[0].toFixed(1) + ',' + q[1].toFixed(1);
+      }).join(' ');
+      var poly = document.createElementNS(NS, 'polygon');
+      poly.setAttribute('points', pts);
+      poly.classList.add('tour-minimap-room');
+      if (item.room.room_id === activeRoomId) {
+        poly.classList.add('is-active');
+      }
+      svg.appendChild(poly);
+    });
+    var active = placed.filter(function (item) {
+      return item.room.room_id === activeRoomId;
+    })[0];
+    if (active) {
+      var cx = 0, cz = 0;
+      active.points.forEach(function (p) { cx += p[0]; cz += p[1]; });
+      cx /= active.points.length;
+      cz /= active.points.length;
+      var dot = toPx([cx, cz]);
+      var circle = document.createElementNS(NS, 'circle');
+      circle.setAttribute('cx', dot[0].toFixed(1));
+      circle.setAttribute('cy', dot[1].toFixed(1));
+      circle.setAttribute('r', '2.5');
+      circle.classList.add('tour-minimap-dot');
+      svg.appendChild(circle);
+    }
+    container.appendChild(svg);
     return true;
   }
 
@@ -199,5 +260,10 @@
     }
   }
 
-  window.TourPlan = { renderPlan: renderPlan };
+  window.TourPlan = {
+    renderPlan: renderPlan,
+    placedRooms: placedRooms,
+    boundsOf: boundsOf,
+    renderMinimap: renderMinimap
+  };
 })();

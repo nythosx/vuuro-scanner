@@ -44,7 +44,7 @@ enum RoomPhotoUploader {
         }
         guard !batches.isEmpty else { return .none }
 
-        let serverRooms = floorPlan.rooms.filter { $0.captureGroupId == captureGroupId }
+        let serverRooms = roomsForCaptureGroup(floorPlan.rooms, captureGroupId: captureGroupId)
         guard !serverRooms.isEmpty else {
             DiagnosticsLog.shared.record(
                 "Photo360: no server rooms carry this capture group \(captureGroupId); leaving \(batches.count) batch(es) on disk",
@@ -139,12 +139,56 @@ enum RoomPhotoUploader {
         )
     }
 
+    static func roomsForCaptureGroup(_ rooms: [FloorPlan.Room], captureGroupId: String) -> [FloorPlan.Room] {
+        rooms.filter {
+            $0.captureGroupId == captureGroupId || $0.joinedToGroupId == captureGroupId
+        }
+    }
+
     private static let originToleranceM: Double = 0.01
 
-    private static func pairByStructureOrigin(
+    static func pairByStructureOrigin(
         batches: [RoomPhotoManifest],
         serverRooms: [FloorPlan.Room]
     ) -> [(batch: RoomPhotoManifest, roomId: String)]? {
+        guard batches.count == serverRooms.count else { return nil }
+        guard batches.count > 0 else { return [] }
+        guard batches.count <= 8 else {
+            return pairGreedy(batches: batches, serverRooms: serverRooms)
+        }
+        let toleranceSq = originToleranceM * originToleranceM
+        var best: [Int]? = nil
+        var bestCost = Double.infinity
+        for perm in permutations(Array(serverRooms.indices)) {
+            var cost = 0.0
+            var valid = true
+            for (batchIndex, roomIndex) in perm.enumerated() {
+                let origin = batches[batchIndex].structureOriginM ?? []
+                guard origin.count == 2, origin.allSatisfy({ $0.isFinite }) else {
+                    valid = false
+                    break
+                }
+                let distSq = originDistanceSquared(serverRooms[roomIndex].structureOriginM, origin)
+                if !distSq.isFinite || distSq > toleranceSq {
+                    valid = false
+                    break
+                }
+                cost += distSq
+            }
+            if valid && cost < bestCost {
+                bestCost = cost
+                best = perm
+            }
+        }
+        guard let assignment = best else { return nil }
+        return zip(batches, assignment).map { (batch: $0.0, roomId: serverRooms[$0.1].roomId) }
+    }
+
+    static func pairGreedy(
+        batches: [RoomPhotoManifest],
+        serverRooms: [FloorPlan.Room]
+    ) -> [(batch: RoomPhotoManifest, roomId: String)]? {
+        let toleranceSq = originToleranceM * originToleranceM
         var remaining = serverRooms
         var matched: [(batch: RoomPhotoManifest, roomId: String)] = []
         for batch in batches {
@@ -152,20 +196,29 @@ enum RoomPhotoUploader {
                   origin.allSatisfy({ $0.isFinite }) else {
                 return nil
             }
-            guard let bestIndex = remaining.indices.min(by: { lhs, rhs in
-                originDistanceSquared(remaining[lhs].structureOriginM, origin)
-                    < originDistanceSquared(remaining[rhs].structureOriginM, origin)
-            }) else {
-                return nil
+            let candidates = remaining.indices.filter { index in
+                let d = originDistanceSquared(remaining[index].structureOriginM, origin)
+                return d.isFinite && d <= toleranceSq
             }
-            let distance = originDistanceSquared(remaining[bestIndex].structureOriginM, origin)
-            guard distance.isFinite, distance <= originToleranceM * originToleranceM else {
-                return nil
-            }
-            matched.append((batch: batch, roomId: remaining[bestIndex].roomId))
-            remaining.remove(at: bestIndex)
+            guard candidates.count == 1 else { return nil }
+            let index = candidates[0]
+            matched.append((batch: batch, roomId: remaining[index].roomId))
+            remaining.remove(at: index)
         }
         return matched
+    }
+
+    static func permutations<T>(_ array: [T]) -> [[T]] {
+        if array.isEmpty { return [[]] }
+        var result: [[T]] = []
+        for (index, element) in array.enumerated() {
+            var remaining = array
+            remaining.remove(at: index)
+            for perm in permutations(remaining) {
+                result.append([element] + perm)
+            }
+        }
+        return result
     }
 
     private static func pairPositionally(

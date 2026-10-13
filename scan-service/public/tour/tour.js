@@ -39,13 +39,18 @@
     state.token = readToken();
 
     if (!state.sessionId) {
-      setStatus('Invalid tour URL \u2014 no session id.', true);
+      setStatus(window.TourStrings.t('invalid_url'), true);
       return;
     }
     if (!state.token) {
-      setStatus('Missing token in the URL. Add ?token=\u2026 to the link.', true);
+      setStatus(window.TourStrings.t('missing_token'), true);
       return;
     }
+    document.getElementById('tour-menu').setAttribute('aria-label', window.TourStrings.t('tour_mode_aria'));
+    var prevRoom = document.getElementById('tour-room-prev');
+    var nextRoom = document.getElementById('tour-room-next');
+    if (prevRoom) prevRoom.setAttribute('aria-label', window.TourStrings.t('prev_room_aria'));
+    if (nextRoom) nextRoom.setAttribute('aria-label', window.TourStrings.t('next_room_aria'));
 
     window.TourRoute.onPop(function (parsed) {
       if (!state.data) {
@@ -55,7 +60,7 @@
       render();
     });
 
-    setStatus('Loading tour\u2026', false);
+    setStatus(window.TourStrings.t('loading_tour'), false);
     fetchTour();
   }
 
@@ -88,21 +93,21 @@
   }
 
   function fetchTour() {
-    fetch('/scan-sessions/' + encodeURIComponent(state.sessionId) + '/tour.json', {
+    fetch('/scan-sessions/' + encodeURIComponent(state.sessionId) + '/tour.json?lang=' + encodeURIComponent(window.TourStrings.lang), {
       headers: { 'X-Scan-Access-Token': state.token }
     })
       .then(function (response) {
         if (response.status === 401) {
-          throw new Error('This link is no longer valid.');
+          throw new Error(window.TourStrings.t('link_expired'));
         }
         if (!response.ok) {
-          throw new Error('Server returned HTTP ' + response.status + '.');
+          throw new Error(window.TourStrings.t('server_http', { status: response.status }));
         }
         return response.json();
       })
       .then(onLoaded)
       .catch(function (err) {
-        setStatus(err && err.message ? err.message : 'Could not load the tour.', true);
+        setStatus(err && err.message ? err.message : window.TourStrings.t('load_failed'), true);
       });
   }
 
@@ -200,12 +205,12 @@
     var menu = els.menu;
     clearNode(menu);
     menu.hidden = false;
-    appendMenuButton('plan', 'Plan');
+    appendMenuButton('plan', window.TourStrings.t('menu_plan'));
     if (state.hasPhotos) {
-      appendMenuButton('photos', 'Photo tour');
+      appendMenuButton('photos', window.TourStrings.t('menu_photos'));
     }
     if (state.hasDollhouse) {
-      appendMenuButton('dollhouse', 'Dollhouse');
+      appendMenuButton('dollhouse', window.TourStrings.t('menu_dollhouse'));
     }
   }
 
@@ -256,6 +261,15 @@
     if (els.roomNav) {
       els.roomNav.hidden = !showRoomNav;
     }
+    if (state.mode === 'photos') {
+      var activeRoom = state.data.rooms[state.roomIndex];
+      if (activeRoom && els.minimap) {
+        els.minimap.hidden = false;
+        window.TourPlan.renderMinimap(els.minimap, state.data.rooms, activeRoom.room_id);
+      }
+    } else if (els.minimap) {
+      els.minimap.hidden = true;
+    }
     if (state.mode !== 'photos') {
       return;
     }
@@ -276,7 +290,7 @@
   function renderPlan() {
     var drew = window.TourPlan.renderPlan(els.viewport, state.data.rooms, openRoom, openPhoto);
     if (!drew) {
-      setStatus('No rooms have been captured yet.', false);
+      setStatus(window.TourStrings.t('no_rooms'), false);
     }
   }
 

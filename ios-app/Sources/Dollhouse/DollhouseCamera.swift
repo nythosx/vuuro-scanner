@@ -18,9 +18,12 @@ final class DollhouseCamera: NSObject {
         self.view = view
         self.cameraNode = cameraNode
         defaultTarget = scene.boundsCenter
-        DollhouseCamera.placeDefault(cameraNode: cameraNode, framing: scene, camera: self)
-        guard attachedView !== view else { return }
+        if attachedView === view {
+            self.update()
+            return
+        }
         attachedView = view
+        DollhouseCamera.placeDefault(cameraNode: cameraNode, framing: scene, camera: self)
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
         let twoFingerPan = UIPanGestureRecognizer(target: self, action: #selector(handleTwoFingerPan(_:)))

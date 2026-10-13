@@ -674,7 +674,7 @@ struct MultiRoomCaptureFlowView: View {
             Spacer(minLength: 20)
 
             if coordinator.capturedRooms.count >= MultiRoomCaptureCoordinator.roomCountWarningThreshold {
-                Text("\(coordinator.capturedRooms.count) rooms captured — you may be approaching a device limit soon.")
+                Text("\(coordinator.capturedRooms.count) rooms captured. If scanning stops soon, finish this walkthrough and continue in a new one with the remaining rooms.")
                     .font(.system(size: 12))
                     .foregroundStyle(.orange)
                     .multilineTextAlignment(.center)
@@ -949,6 +949,17 @@ struct MultiRoomCaptureFlowView: View {
     }
 
     @MainActor
+    private func showTourPhotoOutcome(_ outcome: RoomPhotoUploadOutcome) {
+        if let reason = outcome.skipReason {
+            VuuroToast.shared.show(reason)
+        } else if outcome.photosFailed > 0 {
+            VuuroToast.shared.show(
+                String(format: vuuroLocalized("%lld tour photo(s) couldn't be uploaded"), outcome.photosFailed)
+            )
+        }
+    }
+
+    @MainActor
     private func submitFused(_ structure: CapturedStructure) async {
         guard let preUploadedSession else {
             isFinishingUnit = false
@@ -996,6 +1007,13 @@ struct MultiRoomCaptureFlowView: View {
             )
             isFinishingUnit = false
             self.preUploadedSession = nil
+            let photoOutcome = await RoomPhotoUploader.uploadAll(
+                captureGroupId: captureGroupId,
+                session: preUploadedSession.session,
+                floorPlan: preUploadedSession.floorPlan,
+                store: .shared
+            )
+            showTourPhotoOutcome(photoOutcome)
             onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
             return
         }
@@ -1035,13 +1053,7 @@ struct MultiRoomCaptureFlowView: View {
                 floorPlan: floorPlan,
                 store: .shared
             )
-            if let reason = photoOutcome.skipReason {
-                VuuroToast.shared.show(reason)
-            } else if photoOutcome.photosFailed > 0 {
-                VuuroToast.shared.show(
-                    String(format: vuuroLocalized("%lld tour photo(s) couldn't be uploaded"), photoOutcome.photosFailed)
-                )
-            }
+            showTourPhotoOutcome(photoOutcome)
             onFinished(finishedSession, floorPlan)
         } catch is CancellationError {
             self.preUploadedSession = nil
@@ -1049,6 +1061,13 @@ struct MultiRoomCaptureFlowView: View {
                 "Fused upload cancelled — falling back to unfused per-room tiles.",
                 category: .info
             )
+            let photoOutcome = await RoomPhotoUploader.uploadAll(
+                captureGroupId: captureGroupId,
+                session: preUploadedSession.session,
+                floorPlan: preUploadedSession.floorPlan,
+                store: .shared
+            )
+            showTourPhotoOutcome(photoOutcome)
             onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
         } catch {
             DiagnosticsLog.shared.record(
@@ -1059,6 +1078,13 @@ struct MultiRoomCaptureFlowView: View {
                 uploadProgress.markFailed(index: index)
             }
             self.preUploadedSession = nil
+            let photoOutcome = await RoomPhotoUploader.uploadAll(
+                captureGroupId: captureGroupId,
+                session: preUploadedSession.session,
+                floorPlan: preUploadedSession.floorPlan,
+                store: .shared
+            )
+            showTourPhotoOutcome(photoOutcome)
             onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
         }
     }

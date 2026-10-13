@@ -11,6 +11,7 @@ final class DollhouseGltfWriter
     private const FLOOR_COLOR = [0.90, 0.86, 0.78, 1.0];
     private const WALL_COLOR = [0.95, 0.94, 0.92, 1.0];
     private const MAX_OPENING_WALL_DISTANCE_M = 0.6;
+    private const MAX_TRIANGLES = 150000;
 
     public function write(array $floorPlan): string
     {
@@ -25,6 +26,12 @@ final class DollhouseGltfWriter
         $indices = [];
         foreach ($rooms as $i => $room) {
             self::appendRoom($room, $placements[$i], $positions, $normals, $colors, $indices);
+            if (intdiv(count($indices), 3) > self::MAX_TRIANGLES) {
+                throw new \InvalidArgumentException(sprintf(
+                    'This floor plan needs more than %d triangles to draw in 3D.',
+                    self::MAX_TRIANGLES
+                ));
+            }
         }
         if ($positions === []) {
             throw new \InvalidArgumentException('The captured rooms produced no usable 3D geometry.');

@@ -31,7 +31,7 @@ struct HotspotPhotoViewer: View {
 
     private var header: some View {
         HStack {
-            Text("Tour photo")
+            Text(vuuroLocalized("Tour photo"))
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.white)
             Spacer()
@@ -71,7 +71,7 @@ struct HotspotPhotoViewer: View {
                     ErrorCodeView(error: loadError)
                         .frame(maxWidth: 320)
                 }
-                Button("Try again") {
+                Button(vuuroLocalized("Try again")) {
                     Task { await loadImage() }
                 }
                 .accessibilityIdentifier("hotspotPhotoViewer.retry")

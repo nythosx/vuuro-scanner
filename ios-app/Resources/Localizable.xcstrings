@@ -1425,6 +1425,22 @@
                 }
             }
         },
+        "Tour photo": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tour photo"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Rondleidingfoto"
+                    }
+                }
+            }
+        },
         "Try again": {
             "localizations": {
                 "en": {

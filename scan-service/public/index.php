@@ -749,7 +749,18 @@ if ($method === 'GET' && ($path === '/tour' || str_starts_with($path, '/tour/'))
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: no-store');
     header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none';");
-    readfile($indexFile);
+    $tourLang = $settings->exportLanguage();
+    if (isset($_GET['lang']) && is_string($_GET['lang']) && ExportLanguage::isSupported($_GET['lang'])) {
+        $tourLang = $_GET['lang'];
+    }
+    $shellHtml = (string) @file_get_contents($indexFile);
+    $shellHtml = preg_replace(
+        '#<body(\s[^>]*)?>#',
+        '<body$1 data-tour-lang="' . htmlspecialchars($tourLang, ENT_QUOTES, 'UTF-8') . '">',
+        $shellHtml,
+        1
+    );
+    echo $shellHtml;
     return;
 }
 
@@ -2375,6 +2386,14 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/dollhouse\.
         respondError(422, 'no_floor_plan_geometry', 'This is a notes-only session, so there is no 3D geometry to draw.');
         return;
     }
+    $glbEtag = '"' . md5($session['id'] . '|' . json_encode($floorPlan['rooms'], JSON_THROW_ON_ERROR)) . '"';
+    $clientEtag = $_SERVER['HTTP_IF_NONE_MATCH'] ?? '';
+    if (is_string($clientEtag) && trim($clientEtag) === $glbEtag) {
+        http_response_code(304);
+        header('ETag: ' . $glbEtag);
+        header('Cache-Control: private, no-cache');
+        return;
+    }
     try {
         $glb = (new DollhouseGltfWriter())->write($floorPlan);
     } catch (\InvalidArgumentException $e) {
@@ -2386,6 +2405,8 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/dollhouse\.
         return;
     }
     header('Content-Type: model/gltf-binary');
+    header('ETag: ' . $glbEtag);
+    header('Cache-Control: private, no-cache');
     echo $glb;
     return;
 }
@@ -2731,10 +2752,31 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
     foreach ($photos as $photo) {
         $photosByRoom[(string) $photo['room_id']][] = $photo;
     }
+    $overlapRoomIds = [];
+    $candidates = [];
+    $candidateIndex = [];
+    foreach ($floorPlan['rooms'] as $i => $candidate) {
+        if (isset($candidate['structure_origin_m']) && is_array($candidate['structure_origin_m'])) {
+            $candidateIndex[] = $i;
+            $candidates[] = $candidate;
+        }
+    }
+    if ($candidates !== []) {
+        foreach (\VuuroScan\Export\FusionOverlapDetector::detect($candidates) as $ci) {
+            $orig = $candidateIndex[$ci] ?? null;
+            if ($orig !== null && isset($floorPlan['rooms'][$orig]['room_id'])) {
+                $overlapRoomIds[(string) $floorPlan['rooms'][$orig]['room_id']] = true;
+            }
+        }
+    }
 
     $base = publicBaseUrl();
-    $planImageUrl = $base . "/scan-sessions/{$sessionId}/export/floorplan.png?style=auto&lang=en&unit=metric";
-    $viewerUrl = $base . '/tour/' . rawurlencode($sessionId) . '?token=' . rawurlencode((string) (presented_token_with_query_fallback() ?? ''));
+    $tourLang = $settings->exportLanguage();
+    if (isset($_GET['lang']) && is_string($_GET['lang']) && ExportLanguage::isSupported($_GET['lang'])) {
+        $tourLang = $_GET['lang'];
+    }
+    $planImageUrl = $base . "/scan-sessions/{$sessionId}/export/floorplan.png?style=auto&lang=" . urlencode($tourLang) . "&unit=metric";
+    $viewerUrl = $base . '/tour/' . rawurlencode($sessionId) . '?token=' . rawurlencode((string) (presented_token_with_query_fallback() ?? '')) . '&lang=' . rawurlencode($tourLang);
 
     $rooms = [];
     foreach ($floorPlan['rooms'] as $room) {
@@ -2746,6 +2788,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
             'outline_m' => $room['outline_m'],
             'structure_origin_m' => $room['structure_origin_m'] ?? null,
             'heading_deg' => $room['heading_deg'] ?? null,
+            'overlap' => isset($overlapRoomIds[(string) $room['room_id']]),
             'photos' => $photosByRoom[(string) $room['room_id']] ?? [],
         ];
     }

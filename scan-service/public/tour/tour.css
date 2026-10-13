@@ -351,6 +351,29 @@ body {
   text-align: center;
 }
 
+.tour-minimap svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.tour-minimap-room {
+  fill: rgba(255, 255, 255, 0.28);
+  stroke: rgba(255, 255, 255, 0.7);
+  stroke-width: 1;
+}
+
+.tour-minimap-room.is-active {
+  fill: #ff8212;
+  stroke: #ffffff;
+}
+
+.tour-minimap-dot {
+  fill: #ffffff;
+  stroke: #111111;
+  stroke-width: 1.5;
+}
+
 @media (max-width: 480px) {
   .tour-top { padding: 10px 14px; gap: 10px; }
   .tour-brand { font-size: 14px; }
