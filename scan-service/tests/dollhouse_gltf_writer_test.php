@@ -132,6 +132,121 @@ try {
 }
 dg_check('an empty room list is rejected', $threw);
 
+
+echo "\n== Textured walls when a photo faces them ==\n";
+
+function dg_texture_fixture_jpeg(): string
+{
+    $img = imagecreatetruecolor(8, 8);
+    imagefilledrectangle($img, 0, 0, 8, 8, imagecolorallocate($img, 120, 80, 200));
+    ob_start();
+    imagejpeg($img, null, 80);
+    $jpeg = (string) ob_get_clean();
+    imagedestroy($img);
+    return $jpeg;
+}
+
+function dg_parse_json_chunk(string $glb): array
+{
+    $totalLen = unpack('V', substr($glb, 8, 4))[1];
+    $offset = 12;
+    while ($offset + 8 <= $totalLen) {
+        $len = unpack('V', substr($glb, $offset, 4))[1];
+        $type = unpack('V', substr($glb, $offset + 4, 4))[1];
+        if ($type === 0x4E4F534A) {
+            return (array) json_decode(substr($glb, $offset + 8, $len), true);
+        }
+        $offset += 8 + $len;
+    }
+    return [];
+}
+
+$photoJpeg = dg_texture_fixture_jpeg();
+
+$facingPlan = dg_plan([dg_room('r1', [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]])]);
+$facingPlan['rooms'][0]['heading_deg'] = 0.0;
+$facingPlan['photos_360'] = [[
+    'photo_id' => 'photo-facing',
+    'room_id' => 'r1',
+    'url' => 'test://facing.jpg',
+    'position_m' => [2.0, 0.5],
+    'heading_deg' => 0.0,
+    'captured_at' => gmdate('c'),
+]];
+
+$loaderCalledWith = [];
+$facingLoader = function (string $url) use (&$loaderCalledWith, $photoJpeg): ?string {
+    $loaderCalledWith[] = $url;
+    return $url === 'test://facing.jpg' ? $photoJpeg : null;
+};
+
+$texturedGlb = (new DollhouseGltfWriter())->write($facingPlan, $facingLoader);
+dg_check('the photo loader is asked for the room photo url', in_array('test://facing.jpg', $loaderCalledWith, true), json_encode($loaderCalledWith));
+$texturedJson = dg_parse_json_chunk($texturedGlb);
+dg_check('the textured GLB declares an images array', isset($texturedJson['images']) && count($texturedJson['images']) === 1, json_encode(array_keys($texturedJson)));
+dg_check('the textured GLB declares a textures array', isset($texturedJson['textures']) && count($texturedJson['textures']) === 1);
+dg_check('the textured GLB declares a samplers array', isset($texturedJson['samplers']) && count($texturedJson['samplers']) === 1);
+dg_check('the textured GLB has more than one primitive', isset($texturedJson['meshes'][0]['primitives']) && count($texturedJson['meshes'][0]['primitives']) > 1, (string) (isset($texturedJson['meshes'][0]['primitives']) ? count($texturedJson['meshes'][0]['primitives']) : 0));
+$hasUvAccessor = false;
+foreach ($texturedJson['accessors'] ?? [] as $acc) {
+    if (($acc['type'] ?? '') === 'VEC2') {
+        $hasUvAccessor = true;
+        break;
+    }
+}
+dg_check('the textured GLB has a VEC2 (TEXCOORD_0) accessor', $hasUvAccessor);
+$hasTexCoordPrimitive = false;
+$hasColorPrimitive = false;
+foreach ($texturedJson['meshes'][0]['primitives'] ?? [] as $prim) {
+    $attrs = $prim['attributes'] ?? [];
+    if (isset($attrs['TEXCOORD_0'])) {
+        $hasTexCoordPrimitive = true;
+    }
+    if (isset($attrs['COLOR_0'])) {
+        $hasColorPrimitive = true;
+    }
+}
+dg_check('one primitive carries TEXCOORD_0 (the textured wall)', $hasTexCoordPrimitive);
+dg_check('one primitive still carries COLOR_0 (the flat geometry)', $hasColorPrimitive);
+
+echo "\n== A photo facing away produces no textures ==\n";
+$awayPlan = dg_plan([dg_room('r1', [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]])]);
+$awayPlan['rooms'][0]['heading_deg'] = 0.0;
+$awayPlan['photos_360'] = [[
+    'photo_id' => 'photo-away',
+    'room_id' => 'r1',
+    'url' => 'test://away.jpg',
+    'position_m' => [2.0, -1.0],
+    'heading_deg' => 180.0,
+    'captured_at' => gmdate('c'),
+]];
+$awayGlb = (new DollhouseGltfWriter())->write($awayPlan, fn (string $url): ?string => $photoJpeg);
+$awayJson = dg_parse_json_chunk($awayGlb);
+dg_check('no images array when the only photo faces away from every wall', !isset($awayJson['images']), json_encode(array_keys($awayJson)));
+dg_check('the flat primitive is still emitted', isset($awayJson['meshes'][0]['primitives']) && count($awayJson['meshes'][0]['primitives']) === 1);
+
+echo "\n== A room without heading_deg falls back to flat ==\n";
+$noHeadingPlan = dg_plan([dg_room('r1', [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]])]);
+$noHeadingPlan['photos_360'] = [[
+    'photo_id' => 'photo-1',
+    'room_id' => 'r1',
+    'url' => 'test://some.jpg',
+    'position_m' => [2.0, 0.5],
+    'heading_deg' => 0.0,
+    'captured_at' => gmdate('c'),
+]];
+$noHeadingGlb = (new DollhouseGltfWriter())->write($noHeadingPlan, fn (string $url): ?string => $photoJpeg);
+$noHeadingJson = dg_parse_json_chunk($noHeadingGlb);
+dg_check('no images array when the room itself has no heading_deg', !isset($noHeadingJson['images']), json_encode(array_keys($noHeadingJson)));
+
+echo "\n== No loader means the flat path, unchanged ==\n";
+$flatOnlyPlan = dg_plan([dg_room('r1', [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]])]);
+$flatOnlyGlb = (new DollhouseGltfWriter())->write($flatOnlyPlan);
+$flatOnlyJson = dg_parse_json_chunk($flatOnlyGlb);
+dg_check('the flat path emits exactly one primitive', isset($flatOnlyJson['meshes'][0]['primitives']) && count($flatOnlyJson['meshes'][0]['primitives']) === 1);
+dg_check('the flat path has no images array', !isset($flatOnlyJson['images']));
+dg_check('the flat path has no samplers array', !isset($flatOnlyJson['samplers']));
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

@@ -13,7 +13,15 @@ final class DollhouseGltfWriter
     private const MAX_OPENING_WALL_DISTANCE_M = 0.6;
     private const MAX_TRIANGLES = 150000;
 
-    public function write(array $floorPlan): string
+    public function write(array $floorPlan, ?callable $photoLoader = null): string
+    {
+        if ($photoLoader === null) {
+            return $this->writeFlat($floorPlan);
+        }
+        return $this->writeTextured($floorPlan, $photoLoader);
+    }
+
+    private function writeFlat(array $floorPlan): string
     {
         $rooms = $floorPlan['rooms'] ?? null;
         if (!is_array($rooms) || $rooms === []) {
@@ -37,6 +45,563 @@ final class DollhouseGltfWriter
             throw new \InvalidArgumentException('The captured rooms produced no usable 3D geometry.');
         }
         return self::packGlb($positions, $normals, $colors, $indices);
+    }
+
+    private function writeTextured(array $floorPlan, callable $photoLoader): string
+    {
+        $rooms = $floorPlan['rooms'] ?? null;
+        if (!is_array($rooms) || $rooms === []) {
+            throw new \InvalidArgumentException('This session has no captured rooms to draw in 3D.');
+        }
+        $placements = self::placements($rooms);
+
+        $photosByRoom = [];
+        foreach ($floorPlan['photos_360'] ?? [] as $photo) {
+            if (!is_array($photo)) {
+                continue;
+            }
+            $roomId = $photo['room_id'] ?? null;
+            if (is_string($roomId) && $roomId !== '') {
+                $photosByRoom[$roomId][] = $photo;
+            }
+        }
+
+        $flat = [
+            'positions' => [],
+            'normals' => [],
+            'colors' => [],
+            'indices' => [],
+        ];
+        $texturedWalls = [];
+
+        foreach ($rooms as $i => $room) {
+            $roomId = is_string($room['room_id'] ?? null) ? $room['room_id'] : '';
+            $roomPhotos = $roomId === '' ? [] : ($photosByRoom[$roomId] ?? []);
+            self::appendRoomTextured($room, $placements[$i], $roomPhotos, $photoLoader, $flat, $texturedWalls);
+
+            $tris = intdiv(count($flat['indices']), 3);
+            foreach ($texturedWalls as $bucket) {
+                $tris += intdiv(count($bucket['indices']), 3);
+            }
+            if ($tris > self::MAX_TRIANGLES) {
+                throw new \InvalidArgumentException(sprintf(
+                    'This floor plan needs more than %d triangles to draw in 3D.',
+                    self::MAX_TRIANGLES
+                ));
+            }
+        }
+
+        if ($flat['positions'] === [] && $texturedWalls === []) {
+            throw new \InvalidArgumentException('The captured rooms produced no usable 3D geometry.');
+        }
+
+        return self::packGlbMulti($flat, $texturedWalls);
+    }
+
+    private static function appendRoomTextured(
+        array $room,
+        array $placement,
+        array $roomPhotos,
+        callable $photoLoader,
+        array &$flat,
+        array &$texturedWalls
+    ): void {
+        $outline = $room['outline_m'] ?? null;
+        if (!is_array($outline) || count($outline) < 3) {
+            return;
+        }
+        $outline = array_map(static fn ($p) => [(float) $p[0], (float) $p[1]], $outline);
+        [$ox, $oz] = $placement;
+        $height = isset($room['height_m']) && is_numeric($room['height_m']) && (float) $room['height_m'] > 0
+            ? (float) $room['height_m']
+            : self::DEFAULT_HEIGHT_M;
+        $openings = is_array($room['openings'] ?? null) ? $room['openings'] : [];
+        $headingDeg = isset($room['heading_deg']) && is_numeric($room['heading_deg'])
+            ? (float) $room['heading_deg']
+            : null;
+
+        $photosWithBytes = [];
+        if ($headingDeg !== null) {
+            foreach ($roomPhotos as $photo) {
+                $url = $photo['url'] ?? null;
+                if (!is_string($url) || $url === '') {
+                    continue;
+                }
+                $bytes = $photoLoader($url);
+                if (!is_string($bytes) || $bytes === '') {
+                    continue;
+                }
+                $photosWithBytes[] = [
+                    'photo_id' => (string) ($photo['photo_id'] ?? ''),
+                    'room_id' => (string) ($photo['room_id'] ?? ''),
+                    'position_m' => is_array($photo['position_m'] ?? null) ? $photo['position_m'] : [0.0, 0.0],
+                    'heading_deg' => is_numeric($photo['heading_deg'] ?? null) ? (float) $photo['heading_deg'] : null,
+                    'imageBytes' => $bytes,
+                ];
+            }
+        }
+
+        self::appendFloorToBucket($outline, $ox, $oz, $flat);
+        self::appendWallsTextured($outline, $ox, $oz, $height, $openings, $headingDeg, $photosWithBytes, $flat, $texturedWalls);
+    }
+
+    private static function appendFloorToBucket(array $outline, float $ox, float $oz, array &$flat): void
+    {
+        $triangles = self::triangulate($outline);
+        if ($triangles === []) {
+            return;
+        }
+        $base = intdiv(count($flat['positions']), 3);
+        foreach ($outline as $p) {
+            $flat['positions'][] = $p[0] + $ox;
+            $flat['positions'][] = 0.0;
+            $flat['positions'][] = $p[1] + $oz;
+            $flat['normals'][] = 0.0;
+            $flat['normals'][] = 1.0;
+            $flat['normals'][] = 0.0;
+            if (array_key_exists('colors', $flat)) {
+                foreach (self::FLOOR_COLOR as $col) {
+                    $flat['colors'][] = $col;
+                }
+            }
+        }
+        foreach ($triangles as $tri) {
+            $flat['indices'][] = $base + $tri[0];
+            $flat['indices'][] = $base + $tri[1];
+            $flat['indices'][] = $base + $tri[2];
+        }
+    }
+
+    private static function appendWallsTextured(
+        array $outline,
+        float $ox,
+        float $oz,
+        float $height,
+        array $openings,
+        ?float $headingDeg,
+        array $photosWithBytes,
+        array &$flat,
+        array &$texturedWalls
+    ): void {
+        $n = count($outline);
+        $signed = self::signedArea($outline);
+        $inward = $signed >= 0 ? 1.0 : -1.0;
+        for ($i = 0; $i < $n; $i++) {
+            $a = $outline[$i];
+            $b = $outline[($i + 1) % $n];
+            $dx = $b[0] - $a[0];
+            $dz = $b[1] - $a[1];
+            $len = sqrt($dx * $dx + $dz * $dz);
+            if ($len < 1e-6) {
+                continue;
+            }
+            $ux = $dx / $len;
+            $uz = $dz / $len;
+            $nx = -$uz * $inward;
+            $nz = $ux * $inward;
+
+            $wallPhoto = null;
+            if ($headingDeg !== null && $photosWithBytes !== []) {
+                $projectable = array_values(array_filter(
+                    $photosWithBytes,
+                    static fn (array $p): bool => $p['heading_deg'] !== null
+                ));
+                if ($projectable !== []) {
+                    $wallPhoto = WallTextureProjection::pickWallPhoto(
+                        $a,
+                        $b,
+                        [$nx, $nz],
+                        $headingDeg,
+                        $height,
+                        $projectable
+                    );
+                }
+            }
+
+            foreach (self::wallSegments($a, $len, $ux, $uz, $openings) as $seg) {
+                $pa = [$a[0] + $ux * $seg[0], $a[1] + $uz * $seg[0]];
+                $pb = [$a[0] + $ux * $seg[1], $a[1] + $uz * $seg[1]];
+                self::appendWallBoxToBuckets(
+                    $pa, $pb, $ux, $uz, $nx, $nz, $height, $ox, $oz,
+                    $wallPhoto, $headingDeg, $flat, $texturedWalls
+                );
+            }
+        }
+    }
+
+    private static function appendWallBoxToBuckets(
+        array $a,
+        array $b,
+        float $ux,
+        float $uz,
+        float $nx,
+        float $nz,
+        float $height,
+        float $ox,
+        float $oz,
+        ?array $wallPhoto,
+        ?float $headingDeg,
+        array &$flat,
+        array &$texturedWalls
+    ): void {
+        $half = self::WALL_THICKNESS_M / 2;
+        $iA0 = [$a[0] + $nx * $half + $ox, 0.0, $a[1] + $nz * $half + $oz];
+        $iB0 = [$b[0] + $nx * $half + $ox, 0.0, $b[1] + $nz * $half + $oz];
+        $iAh = [$a[0] + $nx * $half + $ox, $height, $a[1] + $nz * $half + $oz];
+        $iBh = [$b[0] + $nx * $half + $ox, $height, $b[1] + $nz * $half + $oz];
+        $oA0 = [$a[0] - $nx * $half + $ox, 0.0, $a[1] - $nz * $half + $oz];
+        $oB0 = [$b[0] - $nx * $half + $ox, 0.0, $b[1] - $nz * $half + $oz];
+        $oAh = [$a[0] - $nx * $half + $ox, $height, $a[1] - $nz * $half + $oz];
+        $oBh = [$b[0] - $nx * $half + $ox, $height, $b[1] - $nz * $half + $oz];
+
+        $uvs = null;
+        if ($wallPhoto !== null && $headingDeg !== null) {
+            $localA0 = [$a[0] + $nx * $half, 0.0, $a[1] + $nz * $half];
+            $localB0 = [$b[0] + $nx * $half, 0.0, $b[1] + $nz * $half];
+            $localBh = [$b[0] + $nx * $half, $height, $b[1] + $nz * $half];
+            $localAh = [$a[0] + $nx * $half, $height, $a[1] + $nz * $half];
+            $uvs = self::wallFaceUvs($wallPhoto, $headingDeg, [$localA0, $localB0, $localBh, $localAh]);
+        }
+
+        if ($uvs !== null) {
+            $bucket = [
+                'positions' => [],
+                'normals' => [],
+                'uvs' => [],
+                'indices' => [],
+                'imageBytes' => $wallPhoto['imageBytes'],
+                'imageMime' => 'image/jpeg',
+                'photoId' => $wallPhoto['photo_id'] ?? '',
+            ];
+            self::appendQuadToBucket($bucket, [$iA0, $iB0, $iBh, $iAh], [$nx, 0.0, $nz], self::WALL_COLOR, $uvs);
+            $texturedWalls[] = $bucket;
+        } else {
+            self::appendQuadToBucket($flat, [$iA0, $iB0, $iBh, $iAh], [$nx, 0.0, $nz], self::WALL_COLOR, null);
+        }
+
+        self::appendQuadToBucket($flat, [$oA0, $oB0, $oBh, $oAh], [-$nx, 0.0, -$nz], self::WALL_COLOR, null);
+        self::appendQuadToBucket($flat, [$iA0, $oA0, $oB0, $iB0], [0.0, -1.0, 0.0], self::WALL_COLOR, null);
+        self::appendQuadToBucket($flat, [$iAh, $oAh, $oBh, $iBh], [0.0, 1.0, 0.0], self::WALL_COLOR, null);
+        self::appendQuadToBucket($flat, [$iA0, $oA0, $oAh, $iAh], [-$ux, 0.0, -$uz], self::WALL_COLOR, null);
+        self::appendQuadToBucket($flat, [$iB0, $oB0, $oBh, $iBh], [$ux, 0.0, $uz], self::WALL_COLOR, null);
+    }
+
+    private static function wallFaceUvs(array $photo, float $roomHeadingDeg, array $corners): ?array
+    {
+        $photoHeading = $photo['heading_deg'] ?? null;
+        if (!is_numeric($photoHeading)) {
+            return null;
+        }
+        $uvs = [];
+        foreach ($corners as $c) {
+            $uv = WallTextureProjection::projectPointRaw($photo, $roomHeadingDeg, $c[0], $c[1], $c[2]);
+            if ($uv === null) {
+                return null;
+            }
+            $uvs[] = [
+                max(0.0, min(1.0, $uv[0])),
+                max(0.0, min(1.0, $uv[1])),
+            ];
+        }
+        return $uvs;
+    }
+
+    private static function appendQuadToBucket(
+        array &$bucket,
+        array $corners,
+        array $normal,
+        array $color,
+        ?array $uvs
+    ): void {
+        $base = intdiv(count($bucket['positions']), 3);
+        for ($i = 0; $i < 4; $i++) {
+            $c = $corners[$i];
+            $bucket['positions'][] = $c[0];
+            $bucket['positions'][] = $c[1];
+            $bucket['positions'][] = $c[2];
+            $bucket['normals'][] = $normal[0];
+            $bucket['normals'][] = $normal[1];
+            $bucket['normals'][] = $normal[2];
+            if (array_key_exists('colors', $bucket)) {
+                foreach ($color as $col) {
+                    $bucket['colors'][] = $col;
+                }
+            }
+            if (array_key_exists('uvs', $bucket)) {
+                $uv = $uvs[$i] ?? [0.0, 0.0];
+                $bucket['uvs'][] = $uv[0];
+                $bucket['uvs'][] = $uv[1];
+            }
+        }
+        $bucket['indices'][] = $base;
+        $bucket['indices'][] = $base + 1;
+        $bucket['indices'][] = $base + 2;
+        $bucket['indices'][] = $base;
+        $bucket['indices'][] = $base + 2;
+        $bucket['indices'][] = $base + 3;
+    }
+
+    private static function packGlbMulti(array $flat, array $texturedWalls): string
+    {
+        $bin = '';
+        $bufferViews = [];
+        $accessors = [];
+        $images = [];
+        $textures = [];
+        $materials = [];
+        $primitives = [];
+        $samplers = [[
+            'magFilter' => 9729,
+            'minFilter' => 9987,
+            'wrapS' => 33071,
+            'wrapT' => 33071,
+        ]];
+
+        if ($flat['positions'] !== []) {
+            $flatAcc = self::appendBucketAccessors($flat, false, $bin, $bufferViews, $accessors);
+            $materials[] = [
+                'name' => 'flat',
+                'pbrMetallicRoughness' => [
+                    'baseColorFactor' => [1.0, 1.0, 1.0, 1.0],
+                    'metallicFactor' => 0.0,
+                    'roughnessFactor' => 0.9,
+                ],
+                'doubleSided' => false,
+            ];
+            $primitives[] = [
+                'attributes' => [
+                    'POSITION' => $flatAcc['pos'],
+                    'NORMAL' => $flatAcc['nrm'],
+                    'COLOR_0' => $flatAcc['col'],
+                ],
+                'indices' => $flatAcc['idx'],
+                'mode' => 4,
+                'material' => count($materials) - 1,
+            ];
+        }
+
+        foreach ($texturedWalls as $bucket) {
+            if ($bucket['positions'] === []) {
+                continue;
+            }
+            $imageBytes = (string) $bucket['imageBytes'];
+            $imageLength = strlen($imageBytes);
+            $alignedImageLength = self::align4($imageLength);
+            $pad = $alignedImageLength - $imageLength;
+            $binPad = (4 - (strlen($bin) % 4)) % 4;
+            $bin .= str_repeat("\0", $binPad);
+            $imageOffset = strlen($bin);
+            $bin .= $imageBytes;
+            $bin .= str_repeat("\0", $pad);
+            $imageViewIndex = count($bufferViews);
+            $bufferViews[] = [
+                'buffer' => 0,
+                'byteOffset' => $imageOffset,
+                'byteLength' => $alignedImageLength,
+            ];
+            $imageIndex = count($images);
+            $images[] = [
+                'bufferView' => $imageViewIndex,
+                'mimeType' => (string) $bucket['imageMime'],
+            ];
+            $textureIndex = count($textures);
+            $textures[] = [
+                'sampler' => 0,
+                'source' => $imageIndex,
+            ];
+
+            $texAcc = self::appendBucketAccessors($bucket, true, $bin, $bufferViews, $accessors);
+            $materials[] = [
+                'name' => 'textured-' . (string) ($bucket['photoId'] ?? 'wall'),
+                'pbrMetallicRoughness' => [
+                    'baseColorFactor' => [1.0, 1.0, 1.0, 1.0],
+                    'baseColorTexture' => ['index' => $textureIndex],
+                    'metallicFactor' => 0.0,
+                    'roughnessFactor' => 0.9,
+                ],
+                'doubleSided' => false,
+            ];
+            $primitives[] = [
+                'attributes' => [
+                    'POSITION' => $texAcc['pos'],
+                    'NORMAL' => $texAcc['nrm'],
+                    'TEXCOORD_0' => $texAcc['uv'],
+                ],
+                'indices' => $texAcc['idx'],
+                'mode' => 4,
+                'material' => count($materials) - 1,
+            ];
+        }
+
+        if ($primitives === []) {
+            throw new \InvalidArgumentException('The captured rooms produced no usable 3D geometry.');
+        }
+
+        $binPad = (4 - (strlen($bin) % 4)) % 4;
+        $bin .= str_repeat("\0", $binPad);
+
+        $gltf = [
+            'asset' => ['version' => '2.0', 'generator' => 'Vuuro Scan'],
+            'scene' => 0,
+            'scenes' => [['nodes' => [0]]],
+            'nodes' => [['mesh' => 0]],
+            'meshes' => [['primitives' => $primitives]],
+            'accessors' => $accessors,
+            'bufferViews' => $bufferViews,
+            'buffers' => [['byteLength' => strlen($bin)]],
+            'materials' => $materials,
+        ];
+        if ($images !== []) {
+            $gltf['images'] = $images;
+            $gltf['textures'] = $textures;
+            $gltf['samplers'] = $samplers;
+        }
+
+        $json = json_encode($gltf, JSON_UNESCAPED_SLASHES);
+        $jsonPad = (4 - (strlen($json) % 4)) % 4;
+        $json .= str_repeat(' ', $jsonPad);
+
+        $jsonLen = strlen($json);
+        $binLen = strlen($bin);
+        $totalLen = 12 + 8 + $jsonLen + 8 + $binLen;
+
+        $glb = pack('V3', 0x46546C67, 2, $totalLen);
+        $glb .= pack('V2', $jsonLen, 0x4E4F534A) . $json;
+        $glb .= pack('V2', $binLen, 0x004E4942) . $bin;
+        return $glb;
+    }
+
+    private static function appendBucketAccessors(
+        array $bucket,
+        bool $isTextured,
+        string &$bin,
+        array &$bufferViews,
+        array &$accessors
+    ): array {
+        $vertexCount = intdiv(count($bucket['positions']), 3);
+        $minPos = [INF, INF, INF];
+        $maxPos = [-INF, -INF, -INF];
+        for ($i = 0; $i < count($bucket['positions']); $i += 3) {
+            for ($k = 0; $k < 3; $k++) {
+                $v = (float) $bucket['positions'][$i + $k];
+                if ($v < $minPos[$k]) { $minPos[$k] = $v; }
+                if ($v > $maxPos[$k]) { $maxPos[$k] = $v; }
+            }
+        }
+
+        $posData = pack('f*', ...$bucket['positions']);
+        $binPad = (4 - (strlen($bin) % 4)) % 4;
+        $bin .= str_repeat("\0", $binPad);
+        $posOffset = strlen($bin);
+        $bin .= $posData;
+        $posViewIndex = count($bufferViews);
+        $bufferViews[] = [
+            'buffer' => 0,
+            'byteOffset' => $posOffset,
+            'byteLength' => strlen($posData),
+            'target' => 34962,
+        ];
+        $posAcc = count($accessors);
+        $accessors[] = [
+            'bufferView' => $posViewIndex,
+            'componentType' => 5126,
+            'count' => $vertexCount,
+            'type' => 'VEC3',
+            'min' => $minPos,
+            'max' => $maxPos,
+        ];
+
+        $nrmData = pack('f*', ...$bucket['normals']);
+        $binPad = (4 - (strlen($bin) % 4)) % 4;
+        $bin .= str_repeat("\0", $binPad);
+        $nrmOffset = strlen($bin);
+        $bin .= $nrmData;
+        $nrmViewIndex = count($bufferViews);
+        $bufferViews[] = [
+            'buffer' => 0,
+            'byteOffset' => $nrmOffset,
+            'byteLength' => strlen($nrmData),
+            'target' => 34962,
+        ];
+        $nrmAcc = count($accessors);
+        $accessors[] = [
+            'bufferView' => $nrmViewIndex,
+            'componentType' => 5126,
+            'count' => $vertexCount,
+            'type' => 'VEC3',
+        ];
+
+        $colAcc = null;
+        $uvAcc = null;
+        if ($isTextured) {
+            $uvData = pack('f*', ...$bucket['uvs']);
+            $binPad = (4 - (strlen($bin) % 4)) % 4;
+            $bin .= str_repeat("\0", $binPad);
+            $uvOffset = strlen($bin);
+            $bin .= $uvData;
+            $uvViewIndex = count($bufferViews);
+            $bufferViews[] = [
+                'buffer' => 0,
+                'byteOffset' => $uvOffset,
+                'byteLength' => strlen($uvData),
+                'target' => 34962,
+            ];
+            $uvAcc = count($accessors);
+            $accessors[] = [
+                'bufferView' => $uvViewIndex,
+                'componentType' => 5126,
+                'count' => $vertexCount,
+                'type' => 'VEC2',
+            ];
+        } else {
+            $colData = pack('f*', ...$bucket['colors']);
+            $binPad = (4 - (strlen($bin) % 4)) % 4;
+            $bin .= str_repeat("\0", $binPad);
+            $colOffset = strlen($bin);
+            $bin .= $colData;
+            $colViewIndex = count($bufferViews);
+            $bufferViews[] = [
+                'buffer' => 0,
+                'byteOffset' => $colOffset,
+                'byteLength' => strlen($colData),
+                'target' => 34962,
+            ];
+            $colAcc = count($accessors);
+            $accessors[] = [
+                'bufferView' => $colViewIndex,
+                'componentType' => 5126,
+                'count' => $vertexCount,
+                'type' => 'VEC4',
+            ];
+        }
+
+        $idxData = pack('V*', ...$bucket['indices']);
+        $binPad = (4 - (strlen($bin) % 4)) % 4;
+        $bin .= str_repeat("\0", $binPad);
+        $idxOffset = strlen($bin);
+        $bin .= $idxData;
+        $idxViewIndex = count($bufferViews);
+        $bufferViews[] = [
+            'buffer' => 0,
+            'byteOffset' => $idxOffset,
+            'byteLength' => strlen($idxData),
+            'target' => 34963,
+        ];
+        $idxAcc = count($accessors);
+        $accessors[] = [
+            'bufferView' => $idxViewIndex,
+            'componentType' => 5125,
+            'count' => count($bucket['indices']),
+            'type' => 'SCALAR',
+        ];
+
+        return [
+            'pos' => $posAcc,
+            'nrm' => $nrmAcc,
+            'col' => $colAcc,
+            'uv' => $uvAcc,
+            'idx' => $idxAcc,
+        ];
     }
 
     private static function placements(array $rooms): array

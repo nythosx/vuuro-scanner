@@ -9,6 +9,7 @@ enum PerfSpan: String, CaseIterable {
     case roomUpload = "room_upload"
     case resultPlanImage = "result_plan_image"
     case dollhouseBuild = "dollhouse_build"
+    case dollhouseTexturePrefetch = "dollhouse_texture_prefetch"
     case usdzExport = "usdz_export"
 }
 

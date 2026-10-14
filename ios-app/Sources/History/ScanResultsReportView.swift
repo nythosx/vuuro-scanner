@@ -93,6 +93,7 @@ struct ScanResultsReportView: View {
                                 DollhouseContainerView(
                                     rooms: floorPlan.rooms,
                                     photos360: floorPlan.photos360 ?? [],
+                                    session: entry.asResumableSession(),
                                     onShowPlan: { reportUses3D = false },
                                     onHotspotTapped: { photoId in
                                         if let photo = floorPlan.photos360?.first(where: { $0.photoId == photoId }) {
@@ -278,6 +279,7 @@ struct ScanResultsReportView: View {
                 rooms: floorPlan?.rooms ?? [],
                 title: entry.nickname?.isEmpty == false ? entry.nickname! : entry.propertyId,
                 photos360: floorPlan?.photos360 ?? [],
+                session: entry.asResumableSession(),
                 onClose: { showFullScreen3D = false },
                 onHotspotTapped: { photoId in
                     if let photo = floorPlan?.photos360?.first(where: { $0.photoId == photoId }) {

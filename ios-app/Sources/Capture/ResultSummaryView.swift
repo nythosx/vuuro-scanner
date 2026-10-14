@@ -125,6 +125,7 @@ struct ResultSummaryView: View {
                             DollhouseContainerView(
                                 rooms: currentFloorPlan.rooms,
                                 photos360: currentFloorPlan.photos360 ?? [],
+                                session: session,
                                 onShowPlan: { resultUses3D = false },
                                 onHotspotTapped: { photoId in
                                     if let photo = currentFloorPlan.photos360?.first(where: { $0.photoId == photoId }) {
@@ -313,6 +314,7 @@ struct ResultSummaryView: View {
                 rooms: currentFloorPlan.rooms,
                 title: session.propertyId,
                 photos360: currentFloorPlan.photos360 ?? [],
+                session: session,
                 onClose: { showFullScreen3D = false },
                 onHotspotTapped: { photoId in
                     if let photo = currentFloorPlan.photos360?.first(where: { $0.photoId == photoId }) {

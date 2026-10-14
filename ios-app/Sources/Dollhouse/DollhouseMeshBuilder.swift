@@ -127,7 +127,7 @@ struct DollhouseMeshBuilder {
 
     // MARK: - Entrypoints
 
-    static func build(rooms: [FloorPlan.Room], configuration: DollhouseBuildConfiguration = DollhouseBuildConfiguration(), photos360: [FloorPlan.Photo360] = []) throws -> DollhouseScene {
+    static func build(rooms: [FloorPlan.Room], configuration: DollhouseBuildConfiguration = DollhouseBuildConfiguration(), photos360: [FloorPlan.Photo360] = [], photoBytesByURL: [String: Data] = [:]) throws -> DollhouseScene {
         guard !rooms.isEmpty else { throw DollhouseMeshBuilderError.noRooms }
 
         let largePlan = isLargePlan(rooms)
@@ -169,7 +169,8 @@ struct DollhouseMeshBuilder {
                     sectionOrigin: sectionOrigin,
                     skipEdges: sectionSharedEdges.skip[room.roomId] ?? [],
                     interiorEdges: sectionSharedEdges.interior[room.roomId] ?? [],
-                    photos360: photos360ByRoom[room.roomId] ?? []
+                    photos360: photos360ByRoom[room.roomId] ?? [],
+                    photoBytesByURL: photoBytesByURL
                 )
                 if result.estimatedHeight { usedEstimatedHeight = true }
                 if result.degenerate { degenerateRoomCount += 1 }
@@ -447,7 +448,8 @@ struct DollhouseMeshBuilder {
         sectionOrigin: SIMD3<Float>,
         skipEdges: Set<Int>,
         interiorEdges: Set<Int>,
-        photos360: [FloorPlan.Photo360] = []
+        photos360: [FloorPlan.Photo360] = [],
+        photoBytesByURL: [String: Data] = [:]
     ) -> RoomBuildResult {
         guard outline.count >= 3 else {
             return RoomBuildResult(meshes: [], estimatedHeight: false, degenerate: true)
@@ -471,6 +473,7 @@ struct DollhouseMeshBuilder {
 
         let roomOrigin = SIMD3<Float>(Float(room.structureOriginM?.first ?? 0), 0, Float(room.structureOriginM?.dropFirst().first ?? 0))
         let base = sectionOrigin + roomOrigin
+        let roomHeadingDeg: Float? = room.headingDeg.map { Float($0) }
 
         let roomKey = room.roomId
         let roomPath = DollhouseNodePath(["Scene", "Section", "Room-\(roomKey)"])
@@ -512,13 +515,27 @@ struct DollhouseMeshBuilder {
             let inwardNormal2D = SIMD2<Float>(-unit.y * inwardSign, unit.x * inwardSign)
             let thickness = interiorEdges.contains(index) ? DollhouseConstants.interiorWallThicknessM : DollhouseConstants.exteriorWallThicknessM
 
+            let wallPhoto: FloorPlan.Photo360?
+            if let roomHeadingDeg, !photos360.isEmpty, !configuration.performanceMode {
+                wallPhoto = WallTextureProjection.pickWallPhoto(
+                    wallA: a,
+                    wallB: b,
+                    inwardNormal: inwardNormal2D,
+                    roomHeadingDeg: roomHeadingDeg,
+                    wallHeightM: wallHeight,
+                    photos: photos360
+                )
+            } else {
+                wallPhoto = nil
+            }
+
             let openings = planOpenings(on: room, edgeIndex: index, a: a, b: b, unit: unit, length: length, roomHeight: wallHeight)
             let segments = subdivideEdge(edgeLength: length, roomHeight: wallHeight, openings: openings)
 
             for (segmentIndex, segment) in segments.enumerated() {
                 let segA = a + unit * segment.t0
                 let segB = a + unit * segment.t1
-                let mesh = makeWallSegment(
+                let meshList = makeWallSegments(
                     a: segA,
                     b: segB,
                     y0: segment.y0,
@@ -530,9 +547,12 @@ struct DollhouseMeshBuilder {
                     inwardNormal2D: inwardNormal2D,
                     thickness: thickness,
                     extendAtStart: segment.t0 <= 0.0001,
-                    extendAtEnd: segment.t1 >= length - 0.0001
+                    extendAtEnd: segment.t1 >= length - 0.0001,
+                    wallPhoto: wallPhoto,
+                    roomHeadingDeg: roomHeadingDeg,
+                    photoBytesByURL: photoBytesByURL
                 )
-                meshes.append(mesh)
+                meshes.append(contentsOf: meshList)
             }
 
             for opening in openings {
@@ -690,7 +710,13 @@ struct DollhouseMeshBuilder {
 
     // MARK: - Mesh helpers
 
-    private static func appendWallFace(vertices: inout [DollhouseVertex], indices: inout [UInt32], corners: [SIMD3<Float>], expectedNormal: SIMD3<Float>) {
+    private static func appendWallFace(
+        vertices: inout [DollhouseVertex],
+        indices: inout [UInt32],
+        corners: [SIMD3<Float>],
+        expectedNormal: SIMD3<Float>,
+        uvs: [SIMD2<Float>]? = nil
+    ) {
         guard corners.count == 4 else { return }
         let p0 = corners[0]
         let p1 = corners[1]
@@ -699,19 +725,28 @@ struct DollhouseMeshBuilder {
         let computed = simd_cross(p1 - p0, p2 - p0)
         let normalized = simd_normalize(expectedNormal)
         let ordered: [SIMD3<Float>]
+        let reorder: [Int]
         if simd_dot(computed, expectedNormal) < 0 {
             ordered = [p0, p3, p2, p1]
+            reorder = [0, 3, 2, 1]
         } else {
             ordered = [p0, p1, p2, p3]
+            reorder = [0, 1, 2, 3]
+        }
+        let orderedUVs: [SIMD2<Float>]?
+        if let uvs, uvs.count == 4 {
+            orderedUVs = reorder.map { uvs[$0] }
+        } else {
+            orderedUVs = nil
         }
         let baseIndex = UInt32(vertices.count)
-        for corner in ordered {
-            vertices.append(DollhouseVertex(position: corner, normal: normalized))
+        for (i, corner) in ordered.enumerated() {
+            vertices.append(DollhouseVertex(position: corner, normal: normalized, uv: orderedUVs?[i]))
         }
         indices.append(contentsOf: [baseIndex, baseIndex + 1, baseIndex + 2, baseIndex, baseIndex + 2, baseIndex + 3])
     }
 
-    private static func makeWallSegment(
+    private static func makeWallSegments(
         a: SIMD2<Float>,
         b: SIMD2<Float>,
         y0: Float,
@@ -723,12 +758,15 @@ struct DollhouseMeshBuilder {
         inwardNormal2D: SIMD2<Float>,
         thickness: Float,
         extendAtStart: Bool,
-        extendAtEnd: Bool
-    ) -> DollhouseMesh {
+        extendAtEnd: Bool,
+        wallPhoto: FloorPlan.Photo360?,
+        roomHeadingDeg: Float?,
+        photoBytesByURL: [String: Data]
+    ) -> [DollhouseMesh] {
         let direction = b - a
         let length = simd_length(direction)
         if length < 1e-4 || y1 - y0 < 1e-4 {
-            return DollhouseMesh(vertices: [], indices: [], material: material, layer: layer, path: path)
+            return []
         }
         let unit = direction / length
         let halfThickness = thickness / 2
@@ -759,19 +797,71 @@ struct DollhouseMeshBuilder {
         let alongNormal = SIMD3<Float>(unit.x, 0, unit.y)
         let negAlongNormal = -alongNormal
 
-        var vertices: [DollhouseVertex] = []
-        var indices: [UInt32] = []
-        appendWallFace(vertices: &vertices, indices: &indices, corners: [w0, w1, w2, w3], expectedNormal: inward3D)
-        appendWallFace(vertices: &vertices, indices: &indices, corners: [o0, o1, o2, o3], expectedNormal: outward3D)
-        if extendAtStart {
-            appendWallFace(vertices: &vertices, indices: &indices, corners: [w0, o0, o1, w1], expectedNormal: downNormal)
-            appendWallFace(vertices: &vertices, indices: &indices, corners: [w3, w2, o2, o3], expectedNormal: upNormal)
-        } else {
-            appendWallFace(vertices: &vertices, indices: &indices, corners: [w0, o0, o1, w1], expectedNormal: negAlongNormal)
-            appendWallFace(vertices: &vertices, indices: &indices, corners: [w3, w2, o2, o3], expectedNormal: alongNormal)
+        var wallImageBytes: Data? = nil
+        var inwardUVs: [SIMD2<Float>]? = nil
+        if let wallPhoto, let roomHeadingDeg,
+           let bytes = photoBytesByURL[wallPhoto.url], !bytes.isEmpty {
+            func wallLocal(_ p: SIMD2<Float>, _ y: Float) -> SIMD3<Float> {
+                SIMD3<Float>(p.x, y, p.y)
+            }
+            let lw0 = wallLocal(innerA, y0)
+            let lw1 = wallLocal(innerB, y0)
+            let lw2 = wallLocal(innerB, y1)
+            let lw3 = wallLocal(innerA, y1)
+            if let u0 = WallTextureProjection.projectPointRaw(photo: wallPhoto, roomHeadingDeg: roomHeadingDeg, point: lw0),
+               let u1 = WallTextureProjection.projectPointRaw(photo: wallPhoto, roomHeadingDeg: roomHeadingDeg, point: lw1),
+               let u2 = WallTextureProjection.projectPointRaw(photo: wallPhoto, roomHeadingDeg: roomHeadingDeg, point: lw2),
+               let u3 = WallTextureProjection.projectPointRaw(photo: wallPhoto, roomHeadingDeg: roomHeadingDeg, point: lw3) {
+                let clampUV = { (uv: SIMD2<Float>) -> SIMD2<Float> in
+                    SIMD2<Float>(max(0, min(1, uv.x)), max(0, min(1, uv.y)))
+                }
+                inwardUVs = [clampUV(u0), clampUV(u1), clampUV(u2), clampUV(u3)]
+                wallImageBytes = bytes
+            }
         }
 
-        return DollhouseMesh(vertices: vertices, indices: indices, material: material, layer: layer, path: path)
+        var sideVerts: [DollhouseVertex] = []
+        var sideIndices: [UInt32] = []
+        if extendAtStart {
+            appendWallFace(vertices: &sideVerts, indices: &sideIndices, corners: [w0, o0, o1, w1], expectedNormal: downNormal)
+            appendWallFace(vertices: &sideVerts, indices: &sideIndices, corners: [w3, w2, o2, o3], expectedNormal: upNormal)
+        } else {
+            appendWallFace(vertices: &sideVerts, indices: &sideIndices, corners: [w0, o0, o1, w1], expectedNormal: negAlongNormal)
+            appendWallFace(vertices: &sideVerts, indices: &sideIndices, corners: [w3, w2, o2, o3], expectedNormal: alongNormal)
+        }
+
+        if let inwardUVs, let wallImageBytes {
+            var texVerts: [DollhouseVertex] = []
+            var texIndices: [UInt32] = []
+            appendWallFace(vertices: &texVerts, indices: &texIndices, corners: [w0, w1, w2, w3], expectedNormal: inward3D, uvs: inwardUVs)
+            let textureMaterial = DollhouseMaterial(
+                name: material.name + "-textured",
+                color: material.color,
+                roughness: material.roughness,
+                metalness: material.metalness,
+                imageData: wallImageBytes
+            )
+            let texturedMesh = DollhouseMesh(vertices: texVerts, indices: texIndices, material: textureMaterial, layer: layer, path: path.appending("Inward"))
+
+            var flatVerts: [DollhouseVertex] = []
+            var flatIndices: [UInt32] = []
+            appendWallFace(vertices: &flatVerts, indices: &flatIndices, corners: [o0, o1, o2, o3], expectedNormal: outward3D)
+            let offset = UInt32(flatVerts.count)
+            flatVerts.append(contentsOf: sideVerts)
+            flatIndices.append(contentsOf: sideIndices.map { $0 + offset })
+            let flatMesh = DollhouseMesh(vertices: flatVerts, indices: flatIndices, material: material, layer: layer, path: path)
+
+            return [texturedMesh, flatMesh]
+        }
+
+        var flatVerts: [DollhouseVertex] = []
+        var flatIndices: [UInt32] = []
+        appendWallFace(vertices: &flatVerts, indices: &flatIndices, corners: [w0, w1, w2, w3], expectedNormal: inward3D)
+        appendWallFace(vertices: &flatVerts, indices: &flatIndices, corners: [o0, o1, o2, o3], expectedNormal: outward3D)
+        let offset = UInt32(flatVerts.count)
+        flatVerts.append(contentsOf: sideVerts)
+        flatIndices.append(contentsOf: sideIndices.map { $0 + offset })
+        return [DollhouseMesh(vertices: flatVerts, indices: flatIndices, material: material, layer: layer, path: path)]
     }
 
     private static func makeOpeningFrame(

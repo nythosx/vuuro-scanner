@@ -48,6 +48,7 @@ $groups = [
             ['verify_export_language.php'],
             ['verify_photo_360.php'],
             ['verify_tour.php'],
+            ['verify_dollhouse_texturing.php'],
         ],
     ],
     [

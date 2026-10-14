@@ -62,28 +62,41 @@ enum DollhouseSceneBuilder {
         let positionSource = SCNGeometrySource(vertices: mesh.vertices.map { SCNVector3($0.position.x, $0.position.y, $0.position.z) })
         let normalSource = SCNGeometrySource(normals: mesh.vertices.map { SCNVector3($0.normal.x, $0.normal.y, $0.normal.z) })
         let element = SCNGeometryElement(indices: mesh.indices, primitiveType: .triangles)
-        let geometry = SCNGeometry(sources: [positionSource, normalSource], elements: [element])
 
-        var color = mesh.material.color
-        if mesh.material == DollhouseMaterial.exteriorWall {
-            color = theme.exteriorWallColor
-        } else if mesh.material == DollhouseMaterial.interiorWall {
-            color = theme.interiorWallColor
-        } else if mesh.material == DollhouseMaterial.door {
-            color = theme.doorColor
-        } else if mesh.material == DollhouseMaterial.window {
-            color = theme.windowColor
+        var sources: [SCNGeometrySource] = [positionSource, normalSource]
+        if mesh.vertices.allSatisfy({ $0.uv != nil }) {
+            let uvSource = SCNGeometrySource(textureCoordinates: mesh.vertices.map {
+                CGPoint(x: CGFloat($0.uv!.x), y: CGFloat($0.uv!.y))
+            })
+            sources.append(uvSource)
         }
+        let geometry = SCNGeometry(sources: sources, elements: [element])
 
         let material = SCNMaterial()
         material.name = mesh.material.name
         material.lightingModel = .physicallyBased
-        material.diffuse.contents = UIColor(
-            red: CGFloat(color.x),
-            green: CGFloat(color.y),
-            blue: CGFloat(color.z),
-            alpha: CGFloat(color.w)
-        )
+        if let imageData = mesh.material.imageData, let image = UIImage(data: imageData) {
+            material.diffuse.contents = image
+            material.diffuse.wrapS = .clamp
+            material.diffuse.wrapT = .clamp
+        } else {
+            var color = mesh.material.color
+            if mesh.material == DollhouseMaterial.exteriorWall {
+                color = theme.exteriorWallColor
+            } else if mesh.material == DollhouseMaterial.interiorWall {
+                color = theme.interiorWallColor
+            } else if mesh.material == DollhouseMaterial.door {
+                color = theme.doorColor
+            } else if mesh.material == DollhouseMaterial.window {
+                color = theme.windowColor
+            }
+            material.diffuse.contents = UIColor(
+                red: CGFloat(color.x),
+                green: CGFloat(color.y),
+                blue: CGFloat(color.z),
+                alpha: CGFloat(color.w)
+            )
+        }
         material.roughness.contents = NSNumber(value: mesh.material.roughness)
         material.metalness.contents = NSNumber(value: mesh.material.metalness)
         material.isDoubleSided = false

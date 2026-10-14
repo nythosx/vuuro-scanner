@@ -4,6 +4,7 @@ import simd
 struct DollhouseVertex: Equatable {
     let position: SIMD3<Float>
     let normal: SIMD3<Float>
+    var uv: SIMD2<Float>? = nil
 }
 
 struct DollhouseMaterial: Equatable {
@@ -11,6 +12,7 @@ struct DollhouseMaterial: Equatable {
     let color: SIMD4<Float>
     let roughness: Float
     let metalness: Float
+    var imageData: Data? = nil
 
     static let exteriorWall = DollhouseMaterial(name: "exteriorWall", color: SIMD4(0.58, 0.56, 0.53, 1.0), roughness: 0.9, metalness: 0.0)
     static let interiorWall = DollhouseMaterial(name: "interiorWall", color: SIMD4(0.84, 0.83, 0.80, 1.0), roughness: 0.9, metalness: 0.0)

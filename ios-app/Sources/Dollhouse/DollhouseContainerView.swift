@@ -4,6 +4,7 @@ import SwiftUI
 struct DollhouseContainerView: View {
     let rooms: [FloorPlan.Room]
     var photos360: [FloorPlan.Photo360] = []
+    var session: ScanSessionResponse? = nil
     var onShowPlan: (() -> Void)? = nil
     var onHotspotTapped: ((String) -> Void)? = nil
 
@@ -16,6 +17,9 @@ struct DollhouseContainerView: View {
     @State private var isLoading = true
     @State private var buildToken = UUID()
     @State private var buildTask: Task<Void, Never>?
+    @State private var photoBytesByURL: [String: Data] = [:]
+
+    private let client = ScanServiceClient()
 
     private var mode: DollhouseMode {
         DollhouseMode(rawValue: modeRaw) ?? .cutaway
@@ -116,11 +120,37 @@ struct DollhouseContainerView: View {
             showFurniture: showFurniture,
             performanceMode: isLargePlan
         )
-        PerfTrace.begin(.dollhouseBuild)
         buildTask = Task {
+            if let session, !configuration.performanceMode {
+                let missing = photos360Snapshot.filter { photoBytesByURL[$0.url] == nil }
+                if !missing.isEmpty {
+                    PerfTrace.begin(.dollhouseTexturePrefetch)
+                    let fetched = await withTaskGroup(of: (String, Data)?.self) { group in
+                        for photo in missing {
+                            group.addTask {
+                                guard let data = try? await client.fetchPhotoData(url: photo.url, accessToken: session.accessToken) else {
+                                    return nil
+                                }
+                                return (photo.url, data)
+                            }
+                        }
+                        var results: [(String, Data)] = []
+                        for await result in group {
+                            if let result { results.append(result) }
+                        }
+                        return results
+                    }
+                    for (url, data) in fetched {
+                        photoBytesByURL[url] = data
+                    }
+                    PerfTrace.end(.dollhouseTexturePrefetch, detail: "\(fetched.count) of \(missing.count) photos")
+                }
+            }
+            let bytesSnapshot = photoBytesByURL
+            PerfTrace.begin(.dollhouseBuild)
             do {
                 let built = try await Task.detached(priority: .userInitiated) {
-                    let dollhouse = try DollhouseMeshBuilder.build(rooms: roomsSnapshot, configuration: configuration, photos360: photos360Snapshot)
+                    let dollhouse = try DollhouseMeshBuilder.build(rooms: roomsSnapshot, configuration: configuration, photos360: photos360Snapshot, photoBytesByURL: bytesSnapshot)
                     return BuiltDollhouse(scene: dollhouse, scnScene: DollhouseSceneBuilder.buildScene(from: dollhouse))
                 }.value
                 guard !Task.isCancelled else { return }

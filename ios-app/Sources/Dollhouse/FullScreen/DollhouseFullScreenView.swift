@@ -5,6 +5,7 @@ struct DollhouseFullScreenView: View {
     let rooms: [FloorPlan.Room]
     let title: String
     let photos360: [FloorPlan.Photo360]
+    var session: ScanSessionResponse? = nil
     let onClose: () -> Void
     var onHotspotTapped: ((String) -> Void)? = nil
 
@@ -21,6 +22,9 @@ struct DollhouseFullScreenView: View {
     @State private var isLoading = true
     @State private var buildToken = UUID()
     @State private var buildTask: Task<Void, Never>?
+    @State private var photoBytesByURL: [String: Data] = [:]
+
+    private let client = ScanServiceClient()
 
     private var theme: DollhouseTheme {
         DollhouseTheme(rawValue: themeRaw) ?? .light
@@ -128,6 +132,30 @@ struct DollhouseFullScreenView: View {
         let largePlan = DollhouseMeshBuilder.isLargePlan(roomsForBuild)
 
         buildTask = Task {
+            if let session, !largePlan {
+                let missing = photos360.filter { photoBytesByURL[$0.url] == nil }
+                if !missing.isEmpty {
+                    let fetched = await withTaskGroup(of: (String, Data)?.self) { group in
+                        for photo in missing {
+                            group.addTask {
+                                guard let data = try? await client.fetchPhotoData(url: photo.url, accessToken: session.accessToken) else {
+                                    return nil
+                                }
+                                return (photo.url, data)
+                            }
+                        }
+                        var results: [(String, Data)] = []
+                        for await result in group {
+                            if let result { results.append(result) }
+                        }
+                        return results
+                    }
+                    for (url, data) in fetched {
+                        photoBytesByURL[url] = data
+                    }
+                }
+            }
+            let bytesSnapshot = photoBytesByURL
             do {
                 let built = try await Task.detached(priority: .userInitiated) {
                     let configuration = DollhouseBuildConfiguration(
@@ -135,7 +163,7 @@ struct DollhouseFullScreenView: View {
                         showFurniture: visibilityForBuild.furniture,
                         performanceMode: largePlan
                     )
-                    let dollhouse = try DollhouseMeshBuilder.build(rooms: roomsForBuild, configuration: configuration, photos360: photos360)
+                    let dollhouse = try DollhouseMeshBuilder.build(rooms: roomsForBuild, configuration: configuration, photos360: photos360, photoBytesByURL: bytesSnapshot)
                     let scene = DollhouseSceneBuilder.buildScene(
                         from: dollhouse,
                         visibility: visibilityForBuild,
