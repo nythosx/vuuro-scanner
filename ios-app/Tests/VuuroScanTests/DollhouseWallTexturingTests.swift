@@ -79,7 +79,7 @@ final class DollhouseWallTexturingTests: XCTestCase {
 
     func testPhotoFacingAwayLeavesEverythingFlat() throws {
         let plan = try rooms("[\(roomJSON())]")
-        let awayPhoto = photo(roomId: "room-1", position: [2.0, 1.5], headingDeg: 90.0)
+        let awayPhoto = photo(roomId: "room-1", position: [2.0, -1.0], headingDeg: 180.0)
         let bytes = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10])
         let scene = try DollhouseMeshBuilder.build(
             rooms: plan,
