@@ -19,6 +19,9 @@ final class DollhouseCamera: NSObject {
         self.cameraNode = cameraNode
         defaultTarget = scene.boundsCenter
         if attachedView === view {
+            self.target = scene.boundsCenter
+            let size = scene.boundsSize
+            self.distance = max(max(size.x, size.y), size.z) * 0.9 + 2
             self.update()
             return
         }

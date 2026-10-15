@@ -835,8 +835,8 @@ struct MultiRoomCaptureFlowView: View {
             origin = nil
         }
 
-        let headingProvider = HeadingProvider()
         let heading = await headingProvider.currentHeadingDeg()
+        let cameraYaw = RoomPhotoCaptureCoordinator.cameraYawDeg(from: coordinator.arSession)
 
         let photoCoordinator = RoomPhotoCaptureCoordinator(
             arSession: self.coordinator.arSession,
@@ -846,6 +846,7 @@ struct MultiRoomCaptureFlowView: View {
             captureGroupId: captureGroupId,
             structureOriginM: origin,
             initialCompassHeadingDeg: heading,
+            initialCameraYawDeg: cameraYaw,
             store: .shared
         )
         photoCaptureContext = PhotoCaptureContext(coordinator: photoCoordinator)

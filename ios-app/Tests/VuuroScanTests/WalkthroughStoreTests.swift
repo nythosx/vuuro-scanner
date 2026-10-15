@@ -71,4 +71,73 @@ final class WalkthroughStoreTests: XCTestCase {
         WalkthroughStore.clear()
         XCTAssertNil(WalkthroughStore.load())
     }
+
+    func testSaveWritesFileExcludedFromBackup() throws {
+        let identity = ScanIdentity(
+            propertyId: "prop-protection",
+            unitId: "unit-protection",
+            organisationId: "org-protection",
+            purpose: .listing,
+            occupied: false,
+            consentObtained: false,
+            floor: nil
+        )
+        let export = try JSONEncoder().encode(FakeCaptureGenerator.random())
+        WalkthroughStore.save(WalkthroughState(
+            identity: identity,
+            session: nil,
+            rooms: [WalkthroughState.StoredRoom(exportJSON: export, floor: "Ground", label: "Room 1")],
+            startedAt: Date()
+        ))
+        let url = WalkthroughStore.fileURL
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        let values = try url.resourceValues(forKeys: [.isExcludedFromBackupKey])
+        XCTAssertEqual(values.isExcludedFromBackup, true)
+    }
+
+    func testSaveWritesFileWithCompleteUntilFirstUserAuthenticationProtection() throws {
+        let identity = ScanIdentity(
+            propertyId: "prop-protection",
+            unitId: "unit-protection",
+            organisationId: "org-protection",
+            purpose: .listing,
+            occupied: false,
+            consentObtained: false,
+            floor: nil
+        )
+        let export = try JSONEncoder().encode(FakeCaptureGenerator.random())
+        WalkthroughStore.save(WalkthroughState(
+            identity: identity,
+            session: nil,
+            rooms: [WalkthroughState.StoredRoom(exportJSON: export, floor: "Ground", label: "Room 1")],
+            startedAt: Date()
+        ))
+        let attributes = try FileManager.default.attributesOfItem(atPath: WalkthroughStore.fileURL.path)
+        let protection = attributes[.protectionKey] as? FileProtectionType
+        XCTAssertEqual(protection, FileProtectionType.completeUntilFirstUserAuthentication)
+    }
+
+    func testSaveRemainsReadableAfterProtectionIsApplied() throws {
+        let identity = ScanIdentity(
+            propertyId: "prop-protection-roundtrip",
+            unitId: "unit-protection-roundtrip",
+            organisationId: "org-protection-roundtrip",
+            purpose: .checkIn,
+            occupied: false,
+            consentObtained: false,
+            floor: "Attic"
+        )
+        let export = try JSONEncoder().encode(FakeCaptureGenerator.random())
+        WalkthroughStore.save(WalkthroughState(
+            identity: identity,
+            session: nil,
+            rooms: [WalkthroughState.StoredRoom(exportJSON: export, floor: "Attic", label: "Room 1")],
+            startedAt: Date()
+        ))
+        let loaded = WalkthroughStore.load()
+        XCTAssertNotNil(loaded)
+        XCTAssertEqual(loaded?.identity.propertyId, "prop-protection-roundtrip")
+        XCTAssertEqual(loaded?.rooms.count, 1)
+        XCTAssertEqual(loaded?.rooms.first?.floor, "Attic")
+    }
 }

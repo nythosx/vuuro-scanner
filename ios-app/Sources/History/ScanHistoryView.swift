@@ -819,6 +819,33 @@ struct ScanHistoryView: View {
         }
     }
 
+    static func bulkDownloadSummaryMessage(
+        isPDF: Bool,
+        downloaded: Int,
+        skippedNetwork: Int,
+        skippedMissingToken: Int
+    ) -> String? {
+        let single = isPDF ? "PDF" : "image"
+        let plural = isPDF ? "PDFs" : "images"
+        let sessionWord: (Int) -> String = { $0 == 1 ? "session" : "sessions" }
+        if downloaded == 0 && skippedMissingToken == 0 {
+            return "No floor plan \(plural) were available to download."
+        }
+        if downloaded == 0 {
+            return "No floor plan \(plural) were downloaded — \(skippedMissingToken) \(sessionWord(skippedMissingToken)) are missing their access token on this device."
+        }
+        if skippedNetwork == 0 && skippedMissingToken == 0 {
+            return nil
+        }
+        if skippedMissingToken == 0 {
+            return "Downloaded \(downloaded) \(single)(s); skipped \(skippedNetwork) \(sessionWord(skippedNetwork))."
+        }
+        if skippedNetwork == 0 {
+            return "Downloaded \(downloaded) \(single)(s); skipped \(skippedMissingToken) \(sessionWord(skippedMissingToken)) that are missing their access token."
+        }
+        return "Downloaded \(downloaded) \(single)(s); skipped \(skippedNetwork) \(sessionWord(skippedNetwork)) that failed and \(skippedMissingToken) that are missing their access token."
+    }
+
     @MainActor
     private func downloadAllImages() async {
         guard !isBulkFetchingImages else { return }
@@ -830,8 +857,18 @@ struct ScanHistoryView: View {
         }
 
         var urls: [URL] = []
-        var skipped = 0
+        var skippedNetwork = 0
+        var skippedMissingToken = 0
         for (index, entry) in entries.enumerated() {
+            defer { bulkImageProgress = (index + 1, entries.count) }
+            guard !entry.accessToken.isEmpty else {
+                skippedMissingToken += 1
+                DiagnosticsLog.shared.record(
+                    "Bulk image download skipped session \(entry.sessionId): access token missing on this device",
+                    category: .error
+                )
+                continue
+            }
             do {
                 let data = try await client.fetchFloorPlanImage(
                     sessionId: entry.sessionId,
@@ -857,22 +894,20 @@ struct ScanHistoryView: View {
                 )
                 return
             } catch {
-                skipped += 1
+                skippedNetwork += 1
                 DiagnosticsLog.shared.record(
                     "Bulk image download skipped session \(entry.sessionId): \(error.localizedDescription)",
                     category: .error
                 )
             }
-            bulkImageProgress = (index + 1, entries.count)
         }
         bulkImageURLs = urls
-        if urls.isEmpty {
-            errorMessage = "No floor plan images were available to download."
-        } else if skipped > 0 {
-            errorMessage = "Downloaded \(urls.count) image(s); skipped \(skipped) session(s)."
-        } else {
-            errorMessage = nil
-        }
+        errorMessage = Self.bulkDownloadSummaryMessage(
+            isPDF: false,
+            downloaded: urls.count,
+            skippedNetwork: skippedNetwork,
+            skippedMissingToken: skippedMissingToken
+        )
     }
 
     @MainActor
@@ -886,8 +921,18 @@ struct ScanHistoryView: View {
         }
 
         var urls: [URL] = []
-        var skipped = 0
+        var skippedNetwork = 0
+        var skippedMissingToken = 0
         for (index, entry) in entries.enumerated() {
+            defer { bulkPDFProgress = (index + 1, entries.count) }
+            guard !entry.accessToken.isEmpty else {
+                skippedMissingToken += 1
+                DiagnosticsLog.shared.record(
+                    "Bulk PDF download skipped session \(entry.sessionId): access token missing on this device",
+                    category: .error
+                )
+                continue
+            }
             do {
                 let data = try await client.fetchFloorPlanPDF(
                     sessionId: entry.sessionId,
@@ -913,22 +958,20 @@ struct ScanHistoryView: View {
                 )
                 return
             } catch {
-                skipped += 1
+                skippedNetwork += 1
                 DiagnosticsLog.shared.record(
                     "Bulk PDF download skipped session \(entry.sessionId): \(error.localizedDescription)",
                     category: .error
                 )
             }
-            bulkPDFProgress = (index + 1, entries.count)
         }
         bulkPDFURLs = urls
-        if urls.isEmpty {
-            errorMessage = "No floor plan PDFs were available to download."
-        } else if skipped > 0 {
-            errorMessage = "Downloaded \(urls.count) PDF(s); skipped \(skipped) session(s)."
-        } else {
-            errorMessage = nil
-        }
+        errorMessage = Self.bulkDownloadSummaryMessage(
+            isPDF: true,
+            downloaded: urls.count,
+            skippedNetwork: skippedNetwork,
+            skippedMissingToken: skippedMissingToken
+        )
     }
 
     private func cleanUpTempFiles() {

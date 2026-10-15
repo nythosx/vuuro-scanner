@@ -21,7 +21,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     private let captureGroupId: String
     private let structureOriginM: [Double]?
     private let outlineMinXZ: SIMD2<Double>
-    private let initialCameraYawDeg: Double
+    private let initialCameraYawDeg: Double?
     private let initialCompassHeadingDeg: Double?
     private let store: RoomPhotoStore
     private let ciContext = CIContext()
@@ -37,6 +37,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         captureGroupId: String,
         structureOriginM: [Double]?,
         initialCompassHeadingDeg: Double?,
+        initialCameraYawDeg: Double?,
         store: RoomPhotoStore,
         minimumPhotos: Int = 15,
         maximumPhotos: Int = 30
@@ -47,6 +48,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         self.captureGroupId = captureGroupId
         self.structureOriginM = structureOriginM
         self.initialCompassHeadingDeg = initialCompassHeadingDeg
+        self.initialCameraYawDeg = initialCameraYawDeg
         self.store = store
         self.minimumPhotos = minimumPhotos
         self.maximumPhotos = maximumPhotos
@@ -62,10 +64,8 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
                 let minZ = worldCorners.map { $0.z }.min() ?? 0
                 self.outlineMinXZ = SIMD2<Double>(Double(minX), Double(minZ))
             }
-            self.initialCameraYawDeg = Self.yawDeg(transform)
         } else {
             self.outlineMinXZ = .zero
-            self.initialCameraYawDeg = 0
         }
 
         loadExistingPhotos()
@@ -109,18 +109,11 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         let localZ = worldZ - outlineMinXZ.y
 
         let currentYaw = Self.yawDeg(frame.camera.transform)
-        let yawDelta = currentYaw - initialCameraYawDeg
-        let headingDeg: Double
-        if let base = initialCompassHeadingDeg {
-            var raw = base + yawDelta
-            raw = raw.truncatingRemainder(dividingBy: 360)
-            if raw < 0 { raw += 360 }
-            headingDeg = raw
-        } else {
-            var raw = currentYaw.truncatingRemainder(dividingBy: 360)
-            if raw < 0 { raw += 360 }
-            headingDeg = raw
-        }
+        let headingDeg = Self.headingDeg(
+            compassHeadingDeg: initialCompassHeadingDeg,
+            cameraYawAtStartDeg: initialCameraYawDeg,
+            cameraYawAtShutterDeg: currentYaw
+        )
 
         let pitchDeg = Self.pitchDeg(frame.camera.transform)
 
@@ -165,6 +158,28 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         } catch {
             lastError = "Could not delete the photo: \(error.localizedDescription)"
         }
+    }
+
+    static func cameraYawDeg(from session: ARSession) -> Double? {
+        guard let transform = session.currentFrame?.camera.transform else { return nil }
+        return yawDeg(transform)
+    }
+
+    static func headingDeg(
+        compassHeadingDeg: Double?,
+        cameraYawAtStartDeg: Double?,
+        cameraYawAtShutterDeg: Double
+    ) -> Double {
+        if let base = compassHeadingDeg {
+            let delta = cameraYawAtStartDeg.map { cameraYawAtShutterDeg - $0 } ?? 0
+            var raw = base + delta
+            raw = raw.truncatingRemainder(dividingBy: 360)
+            if raw < 0 { raw += 360 }
+            return raw
+        }
+        var raw = cameraYawAtShutterDeg.truncatingRemainder(dividingBy: 360)
+        if raw < 0 { raw += 360 }
+        return raw
     }
 
     private func loadExistingPhotos() {

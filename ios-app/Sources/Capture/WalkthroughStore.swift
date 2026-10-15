@@ -16,7 +16,7 @@ struct WalkthroughState: Codable {
 }
 
 enum WalkthroughStore {
-    private static var fileURL: URL {
+    static var fileURL: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("VuuroScan", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -25,7 +25,16 @@ enum WalkthroughStore {
 
     static func save(_ state: WalkthroughState) {
         guard let data = try? JSONEncoder().encode(state) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        let url = fileURL
+        try? data.write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: url.path
+        )
+        var mutableURL = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? mutableURL.setResourceValues(values)
     }
 
     static func load() -> WalkthroughState? {
