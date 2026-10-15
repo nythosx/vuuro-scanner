@@ -112,9 +112,13 @@ final class WalkthroughStoreTests: XCTestCase {
             rooms: [WalkthroughState.StoredRoom(exportJSON: export, floor: "Ground", label: "Room 1")],
             startedAt: Date()
         ))
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Data Protection classes aren't enforced or reliably reported on the iOS Simulator; this needs a real device.")
+        #else
         let attributes = try FileManager.default.attributesOfItem(atPath: WalkthroughStore.fileURL.path)
         let protection = attributes[.protectionKey] as? FileProtectionType
         XCTAssertEqual(protection, FileProtectionType.completeUntilFirstUserAuthentication)
+        #endif
     }
 
     func testSaveRemainsReadableAfterProtectionIsApplied() throws {
