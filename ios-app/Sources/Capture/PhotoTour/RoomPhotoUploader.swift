@@ -58,9 +58,9 @@ enum RoomPhotoUploader {
             )
         }
 
-        if batches.count > serverRooms.count {
+        if batches.count != serverRooms.count {
             DiagnosticsLog.shared.record(
-                "Photo360: local batch count (\(batches.count)) exceeds server room count (\(serverRooms.count)) for \(captureGroupId); uploading what matches",
+                "Photo360: local batch count (\(batches.count)) does not match server room count (\(serverRooms.count)) for \(captureGroupId); will still upload the rest if every remaining batch pairs to exactly one room",
                 category: .info
             )
         }
@@ -70,7 +70,7 @@ enum RoomPhotoUploader {
             pairing = byOrigin
         } else if let greedy = pairGreedy(batches: batches, serverRooms: serverRooms) {
             DiagnosticsLog.shared.record(
-                "Photo360: paired \(greedy.count) of \(batches.count) local batch(es) by origin; some server rooms have no tour photos",
+                "Photo360: paired all \(greedy.count) local batch(es) by origin; \(serverRooms.count - greedy.count) server room(s) have no tour photos",
                 category: .info
             )
             pairing = greedy
@@ -190,22 +190,17 @@ enum RoomPhotoUploader {
         for batch in batches {
             guard let origin = batch.structureOriginM, origin.count == 2,
                   origin.allSatisfy({ $0.isFinite }) else {
-                continue
+                return nil
             }
             let candidates = remaining.indices.filter { index in
                 let d = originDistanceSquared(remaining[index].structureOriginM, origin)
                 return d.isFinite && d <= toleranceSq
             }
-            guard let index = candidates.min(by: { lhs, rhs in
-                originDistanceSquared(remaining[lhs].structureOriginM, origin)
-                    < originDistanceSquared(remaining[rhs].structureOriginM, origin)
-            }) else {
-                continue
-            }
+            guard candidates.count == 1 else { return nil }
+            let index = candidates[0]
             matched.append((batch: batch, roomId: remaining[index].roomId))
             remaining.remove(at: index)
         }
-        guard !matched.isEmpty else { return nil }
         return matched
     }
 
