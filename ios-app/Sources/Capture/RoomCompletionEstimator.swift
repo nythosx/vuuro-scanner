@@ -47,7 +47,14 @@ struct RoomCompletionEstimator {
             return .scanning
         }
 
-        let wallsStable = recentWallCounts.count >= Self.windowSize && Set(recentWallCounts).count == 1
+        let wallsStable: Bool
+        if recentWallCounts.count < Self.windowSize {
+            wallsStable = false
+        } else {
+            var counts: [Int: Int] = [:]
+            for w in recentWallCounts { counts[w, default: 0] += 1 }
+            wallsStable = (counts.values.max() ?? 0) >= Self.windowSize - 2
+        }
         let hasOpening = (stats.doors + stats.windows + stats.openings) >= 1
 
         if wallsStable, hasOpening {

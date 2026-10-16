@@ -562,8 +562,31 @@ private struct AttachmentRoomCard: View {
     @MainActor
     private func saveLabel(_ value: String) async {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let storedValue = RoomTypeClassifier.storedValue(forEntered: trimmed) else { return }
-        guard trimmed != committedLabel else { return }
+        guard let storedValue = RoomTypeClassifier.storedValue(forEntered: trimmed) else {
+            if committedLabel.isEmpty { return }
+            do {
+                let updated = try await client.updateRoomType(
+                    sessionId: session.id,
+                    accessToken: session.accessToken,
+                    roomId: room.roomId,
+                    roomType: nil
+                )
+                committedLabel = ""
+                onUpdate(updated)
+                clearDraftIfFullySynced()
+            } catch is CancellationError {
+                DiagnosticsLog.shared.record("Room type save task was cancelled.", category: .info)
+            } catch {
+                onError(AppError(site: .roomTypeUpdate, underlying: error))
+                labelDraft = committedLabel
+            }
+            return
+        }
+        let normalized = RoomTypeClassifier.displayName(for: storedValue)
+        guard normalized != committedLabel else {
+            labelDraft = normalized
+            return
+        }
         do {
             let updated = try await client.updateRoomType(
                 sessionId: session.id,
@@ -571,7 +594,8 @@ private struct AttachmentRoomCard: View {
                 roomId: room.roomId,
                 roomType: storedValue
             )
-            committedLabel = trimmed
+            committedLabel = normalized
+            labelDraft = normalized
             onUpdate(updated)
             clearDraftIfFullySynced()
         } catch is CancellationError {
@@ -619,6 +643,11 @@ private struct AttachmentRoomCard: View {
     private func saveNote(_ text: String, existingId: String?) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        var waited = 0
+        while isSavingNote && waited < 100 {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            waited += 1
+        }
         guard !isSavingNote else { return }
         isSavingNote = true
         defer { isSavingNote = false }
@@ -1225,9 +1254,14 @@ private struct SessionAttachmentEditor: View {
 
     @MainActor
     private func save() async {
+        var waited = 0
+        while isSavingNote && waited < 100 {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            waited += 1
+        }
+        guard !isSavingNote else { return }
         let trimmed = noteDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty && savedNoteId == nil { return }
-        guard !isSavingNote else { return }
         if trimmed == committedNote && selectedTags == committedTags { return }
         isSavingNote = true
         defer { isSavingNote = false }

@@ -20,6 +20,7 @@ final class FloorPlanImageRenderer
     private const DIMENSION_GUTTER = 28;
     private const MAX_CANVAS_DIMENSION_PX = 4000;
     private const MAX_GROUPED_CANVAS_HEIGHT_PX = 12000;
+    private const MAX_GROUPED_TOTAL_PIXELS = 16000000;
     private const GROUP_HEADING_HEIGHT_PX = 40;
     private const ROOM_PALETTE = [
         [255, 229, 208],
@@ -577,7 +578,15 @@ final class FloorPlanImageRenderer
         $blocks = [];
         $width = 0;
         $height = 0;
+        $totalPixels = 0;
         foreach ($groups as $index => $group) {
+            if ($totalPixels > self::MAX_GROUPED_TOTAL_PIXELS) {
+                throw new \InvalidArgumentException(sprintf(
+                    'This floor plan has %d floor sections totalling more than %d px, which is too large to draw as one image. Export one floor at a time or use layout=tiles.',
+                    count($groups),
+                    self::MAX_GROUPED_TOTAL_PIXELS
+                ));
+            }
             $png = (new self())->render([...$floorPlan, 'rooms' => $group['rooms']], $layout, null, $unit, $label, $style);
             $size = getimagesizefromstring($png);
             if ($size === false) {
@@ -586,6 +595,7 @@ final class FloorPlanImageRenderer
             $blocks[] = [$png, $headings[$index]];
             $width = max($width, (int) $size[0]);
             $height += (int) $size[1] + $bandHeight;
+            $totalPixels += (int) $size[0] * (int) $size[1];
         }
         if ($height > self::MAX_GROUPED_CANVAS_HEIGHT_PX || $width * $height > self::MAX_CANVAS_DIMENSION_PX * self::MAX_CANVAS_DIMENSION_PX) {
             throw new \InvalidArgumentException(sprintf(

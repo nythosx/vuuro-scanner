@@ -29,7 +29,7 @@ struct RoomPhotoCaptureOverlay: View {
         if coordinator.photoCount == 0 {
             return "No photos have been taken for this room. It will be added to the tour without photos."
         }
-        return "\(coordinator.photoCount) photo\(coordinator.photoCount == 1 ? "" : "s") so far, less than the recommended \(coordinator.minimumPhotos). Photos below the minimum stay on this phone and will not be uploaded."
+        return "\(coordinator.photoCount) photo\(coordinator.photoCount == 1 ? "" : "s") so far, less than the recommended \(coordinator.minimumPhotos). Photos you have already taken will be uploaded."
     }
 
     private var topBar: some View {

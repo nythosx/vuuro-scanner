@@ -749,7 +749,15 @@ async function downloadVuuroscanFile(sessionId, fp) {
   const unit = (fp && fp.unit_id ? fp.unit_id : '');
   const filename = 'scan-' + base + (unit ? '-' + unit : '') + '.vuuroscan';
   try {
-    const blob = await apiBlob(path);
+    const data = await apiJson(path);
+    const exportsBlock = (data && data.exports) || {};
+    const omitted = [];
+    if (exportsBlock.png_omitted_too_large === true) omitted.push('the plan image');
+    if (exportsBlock.pdf_omitted_too_large === true) omitted.push('the PDF export');
+    if (omitted.length > 0) {
+      showToast('Downloaded, but ' + omitted.join(' and ') + ' was too large to include in this bundle.');
+    }
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1181,6 +1189,14 @@ function renderImportDetail(data) {
   const exportedFrom = data.scan_service_base_url || '(unknown origin)';
 
   const pngBase64 = exportsBlock.png_base64 || '';
+  const pngOmittedTooLarge = exportsBlock.png_omitted_too_large === true;
+  const pdfOmittedTooLarge = exportsBlock.pdf_omitted_too_large === true;
+  const omissionNotes = [];
+  if (pngOmittedTooLarge) omissionNotes.push('The plan image was too large to embed in this bundle.');
+  if (pdfOmittedTooLarge) omissionNotes.push('The PDF export was too large to embed in this bundle.');
+  const omissionHtml = omissionNotes.length > 0
+    ? '<div class="publish-result warn">' + omissionNotes.map(escapeHtml).join(' ') + '</div>'
+    : '';
   const pngHtml = pngBase64
     ? '<img id="importedFloorPlanImage" alt="Floor plan">'
     : '<p class="muted">No PNG drawing embedded in this bundle.</p>';
@@ -1205,6 +1221,7 @@ function renderImportDetail(data) {
       '</p>' +
     '</div>' +
 
+    omissionHtml +
     '<div class="floor-plan">' + pngHtml + '</div>' +
 
     (pngBase64

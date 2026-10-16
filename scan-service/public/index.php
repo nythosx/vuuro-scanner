@@ -120,6 +120,9 @@ function rateLimited(ScanSessionRepository $repo, string $bucket, int $max, int 
 {
     $count = $repo->recordAndCountRecentEvents($bucket, $windowSeconds);
     if ($count > $max) {
+        if (preg_match('/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):/', $bucket, $auditMatch) === 1) {
+            $repo->logAccess($auditMatch[1], 'rate_limited', 'denied');
+        }
         header("Retry-After: $windowSeconds");
         $windowMinutes = max(1, (int) round($windowSeconds / 60));
         respondError(429, 'rate_limited', "You're making requests faster than we can safely process (limit: $max per $windowMinutes minute(s)). Please slow down and try again shortly.", ['limit' => $max, 'window_seconds' => $windowSeconds]);

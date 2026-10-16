@@ -193,6 +193,8 @@ final class ScanSessionRepository
     public function deleteSession(string $id): void
     {
         $this->withWriteLock(function () use ($id) {
+            $this->db->prepare('DELETE FROM photo_360 WHERE session_id = :id')->execute(['id' => $id]);
+            $this->db->prepare('DELETE FROM tour_asset WHERE session_id = :id')->execute(['id' => $id]);
             $this->db->prepare('DELETE FROM floor_plans WHERE scan_session_id = :id')->execute(['id' => $id]);
             $this->db->prepare('DELETE FROM idempotency_keys WHERE scan_session_id = :id')->execute(['id' => $id]);
             $this->db->prepare('DELETE FROM access_log WHERE scan_session_id = :id')->execute(['id' => $id]);

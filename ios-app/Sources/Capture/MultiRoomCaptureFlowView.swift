@@ -471,8 +471,7 @@ struct MultiRoomCaptureFlowView: View {
             WalkthroughStore.clear()
             return
         }
-        var storedRooms: [WalkthroughState.StoredRoom] = []
-        var storedRescan: StoredRescanChoice?
+        var pending: [(export: RoomPlanCaptureExport, floor: String, isRescanTarget: Bool)] = []
         for (index, room) in coordinator.capturedRooms.enumerated() {
             let confirmation = coordinator.roomTypeConfirmations.indices.contains(index) ? coordinator.roomTypeConfirmations[index] : nil
             let walkPath = coordinator.roomWalkPaths.indices.contains(index) ? coordinator.roomWalkPaths[index] : nil
@@ -487,27 +486,41 @@ struct MultiRoomCaptureFlowView: View {
                 export.joinedToGroupId = joinId
             }
             export.replacesRoomId = roomReplacements[index]
-            guard let data = try? JSONEncoder().encode(export) else { continue }
-            if index == rescanRoomIndex, let pendingRescan {
-                storedRescan = StoredRescanChoice(roomIndex: storedRooms.count, candidates: pendingRescan.candidates)
-            }
-            let roomFloor = coordinator.floor(forRoomAt: index)
-            storedRooms.append(WalkthroughState.StoredRoom(
-                exportJSON: data,
-                floor: roomFloor.isEmpty ? nil : roomFloor,
-                label: "Room \(index + 1)"
+            pending.append((
+                export: export,
+                floor: coordinator.floor(forRoomAt: index),
+                isRescanTarget: index == rescanRoomIndex
             ))
         }
-        guard !storedRooms.isEmpty else { return }
-        let state = WalkthroughState(
-            identity: identity,
-            session: existingSession ?? preUploadedSession?.session,
-            rooms: storedRooms,
-            startedAt: Date(),
-            pendingRescan: storedRescan,
-            captureGroupId: captureGroupId
-        )
-        WalkthroughStore.save(state)
+        let rescanCandidates = pendingRescan?.candidates
+        let identitySnapshot = identity
+        let sessionSnapshot = existingSession ?? preUploadedSession?.session
+        let groupId = captureGroupId
+        Task.detached(priority: .utility) {
+            var storedRooms: [WalkthroughState.StoredRoom] = []
+            var storedRescan: StoredRescanChoice?
+            for (index, item) in pending.enumerated() {
+                guard let data = try? JSONEncoder().encode(item.export) else { continue }
+                if item.isRescanTarget, let rescanCandidates {
+                    storedRescan = StoredRescanChoice(roomIndex: storedRooms.count, candidates: rescanCandidates)
+                }
+                storedRooms.append(WalkthroughState.StoredRoom(
+                    exportJSON: data,
+                    floor: item.floor.isEmpty ? nil : item.floor,
+                    label: "Room \(index + 1)"
+                ))
+            }
+            guard !storedRooms.isEmpty else { return }
+            let state = WalkthroughState(
+                identity: identitySnapshot,
+                session: sessionSnapshot,
+                rooms: storedRooms,
+                startedAt: Date(),
+                pendingRescan: storedRescan,
+                captureGroupId: groupId
+            )
+            WalkthroughStore.save(state)
+        }
     }
 
     @MainActor
@@ -518,9 +531,24 @@ struct MultiRoomCaptureFlowView: View {
             DiagnosticsLog.shared.record("Resumed walkthrough asks again whether room \(choice.roomIndex + 1) replaces an earlier room", category: .info)
             return
         }
-        let storedPairs: [(export: RoomPlanCaptureExport, floor: String?)] = state.rooms.compactMap { stored in
-            guard let export = try? JSONDecoder().decode(RoomPlanCaptureExport.self, from: stored.exportJSON) else { return nil }
-            return (export, stored.floor)
+        var storedPairs: [(export: RoomPlanCaptureExport, floor: String?)] = []
+        var droppedRoomCount = 0
+        for stored in state.rooms {
+            if let export = try? JSONDecoder().decode(RoomPlanCaptureExport.self, from: stored.exportJSON) {
+                storedPairs.append((export: export, floor: stored.floor))
+            } else {
+                droppedRoomCount += 1
+            }
+        }
+        if droppedRoomCount > 0 {
+            DiagnosticsLog.shared.record(
+                "Saved walkthrough had \(droppedRoomCount) of \(state.rooms.count) room(s) that could not be decoded; refusing to resume to avoid silent loss",
+                category: .error
+            )
+            WalkthroughStore.clear()
+            VuuroToast.shared.show(vuuroLocalized("Couldn't read the saved rooms — start a new walkthrough"))
+            coordinator.start()
+            return
         }
         let exports = storedPairs.map { $0.export }
         let storedFloors = storedPairs.map { $0.floor }

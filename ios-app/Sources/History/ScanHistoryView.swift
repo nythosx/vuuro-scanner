@@ -635,9 +635,9 @@ struct ScanHistoryView: View {
             appError = AppError(site: .historyTokenMissing, underlying: nil)
             return nil
         }
-        if let expiresAtString = entry.expiresAt, !expiresAtString.isEmpty,
-           let expiresAt = ISO8601DateFormatter().date(from: expiresAtString),
-           expiresAt.timeIntervalSinceNow >= 14 * 24 * 60 * 60 {
+        guard let expiresAtString = entry.expiresAt, !expiresAtString.isEmpty else { return entry }
+        guard let expiresAt = ISO8601DateFormatter().date(from: expiresAtString) else { return entry }
+        if expiresAt.timeIntervalSinceNow >= 14 * 24 * 60 * 60 {
             return entry
         }
         do {

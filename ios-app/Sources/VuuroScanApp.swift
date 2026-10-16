@@ -225,7 +225,11 @@ struct ScanFlowView: View {
                 ) { updated in
                     stage = .summary(session: session, floorPlan: updated)
                 } onAddRoom: {
-                    stage = .capturing(identity: identity, session: session, attempt: UUID())
+                    if ContinueRoute.continuesAsUnit(rooms: floorPlan.rooms, floor: session.defaultFloor) {
+                        stage = .multiRoomCapturing(identity: identity, session: session, attempt: UUID())
+                    } else {
+                        stage = .capturing(identity: identity, session: session, attempt: UUID())
+                    }
                 } onBack: {
                     PendingUploadStore.clear()
                     DraftStore.clearAll(sessionId: session.id)

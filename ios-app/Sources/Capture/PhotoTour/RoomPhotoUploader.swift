@@ -58,28 +58,22 @@ enum RoomPhotoUploader {
             )
         }
 
-        guard batches.count == serverRooms.count else {
+        if batches.count > serverRooms.count {
             DiagnosticsLog.shared.record(
-                "Photo360: local batch count (\(batches.count)) does not match server room count (\(serverRooms.count)); leaving photos on disk",
-                category: .error
-            )
-            return RoomPhotoUploadOutcome(
-                batchesConsidered: batches.count,
-                photosUploaded: 0,
-                photosFailed: 0,
-                skipReason: vuuroLocalized("Local tour photos don't match the captured rooms.")
+                "Photo360: local batch count (\(batches.count)) exceeds server room count (\(serverRooms.count)) for \(captureGroupId); uploading what matches",
+                category: .info
             )
         }
 
         let pairing: [(batch: RoomPhotoManifest, roomId: String)]?
         if let byOrigin = pairByStructureOrigin(batches: batches, serverRooms: serverRooms) {
             pairing = byOrigin
-        } else if let positional = pairPositionally(batches: batches, serverRooms: serverRooms) {
+        } else if let greedy = pairGreedy(batches: batches, serverRooms: serverRooms) {
             DiagnosticsLog.shared.record(
-                "Photo360: falling back to positional pairing for \(captureGroupId) — structure origins did not match",
+                "Photo360: paired \(greedy.count) of \(batches.count) local batch(es) by origin; some server rooms have no tour photos",
                 category: .info
             )
-            pairing = positional
+            pairing = greedy
         } else {
             pairing = nil
         }
@@ -99,9 +93,11 @@ enum RoomPhotoUploader {
 
         var uploaded = 0
         var failed = 0
+        var expected = 0
         for (batch, roomId) in matched {
             let photos = batch.photos.filter { isPlausiblePosition($0.positionM) }
             guard !photos.isEmpty else { continue }
+            expected += photos.count
             for photo in photos {
                 if Task.isCancelled {
                     return RoomPhotoUploadOutcome(
@@ -127,7 +123,7 @@ enum RoomPhotoUploader {
             }
         }
 
-        if failed == 0 {
+        if failed == 0 && expected > 0 && uploaded == expected {
             store.clearAll(captureGroupId: captureGroupId)
         }
 
@@ -194,17 +190,22 @@ enum RoomPhotoUploader {
         for batch in batches {
             guard let origin = batch.structureOriginM, origin.count == 2,
                   origin.allSatisfy({ $0.isFinite }) else {
-                return nil
+                continue
             }
             let candidates = remaining.indices.filter { index in
                 let d = originDistanceSquared(remaining[index].structureOriginM, origin)
                 return d.isFinite && d <= toleranceSq
             }
-            guard candidates.count == 1 else { return nil }
-            let index = candidates[0]
+            guard let index = candidates.min(by: { lhs, rhs in
+                originDistanceSquared(remaining[lhs].structureOriginM, origin)
+                    < originDistanceSquared(remaining[rhs].structureOriginM, origin)
+            }) else {
+                continue
+            }
             matched.append((batch: batch, roomId: remaining[index].roomId))
             remaining.remove(at: index)
         }
+        guard !matched.isEmpty else { return nil }
         return matched
     }
 
