@@ -472,6 +472,19 @@ final class ScanSessionRepository
             }
 
             [$rooms, $replacedRoomIds] = self::resolveReplacements($existing['rooms'], $rooms, $replacedRoomIds);
+            $seenRoomIds = [];
+            foreach ($rooms as $room) {
+                $roomId = $room['room_id'] ?? null;
+                if ($roomId === null) {
+                    continue;
+                }
+                if (isset($seenRoomIds[$roomId])) {
+                    throw new \InvalidArgumentException(
+                        "room_id '{$roomId}' appears more than once in this room set."
+                    );
+                }
+                $seenRoomIds[$roomId] = true;
+            }
             $combined = $rooms;
             if ($replaceGroups !== null) {
                 $kept = [];

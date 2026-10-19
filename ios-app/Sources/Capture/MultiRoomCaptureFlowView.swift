@@ -566,6 +566,13 @@ struct MultiRoomCaptureFlowView: View {
             let labels = roomLabels(for: exports)
             uploadProgress.begin(roomLabels: labels)
             guard let result = await submitExports(exports, floors: storedFloors) else { return }
+            let photoOutcome = await RoomPhotoUploader.uploadAll(
+                captureGroupId: captureGroupId,
+                session: result.session,
+                floorPlan: result.floorPlan,
+                store: .shared
+            )
+            showTourPhotoOutcome(photoOutcome)
             onFinished(result.session, result.floorPlan)
         }
     }
@@ -1173,7 +1180,7 @@ struct MultiRoomCaptureFlowView: View {
             captures.append(.init(idempotencyKey: UUID().uuidString, bodyJSON: bodyJSON))
         }
 
-        var pending = PendingUploadState(session: existingSession, identity: identity, captures: captures)
+        var pending = PendingUploadState(session: existingSession, identity: identity, captures: captures, captureGroupId: captureGroupId)
         PendingUploadStore.save(pending)
         WalkthroughStore.clear()
 

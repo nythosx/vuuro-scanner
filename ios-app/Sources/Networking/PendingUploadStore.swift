@@ -6,6 +6,7 @@ struct PendingUploadState: Codable {
     var captures: [PendingCapture]
     var skippedAt: Date? = nil
     var pendingRescan: StoredRescanChoice? = nil
+    var captureGroupId: String? = nil
 
     struct PendingCapture: Codable {
         let idempotencyKey: String

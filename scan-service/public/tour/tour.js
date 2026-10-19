@@ -244,6 +244,9 @@
   }
 
   function renderViewport() {
+    if (window.TourDollhouse && typeof window.TourDollhouse.stop === 'function') {
+      window.TourDollhouse.stop();
+    }
     clearNode(els.viewport);
     if (state.mode === 'plan') {
       renderPlan();

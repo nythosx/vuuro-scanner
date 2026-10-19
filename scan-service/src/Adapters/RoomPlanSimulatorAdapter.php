@@ -332,7 +332,7 @@ final class RoomPlanSimulatorAdapter
         if (!is_string($floor)) {
             return null;
         }
-        $trimmed = trim($floor);
+        $trimmed = trim(mb_convert_encoding($floor, 'UTF-8', 'UTF-8'));
         if ($trimmed === '') {
             return null;
         }
@@ -364,6 +364,7 @@ final class RoomPlanSimulatorAdapter
         if (!is_string($label)) {
             return null;
         }
+        $label = mb_convert_encoding($label, 'UTF-8', 'UTF-8');
         $label = trim(preg_replace('/[\x00-\x1f\x7f]/', '', $label) ?? '');
         if ($label === '') {
             return null;

@@ -3,7 +3,17 @@
 
   var HOTSPOT_PIXEL_SIZE = 24;
 
+  var activeViewer = null;
+
+  function stop() {
+    if (activeViewer) {
+      activeViewer.stop();
+      activeViewer = null;
+    }
+  }
+
   function render(viewport, url, rooms, onBackToPlan, onHotspotTap, buildUrl) {
+    stop();
     if (!url) {
       renderFallback(viewport, onBackToPlan, window.TourStrings.t('dollhouse_unavailable'));
       return;
@@ -22,6 +32,7 @@
         var hotspots = buildHotspots(rooms || []);
         var stage = buildStage(viewport, onBackToPlan);
         var viewer = new Viewer(stage.canvas, gltf, hotspots, stage.hotspotLayer, onHotspotTap);
+        activeViewer = viewer;
         viewer.start();
       })
       .catch(function (err) {
@@ -478,6 +489,15 @@
 
   Viewer.prototype.stop = function () {
     this.running = false;
+    var gl = this.gl;
+    if (!gl) {
+      return;
+    }
+    if (this.posBuf) { gl.deleteBuffer(this.posBuf); this.posBuf = null; }
+    if (this.nrmBuf) { gl.deleteBuffer(this.nrmBuf); this.nrmBuf = null; }
+    if (this.colBuf) { gl.deleteBuffer(this.colBuf); this.colBuf = null; }
+    if (this.idxBuf) { gl.deleteBuffer(this.idxBuf); this.idxBuf = null; }
+    if (this.program) { gl.deleteProgram(this.program); this.program = null; }
   };
 
   function compile(gl, vertSrc, fragSrc) {
@@ -503,5 +523,5 @@
     return program;
   }
 
-  window.TourDollhouse = { render: render };
+  window.TourDollhouse = { render: render, stop: stop };
 })();

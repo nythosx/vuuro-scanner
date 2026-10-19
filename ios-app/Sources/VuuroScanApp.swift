@@ -925,7 +925,7 @@ private struct RoomCaptureFlowStep: View {
             if !candidates.isEmpty {
                 let floor = captureFloor.trimmingCharacters(in: .whitespacesAndNewlines)
                 if let bodyJSON = try? client.encodeCaptureBody(capture: export, location: capturedLocation, floor: floor.isEmpty ? nil : floor) {
-                    var pending = PendingUploadState(session: existingSession, identity: identity, captures: [.init(idempotencyKey: UUID().uuidString, bodyJSON: bodyJSON)])
+                    var pending = PendingUploadState(session: existingSession, identity: identity, captures: [.init(idempotencyKey: UUID().uuidString, bodyJSON: bodyJSON)], captureGroupId: export.captureGroupId)
                     pending.pendingRescan = StoredRescanChoice(roomIndex: 0, candidates: candidates)
                     PendingUploadStore.save(pending)
                 }
@@ -952,7 +952,7 @@ private struct RoomCaptureFlowStep: View {
         if let existingSession {
             session = existingSession
         } else {
-            PendingUploadStore.save(PendingUploadState(session: nil, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)]))
+            PendingUploadStore.save(PendingUploadState(session: nil, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)], captureGroupId: export.captureGroupId))
             do {
                 session = try await client.createSession(identity: identity.withFloor(captureFloor))
             } catch {
@@ -974,7 +974,7 @@ private struct RoomCaptureFlowStep: View {
             ))
         }
 
-        PendingUploadStore.save(PendingUploadState(session: session, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)]))
+        PendingUploadStore.save(PendingUploadState(session: session, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)], captureGroupId: export.captureGroupId))
         do {
             let result = try await client.uploadCaptureKeepingRoom(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
             let floorPlan = result.floorPlan
@@ -1012,7 +1012,7 @@ private struct RoomCaptureFlowStep: View {
     @MainActor
     private func retryUpload(session: ScanSessionResponse, export: RoomPlanCaptureExport, idempotencyKey: String, bodyJSON: Data) async {
         defer { isRetryingUpload = false }
-        PendingUploadStore.save(PendingUploadState(session: session, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)]))
+        PendingUploadStore.save(PendingUploadState(session: session, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)], captureGroupId: export.captureGroupId))
         do {
             let result = try await client.uploadCaptureKeepingRoom(sessionId: session.id, accessToken: session.accessToken, idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)
             let floorPlan = result.floorPlan

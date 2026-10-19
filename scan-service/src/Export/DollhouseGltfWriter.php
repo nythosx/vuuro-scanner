@@ -380,35 +380,44 @@ final class DollhouseGltfWriter
             ];
         }
 
+        $textureByPhoto = [];
         foreach ($texturedWalls as $bucket) {
             if ($bucket['positions'] === []) {
                 continue;
             }
-            $imageBytes = (string) $bucket['imageBytes'];
-            $imageLength = strlen($imageBytes);
-            $alignedImageLength = self::align4($imageLength);
-            $pad = $alignedImageLength - $imageLength;
-            $binPad = (4 - (strlen($bin) % 4)) % 4;
-            $bin .= str_repeat("\0", $binPad);
-            $imageOffset = strlen($bin);
-            $bin .= $imageBytes;
-            $bin .= str_repeat("\0", $pad);
-            $imageViewIndex = count($bufferViews);
-            $bufferViews[] = [
-                'buffer' => 0,
-                'byteOffset' => $imageOffset,
-                'byteLength' => $alignedImageLength,
-            ];
-            $imageIndex = count($images);
-            $images[] = [
-                'bufferView' => $imageViewIndex,
-                'mimeType' => (string) $bucket['imageMime'],
-            ];
-            $textureIndex = count($textures);
-            $textures[] = [
-                'sampler' => 0,
-                'source' => $imageIndex,
-            ];
+            $photoId = (string) ($bucket['photoId'] ?? '');
+            if ($photoId !== '' && isset($textureByPhoto[$photoId])) {
+                $textureIndex = $textureByPhoto[$photoId];
+            } else {
+                $imageBytes = (string) $bucket['imageBytes'];
+                $imageLength = strlen($imageBytes);
+                $alignedImageLength = self::align4($imageLength);
+                $pad = $alignedImageLength - $imageLength;
+                $binPad = (4 - (strlen($bin) % 4)) % 4;
+                $bin .= str_repeat("\0", $binPad);
+                $imageOffset = strlen($bin);
+                $bin .= $imageBytes;
+                $bin .= str_repeat("\0", $pad);
+                $imageViewIndex = count($bufferViews);
+                $bufferViews[] = [
+                    'buffer' => 0,
+                    'byteOffset' => $imageOffset,
+                    'byteLength' => $alignedImageLength,
+                ];
+                $imageIndex = count($images);
+                $images[] = [
+                    'bufferView' => $imageViewIndex,
+                    'mimeType' => (string) $bucket['imageMime'],
+                ];
+                $textureIndex = count($textures);
+                $textures[] = [
+                    'sampler' => 0,
+                    'source' => $imageIndex,
+                ];
+                if ($photoId !== '') {
+                    $textureByPhoto[$photoId] = $textureIndex;
+                }
+            }
 
             $texAcc = self::appendBucketAccessors($bucket, true, $bin, $bufferViews, $accessors);
             $materials[] = [

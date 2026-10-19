@@ -205,12 +205,20 @@ struct AttachmentsScreen: View {
             Button {
                 guard !isSaving else { return }
                 isSaving = true
+                appError = nil
                 let expected = expectedFlushCount
                 flushCoordinator.reset(expected: expected)
                 flushCoordinator.bumpGeneration()
                 Task { @MainActor in
                     await flushCoordinator.requestFlush()
-                    onFinished(current)
+                    if appError == nil {
+                        onFinished(current)
+                    } else {
+                        isSaving = false
+                        if let message = appError?.userMessage, !message.isEmpty {
+                            VuuroToast.shared.show(message)
+                        }
+                    }
                 }
             } label: {
                 if isSaving {

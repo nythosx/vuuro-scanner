@@ -48,8 +48,8 @@ final class RoomPhotoStore {
         try data.write(to: photoURL, options: [.atomic, .completeFileProtection])
 
         var manifest: RoomPhotoManifest
-        if let existing = try? loadManifest(captureGroupId: captureGroupId, roomKey: roomKey) {
-            manifest = existing
+        if fileManager.fileExists(atPath: manifestURL(captureGroupId: captureGroupId, roomKey: roomKey).path) {
+            manifest = try loadManifest(captureGroupId: captureGroupId, roomKey: roomKey)
         } else {
             manifest = RoomPhotoManifest(
                 captureGroupId: captureGroupId,
@@ -65,8 +65,7 @@ final class RoomPhotoStore {
     }
 
     func loadManifest(captureGroupId: String, roomKey: String) throws -> RoomPhotoManifest {
-        let url = batchDirectory(captureGroupId: captureGroupId, roomKey: roomKey)
-            .appendingPathComponent("manifest.json")
+        let url = manifestURL(captureGroupId: captureGroupId, roomKey: roomKey)
         let data = try Data(contentsOf: url)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -122,13 +121,17 @@ final class RoomPhotoStore {
             .appendingPathComponent(sanitized(roomKey), isDirectory: true)
     }
 
+    private func manifestURL(captureGroupId: String, roomKey: String) -> URL {
+        batchDirectory(captureGroupId: captureGroupId, roomKey: roomKey)
+            .appendingPathComponent("manifest.json")
+    }
+
     private func sanitized(_ value: String) -> String {
         value.replacingOccurrences(of: "/", with: "_")
     }
 
     private func writeManifest(_ manifest: RoomPhotoManifest, captureGroupId: String, roomKey: String) throws {
-        let url = batchDirectory(captureGroupId: captureGroupId, roomKey: roomKey)
-            .appendingPathComponent("manifest.json")
+        let url = manifestURL(captureGroupId: captureGroupId, roomKey: roomKey)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(manifest)

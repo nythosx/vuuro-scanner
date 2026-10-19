@@ -43,7 +43,7 @@ struct HotspotPhotoViewer: View {
                     .background(Color.white.opacity(0.12), in: Circle())
             }
             .accessibilityIdentifier("hotspotPhotoViewer.close")
-            .accessibilityLabel("Close photo")
+            .accessibilityLabel(vuuroLocalized("Close photo"))
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
@@ -64,7 +64,7 @@ struct HotspotPhotoViewer: View {
                 Image(systemName: "photo")
                     .font(.system(size: 34))
                     .foregroundStyle(.white.opacity(0.4))
-                Text("Couldn't load this photo.")
+                Text(vuuroLocalized("Couldn't load this photo."))
                     .font(.system(size: 13))
                     .foregroundStyle(.white.opacity(0.7))
                 if let loadError {

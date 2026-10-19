@@ -223,6 +223,14 @@ struct PendingUploadRecoveryView: View {
                     "Pending upload recovered successfully into session \(session.id)",
                     category: .info
                 )
+                if let groupId = currentState.captureGroupId, !groupId.isEmpty {
+                    _ = await RoomPhotoUploader.uploadAll(
+                        captureGroupId: groupId,
+                        session: session,
+                        floorPlan: floorPlan,
+                        store: .shared
+                    )
+                }
                 onFinished(session, floorPlan)
                 return
             }

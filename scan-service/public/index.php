@@ -134,7 +134,7 @@ function rateLimited(ScanSessionRepository $repo, string $bucket, int $max, int 
 
 function pollForIdempotentResponse(ScanSessionRepository $repo, string $sessionId, string $idempotencyKey): ?array
 {
-    for ($attempt = 0; $attempt < 20; $attempt++) {
+    for ($attempt = 0; $attempt < 60; $attempt++) {
         usleep(50_000);
         $result = $repo->findIdempotentResponse($sessionId, $idempotencyKey);
         if ($result !== null) {
@@ -2314,6 +2314,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
         return;
     }
+    header('Cache-Control: private, no-store');
     header('Content-Type: image/png');
     echo $png;
     return;
@@ -2368,6 +2369,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
         return;
     }
+    header('Cache-Control: private, no-store');
     header('Content-Type: image/svg+xml');
     echo $svg;
     return;
@@ -2483,6 +2485,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
         respondError(500, 'internal_error', "Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.");
         return;
     }
+    header('Cache-Control: private, no-store');
     header('Content-Type: application/pdf');
     echo $pdf;
     return;

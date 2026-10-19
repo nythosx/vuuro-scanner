@@ -224,7 +224,7 @@ struct AttachmentPhotoViewer: View {
                     .background(Color.white.opacity(0.12), in: Circle())
             }
             .accessibilityIdentifier("photoViewer.close")
-            .accessibilityLabel("Close photo")
+            .accessibilityLabel(vuuroLocalized("Close photo"))
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
@@ -245,7 +245,7 @@ struct AttachmentPhotoViewer: View {
                 Image(systemName: "photo")
                     .font(.system(size: 34))
                     .foregroundStyle(.white.opacity(0.4))
-                Text("Couldn't load this photo.")
+                Text(vuuroLocalized("Couldn't load this photo."))
                     .font(.system(size: 13))
                     .foregroundStyle(.white.opacity(0.7))
                 if let loadError {
@@ -302,7 +302,7 @@ struct AttachmentPhotoViewer: View {
                         footerLabel("Delete", systemImage: "trash", color: Color(red: 1.0, green: 0.42, blue: 0.39))
                     }
                     .accessibilityIdentifier("photoViewer.delete")
-                    .accessibilityLabel("Delete photo")
+                    .accessibilityLabel(vuuroLocalized("Delete photo"))
                     .buttonStyle(.plain)
                     .disabled(isWorking)
                 }

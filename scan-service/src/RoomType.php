@@ -31,7 +31,7 @@ final class RoomType
 
     public static function isValidConfirmedValue(string $value): bool
     {
-        $trimmed = trim($value);
+        $trimmed = trim(mb_convert_encoding($value, 'UTF-8', 'UTF-8'));
         if ($trimmed === '') {
             return false;
         }
