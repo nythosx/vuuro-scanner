@@ -21,13 +21,17 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     private let captureGroupId: String
     private let structureOriginM: [Double]?
     private let outlineMinXZ: SIMD2<Double>
+    private let outlineLocal: [CGPoint]
     private let initialCameraYawDeg: Double?
     private let initialCompassHeadingDeg: Double?
     private let store: RoomPhotoStore
     private let ciContext = CIContext()
 
-    private var coverage = RoomPhotoCoverageTracker()
+    private var coverageTracker: RoomPhotoCoverageTracker
     private(set) var photos: [RoomPhotoMetadata] = []
+
+    var session: ARSession { arSession }
+    var coverage: RoomPhotoCoverage { coverageTracker.coverage }
 
     init(
         arSession: ARSession,
@@ -58,15 +62,25 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
             let corners = floor.polygonCorners
             if corners.isEmpty {
                 self.outlineMinXZ = .zero
+                self.outlineLocal = []
             } else {
                 let worldCorners = corners.map { transform * simd_float4($0, 1) }
                 let minX = worldCorners.map { $0.x }.min() ?? 0
                 let minZ = worldCorners.map { $0.z }.min() ?? 0
                 self.outlineMinXZ = SIMD2<Double>(Double(minX), Double(minZ))
+                self.outlineLocal = worldCorners.map {
+                    CGPoint(x: Double($0.x) - Double(minX), y: Double($0.z) - Double(minZ))
+                }
             }
         } else {
             self.outlineMinXZ = .zero
+            self.outlineLocal = []
         }
+
+        self.coverageTracker = RoomPhotoCoverageTracker(
+            outline: self.outlineLocal,
+            roomHeadingDeg: initialCompassHeadingDeg
+        )
 
         loadExistingPhotos()
     }
@@ -134,13 +148,32 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
                 structureOriginM: structureOriginM
             )
             photos.append(metadata)
-            coverage.record(headingDeg: headingDeg, pitchDeg: pitchDeg)
+            coverageTracker.record(
+                positionM: CGPoint(x: localX, y: localZ),
+                cameraHeadingDeg: headingDeg
+            )
             photoCount = photos.count
-            coveragePercent = coverage.coveragePercent
+            coveragePercent = coverageTracker.overallCoverage
             lastError = nil
         } catch {
             lastError = "Could not save the photo: \(error.localizedDescription)"
         }
+    }
+
+    private var thumbnailCache: [String: UIImage] = [:]
+
+    func loadThumbnail(_ metadata: RoomPhotoMetadata) -> UIImage? {
+        if let cached = thumbnailCache[metadata.localId] {
+            return cached
+        }
+        guard let data = try? store.loadPhotoData(
+            localId: metadata.localId,
+            captureGroupId: captureGroupId,
+            roomKey: roomKey
+        ) else { return nil }
+        guard let image = UIImage(data: data) else { return nil }
+        thumbnailCache[metadata.localId] = image
+        return image
     }
 
     func deletePhoto(_ metadata: RoomPhotoMetadata) {
@@ -151,13 +184,32 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
                 roomKey: roomKey
             )
             photos.removeAll { $0.localId == metadata.localId }
+            thumbnailCache.removeValue(forKey: metadata.localId)
             rebuildCoverage()
             photoCount = photos.count
-            coveragePercent = coverage.coveragePercent
+            coveragePercent = coverageTracker.overallCoverage
             lastError = nil
         } catch {
             lastError = "Could not delete the photo: \(error.localizedDescription)"
         }
+    }
+
+    func liveHeadingDeg() -> Double? {
+        guard let currentYaw = Self.cameraYawDeg(from: arSession) else { return nil }
+        return Self.headingDeg(
+            compassHeadingDeg: initialCompassHeadingDeg,
+            cameraYawAtStartDeg: initialCameraYawDeg,
+            cameraYawAtShutterDeg: currentYaw
+        )
+    }
+
+    func livePositionLocal() -> CGPoint? {
+        guard let transform = arSession.currentFrame?.camera.transform else { return nil }
+        let t = transform.columns.3
+        return CGPoint(
+            x: Double(t.x) - outlineMinXZ.x,
+            y: Double(t.z) - outlineMinXZ.y
+        )
     }
 
     static func cameraYawDeg(from session: ARSession) -> Double? {
@@ -189,13 +241,17 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         photos = manifest.photos
         photoCount = photos.count
         rebuildCoverage()
-        coveragePercent = coverage.coveragePercent
+        coveragePercent = coverageTracker.overallCoverage
     }
 
     private func rebuildCoverage() {
-        coverage.reset()
+        coverageTracker.reset()
         for photo in photos {
-            coverage.record(headingDeg: photo.headingDeg, pitchDeg: photo.pitchDeg)
+            guard photo.positionM.count >= 2 else { continue }
+            coverageTracker.record(
+                positionM: CGPoint(x: photo.positionM[0], y: photo.positionM[1]),
+                cameraHeadingDeg: photo.headingDeg
+            )
         }
     }
 

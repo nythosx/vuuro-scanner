@@ -167,9 +167,8 @@ final class CaptureCoordinator: NSObject, ObservableObject {
             isRunning = false
             captureSession?.stop(pauseARSession: false)
         }
-        arSession.pause()
         UIApplication.shared.isIdleTimerDisabled = false
-        DiagnosticsLog.shared.record("Capture view left the screen — capture session stopped and AR session paused", category: .state)
+        DiagnosticsLog.shared.record("Capture view left the screen — capture session stopped, AR session left running for the photo step", category: .state)
     }
 
     private func runIfReady() {

@@ -153,4 +153,92 @@ final class DollhouseCameraTests: XCTestCase {
         let distanceToSecond = distance(from: secondCameraNode, to: secondScene.boundsCenter)
         XCTAssertEqual(distanceToSecond, expectedRadius, accuracy: 0.01)
     }
+
+    func testRemountPreservesUserCameraPose() {
+        let scene = makeScene(boundsMin: SIMD3(0, 0, 0), boundsMax: SIMD3(4, 2.6, 3))
+        let camera = DollhouseCamera()
+
+        let firstView = SCNView()
+        let firstNode = SCNNode()
+        firstNode.camera = SCNCamera()
+        camera.attach(to: firstView, cameraNode: firstNode, framing: scene)
+        let initialPosition = firstNode.position
+
+        let secondView = SCNView()
+        let secondNode = SCNNode()
+        secondNode.camera = SCNCamera()
+        camera.attach(to: secondView, cameraNode: secondNode, framing: scene)
+        let remountPosition = secondNode.position
+
+        XCTAssertEqual(remountPosition.x, initialPosition.x, accuracy: 0.01)
+        XCTAssertEqual(remountPosition.y, initialPosition.y, accuracy: 0.01)
+        XCTAssertEqual(remountPosition.z, initialPosition.z, accuracy: 0.01)
+    }
+
+    func testRemountReinstallsGestureRecognizersOnTheNewView() {
+        let scene = makeScene(boundsMin: SIMD3(0, 0, 0), boundsMax: SIMD3(4, 2.6, 3))
+        let camera = DollhouseCamera()
+
+        let firstView = SCNView()
+        let firstNode = SCNNode()
+        firstNode.camera = SCNCamera()
+        camera.attach(to: firstView, cameraNode: firstNode, framing: scene)
+        XCTAssertEqual(firstView.gestureRecognizers?.count, 4, "first attach must install pan/pinch/two-finger-pan/double-tap")
+
+        let secondView = SCNView()
+        let secondNode = SCNNode()
+        secondNode.camera = SCNCamera()
+        camera.attach(to: secondView, cameraNode: secondNode, framing: scene)
+        XCTAssertEqual(secondView.gestureRecognizers?.count, 4, "a rebuild swaps in a new SCNView (theme/mode/layer/floor toggle) — gestures must still work on it, not only the pose")
+    }
+
+    func testReattachingTheSameViewDoesNotDuplicateGestureRecognizers() {
+        let scene = makeScene(boundsMin: SIMD3(0, 0, 0), boundsMax: SIMD3(4, 2.6, 3))
+        let camera = DollhouseCamera()
+
+        let view = SCNView()
+        let node = SCNNode()
+        node.camera = SCNCamera()
+        camera.attach(to: view, cameraNode: node, framing: scene)
+        camera.attach(to: view, cameraNode: node, framing: scene)
+
+        XCTAssertEqual(view.gestureRecognizers?.count, 4, "re-attaching the same view (e.g. a scene-data-only update) must not stack duplicate recognizers")
+    }
+
+    func testDoubleTapResetsZoomDistance() {
+        let scene = makeScene(boundsMin: SIMD3(0, 0, 0), boundsMax: SIMD3(4, 2.6, 3))
+        let camera = DollhouseCamera()
+        let view = SCNView()
+        let node = SCNNode()
+        node.camera = SCNCamera()
+        camera.attach(to: view, cameraNode: node, framing: scene)
+
+        let defaultDistanceFromTarget = distance(from: node, to: scene.boundsCenter)
+
+        let pinch = UIPinchGestureRecognizer()
+        pinch.scale = 3.0
+        camera.handlePinch(pinch)
+        let zoomedDistance = distance(from: node, to: scene.boundsCenter)
+        XCTAssertLessThan(zoomedDistance, defaultDistanceFromTarget, "pinching with scale > 1 must zoom in")
+
+        let doubleTap = UITapGestureRecognizer()
+        camera.handleDoubleTap(doubleTap)
+        let resetDistance = distance(from: node, to: scene.boundsCenter)
+        XCTAssertEqual(resetDistance, defaultDistanceFromTarget, accuracy: 0.01, "double-tap must also reset zoom, not just yaw/pitch/target")
+    }
+
+    func testContinuousGestureRecognizersAllowSimultaneousRecognition() {
+        let scene = makeScene(boundsMin: SIMD3(0, 0, 0), boundsMax: SIMD3(4, 2.6, 3))
+        let camera = DollhouseCamera()
+        let view = SCNView()
+        let node = SCNNode()
+        node.camera = SCNCamera()
+        camera.attach(to: view, cameraNode: node, framing: scene)
+
+        let continuous = (view.gestureRecognizers ?? []).filter { !($0 is UITapGestureRecognizer) }
+        XCTAssertEqual(continuous.count, 3, "expected pan, pinch, and two-finger pan")
+        for recognizer in continuous {
+            XCTAssertNotNil(recognizer.delegate, "pan/pinch/two-finger-pan must have a delegate so they can recognize simultaneously — otherwise a one-finger drag that grows into a pinch drops one of them")
+        }
+    }
 }

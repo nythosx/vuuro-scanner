@@ -5,6 +5,7 @@ struct DollhouseSceneView: UIViewRepresentable {
     let scene: DollhouseScene
     let scnScene: SCNScene
     let theme: DollhouseTheme
+    var camera: DollhouseCamera? = nil
     var onHotspotTap: ((String) -> Void)? = nil
 
     func makeUIView(context: Context) -> SCNView {
@@ -47,13 +48,17 @@ struct DollhouseSceneView: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(camera: camera)
     }
 
     final class Coordinator: NSObject {
-        let camera = DollhouseCamera()
+        let camera: DollhouseCamera
         var lastSceneId: UUID?
         var onHotspotTap: ((String) -> Void)?
+
+        init(camera: DollhouseCamera? = nil) {
+            self.camera = camera ?? DollhouseCamera()
+        }
 
         @objc func handleTap(_ gesture: UITapGestureRecognizer) {
             guard let view = gesture.view as? SCNView else { return }

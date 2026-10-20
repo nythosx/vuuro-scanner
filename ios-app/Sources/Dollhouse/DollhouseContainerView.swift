@@ -11,6 +11,7 @@ struct DollhouseContainerView: View {
     @AppStorage("dollhouseMode") private var modeRaw: String = DollhouseMode.cutaway.rawValue
     @AppStorage("dollhouseShowFurniture") private var showFurniture: Bool = true
 
+    @State private var camera = DollhouseCamera()
     @State private var scene: DollhouseScene?
     @State private var scnScene: SCNScene?
     @State private var errorMessage: String?
@@ -65,7 +66,7 @@ struct DollhouseContainerView: View {
             if isLoading {
                 DollhousePlaceholderView(kind: .loading)
             } else if let scene, let scnScene, !scene.isEmpty {
-                DollhouseSceneView(scene: scene, scnScene: scnScene, theme: .light, onHotspotTap: onHotspotTapped)
+                DollhouseSceneView(scene: scene, scnScene: scnScene, theme: .light, camera: camera, onHotspotTap: onHotspotTapped)
                     .frame(minHeight: 320)
                     .background(VuuroColor.bgInset)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -96,6 +97,10 @@ struct DollhouseContainerView: View {
             }
             .font(.system(size: 13))
             .foregroundStyle(VuuroColor.textPrimary)
+
+            Text("Drag to rotate · Pinch to zoom · Two-finger drag to pan")
+                .font(.system(size: 11))
+                .foregroundStyle(VuuroColor.textSecondary)
         }
         .padding(.horizontal, 20)
     }

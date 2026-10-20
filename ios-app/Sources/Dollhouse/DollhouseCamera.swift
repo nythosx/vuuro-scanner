@@ -8,37 +8,60 @@ final class DollhouseCamera: NSObject {
     private weak var cameraNode: SCNNode?
     private weak var attachedView: SCNView?
     private var distance: Float = 10
+    private var defaultDistance: Float = 10
     private var defaultTarget: SIMD3<Float> = .zero
     private var yaw: Float = .pi / 4
     private var pitch: Float = .pi / 4
     private var target: SIMD3<Float> = .zero
     private var lastPanLocation: CGPoint = .zero
 
+    private var hasFramed = false
+
     func attach(to view: SCNView, cameraNode: SCNNode, framing scene: DollhouseScene) {
         self.view = view
         self.cameraNode = cameraNode
+
+        let previousTarget = defaultTarget
         defaultTarget = scene.boundsCenter
-        if attachedView === view {
-            self.target = scene.boundsCenter
-            let size = scene.boundsSize
-            self.distance = max(max(size.x, size.y), size.z) * 0.9 + 2
+        let size = scene.boundsSize
+        defaultDistance = max(max(size.x, size.y), size.z) * 0.9 + 2
+        let sceneBoundsChanged = simd_distance(previousTarget, scene.boundsCenter) > 0.01
+        let isNewView = attachedView !== view
+        attachedView = view
+
+        if hasFramed {
+            if sceneBoundsChanged {
+                self.target = scene.boundsCenter
+                self.distance = defaultDistance
+            }
+            if isNewView {
+                installGestureRecognizers(on: view)
+            }
             self.update()
             return
         }
-        attachedView = view
+
+        hasFramed = true
         DollhouseCamera.placeDefault(cameraNode: cameraNode, framing: scene, camera: self)
+        installGestureRecognizers(on: view)
+    }
+
+    private func installGestureRecognizers(on view: SCNView) {
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
         let twoFingerPan = UIPanGestureRecognizer(target: self, action: #selector(handleTwoFingerPan(_:)))
         twoFingerPan.minimumNumberOfTouches = 2
         twoFingerPan.maximumNumberOfTouches = 2
         pan.maximumNumberOfTouches = 1
-        pan.require(toFail: twoFingerPan)
+        pan.delegate = self
+        pinch.delegate = self
+        twoFingerPan.delegate = self
         view.addGestureRecognizer(pan)
         view.addGestureRecognizer(pinch)
         view.addGestureRecognizer(twoFingerPan)
         let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
         doubleTap.numberOfTapsRequired = 2
+        doubleTap.require(toFail: pan)
         view.addGestureRecognizer(doubleTap)
     }
 
@@ -80,7 +103,7 @@ final class DollhouseCamera: NSObject {
         let sensitivity: Float = 0.008
         yaw -= Float(translation.x) * sensitivity
         pitch += Float(translation.y) * sensitivity
-        pitch = max(0.15, min(Float.pi / 2 - 0.05, pitch))
+        pitch = max(0.05, min(Float.pi / 2 - 0.05, pitch))
         update()
     }
 
@@ -94,7 +117,7 @@ final class DollhouseCamera: NSObject {
         update()
     }
 
-    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+    @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
         let scale = Float(gesture.scale)
         gesture.scale = 1
         distance /= scale
@@ -102,10 +125,20 @@ final class DollhouseCamera: NSObject {
         update()
     }
 
-    @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+    @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
         yaw = .pi / 4
         pitch = .pi / 4
         target = defaultTarget
+        distance = defaultDistance
         update()
+    }
+}
+
+extension DollhouseCamera: UIGestureRecognizerDelegate {
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        true
     }
 }

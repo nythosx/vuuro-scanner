@@ -16,6 +16,7 @@ struct DollhouseFullScreenView: View {
     @State private var showLayers = false
     @State private var selectedFloorIndex: Int? = nil
 
+    @State private var camera = DollhouseCamera()
     @State private var scene: DollhouseScene?
     @State private var scnScene: SCNScene?
     @State private var errorMessage: String?
@@ -102,6 +103,7 @@ struct DollhouseFullScreenView: View {
                 scene: scene,
                 scnScene: scnScene,
                 theme: theme,
+                camera: camera,
                 onHotspotTap: onHotspotTapped
             )
             .ignoresSafeArea()

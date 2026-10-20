@@ -67,6 +67,10 @@ struct DollhouseFullScreenBottomChrome: View {
                 .accessibilityIdentifier("dollhouse.layers")
                 .buttonStyle(.plain)
             }
+            Text("Drag to rotate · Pinch to zoom · Two-finger drag to pan")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.6))
+                .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 24)

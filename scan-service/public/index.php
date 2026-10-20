@@ -488,6 +488,25 @@ function parseFloorPlanStyleFromQuery(string $automaticStyle = 'default'): Floor
 }
 
 
+function attachTourMetadata(array $floorPlan, array $session, ?string $token, \VuuroScan\ServiceSettings $settings): array
+{
+    if (($floorPlan['rooms'] ?? []) === [] || $token === null || $token === '') {
+        $floorPlan['tour'] = null;
+        return $floorPlan;
+    }
+    $base = publicBaseUrl();
+    $lang = $settings->exportLanguage();
+    $sessionId = (string) $session['id'];
+    $floorPlan['tour'] = [
+        'viewer_url' => $base . '/tour/' . rawurlencode($sessionId)
+            . '?token=' . rawurlencode($token)
+            . '&lang=' . rawurlencode($lang),
+        'plan_image_url' => $base . "/scan-sessions/{$sessionId}/export/floorplan.png?style=auto&lang=" . urlencode($lang) . '&unit=metric',
+        'dollhouse_glb_url' => $base . "/scan-sessions/{$sessionId}/export/dollhouse.glb",
+    ];
+    return $floorPlan;
+}
+
 function deletionStatus(array $session, \VuuroScan\ServiceSettings $settings): array
 {
     $requestedAt = (string) ($session['deletion_requested_at'] ?? '');
@@ -1276,6 +1295,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/capture$#', $path
         }
         throw $e;
     }
+    $floorPlan = attachTourMetadata($floorPlan, $session, presented_token(), $settings);
     if ($holdsIdempotencyClaim) {
         $repo->completeIdempotencyKey($session['id'], $idempotencyKey, $floorPlan);
     }
@@ -1397,7 +1417,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/rooms$#', $path, 
         return;
     }
 
-    respond(200, $floorPlan);
+    respond(200, attachTourMetadata($floorPlan, $session, presented_token(), $settings));
     return;
 }
 
@@ -2563,7 +2583,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)$#', $path, $m)) {
         return;
     }
 
-    respond(200, $floorPlan);
+    respond(200, attachTourMetadata($floorPlan, $session, presented_token(), $settings));
     return;
 }
 

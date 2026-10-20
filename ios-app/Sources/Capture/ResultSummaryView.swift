@@ -47,6 +47,10 @@ struct ResultSummaryView: View {
 
     private let client = ScanServiceClient()
 
+    private var webTourURL: URL? {
+        client.webTourURL(session: session, floorPlan: currentFloorPlan)
+    }
+
     private var totalAreaM2: Double {
         currentFloorPlan.rooms.reduce(0.0) { $0 + $1.floorAreaM2 }
     }
@@ -787,6 +791,17 @@ struct ResultSummaryView: View {
 
     private var actionButtons: some View {
         VStack(spacing: 10) {
+            if let tourURL = webTourURL {
+                Button {
+                    UIApplication.shared.open(tourURL)
+                } label: {
+                    Label("Open web tour", systemImage: "safari")
+                        .frame(maxWidth: .infinity)
+                }
+                .accessibilityIdentifier("result.openWebTour")
+                .buttonStyle(.vuuroOutline)
+            }
+
             Button("Save & return home") {
                 Task {
                     appError = nil

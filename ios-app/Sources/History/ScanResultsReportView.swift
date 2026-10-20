@@ -1019,8 +1019,23 @@ struct ScanResultsReportView: View {
         .padding(.bottom, 12)
     }
 
+    private var webTourURL: URL? {
+        client.webTourURL(session: entry.asResumableSession(), floorPlan: floorPlan)
+    }
+
     private var actionButtons: some View {
         VStack(spacing: 10) {
+            if let tourURL = webTourURL {
+                Button {
+                    UIApplication.shared.open(tourURL)
+                } label: {
+                    Label("Open web tour", systemImage: "safari")
+                        .frame(maxWidth: .infinity)
+                }
+                .accessibilityIdentifier("report.openWebTour")
+                .buttonStyle(.vuuroOutline)
+            }
+
             if let deletionStatus, deletionStatus.requested {
                 Text(deletionRequestedText(deletionStatus))
                     .font(.system(size: 12))

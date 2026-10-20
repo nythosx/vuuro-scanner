@@ -1,45 +1,38 @@
+import CoreGraphics
 import Foundation
 
-struct RoomPhotoCoverageTracker: Equatable {
-    static let headingSectors = 12
-    static let pitchBands = 3
+struct RoomPhotoCoverageTracker {
+    static let defaultCellSizeM = 1.0
 
-    private(set) var coveredCells: Set<Int> = []
+    private(set) var coverage: RoomPhotoCoverage
 
-    mutating func record(headingDeg: Double, pitchDeg: Double) {
-        let sectorWidth = 360.0 / Double(Self.headingSectors)
-        var normalizedHeading = headingDeg.truncatingRemainder(dividingBy: 360)
-        if normalizedHeading < 0 { normalizedHeading += 360 }
-        var sector = Int((normalizedHeading / sectorWidth).rounded()) % Self.headingSectors
-        if sector < 0 { sector += Self.headingSectors }
+    init(
+        outline: [CGPoint],
+        cellSizeM: Double = RoomPhotoCoverageTracker.defaultCellSizeM,
+        roomHeadingDeg: Double? = nil
+    ) {
+        self.coverage = RoomPhotoCoverage(
+            outline: outline,
+            cellSizeM: cellSizeM,
+            roomHeadingDeg: roomHeadingDeg
+        )
+    }
 
-        let band: Int
-        if pitchDeg < -15 {
-            band = 0
-        } else if pitchDeg > 15 {
-            band = 2
-        } else {
-            band = 1
-        }
-
-        coveredCells.insert(sector * Self.pitchBands + band)
+    mutating func record(positionM: CGPoint, cameraHeadingDeg: Double) {
+        coverage.record(positionM: positionM, cameraHeadingDeg: cameraHeadingDeg)
     }
 
     mutating func reset() {
-        coveredCells.removeAll()
+        coverage.reset()
     }
 
-    var coveragePercent: Double {
-        let total = Self.headingSectors * Self.pitchBands
-        guard total > 0 else { return 0 }
-        return Double(coveredCells.count) / Double(total)
-    }
-
-    var coveredCellCount: Int {
-        coveredCells.count
-    }
-
-    var totalCellCount: Int {
-        Self.headingSectors * Self.pitchBands
-    }
+    var positionCoverage: Double { coverage.positionCoverage }
+    var wallCoverage: Double { coverage.wallCoverage }
+    var overallCoverage: Double { coverage.overallCoverage }
+    var isReadyToFinish: Bool { coverage.isReadyToFinish }
+    var nextAction: String? { coverage.nextAction }
+    var coveredCellCount: Int { coverage.coveredCells.count }
+    var coveredWallCount: Int { coverage.coveredWalls.count }
+    var totalCellCount: Int { coverage.inRoomCells.count }
+    var totalWallCount: Int { coverage.walls.count }
 }
