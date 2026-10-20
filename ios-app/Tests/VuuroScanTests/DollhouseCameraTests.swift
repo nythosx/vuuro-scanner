@@ -175,6 +175,10 @@ final class DollhouseCameraTests: XCTestCase {
         XCTAssertEqual(remountPosition.z, initialPosition.z, accuracy: 0.01)
     }
 
+    private func ourRecognizerCount(_ view: SCNView) -> Int {
+        (view.gestureRecognizers ?? []).filter { $0.name == "dollhouseCamera" }.count
+    }
+
     func testRemountReinstallsGestureRecognizersOnTheNewView() {
         let scene = makeScene(boundsMin: SIMD3(0, 0, 0), boundsMax: SIMD3(4, 2.6, 3))
         let camera = DollhouseCamera()
@@ -183,13 +187,13 @@ final class DollhouseCameraTests: XCTestCase {
         let firstNode = SCNNode()
         firstNode.camera = SCNCamera()
         camera.attach(to: firstView, cameraNode: firstNode, framing: scene)
-        XCTAssertEqual(firstView.gestureRecognizers?.count, 4, "first attach must install pan/pinch/two-finger-pan/double-tap")
+        XCTAssertEqual(ourRecognizerCount(firstView), 4, "first attach must install pan/pinch/two-finger-pan/double-tap")
 
         let secondView = SCNView()
         let secondNode = SCNNode()
         secondNode.camera = SCNCamera()
         camera.attach(to: secondView, cameraNode: secondNode, framing: scene)
-        XCTAssertEqual(secondView.gestureRecognizers?.count, 4, "a rebuild swaps in a new SCNView (theme/mode/layer/floor toggle) — gestures must still work on it, not only the pose")
+        XCTAssertEqual(ourRecognizerCount(secondView), 4, "a rebuild swaps in a new SCNView (theme/mode/layer/floor toggle) — gestures must still work on it, not only the pose")
     }
 
     func testReattachingTheSameViewDoesNotDuplicateGestureRecognizers() {
@@ -202,7 +206,7 @@ final class DollhouseCameraTests: XCTestCase {
         camera.attach(to: view, cameraNode: node, framing: scene)
         camera.attach(to: view, cameraNode: node, framing: scene)
 
-        XCTAssertEqual(view.gestureRecognizers?.count, 4, "re-attaching the same view (e.g. a scene-data-only update) must not stack duplicate recognizers")
+        XCTAssertEqual(ourRecognizerCount(view), 4, "re-attaching the same view (e.g. a scene-data-only update) must not stack duplicate recognizers")
     }
 
     func testDoubleTapResetsZoomDistance() {
@@ -235,7 +239,7 @@ final class DollhouseCameraTests: XCTestCase {
         node.camera = SCNCamera()
         camera.attach(to: view, cameraNode: node, framing: scene)
 
-        let continuous = (view.gestureRecognizers ?? []).filter { !($0 is UITapGestureRecognizer) }
+        let continuous = (view.gestureRecognizers ?? []).filter { $0.name == "dollhouseCamera" && !($0 is UITapGestureRecognizer) }
         XCTAssertEqual(continuous.count, 3, "expected pan, pinch, and two-finger pan")
         for recognizer in continuous {
             XCTAssertNotNil(recognizer.delegate, "pan/pinch/two-finger-pan must have a delegate so they can recognize simultaneously — otherwise a one-finger drag that grows into a pinch drops one of them")

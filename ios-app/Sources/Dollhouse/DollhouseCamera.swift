@@ -56,12 +56,16 @@ final class DollhouseCamera: NSObject {
         pan.delegate = self
         pinch.delegate = self
         twoFingerPan.delegate = self
+        pan.name = "dollhouseCamera"
+        pinch.name = "dollhouseCamera"
+        twoFingerPan.name = "dollhouseCamera"
         view.addGestureRecognizer(pan)
         view.addGestureRecognizer(pinch)
         view.addGestureRecognizer(twoFingerPan)
         let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
         doubleTap.numberOfTapsRequired = 2
         doubleTap.require(toFail: pan)
+        doubleTap.name = "dollhouseCamera"
         view.addGestureRecognizer(doubleTap)
     }
 
