@@ -118,6 +118,18 @@ body {
   outline: none;
 }
 
+.tour-plan-room-overlap {
+  fill: rgba(214, 69, 62, 0.22);
+  stroke: #D6453E;
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+}
+
+.tour-plan-room-overlap:hover,
+.tour-plan-room-overlap:focus {
+  fill: rgba(214, 69, 62, 0.4);
+}
+
 .tour-plan-label {
   font-size: 13px;
   font-weight: 600;

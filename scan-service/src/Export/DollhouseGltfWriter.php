@@ -10,6 +10,7 @@ final class DollhouseGltfWriter
     private const DEFAULT_HEIGHT_M = 2.4;
     private const FLOOR_COLOR = [0.90, 0.86, 0.78, 1.0];
     private const WALL_COLOR = [0.95, 0.94, 0.92, 1.0];
+    private const OVERLAP_COLOR = [0.84, 0.27, 0.24, 1.0];
     private const MAX_OPENING_WALL_DISTANCE_M = 0.6;
     private const MAX_TRIANGLES = 150000;
 
@@ -66,6 +67,8 @@ final class DollhouseGltfWriter
             }
         }
 
+        $overlapRoomIds = self::overlappingRoomIds($rooms);
+
         $flat = [
             'positions' => [],
             'normals' => [],
@@ -77,7 +80,8 @@ final class DollhouseGltfWriter
         foreach ($rooms as $i => $room) {
             $roomId = is_string($room['room_id'] ?? null) ? $room['room_id'] : '';
             $roomPhotos = $roomId === '' ? [] : ($photosByRoom[$roomId] ?? []);
-            self::appendRoomTextured($room, $placements[$i], $roomPhotos, $photoLoader, $flat, $texturedWalls);
+            $isOverlap = $roomId !== '' && isset($overlapRoomIds[$roomId]);
+            self::appendRoomTextured($room, $placements[$i], $roomPhotos, $photoLoader, $isOverlap, $flat, $texturedWalls);
 
             $tris = intdiv(count($flat['indices']), 3);
             foreach ($texturedWalls as $bucket) {
@@ -98,11 +102,36 @@ final class DollhouseGltfWriter
         return self::packGlbMulti($flat, $texturedWalls);
     }
 
+    private static function overlappingRoomIds(array $rooms): array
+    {
+        $candidates = [];
+        $candidateIndex = [];
+        foreach ($rooms as $i => $room) {
+            if (isset($room['structure_origin_m']) && is_array($room['structure_origin_m'])) {
+                $candidateIndex[] = $i;
+                $candidates[] = $room;
+            }
+        }
+        if ($candidates === []) {
+            return [];
+        }
+        $flagged = [];
+        foreach (FusionOverlapDetector::detect($candidates) as $ci) {
+            $orig = $candidateIndex[$ci] ?? null;
+            $roomId = $orig !== null ? ($rooms[$orig]['room_id'] ?? null) : null;
+            if (is_string($roomId) && $roomId !== '') {
+                $flagged[$roomId] = true;
+            }
+        }
+        return $flagged;
+    }
+
     private static function appendRoomTextured(
         array $room,
         array $placement,
         array $roomPhotos,
         callable $photoLoader,
+        bool $isOverlap,
         array &$flat,
         array &$texturedWalls
     ): void {
@@ -141,11 +170,13 @@ final class DollhouseGltfWriter
             }
         }
 
-        self::appendFloorToBucket($outline, $ox, $oz, $flat);
-        self::appendWallsTextured($outline, $ox, $oz, $height, $openings, $headingDeg, $photosWithBytes, $flat, $texturedWalls);
+        $floorColor = $isOverlap ? self::OVERLAP_COLOR : self::FLOOR_COLOR;
+        $wallColor = $isOverlap ? self::OVERLAP_COLOR : self::WALL_COLOR;
+        self::appendFloorToBucket($outline, $ox, $oz, $floorColor, $flat);
+        self::appendWallsTextured($outline, $ox, $oz, $height, $openings, $headingDeg, $photosWithBytes, $isOverlap, $wallColor, $flat, $texturedWalls);
     }
 
-    private static function appendFloorToBucket(array $outline, float $ox, float $oz, array &$flat): void
+    private static function appendFloorToBucket(array $outline, float $ox, float $oz, array $floorColor, array &$flat): void
     {
         $triangles = self::triangulate($outline);
         if ($triangles === []) {
@@ -160,7 +191,7 @@ final class DollhouseGltfWriter
             $flat['normals'][] = 1.0;
             $flat['normals'][] = 0.0;
             if (array_key_exists('colors', $flat)) {
-                foreach (self::FLOOR_COLOR as $col) {
+                foreach ($floorColor as $col) {
                     $flat['colors'][] = $col;
                 }
             }
@@ -180,6 +211,8 @@ final class DollhouseGltfWriter
         array $openings,
         ?float $headingDeg,
         array $photosWithBytes,
+        bool $isOverlap,
+        array $wallColor,
         array &$flat,
         array &$texturedWalls
     ): void {
@@ -201,7 +234,7 @@ final class DollhouseGltfWriter
             $nz = $ux * $inward;
 
             $wallPhoto = null;
-            if ($headingDeg !== null && $photosWithBytes !== []) {
+            if (!$isOverlap && $headingDeg !== null && $photosWithBytes !== []) {
                 $projectable = array_values(array_filter(
                     $photosWithBytes,
                     static fn (array $p): bool => $p['heading_deg'] !== null
@@ -223,7 +256,7 @@ final class DollhouseGltfWriter
                 $pb = [$a[0] + $ux * $seg[1], $a[1] + $uz * $seg[1]];
                 self::appendWallBoxToBuckets(
                     $pa, $pb, $ux, $uz, $nx, $nz, $height, $ox, $oz,
-                    $wallPhoto, $headingDeg, $flat, $texturedWalls
+                    $wallPhoto, $headingDeg, $wallColor, $flat, $texturedWalls
                 );
             }
         }
@@ -241,6 +274,7 @@ final class DollhouseGltfWriter
         float $oz,
         ?array $wallPhoto,
         ?float $headingDeg,
+        array $wallColor,
         array &$flat,
         array &$texturedWalls
     ): void {
@@ -273,17 +307,17 @@ final class DollhouseGltfWriter
                 'imageMime' => 'image/jpeg',
                 'photoId' => $wallPhoto['photo_id'] ?? '',
             ];
-            self::appendQuadToBucket($bucket, [$iA0, $iB0, $iBh, $iAh], [$nx, 0.0, $nz], self::WALL_COLOR, $uvs);
+            self::appendQuadToBucket($bucket, [$iA0, $iB0, $iBh, $iAh], [$nx, 0.0, $nz], $wallColor, $uvs);
             $texturedWalls[] = $bucket;
         } else {
-            self::appendQuadToBucket($flat, [$iA0, $iB0, $iBh, $iAh], [$nx, 0.0, $nz], self::WALL_COLOR, null);
+            self::appendQuadToBucket($flat, [$iA0, $iB0, $iBh, $iAh], [$nx, 0.0, $nz], $wallColor, null);
         }
 
-        self::appendQuadToBucket($flat, [$oA0, $oB0, $oBh, $oAh], [-$nx, 0.0, -$nz], self::WALL_COLOR, null);
-        self::appendQuadToBucket($flat, [$iA0, $oA0, $oB0, $iB0], [0.0, -1.0, 0.0], self::WALL_COLOR, null);
-        self::appendQuadToBucket($flat, [$iAh, $oAh, $oBh, $iBh], [0.0, 1.0, 0.0], self::WALL_COLOR, null);
-        self::appendQuadToBucket($flat, [$iA0, $oA0, $oAh, $iAh], [-$ux, 0.0, -$uz], self::WALL_COLOR, null);
-        self::appendQuadToBucket($flat, [$iB0, $oB0, $oBh, $iBh], [$ux, 0.0, $uz], self::WALL_COLOR, null);
+        self::appendQuadToBucket($flat, [$oA0, $oB0, $oBh, $oAh], [-$nx, 0.0, -$nz], $wallColor, null);
+        self::appendQuadToBucket($flat, [$iA0, $oA0, $oB0, $iB0], [0.0, -1.0, 0.0], $wallColor, null);
+        self::appendQuadToBucket($flat, [$iAh, $oAh, $oBh, $iBh], [0.0, 1.0, 0.0], $wallColor, null);
+        self::appendQuadToBucket($flat, [$iA0, $oA0, $oAh, $iAh], [-$ux, 0.0, -$uz], $wallColor, null);
+        self::appendQuadToBucket($flat, [$iB0, $oB0, $oBh, $iBh], [$ux, 0.0, $uz], $wallColor, null);
     }
 
     private static function wallFaceUvs(array $photo, float $roomHeadingDeg, array $corners): ?array
