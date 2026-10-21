@@ -13,6 +13,7 @@ final class DollhouseGltfWriter
     private const OVERLAP_COLOR = [0.84, 0.27, 0.24, 1.0];
     private const MAX_OPENING_WALL_DISTANCE_M = 0.6;
     private const MAX_TRIANGLES = 150000;
+    private const MAX_TEXTURE_EDGE_PX = 1600;
 
     public function write(array $floorPlan, ?callable $photoLoader = null): string
     {
@@ -102,6 +103,29 @@ final class DollhouseGltfWriter
         return self::packGlbMulti($flat, $texturedWalls);
     }
 
+    private static function capTextureSize(string $bytes, string $mime, int $width, int $height): array
+    {
+        $longest = max($width, $height);
+        if ($width <= 0 || $height <= 0 || $longest <= self::MAX_TEXTURE_EDGE_PX) {
+            return [$bytes, $mime];
+        }
+        $image = @imagecreatefromstring($bytes);
+        if ($image === false) {
+            return [$bytes, $mime];
+        }
+        $scale = self::MAX_TEXTURE_EDGE_PX / $longest;
+        $targetWidth = max(1, (int) round($width * $scale));
+        $targetHeight = max(1, (int) round($height * $scale));
+        $resized = imagecreatetruecolor($targetWidth, $targetHeight);
+        imagecopyresampled($resized, $image, 0, 0, 0, 0, $targetWidth, $targetHeight, $width, $height);
+        imagedestroy($image);
+        ob_start();
+        imagejpeg($resized, null, 82);
+        $resizedBytes = (string) ob_get_clean();
+        imagedestroy($resized);
+        return [$resizedBytes, 'image/jpeg'];
+    }
+
     private static function overlappingRoomIds(array $rooms): array
     {
         $candidates = [];
@@ -165,6 +189,7 @@ final class DollhouseGltfWriter
                 if (!in_array($mime, ['image/jpeg', 'image/png'], true)) {
                     continue;
                 }
+                [$bytes, $mime] = self::capTextureSize($bytes, $mime, (int) $imageInfo[0], (int) $imageInfo[1]);
                 $photosWithBytes[] = [
                     'photo_id' => (string) ($photo['photo_id'] ?? ''),
                     'room_id' => (string) ($photo['room_id'] ?? ''),
