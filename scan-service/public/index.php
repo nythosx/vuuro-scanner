@@ -2412,7 +2412,8 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/dollhouse\.
         respondError(422, 'no_floor_plan_geometry', 'This is a notes-only session, so there is no 3D geometry to draw.');
         return;
     }
-    $glbEtag = '"' . md5($session['id'] . '|' . json_encode($floorPlan['rooms'], JSON_THROW_ON_ERROR)) . '"';
+    $glbEtag = '"' . md5($session['id'] . '|' . json_encode($floorPlan['rooms'], JSON_THROW_ON_ERROR)
+        . '|' . json_encode($floorPlan['photos_360'] ?? [], JSON_THROW_ON_ERROR)) . '"';
     $clientEtag = $_SERVER['HTTP_IF_NONE_MATCH'] ?? '';
     if (is_string($clientEtag) && trim($clientEtag) === $glbEtag) {
         http_response_code(304);
@@ -2420,8 +2421,17 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/dollhouse\.
         header('Cache-Control: private, no-cache');
         return;
     }
+    $sessionIdForPhotos = $session['id'];
+    $photoLoader = static function (string $url) use ($sessionIdForPhotos): ?string {
+        $filePath = ownedPhotoFilePath($sessionIdForPhotos, $url);
+        if ($filePath === null) {
+            return null;
+        }
+        $bytes = file_get_contents($filePath);
+        return $bytes === false ? null : $bytes;
+    };
     try {
-        $glb = (new DollhouseGltfWriter())->write($floorPlan);
+        $glb = (new DollhouseGltfWriter())->write($floorPlan, $photoLoader);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_dollhouse', "This floor plan couldn't be drawn in 3D: " . $e->getMessage());
         return;
