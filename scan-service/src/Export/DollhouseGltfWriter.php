@@ -160,12 +160,18 @@ final class DollhouseGltfWriter
                 if (!is_string($bytes) || $bytes === '') {
                     continue;
                 }
+                $imageInfo = @getimagesizefromstring($bytes);
+                $mime = is_array($imageInfo) ? ($imageInfo['mime'] ?? null) : null;
+                if (!in_array($mime, ['image/jpeg', 'image/png'], true)) {
+                    continue;
+                }
                 $photosWithBytes[] = [
                     'photo_id' => (string) ($photo['photo_id'] ?? ''),
                     'room_id' => (string) ($photo['room_id'] ?? ''),
                     'position_m' => is_array($photo['position_m'] ?? null) ? $photo['position_m'] : [0.0, 0.0],
                     'heading_deg' => is_numeric($photo['heading_deg'] ?? null) ? (float) $photo['heading_deg'] : null,
                     'imageBytes' => $bytes,
+                    'imageMime' => $mime,
                 ];
             }
         }
@@ -304,7 +310,7 @@ final class DollhouseGltfWriter
                 'uvs' => [],
                 'indices' => [],
                 'imageBytes' => $wallPhoto['imageBytes'],
-                'imageMime' => 'image/jpeg',
+                'imageMime' => $wallPhoto['imageMime'],
                 'photoId' => $wallPhoto['photo_id'] ?? '',
             ];
             self::appendQuadToBucket($bucket, [$iA0, $iB0, $iBh, $iAh], [$nx, 0.0, $nz], $wallColor, $uvs);
