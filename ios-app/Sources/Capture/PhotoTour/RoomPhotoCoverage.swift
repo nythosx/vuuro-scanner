@@ -3,6 +3,12 @@ import Foundation
 import simd
 
 struct RoomPhotoCoverage: Equatable {
+    static let minimumWallLengthM = 0.5
+    static let collinearAngleDeg = 10.0
+    static let collinearOffsetM = 0.3
+    static let readyWallCoverage = 0.8
+    static let readyPositionCoverage = 0.5
+
     struct Cell: Hashable {
         let x: Int
         let z: Int
@@ -25,7 +31,8 @@ struct RoomPhotoCoverage: Equatable {
     let inRoomCells: Set<Cell>
     let walls: [Wall]
 
-    private(set) var coveredCells: Set<Cell>
+    private(set) var photoCells: Set<Cell>
+    private(set) var walkedCells: Set<Cell>
     private(set) var coveredWalls: Set<Int>
     private(set) var recordedPositions: [SIMD2<Double>]
 
@@ -34,7 +41,8 @@ struct RoomPhotoCoverage: Equatable {
         self.outline = points
         self.cellSizeM = cellSizeM
         self.roomHeadingDeg = roomHeadingDeg
-        self.coveredCells = []
+        self.photoCells = []
+        self.walkedCells = []
         self.coveredWalls = []
         self.recordedPositions = []
 
@@ -76,31 +84,69 @@ struct RoomPhotoCoverage: Equatable {
             area2 += a.x * b.y - b.x * a.y
         }
         let sign: Double = area2 >= 0 ? 1.0 : -1.0
+        self.walls = Self.logicalWalls(points, sign: sign)
+    }
 
-        var wallList: [Wall] = []
+    static func logicalWalls(_ points: [SIMD2<Double>], sign: Double) -> [Wall] {
+        var edges: [(index: Int, a: SIMD2<Double>, b: SIMD2<Double>)] = []
         for i in 0..<points.count {
             let a = points[i]
             let b = points[(i + 1) % points.count]
-            let dx = b.x - a.x
-            let dz = b.y - a.y
-            let length = (dx * dx + dz * dz).squareRoot()
-            if length < 1e-6 { continue }
-            let inward = SIMD2<Double>(-dz / length * sign, dx / length * sign)
-            wallList.append(Wall(
-                index: i,
+            if simd_length(b - a) >= 1e-6 {
+                edges.append((index: i, a: a, b: b))
+            }
+        }
+        let long = edges.filter { simd_length($0.b - $0.a) >= minimumWallLengthM }
+        let usable = long.isEmpty ? edges : long
+        guard !usable.isEmpty else { return [] }
+
+        func continues(_ first: (index: Int, a: SIMD2<Double>, b: SIMD2<Double>), _ next: (index: Int, a: SIMD2<Double>, b: SIMD2<Double>)) -> Bool {
+            let d1 = simd_normalize(first.b - first.a)
+            let d2 = simd_normalize(next.b - next.a)
+            guard simd_dot(d1, d2) >= cos(collinearAngleDeg * .pi / 180.0) else { return false }
+            let offset = next.a - first.a
+            let perpendicular = abs(offset.x * d1.y - offset.y * d1.x)
+            return perpendicular <= collinearOffsetM
+        }
+
+        var start = 0
+        if usable.count > 1 {
+            for k in usable.indices where !continues(usable[(k - 1 + usable.count) % usable.count], usable[k]) {
+                start = k
+                break
+            }
+        }
+
+        var groups: [[(index: Int, a: SIMD2<Double>, b: SIMD2<Double>)]] = []
+        for step in 0..<usable.count {
+            let edge = usable[(start + step) % usable.count]
+            if var last = groups.last, let tail = last.last, continues(tail, edge) {
+                last.append(edge)
+                groups[groups.count - 1] = last
+            } else {
+                groups.append([edge])
+            }
+        }
+
+        return groups.map { group in
+            let a = group[0].a
+            let b = group[group.count - 1].b
+            let direction = simd_length(b - a) > 1e-6 ? simd_normalize(b - a) : simd_normalize(group[0].b - group[0].a)
+            let inward = SIMD2<Double>(-direction.y * sign, direction.x * sign)
+            return Wall(
+                index: group[0].index,
                 a: a,
                 b: b,
                 inwardNormal: inward,
-                midpoint: SIMD2<Double>((a.x + b.x) / 2, (a.y + b.y) / 2)
-            ))
+                midpoint: (a + b) / 2
+            )
         }
-        self.walls = wallList
     }
 
     mutating func record(positionM: CGPoint, cameraHeadingDeg: Double) {
         let pos = SIMD2<Double>(Double(positionM.x), Double(positionM.y))
         if let cell = cellFor(pos) {
-            coveredCells.insert(cell)
+            photoCells.insert(cell)
         }
         let direction = directionVector(cameraHeadingDeg: cameraHeadingDeg)
         if let wallIndex = Self.rayHitWall(origin: pos, direction: direction, walls: walls) {
@@ -109,8 +155,19 @@ struct RoomPhotoCoverage: Equatable {
         recordedPositions.append(pos)
     }
 
+    mutating func recordWalk(positionM: CGPoint) {
+        let pos = SIMD2<Double>(Double(positionM.x), Double(positionM.y))
+        if let cell = cellFor(pos) {
+            walkedCells.insert(cell)
+        }
+    }
+
+    var coveredCells: Set<Cell> {
+        photoCells.union(walkedCells)
+    }
+
     mutating func reset() {
-        coveredCells.removeAll()
+        photoCells.removeAll()
         coveredWalls.removeAll()
         recordedPositions.removeAll()
     }
@@ -131,7 +188,7 @@ struct RoomPhotoCoverage: Equatable {
     }
 
     var isReadyToFinish: Bool {
-        positionCoverage >= 0.7 && wallCoverage >= 0.9
+        positionCoverage >= Self.readyPositionCoverage && wallCoverage >= Self.readyWallCoverage
     }
 
     var uncoveredWalls: [Wall] {
@@ -152,7 +209,7 @@ struct RoomPhotoCoverage: Equatable {
             }
             return "Aim at the red walls on the minimap \u{2014} \(uncovered.count) left."
         }
-        if positionCoverage < 0.7 {
+        if positionCoverage < Self.readyPositionCoverage {
             return "Walk into the grey areas on the minimap to cover them."
         }
         return nil

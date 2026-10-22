@@ -27,6 +27,7 @@ struct CoverageMinimap: View {
     }
 
     private func draw(in context: inout GraphicsContext, mapping: Mapping) {
+        let coveredCells = coverage.coveredCells
         for cell in coverage.inRoomCells {
             let cellMinX = coverage.gridOrigin.x + Double(cell.x) * coverage.cellSizeM
             let cellMinZ = coverage.gridOrigin.y + Double(cell.z) * coverage.cellSizeM
@@ -41,11 +42,25 @@ struct CoverageMinimap: View {
                 width: bottomRight.x - topLeft.x,
                 height: bottomRight.y - topLeft.y
             )
-            let isCovered = coverage.coveredCells.contains(cell)
+            let isCovered = coveredCells.contains(cell)
             let colour = isCovered
                 ? VuuroColor.lime.opacity(0.35)
                 : VuuroColor.textTertiary.opacity(0.10)
             context.fill(Path(rect), with: .color(colour))
+        }
+
+        if outline.count >= 3 {
+            var outlinePath = Path()
+            outlinePath.move(to: mapping.toView(outline[0]))
+            for point in outline.dropFirst() {
+                outlinePath.addLine(to: mapping.toView(point))
+            }
+            outlinePath.closeSubpath()
+            context.stroke(
+                outlinePath,
+                with: .color(VuuroColor.textTertiary.opacity(0.6)),
+                style: StrokeStyle(lineWidth: 1.5, lineJoin: .round)
+            )
         }
 
         for wall in coverage.walls {

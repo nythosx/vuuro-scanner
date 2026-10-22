@@ -704,7 +704,7 @@ function renderDetail(data, sessionId) {
     '<h2>Rooms</h2>' +
     wrapTable('<table class="data-table"><thead><tr>' +
       '<th>Room</th><th>Type</th><th>Area (m²)</th><th>Perimeter (m)</th>' +
-      '<th>Height (m)</th><th>Confidence</th><th>Coverage</th>' +
+      '<th>Height (m)</th><th>Confidence</th><th>Scan quality</th>' +
     '</tr></thead><tbody>' + roomRows + '</tbody></table>') +
 
     '<h2>Photos (' + photos.length + ')</h2>' +
@@ -1235,7 +1235,7 @@ function renderImportDetail(data) {
       ? '<p class="muted">No rooms in this imported scan.</p>'
       : wrapTable('<table class="data-table"><thead><tr>' +
         '<th>Room</th><th>Type</th><th>Area (m²)</th><th>Perimeter (m)</th>' +
-        '<th>Height (m)</th><th>Confidence</th><th>Coverage</th>' +
+        '<th>Height (m)</th><th>Confidence</th><th>Scan quality</th>' +
         '</tr></thead><tbody>' + roomRows + '</tbody></table>')) +
 
     '<h2>Photos (' + photos.length + ')</h2>' +

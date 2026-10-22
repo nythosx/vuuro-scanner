@@ -183,6 +183,85 @@ final class RoomPhotoCoverageTrackerTests: XCTestCase {
         XCTAssertEqual(empty.directionVector(cameraHeadingDeg: 90).y, 0, accuracy: 1e-9)
     }
 
+    func testWalkingFillsPositionWithoutPhotos() {
+        var tracker = RoomPhotoCoverageTracker(outline: rectangle())
+        for x in stride(from: 0.5, to: 4.0, by: 1.0) {
+            tracker.recordWalk(positionM: CGPoint(x: x, y: 1.5))
+        }
+        XCTAssertEqual(tracker.coveredCellCount, 4)
+        XCTAssertEqual(tracker.coveredWallCount, 0)
+        XCTAssertEqual(tracker.positionCoverage, 4.0 / 12.0, accuracy: 1e-9)
+    }
+
+    func testDeletingPhotosKeepsWalkedArea() {
+        var tracker = RoomPhotoCoverageTracker(outline: rectangle())
+        tracker.recordWalk(positionM: CGPoint(x: 0.5, y: 0.5))
+        tracker.record(positionM: CGPoint(x: 3.5, y: 2.5), cameraHeadingDeg: 0)
+        tracker.reset()
+        XCTAssertEqual(tracker.coveredCellCount, 1)
+        XCTAssertEqual(tracker.coveredWallCount, 0)
+    }
+
+    func testStraightWallSplitIntoSegmentsCountsAsOneWall() {
+        let outline = [
+            CGPoint(x: 0, y: 0),
+            CGPoint(x: 2.31, y: 0),
+            CGPoint(x: 5.06, y: 0.02),
+            CGPoint(x: 8.95, y: 0),
+            CGPoint(x: 8.95, y: 6),
+            CGPoint(x: 0, y: 6),
+        ]
+        let tracker = RoomPhotoCoverageTracker(outline: outline)
+        XCTAssertEqual(tracker.totalWallCount, 4)
+    }
+
+    func testShortJogsAreNotCountedAsWalls() {
+        let outline = [
+            CGPoint(x: 0, y: 0),
+            CGPoint(x: 4, y: 0),
+            CGPoint(x: 4, y: 0.2),
+            CGPoint(x: 8, y: 0.2),
+            CGPoint(x: 8, y: 5),
+            CGPoint(x: 0, y: 5),
+        ]
+        let tracker = RoomPhotoCoverageTracker(outline: outline)
+        XCTAssertEqual(tracker.totalWallCount, 4)
+    }
+
+    func testAtticSizedRoomIsReachableWithinThePhotoCap() {
+        let attic = [
+            CGPoint(x: 0, y: 0.69),
+            CGPoint(x: 1.79, y: 0.69),
+            CGPoint(x: 1.79, y: 0),
+            CGPoint(x: 10.74, y: 0),
+            CGPoint(x: 10.74, y: 5.76),
+            CGPoint(x: 1.79, y: 5.76),
+            CGPoint(x: 1.79, y: 5.09),
+            CGPoint(x: 0, y: 5.09),
+        ]
+        var tracker = RoomPhotoCoverageTracker(outline: attic)
+        for x in stride(from: 0.5, to: 10.74, by: 1.0) {
+            for z in [0.5, 1.5, 2.5, 3.5, 4.5, 5.4] {
+                tracker.recordWalk(positionM: CGPoint(x: x, y: z))
+            }
+        }
+        var photos = 0
+        for (position, heading) in [
+            (CGPoint(x: 6, y: 2.9), 0.0), (CGPoint(x: 6, y: 2.9), 180.0),
+            (CGPoint(x: 6, y: 2.9), 270.0), (CGPoint(x: 3, y: 2.9), 90.0),
+            (CGPoint(x: 0.9, y: 2.9), 90.0), (CGPoint(x: 1.0, y: 2.9), 0.0),
+            (CGPoint(x: 1.0, y: 2.9), 180.0), (CGPoint(x: 3, y: 0.3), 90.0),
+            (CGPoint(x: 3, y: 5.4), 90.0),
+        ] {
+            tracker.record(positionM: position, cameraHeadingDeg: heading)
+            photos += 1
+        }
+        XCTAssertLessThanOrEqual(photos, 30)
+        XCTAssertGreaterThanOrEqual(tracker.positionCoverage, RoomPhotoCoverage.readyPositionCoverage)
+        XCTAssertGreaterThanOrEqual(tracker.wallCoverage, RoomPhotoCoverage.readyWallCoverage)
+        XCTAssertTrue(tracker.isReadyToFinish)
+    }
+
     func testDegenerateOutlineHasNoCellsOrWalls() {
         let tracker = RoomPhotoCoverageTracker(outline: [
             CGPoint(x: 0, y: 0),

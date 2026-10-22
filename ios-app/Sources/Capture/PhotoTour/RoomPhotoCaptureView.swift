@@ -140,7 +140,7 @@ struct RoomPhotoCaptureOverlay: View {
                 .foregroundStyle(coordinator.coverage.isReadyToFinish ? VuuroColor.lime : .white)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("covered")
+                Text(coordinator.coverage.isReadyToFinish ? "photo coverage · ready" : "photo coverage")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white)
                 Text(String(
@@ -324,8 +324,8 @@ struct RoomPhotoCaptureOverlay: View {
         if uncoveredWallCount > 0 {
             return "\(uncoveredWallCount) wall\(uncoveredWallCount == 1 ? "" : "s") \(uncoveredWallCount == 1 ? "hasn't" : "haven't") been photographed. The tour will be missing those views."
         }
-        if positionPct < 70 {
-            return "You've covered \(positionPct)% of the room. Photos from more spots will make the tour richer."
+        if positionPct < Int(RoomPhotoCoverage.readyPositionCoverage * 100) {
+            return "You've walked \(positionPct)% of the room. Walking through the grey areas will make the tour richer."
         }
         return "You can finish anyway, or keep scanning for a better tour."
     }

@@ -26,6 +26,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     private let initialCompassHeadingDeg: Double?
     private let store: RoomPhotoStore
     private let ciContext = CIContext()
+    private var walkSamplingTask: Task<Void, Never>?
 
     private var coverageTracker: RoomPhotoCoverageTracker
     private(set) var photos: [RoomPhotoMetadata] = []
@@ -83,6 +84,31 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         )
 
         loadExistingPhotos()
+        startWalkSampling()
+    }
+
+    func stopWalkSampling() {
+        walkSamplingTask?.cancel()
+        walkSamplingTask = nil
+    }
+
+    private func startWalkSampling() {
+        walkSamplingTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard let self else { return }
+                self.sampleWalkPosition()
+            }
+        }
+    }
+
+    private func sampleWalkPosition() {
+        guard let position = livePositionLocal() else { return }
+        let before = coverageTracker.coveredCellCount
+        coverageTracker.recordWalk(positionM: position)
+        if coverageTracker.coveredCellCount != before {
+            coveragePercent = coverageTracker.overallCoverage
+        }
     }
 
     var isMinimumReached: Bool { photos.count >= minimumPhotos }

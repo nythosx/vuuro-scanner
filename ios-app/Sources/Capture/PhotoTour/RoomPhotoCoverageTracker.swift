@@ -22,6 +22,10 @@ struct RoomPhotoCoverageTracker {
         coverage.record(positionM: positionM, cameraHeadingDeg: cameraHeadingDeg)
     }
 
+    mutating func recordWalk(positionM: CGPoint) {
+        coverage.recordWalk(positionM: positionM)
+    }
+
     mutating func reset() {
         coverage.reset()
     }
