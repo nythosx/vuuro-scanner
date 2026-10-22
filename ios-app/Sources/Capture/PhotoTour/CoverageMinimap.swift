@@ -5,6 +5,9 @@ struct CoverageMinimap: View {
     let coverage: RoomPhotoCoverage
     let currentPosition: CGPoint?
     let currentHeadingDeg: Double?
+    var compact: Bool = false
+    var chromeless: Bool = false
+    var coveredWallColor: Color = VuuroColor.textPrimary
 
     var body: some View {
         GeometryReader { proxy in
@@ -13,10 +16,10 @@ struct CoverageMinimap: View {
                 draw(in: &context, mapping: mapping)
             }
         }
-        .background(VuuroColor.bgInset, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(chromeless ? Color.clear : VuuroColor.bgInset, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(VuuroColor.borderMed, lineWidth: 1)
+                .stroke(chromeless ? Color.clear : VuuroColor.borderMed, lineWidth: 1)
         )
         .accessibilityIdentifier("coverage.minimap")
         .accessibilityLabel(String(
@@ -59,7 +62,7 @@ struct CoverageMinimap: View {
             context.stroke(
                 outlinePath,
                 with: .color(VuuroColor.textTertiary.opacity(0.6)),
-                style: StrokeStyle(lineWidth: 1.5, lineJoin: .round)
+                style: StrokeStyle(lineWidth: compact ? 1 : 1.5, lineJoin: .round)
             )
         }
 
@@ -70,28 +73,30 @@ struct CoverageMinimap: View {
             if coverage.coveredWalls.contains(wall.index) {
                 context.stroke(
                     path,
-                    with: .color(VuuroColor.textPrimary),
-                    style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                    with: .color(coveredWallColor),
+                    style: StrokeStyle(lineWidth: compact ? 2 : 3, lineCap: .round)
                 )
             } else {
                 context.stroke(
                     path,
                     with: .color(VuuroColor.danger),
-                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [5, 4])
+                    style: StrokeStyle(lineWidth: compact ? 1.5 : 2.5, lineCap: .round, dash: compact ? [3, 2] : [5, 4])
                 )
             }
         }
 
         if let position = currentPosition {
             let posView = mapping.toView(position)
-            let dotRect = CGRect(x: posView.x - 5, y: posView.y - 5, width: 10, height: 10)
+            let dotRadius: CGFloat = compact ? 3 : 5
+            let dotRect = CGRect(x: posView.x - dotRadius, y: posView.y - dotRadius, width: dotRadius * 2, height: dotRadius * 2)
             context.fill(Path(ellipseIn: dotRect), with: .color(VuuroColor.accent))
 
             if let heading = currentHeadingDeg {
                 let direction = coverage.directionVector(cameraHeadingDeg: heading)
+                let arrowLength: CGFloat = compact ? 10 : 22
                 let arrowEnd = CGPoint(
-                    x: posView.x + direction.x * 22,
-                    y: posView.y + direction.y * 22
+                    x: posView.x + direction.x * arrowLength,
+                    y: posView.y + direction.y * arrowLength
                 )
                 var arrow = Path()
                 arrow.move(to: posView)
@@ -99,7 +104,7 @@ struct CoverageMinimap: View {
                 context.stroke(
                     arrow,
                     with: .color(VuuroColor.accent),
-                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
+                    style: StrokeStyle(lineWidth: compact ? 1.5 : 2.5, lineCap: .round)
                 )
             }
         }

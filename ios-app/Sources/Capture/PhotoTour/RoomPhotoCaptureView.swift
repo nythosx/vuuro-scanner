@@ -5,21 +5,74 @@ struct RoomPhotoCaptureOverlay: View {
     let onSkip: () -> Void
     let onFinish: () -> Void
 
+    @AppStorage("photoTour.onboardingSeen") private var onboardingSeen = false
+    @State private var showOnboarding = false
     @State private var showSkipConfirmation = false
     @State private var showFinishAnywayAlert = false
     @State private var previewPhoto: PhotoPreviewItem?
+    @State private var showExpandedMinimap = false
+    @State private var showGallery = false
+    @State private var flashVisible = false
+    @State private var toastMessage: String?
+    @State private var toastTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
             LiveCameraPreview(arSession: coordinator.session)
                 .ignoresSafeArea()
+
+            Color.white
+                .opacity(flashVisible ? 0.6 : 0)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+
             VStack(spacing: 0) {
                 topBar
+                floatingHint
+                    .padding(.horizontal, 20)
                 Spacer(minLength: 0)
                 bottomPanel
             }
+
+            if let toastMessage {
+                VStack {
+                    Spacer()
+                    Text(toastMessage)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(Color(red: 28 / 255, green: 28 / 255, blue: 30 / 255).opacity(0.95), in: Capsule())
+                        .overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.5), radius: 15, y: 10)
+                        .padding(.bottom, 140)
+                }
+                .allowsHitTesting(false)
+                .transition(.opacity)
+            }
+
+            if showGallery {
+                galleryOverlay
+                    .transition(.opacity)
+            }
+
+            if showOnboarding {
+                onboardingOverlay
+                    .transition(.opacity)
+            }
         }
         .background(Color.black)
+        .animation(.easeOut(duration: 0.25), value: showGallery)
+        .animation(.easeOut(duration: 0.25), value: showOnboarding)
+        .animation(.easeOut(duration: 0.3), value: toastMessage)
+        .onAppear {
+            if !onboardingSeen {
+                showOnboarding = true
+            }
+        }
+        .onDisappear {
+            toastTask?.cancel()
+        }
         .alert("Skip photos for this room?", isPresented: $showSkipConfirmation) {
             Button("Skip", role: .destructive, action: onSkip)
                 .accessibilityIdentifier("photoTour.skipConfirm")
@@ -42,6 +95,9 @@ struct RoomPhotoCaptureOverlay: View {
                 onDelete: {
                     coordinator.deletePhoto(item.photo)
                     previewPhoto = nil
+                    if coordinator.photos.isEmpty {
+                        showGallery = false
+                    }
                 },
                 onClose: { previewPhoto = nil }
             )
@@ -50,7 +106,7 @@ struct RoomPhotoCaptureOverlay: View {
     }
 
     private var topBar: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 12) {
             Button {
                 showSkipConfirmation = true
             } label: {
@@ -59,169 +115,391 @@ struct RoomPhotoCaptureOverlay: View {
                     .foregroundStyle(.white)
                     .frame(width: 36, height: 36)
                     .background(.ultraThinMaterial, in: Circle())
-                    .background(Color.black.opacity(0.4), in: Circle())
+                    .background(Color.white.opacity(0.15), in: Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
             }
             .accessibilityIdentifier("photoTour.cancel")
             .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Photos for this room")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(.white)
                 Text(String(format: "Room %lld", coordinator.roomNumber))
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .font(.system(size: 15, weight: .semibold))
+                    .tracking(-0.3)
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.9), radius: 3, y: 1)
+                Text("Photos for this room")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .shadow(color: .black.opacity(0.9), radius: 2, y: 1)
             }
 
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
         .padding(.top, 16)
-        .padding(.bottom, 16)
+        .padding(.bottom, 12)
         .background(
             LinearGradient(
-                colors: [Color.black.opacity(0.7), Color.black.opacity(0)],
+                colors: [Color.black.opacity(0.6), Color.black.opacity(0)],
                 startPoint: .top,
                 endPoint: .bottom
             )
+            .ignoresSafeArea(edges: .top)
         )
+    }
+
+    @ViewBuilder
+    private var floatingHint: some View {
+        if let hint = coordinator.coverage.nextAction {
+            let ready = coordinator.coverage.isReadyToFinish
+            HStack(spacing: 6) {
+                Image(systemName: ready ? "checkmark.circle.fill" : "lightbulb.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(VuuroColor.lime)
+                Text(hint)
+                    .font(.system(size: 12, weight: .medium))
+                    .tracking(-0.1)
+                    .foregroundStyle(ready ? VuuroColor.lime : Color.white.opacity(0.95))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(.ultraThinMaterial, in: Capsule())
+            .background((ready ? VuuroColor.lime.opacity(0.12) : Color.black.opacity(0.15)), in: Capsule())
+            .overlay(Capsule().stroke(ready ? VuuroColor.lime.opacity(0.3) : Color.white.opacity(0.08), lineWidth: 1))
+            .shadow(color: .black.opacity(0.6), radius: 4, y: 1)
+            .frame(maxWidth: .infinity)
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("photoTour.nextAction")
+        }
     }
 
     private var bottomPanel: some View {
-        VStack(spacing: 10) {
-            minimapSection
-            coverageSummary
-            if let hint = coordinator.coverage.nextAction {
-                nextActionHint(hint)
+        VStack(spacing: 12) {
+            if showExpandedMinimap {
+                expandedMinimap
+                    .transition(.scale(scale: 0.92).combined(with: .opacity))
+            } else {
+                infoRow
+                    .transition(.opacity.combined(with: .offset(y: 10)))
             }
-            photoStrip
             errorLine
-            shutterRow
+            controlsRow
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 16)
-        .padding(.bottom, 24)
+        .animation(.easeOut(duration: 0.3), value: showExpandedMinimap)
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 28)
         .frame(maxWidth: .infinity)
         .background(
             LinearGradient(
-                colors: [Color.black.opacity(0.55), Color.black.opacity(0.95)],
+                stops: [
+                    .init(color: Color.black.opacity(0), location: 0),
+                    .init(color: Color(red: 10 / 255, green: 10 / 255, blue: 12 / 255).opacity(0.85), location: 0.3),
+                    .init(color: Color.black.opacity(0.95), location: 1),
+                ],
                 startPoint: .top,
                 endPoint: .bottom
             )
+            .ignoresSafeArea(edges: .bottom)
         )
     }
 
-    @ViewBuilder
-    private var minimapSection: some View {
-        if coordinator.coverage.outline.count >= 3 {
-            TimelineView(.animation(minimumInterval: 0.1, paused: false)) { _ in
-                CoverageMinimap(
-                    outline: outlineCGPoints,
-                    coverage: coordinator.coverage,
-                    currentPosition: coordinator.livePositionLocal(),
-                    currentHeadingDeg: coordinator.liveHeadingDeg()
-                )
-            }
-            .frame(height: 140)
-        } else {
-            Text("Room outline unavailable")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
-                .frame(maxWidth: .infinity)
-                .frame(height: 140)
-                .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    private var infoRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            miniMinimap
+            coverageSummary
+            photoStack
         }
+    }
+
+    @ViewBuilder
+    private var miniMinimap: some View {
+        Button {
+            if coordinator.coverage.outline.count >= 3 {
+                showExpandedMinimap = true
+            }
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                if coordinator.coverage.outline.count >= 3 {
+                    liveMinimap(compact: true)
+                        .padding(6)
+                } else {
+                    Image(systemName: "map")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .padding(4)
+            }
+            .frame(width: 90, height: 56)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open coverage map")
+        .accessibilityIdentifier("photoTour.minimapExpand")
+    }
+
+    private var expandedMinimap: some View {
+        Button {
+            showExpandedMinimap = false
+        } label: {
+            ZStack(alignment: .bottom) {
+                liveMinimap(compact: false)
+                    .frame(maxWidth: 320, maxHeight: 220)
+                    .padding(.bottom, 18)
+                Text("Tap to close")
+                    .font(.system(size: 11, weight: .medium))
+                    .tracking(0.2)
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity)
+            .frame(height: 260)
+            .background(Color.white.opacity(0.02), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("photoTour.minimapClose")
+    }
+
+    private func liveMinimap(compact: Bool) -> some View {
+        TimelineView(.animation(minimumInterval: 0.1, paused: false)) { _ in
+            CoverageMinimap(
+                outline: outlineCGPoints,
+                coverage: coordinator.coverage,
+                currentPosition: coordinator.livePositionLocal(),
+                currentHeadingDeg: coordinator.liveHeadingDeg(),
+                compact: compact,
+                chromeless: true,
+                coveredWallColor: .white
+            )
+        }
+        .allowsHitTesting(false)
     }
 
     private var coverageSummary: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(String(format: "%d%%", Int(coordinator.coverage.overallCoverage * 100)))
-                .font(.system(size: 30, weight: .bold, design: .rounded))
-                .foregroundStyle(coordinator.coverage.isReadyToFinish ? VuuroColor.lime : .white)
-
-            VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(String(format: "%d%%", Int(coordinator.coverage.overallCoverage * 100)))
+                    .font(.system(size: 22, weight: .heavy))
+                    .tracking(-0.8)
+                    .monospacedDigit()
+                    .foregroundStyle(coordinator.coverage.isReadyToFinish ? VuuroColor.lime : VuuroColor.accent)
+                    .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
                 Text(coordinator.coverage.isReadyToFinish ? "photo coverage · ready" : "photo coverage")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
-                Text(String(
-                    format: "Position %d%% · Walls %d%%",
-                    Int(coordinator.coverage.positionCoverage * 100),
-                    Int(coordinator.coverage.wallCoverage * 100)
-                ))
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(0.6))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
-
-            Spacer(minLength: 0)
-
             Text(String(
-                format: "%lld photo%@",
-                coordinator.photoCount,
-                coordinator.photoCount == 1 ? "" : "s"
+                format: "Pos %d%% · Walls %d%%",
+                Int(coordinator.coverage.positionCoverage * 100),
+                Int(coordinator.coverage.wallCoverage * 100)
             ))
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.65))
+            .font(.system(size: 11))
+            .monospacedDigit()
+            .foregroundStyle(.white.opacity(0.6))
+            .lineLimit(1)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
         .accessibilityIdentifier("photoTour.coverageSummary")
     }
 
-    private func nextActionHint(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "lightbulb.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(VuuroColor.lime)
-                .padding(.top, 1)
-            Text(text)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.9))
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .accessibilityIdentifier("photoTour.nextAction")
-    }
-
-    @ViewBuilder
-    private var photoStrip: some View {
-        if !coordinator.photos.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(coordinator.photos, id: \.localId) { photo in
-                        photoThumbnail(photo)
-                    }
-                }
-                .padding(.vertical, 2)
+    private var photoStack: some View {
+        Button {
+            if coordinator.photos.isEmpty {
+                showToast("Tap the shutter to take a photo first.")
+            } else {
+                showGallery = true
             }
-            .accessibilityIdentifier("photoTour.photoStrip")
+        } label: {
+            HStack(spacing: 4) {
+                if coordinator.photos.isEmpty {
+                    Image(systemName: "camera")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .frame(width: 30, height: 30)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(Color.white.opacity(0.3), style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+                        )
+                } else {
+                    HStack(spacing: -20) {
+                        ForEach(Array(coordinator.photos.suffix(3)), id: \.localId) { photo in
+                            stackedThumbnail(photo)
+                        }
+                    }
+                    Text("\(coordinator.photoCount)")
+                        .font(.system(size: 11, weight: .bold))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                }
+            }
+            .padding(2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(String(format: "%lld photo%@", coordinator.photoCount, coordinator.photoCount == 1 ? "" : "s"))
+        .accessibilityIdentifier("photoTour.photoStrip")
+    }
+
+    private func stackedThumbnail(_ photo: RoomPhotoMetadata) -> some View {
+        ZStack {
+            Color(white: 0.2)
+            if let thumb = coordinator.loadThumbnail(photo) {
+                Image(uiImage: thumb)
+                    .resizable()
+                    .scaledToFill()
+            }
+        }
+        .frame(width: 30, height: 30)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.white.opacity(0.85), lineWidth: 1.5)
+        )
+        .shadow(color: .black.opacity(0.5), radius: 3, y: 2)
+    }
+
+    private var galleryOverlay: some View {
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.65)
+                .background(.ultraThinMaterial)
+                .ignoresSafeArea()
+                .onTapGesture { showGallery = false }
+
+            VStack(spacing: 0) {
+                Capsule()
+                    .fill(Color.white.opacity(0.2))
+                    .frame(width: 36, height: 4)
+                    .padding(.bottom, 16)
+                HStack {
+                    Text(String(format: "%lld photo%@", coordinator.photoCount, coordinator.photoCount == 1 ? "" : "s"))
+                        .font(.system(size: 16, weight: .bold))
+                        .tracking(-0.2)
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Button {
+                        showGallery = false
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 32, height: 32)
+                            .background(Color.white.opacity(0.1), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("photoTour.galleryClose")
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 16)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(coordinator.photos, id: \.localId) { photo in
+                            galleryThumbnail(photo)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 4)
+                }
+                .padding(.bottom, 8)
+            }
+            .padding(.top, 20)
+            .padding(.bottom, 34)
+            .frame(maxWidth: .infinity)
+            .background(
+                Color(red: 28 / 255, green: 28 / 255, blue: 30 / 255),
+                in: UnevenRoundedRectangle(topLeadingRadius: 24, topTrailingRadius: 24, style: .continuous)
+            )
+            .ignoresSafeArea(edges: .bottom)
         }
     }
 
-    private func photoThumbnail(_ photo: RoomPhotoMetadata) -> some View {
+    private func galleryThumbnail(_ photo: RoomPhotoMetadata) -> some View {
         Button {
             previewPhoto = PhotoPreviewItem(photo: photo)
         } label: {
             ZStack {
+                Color(white: 0.2)
                 if let thumb = coordinator.loadThumbnail(photo) {
                     Image(uiImage: thumb)
                         .resizable()
                         .scaledToFill()
                 } else {
-                    Color.white.opacity(0.08)
                     Image(systemName: "photo")
                         .foregroundStyle(.white.opacity(0.4))
                 }
             }
-            .frame(width: 56, height: 56)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .frame(width: 110, height: 110)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("photoTour.stripItem")
+    }
+
+    private var onboardingOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.7)
+                .background(.ultraThinMaterial)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                Image(systemName: "camera.fill")
+                    .font(.system(size: 24))
+                    .foregroundStyle(VuuroColor.accent)
+                    .frame(width: 56, height: 56)
+                    .background(VuuroColor.accent.opacity(0.15), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .padding(.bottom, 16)
+                Text("Photos for the tour")
+                    .font(.system(size: 19, weight: .bold))
+                    .tracking(-0.3)
+                    .foregroundStyle(.white)
+                    .padding(.bottom, 10)
+                Text("These photos turn this room into a walk-through tour. Walk through the room and take a photo of each wall: red walls on the map still need one. You're done when most walls are white and you've walked about half the room. This step is optional, tap Skip if you don't need a tour.")
+                    .font(.system(size: 14))
+                    .lineSpacing(3)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 24)
+                Button {
+                    onboardingSeen = true
+                    showOnboarding = false
+                } label: {
+                    Text("Got it")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(VuuroColor.lime, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("photoTour.onboardingDismiss")
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 28)
+            .background(Color(red: 28 / 255, green: 28 / 255, blue: 30 / 255), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(Color(white: 0.2), lineWidth: 1)
+            )
+            .padding(24)
+        }
+        .accessibilityIdentifier("photoTour.onboarding")
     }
 
     @ViewBuilder
@@ -235,17 +513,17 @@ struct RoomPhotoCaptureOverlay: View {
         }
     }
 
-    private var shutterRow: some View {
-        HStack(alignment: .center, spacing: 16) {
+    private var controlsRow: some View {
+        HStack(alignment: .center, spacing: 0) {
             Button {
                 showSkipConfirmation = true
             } label: {
                 Text("Skip")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 12)
-                    .background(Color.white.opacity(0.12), in: Capsule())
+                    .foregroundStyle(.white.opacity(0.6))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .frame(minWidth: 70, alignment: .leading)
             }
             .accessibilityIdentifier("photoTour.skip")
             .buttonStyle(.plain)
@@ -257,7 +535,7 @@ struct RoomPhotoCaptureOverlay: View {
             Spacer(minLength: 0)
 
             Button {
-                if coordinator.coverage.isReadyToFinish || coordinator.photoCount == 0 {
+                if coordinator.coverage.isReadyToFinish {
                     onFinish()
                 } else {
                     showFinishAnywayAlert = true
@@ -266,8 +544,9 @@ struct RoomPhotoCaptureOverlay: View {
                 Text("Finish")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(finishForeground)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .frame(minWidth: 70)
                     .background(finishBackground, in: Capsule())
             }
             .accessibilityIdentifier("photoTour.finish")
@@ -283,32 +562,55 @@ struct RoomPhotoCaptureOverlay: View {
     }
 
     private var finishForeground: Color {
-        if coordinator.photoCount == 0 { return .white.opacity(0.5) }
-        return Color(red: 24/255, green: 24/255, blue: 27/255)
+        if coordinator.photoCount == 0 { return .white.opacity(0.4) }
+        return .black
     }
 
     private var shutterButton: some View {
         Button {
-            Task { await coordinator.capturePhoto() }
+            Task { await capture() }
         } label: {
             ZStack {
                 Circle()
-                    .fill(Color.white.opacity(0.2))
-                    .frame(width: 76, height: 76)
-                Circle()
-                    .stroke(Color.white, lineWidth: 3)
-                    .frame(width: 64, height: 64)
+                    .stroke(Color.white, lineWidth: 3.5)
+                    .frame(width: 66, height: 66)
                 Circle()
                     .fill(Color.white)
                     .frame(width: 52, height: 52)
+                    .scaleEffect(coordinator.isCapturing ? 0.85 : 1)
                 if coordinator.isCapturing {
                     ProgressView().tint(.black)
                 }
             }
+            .opacity(coordinator.isMaximumReached ? 0.4 : 1)
+            .animation(.easeOut(duration: 0.1), value: coordinator.isCapturing)
         }
         .accessibilityIdentifier("photoTour.shutter")
         .buttonStyle(.plain)
         .disabled(coordinator.isCapturing || coordinator.isMaximumReached)
+    }
+
+    @MainActor
+    private func capture() async {
+        withAnimation(.easeOut(duration: 0.05)) { flashVisible = true }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            withAnimation(.easeOut(duration: 0.2)) { flashVisible = false }
+        }
+        await coordinator.capturePhoto()
+        if coordinator.isMaximumReached {
+            showToast("That's the maximum of \(coordinator.maximumPhotos) photos for this room.")
+        }
+    }
+
+    private func showToast(_ message: String) {
+        toastTask?.cancel()
+        toastMessage = message
+        toastTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard !Task.isCancelled else { return }
+            toastMessage = nil
+        }
     }
 
     private var skipMessage: String {
