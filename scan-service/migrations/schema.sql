@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS scan_sessions (
     -- either a caller-supplied access_token_ttl_seconds or a 90-day default,
     -- and refreshed on every POST .../rotate-token call.
     expires_at TEXT NOT NULL DEFAULT '',
-    access_token_hash TEXT NOT NULL DEFAULT ''
+    access_token_hash TEXT NOT NULL DEFAULT '',
+    deletion_requested_at TEXT NOT NULL DEFAULT '',
+    default_floor TEXT NOT NULL DEFAULT ''
 );
 
 -- Idempotency for POST .../capture (enterprise reliability hardening): a

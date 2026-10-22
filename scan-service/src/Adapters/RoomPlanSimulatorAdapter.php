@@ -508,7 +508,7 @@ final class RoomPlanSimulatorAdapter
                 }
                 $position = $item['position'] ?? null;
                 if (is_array($position)) {
-                    self::validatePoints("$group\[$itemIndex].position", [$position]);
+                    self::validatePoints("{$group}[{$itemIndex}].position", [$position]);
                 }
                 $corners = $item['polygonCorners'] ?? null;
                 if (!is_array($corners)) {
@@ -523,7 +523,7 @@ final class RoomPlanSimulatorAdapter
                         self::MAX_POLYGON_POINTS
                     ));
                 }
-                self::validatePoints("$group\[$itemIndex].polygonCorners", $corners);
+                self::validatePoints("{$group}[{$itemIndex}].polygonCorners", $corners);
             }
         }
 
