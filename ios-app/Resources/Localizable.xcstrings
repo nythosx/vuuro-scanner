@@ -7936,6 +7936,134 @@
                     }
                 }
             }
+        },
+        "%lld tour photo(s) are still only on this phone": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%lld tour photo(s) are still only on this phone"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%lld rondleidingsfoto('s) staan nog alleen op deze telefoon"
+                    }
+                }
+            }
+        },
+        "They were not uploaded with this scan. Upload them now to add them to the tour.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "They were not uploaded with this scan. Upload them now to add them to the tour."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Ze zijn niet met deze scan geüpload. Upload ze nu om ze aan de rondleiding toe te voegen."
+                    }
+                }
+            }
+        },
+        "Upload tour photos": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Upload tour photos"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Rondleidingsfoto's uploaden"
+                    }
+                }
+            }
+        },
+        "%lld tour photo(s) uploaded": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%lld tour photo(s) uploaded"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%lld rondleidingsfoto('s) geüpload"
+                    }
+                }
+            }
+        },
+        "%lld tour photo(s) couldn't be uploaded": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%lld tour photo(s) couldn't be uploaded"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%lld rondleidingsfoto('s) konden niet worden geüpload"
+                    }
+                }
+            }
+        },
+        "Could not match tour photos to the captured rooms.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Could not match tour photos to the captured rooms."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De rondleidingsfoto's konden niet aan de gescande ruimtes worden gekoppeld."
+                    }
+                }
+            }
+        },
+        "Tour photos weren't attached to the captured rooms.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tour photos weren't attached to the captured rooms."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De rondleidingsfoto's zijn niet aan de gescande ruimtes gekoppeld."
+                    }
+                }
+            }
+        },
+        "Could not read local tour photos.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Could not read local tour photos."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De rondleidingsfoto's op deze telefoon konden niet worden gelezen."
+                    }
+                }
+            }
         }
     },
     "version": "1.0"

@@ -845,7 +845,20 @@ struct MultiRoomCaptureFlowView: View {
     private func finishWithPreUploadOrError(_ error: AppError) {
         if let preUploadedSession {
             self.preUploadedSession = nil
-            onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
+            DiagnosticsLog.shared.record(
+                "Finishing with the pre-uploaded rooms after a merge problem; uploading tour photos first",
+                category: .info
+            )
+            uploadTask = Task {
+                let photoOutcome = await RoomPhotoUploader.uploadAll(
+                    captureGroupId: captureGroupId,
+                    session: preUploadedSession.session,
+                    floorPlan: preUploadedSession.floorPlan,
+                    store: .shared
+                )
+                showTourPhotoOutcome(photoOutcome)
+                onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
+            }
         } else {
             onError(error, existingSession)
         }

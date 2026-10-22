@@ -5,6 +5,10 @@ import XCTest
 final class RoomPhotoUploaderTests: XCTestCase {
 
     private func room(_ id: String, origin: [Double]?, group: String? = nil, joined: String? = nil) throws -> FloorPlan.Room {
+        try JSONDecoder().decode(FloorPlan.Room.self, from: Data(roomJSON(id, origin: origin, group: group, joined: joined).utf8))
+    }
+
+    private func roomJSON(_ id: String, origin: [Double]? = nil, group: String? = nil, joined: String? = nil) -> String {
         let originJSON = origin.map { "[\($0[0]), \($0[1])]" } ?? "null"
         let groupJSON = group.map { "\"\($0)\"" } ?? "null"
         let joinedJSON = joined.map { "\"\($0)\"" } ?? "null"
@@ -18,7 +22,19 @@ final class RoomPhotoUploaderTests: XCTestCase {
           "floor": "Ground", "capture_group_id": \(groupJSON), "joined_to_group_id": \(joinedJSON)
         }
         """
-        return try JSONDecoder().decode(FloorPlan.Room.self, from: Data(json.utf8))
+        return json
+    }
+
+    private static func planJSON(rooms: [String]) -> String {
+        """
+        {
+          "scan_session_id": "s-1", "property_id": "p-1", "unit_id": "u-1", "organisation_id": "o-1",
+          "capture_provider": "roomplan", "captured_at": "2026-10-22T10:00:00+00:00",
+          "measurement_basis": "indicative_nen2580_inspired", "purpose": "listing",
+          "rooms": [\(rooms.joined(separator: ","))],
+          "photos": [], "notes": [], "capture_location": null
+        }
+        """
     }
 
     private func batch(_ roomKey: String, origin: [Double]?, group: String = "walk-1") -> RoomPhotoManifest {
@@ -96,6 +112,50 @@ final class RoomPhotoUploaderTests: XCTestCase {
         let batchA = batch("a", origin: nil)
         let room1 = try room("room-1", origin: [0.0, 0.0])
         XCTAssertNil(RoomPhotoUploader.pairByStructureOrigin(batches: [batchA], serverRooms: [room1]))
+    }
+
+    func testSingleRoomScanPairsEvenWhenTheServerRoomHasNoOrigin() throws {
+        let batchA = batch("a", origin: [1.234, -0.5])
+        let room1 = try room("room-01-floor", origin: nil, group: "walk-1")
+        let result = RoomPhotoUploader.pair(batches: [batchA], serverRooms: [room1])
+        XCTAssertEqual(result?.map(\.roomId), ["room-01-floor"])
+    }
+
+    func testSingleRoomScanPairsWhenTheBatchHasNoOrigin() throws {
+        let batchA = batch("a", origin: nil)
+        let room1 = try room("room-1", origin: [0.0, 0.0])
+        XCTAssertEqual(RoomPhotoUploader.pair(batches: [batchA], serverRooms: [room1])?.map(\.roomId), ["room-1"])
+    }
+
+    func testRoomsWithoutOriginPairInCaptureOrder() throws {
+        let batches = [batch("a", origin: [0.0, 0.0]), batch("b", origin: [5.0, 0.0])]
+        let rooms = [try room("room-1", origin: nil), try room("room-2", origin: nil)]
+        XCTAssertEqual(RoomPhotoUploader.pair(batches: batches, serverRooms: rooms)?.map(\.roomId), ["room-1", "room-2"])
+    }
+
+    func testMultiRoomWithMismatchedOriginsStillRefuses() throws {
+        let batches = [batch("a", origin: [0.0, 0.0]), batch("b", origin: [5.0, 0.0])]
+        let rooms = [try room("room-1", origin: [2.0, 0.0]), try room("room-2", origin: [9.0, 0.0])]
+        XCTAssertNil(RoomPhotoUploader.pair(batches: batches, serverRooms: rooms))
+    }
+
+    func testPendingPhotoCountFindsPhotosLeftOnThePhone() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = RoomPhotoStore(rootDirectory: dir)
+        for index in 0..<3 {
+            try store.savePhoto(
+                Data([0xFF, 0xD8, 0xFF]),
+                metadata: RoomPhotoMetadata(localId: "p\(index)", capturedAt: Date(), positionM: [1, 1], headingDeg: 0, pitchDeg: 0),
+                captureGroupId: "walk-1",
+                roomKey: "room-key",
+                structureOriginM: nil
+            )
+        }
+        let plan = try JSONDecoder().decode(FloorPlan.self, from: Data(Self.planJSON(rooms: [roomJSON("room-1", group: "walk-1"), roomJSON("room-2", group: "walk-9")]).utf8))
+        XCTAssertEqual(RoomPhotoUploader.pendingPhotoCount(floorPlan: plan, store: store), ["walk-1": 3])
+        store.clearAll(captureGroupId: "walk-1")
+        XCTAssertEqual(RoomPhotoUploader.pendingPhotoCount(floorPlan: plan, store: store), [:])
     }
 
     func testPermutationsProducesFactorialCounts() {

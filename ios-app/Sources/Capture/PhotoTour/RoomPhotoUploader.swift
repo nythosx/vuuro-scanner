@@ -65,18 +65,7 @@ enum RoomPhotoUploader {
             )
         }
 
-        let pairing: [(batch: RoomPhotoManifest, roomId: String)]?
-        if let byOrigin = pairByStructureOrigin(batches: batches, serverRooms: serverRooms) {
-            pairing = byOrigin
-        } else if let greedy = pairGreedy(batches: batches, serverRooms: serverRooms) {
-            DiagnosticsLog.shared.record(
-                "Photo360: paired all \(greedy.count) local batch(es) by origin; \(serverRooms.count - greedy.count) server room(s) have no tour photos",
-                category: .info
-            )
-            pairing = greedy
-        } else {
-            pairing = nil
-        }
+        let pairing = pair(batches: batches, serverRooms: serverRooms)
 
         guard let matched = pairing else {
             DiagnosticsLog.shared.record(
@@ -133,6 +122,53 @@ enum RoomPhotoUploader {
             photosFailed: failed,
             skipReason: nil
         )
+    }
+
+    static func pair(
+        batches: [RoomPhotoManifest],
+        serverRooms: [FloorPlan.Room]
+    ) -> [(batch: RoomPhotoManifest, roomId: String)]? {
+        if let byOrigin = pairByStructureOrigin(batches: batches, serverRooms: serverRooms) {
+            return byOrigin
+        }
+        if let greedy = pairGreedy(batches: batches, serverRooms: serverRooms) {
+            DiagnosticsLog.shared.record(
+                "Photo360: paired all \(greedy.count) local batch(es) by origin; \(serverRooms.count - greedy.count) server room(s) have no tour photos",
+                category: .info
+            )
+            return greedy
+        }
+        if batches.count == 1, serverRooms.count == 1 {
+            DiagnosticsLog.shared.record(
+                "Photo360: origins did not match, pairing the only local batch with the only server room \(serverRooms[0].roomId)",
+                category: .info
+            )
+            return [(batch: batches[0], roomId: serverRooms[0].roomId)]
+        }
+        if serverRooms.allSatisfy({ $0.structureOriginM == nil }),
+           let positional = pairPositionally(batches: batches, serverRooms: serverRooms) {
+            DiagnosticsLog.shared.record(
+                "Photo360: server rooms carry no origin, pairing \(positional.count) batch(es) in capture order",
+                category: .info
+            )
+            return positional
+        }
+        return nil
+    }
+
+    static func pendingPhotoCount(floorPlan: FloorPlan, store: RoomPhotoStore) -> [String: Int] {
+        var groupIds: Set<String> = []
+        for room in floorPlan.rooms {
+            if let id = room.captureGroupId, !id.isEmpty { groupIds.insert(id) }
+            if let id = room.joinedToGroupId, !id.isEmpty { groupIds.insert(id) }
+        }
+        var counts: [String: Int] = [:]
+        for groupId in groupIds {
+            let batches = (try? store.allBatches(captureGroupId: groupId)) ?? []
+            let total = batches.reduce(0) { $0 + $1.photos.count }
+            if total > 0 { counts[groupId] = total }
+        }
+        return counts
     }
 
     static func roomsForCaptureGroup(_ rooms: [FloorPlan.Room], captureGroupId: String) -> [FloorPlan.Room] {
@@ -217,7 +253,7 @@ enum RoomPhotoUploader {
         return result
     }
 
-    private static func pairPositionally(
+    static func pairPositionally(
         batches: [RoomPhotoManifest],
         serverRooms: [FloorPlan.Room]
     ) -> [(batch: RoomPhotoManifest, roomId: String)]? {
