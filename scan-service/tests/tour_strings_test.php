@@ -40,7 +40,7 @@ if (count($parts) === 2) {
     ts_check('every English key has a Dutch counterpart', $onlyEn === [], 'missing in nl: ' . implode(', ', $onlyEn));
     ts_check('every Dutch key has an English counterpart', $onlyNl === [], 'missing in en: ' . implode(', ', $onlyNl));
     ts_check('both tables have the same key count', count($en) === count($nl), count($en) . ' vs ' . count($nl));
-    ts_check('both tables declare the expected 24 keys', count($en) === 24 && count($nl) === 24, count($en) . ' and ' . count($nl));
+    ts_check('both tables declare the expected 25 keys', count($en) === 25 && count($nl) === 25, count($en) . ' and ' . count($nl));
 
     $enVars = [];
     $nlVars = [];

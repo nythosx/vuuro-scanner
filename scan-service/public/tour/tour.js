@@ -11,7 +11,8 @@
     hasPhotos: false,
     hasDollhouse: false,
     roomsWithPhotos: [],
-    roomSequenceIndex: 0
+    roomSequenceIndex: 0,
+    isEmbed: false
   };
 
   var els = {};
@@ -33,6 +34,11 @@
     }
     if (els.roomNext) {
       els.roomNext.addEventListener('click', function () { stepRoom(1); });
+    }
+
+    state.isEmbed = readEmbed();
+    if (state.isEmbed) {
+      installEmbedChrome();
     }
 
     state.sessionId = readSessionId();
@@ -71,6 +77,25 @@
 
   function readToken() {
     return new URLSearchParams(window.location.search).get('token') || '';
+  }
+
+  function readEmbed() {
+    return new URLSearchParams(window.location.search).get('embed') === '1';
+  }
+
+  function installEmbedChrome() {
+    var brand = document.querySelector('.tour-brand');
+    if (!brand || !brand.parentNode) return;
+    var url = new URL(window.location.href);
+    url.searchParams.delete('embed');
+    var link = document.createElement('a');
+    link.className = 'tour-popout';
+    link.href = url.toString();
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.setAttribute('aria-label', window.TourStrings.t('popout_full_tour'));
+    link.textContent = window.TourStrings.t('popout_full_tour') + ' \u2197';
+    brand.parentNode.replaceChild(link, brand);
   }
 
   function withToken(url) {

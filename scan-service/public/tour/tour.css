@@ -459,3 +459,28 @@ body {
 @media (max-width: 480px) {
   .tour-dollhouse-back { left: 12px; bottom: 12px; }
 }
+
+.tour-popout {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #fff;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.10);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  transition: background 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+.tour-popout:hover,
+.tour-popout:focus-visible {
+  background: rgba(255, 255, 255, 0.20);
+  border-color: rgba(255, 255, 255, 0.30);
+  outline: none;
+}
+@media (max-width: 480px) {
+  .tour-popout { padding: 6px 10px; font-size: 12px; }
+}
