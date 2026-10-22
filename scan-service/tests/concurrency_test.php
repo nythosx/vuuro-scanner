@@ -22,6 +22,19 @@ function c_check(string $label, bool $pass, string $detail = ''): void
     }
 }
 
+function c_wait_for_file(string $path, float $timeoutSeconds = 15.0): bool
+{
+    $deadline = microtime(true) + $timeoutSeconds;
+    while (microtime(true) < $deadline) {
+        clearstatcache(true, $path);
+        if (is_file($path)) {
+            return true;
+        }
+        usleep(20_000);
+    }
+    return false;
+}
+
 $dbFile = sys_get_temp_dir() . '/vuuro_scan_concurrency_test_' . bin2hex(random_bytes(6)) . '.sqlite';
 @unlink($dbFile);
 
@@ -41,13 +54,15 @@ use VuuroScan\Storage\Database;
 
 $dbFile = $argv[2];
 $sessionId = $argv[3];
+$readyFile = $argv[4];
 
 $db = Database::connect($dbFile);
 $repo = new ScanSessionRepository($db);
 
 $lock = new ReflectionMethod(ScanSessionRepository::class, 'withWriteLock');
 $lock->setAccessible(true);
-$lock->invoke($repo, function () use ($repo, $sessionId) {
+$lock->invoke($repo, function () use ($repo, $sessionId, $readyFile) {
+    file_put_contents($readyFile, '1');
     $repo->findFloorPlan($sessionId);
     sleep(2);
     $repo->saveFloorPlan($sessionId, [
@@ -64,8 +79,9 @@ file_put_contents($workerFile, $workerScript);
 
 $srcRoot = __DIR__;
 $descriptors = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+$raceReadyFile = sys_get_temp_dir() . '/vuuro_scan_race_ready_' . bin2hex(random_bytes(6));
 $process = proc_open(
-    [PHP_BINARY, $workerFile, $srcRoot, $dbFile, $sessionId],
+    [PHP_BINARY, $workerFile, $srcRoot, $dbFile, $sessionId, $raceReadyFile],
     $descriptors,
     $pipes
 );
@@ -75,7 +91,7 @@ if ($process !== false) {
     fclose($pipes[1]);
     fclose($pipes[2]);
 
-    usleep(500_000);
+    c_check('worker A holds the write lock before this process tries to write', c_wait_for_file($raceReadyFile));
 
     $start = microtime(true);
     $result = $repo->appendCapture($sessionId, [
@@ -88,6 +104,7 @@ if ($process !== false) {
 
     proc_close($process);
     @unlink($workerFile);
+    @unlink($raceReadyFile);
 
     c_check(
         "this process's own appendCapture() call blocked waiting for worker A's lock (took {$elapsed}s, expected > 1s)",
@@ -128,7 +145,8 @@ $db = Database::connect($argv[2]);
 $repo = new ScanSessionRepository($db);
 $lock = new ReflectionMethod(ScanSessionRepository::class, 'withWriteLock');
 $lock->setAccessible(true);
-$lock->invoke($repo, function () {
+$lock->invoke($repo, function () use ($argv) {
+    file_put_contents($argv[3], '1');
     sleep(18);
 });
 PHP;
@@ -139,11 +157,12 @@ $idempotencyKey = 'concurrency-test-key';
 $claimed = $idempotencyRepo->claimIdempotencyKey($idempotencySessionId, $idempotencyKey, 'fp');
 c_check('idempotency key claimed before contention starts', $claimed);
 
-$lockProcess = proc_open([PHP_BINARY, $lockHoldingWorkerFile, __DIR__, $idempotencyDbFile], $descriptors, $lockPipes);
+$lockReadyFile = sys_get_temp_dir() . '/vuuro_scan_idempotency_lock_ready_' . bin2hex(random_bytes(6));
+$lockProcess = proc_open([PHP_BINARY, $lockHoldingWorkerFile, __DIR__, $idempotencyDbFile, $lockReadyFile], $descriptors, $lockPipes);
 if ($lockProcess !== false) {
     fclose($lockPipes[1]);
     fclose($lockPipes[2]);
-    usleep(300_000);
+    c_check('the lock-holding worker holds the write lock before the capture is attempted', c_wait_for_file($lockReadyFile));
 
     $threwUnderContention = false;
     try {
@@ -161,6 +180,7 @@ if ($lockProcess !== false) {
 
     proc_close($lockProcess);
     @unlink($lockHoldingWorkerFile);
+    @unlink($lockReadyFile);
 
     $reclaimable = $idempotencyRepo->claimIdempotencyKey($idempotencySessionId, $idempotencyKey, 'fp-retry');
     c_check(
