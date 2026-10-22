@@ -97,7 +97,7 @@ struct CoverageMinimap: View {
         let minY: CGFloat
 
         init(outline: [CGPoint], size: CGSize) {
-            let margin: CGFloat = 12
+            let margin: CGFloat = 0.5
             let minX = (outline.map { $0.x }.min() ?? 0) - margin
             let maxX = (outline.map { $0.x }.max() ?? 1) + margin
             let minY = (outline.map { $0.y }.min() ?? 0) - margin
