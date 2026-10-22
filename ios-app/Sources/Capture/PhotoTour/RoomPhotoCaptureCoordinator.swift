@@ -80,7 +80,10 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
 
         self.coverageTracker = RoomPhotoCoverageTracker(
             outline: self.outlineLocal,
-            roomHeadingDeg: initialCompassHeadingDeg
+            roomHeadingDeg: Self.coverageReferenceDeg(
+                compassHeadingDeg: initialCompassHeadingDeg,
+                cameraYawAtStartDeg: initialCameraYawDeg
+            )
         )
 
         loadExistingPhotos()
@@ -243,6 +246,14 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         return yawDeg(transform)
     }
 
+    static func coverageReferenceDeg(compassHeadingDeg: Double?, cameraYawAtStartDeg: Double?) -> Double {
+        guard let compassHeadingDeg else { return 270 }
+        var raw = 270 + compassHeadingDeg - (cameraYawAtStartDeg ?? 0)
+        raw = raw.truncatingRemainder(dividingBy: 360)
+        if raw < 0 { raw += 360 }
+        return raw
+    }
+
     static func headingDeg(
         compassHeadingDeg: Double?,
         cameraYawAtStartDeg: Double?,
@@ -281,7 +292,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         }
     }
 
-    private static func yawDeg(_ transform: simd_float4x4) -> Double {
+    static func yawDeg(_ transform: simd_float4x4) -> Double {
         let forward = transform.columns.2
         return atan2(Double(forward.z), Double(forward.x)) * 180.0 / .pi
     }
