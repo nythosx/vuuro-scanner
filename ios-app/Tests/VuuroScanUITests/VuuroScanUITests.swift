@@ -113,17 +113,16 @@ final class VuuroScanUITests: XCTestCase {
         for round in 1...2 {
             let menu = element(app, "report.shareMenu")
             XCTAssertTrue(menu.waitForExistence(timeout: timeout), "share menu never appeared (round \(round))")
-            let hittable = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: menu)
-            if XCTWaiter().wait(for: [hittable], timeout: 10) != .completed {
-                print("SHARE_MENU_NOT_HITTABLE round \(round)")
-                print(app.debugDescription)
+            let shareUSDZ = element(app, "report.shareUSDZ")
+            for _ in 0..<5 where !shareUSDZ.exists {
+                menu.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                if shareUSDZ.waitForExistence(timeout: 3) { break }
+            }
+            if !shareUSDZ.exists {
                 let shot = XCTAttachment(screenshot: app.screenshot())
-                shot.name = "share-menu-not-hittable-round-\(round)"
+                shot.name = "share-menu-did-not-open-round-\(round)"
                 shot.lifetime = .keepAlways
                 add(shot)
-                menu.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            } else {
-                menu.tap()
             }
             tap(app, "report.shareUSDZ")
             XCTAssertTrue(shareSheet(app).waitForExistence(timeout: 60), "share sheet for the 3D model never appeared (round \(round))")
