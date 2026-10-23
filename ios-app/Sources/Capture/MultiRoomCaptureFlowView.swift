@@ -260,10 +260,12 @@ struct MultiRoomCaptureFlowView: View {
                                 onKeep: {
                                     self.partialRoomFailureMessage = nil
                                     let kept = coordinator.keepPendingPartialRoom()
-                                    if !kept {
+                                    if kept {
+                                        Task { await beginPhotoStepOrContinue() }
+                                    } else {
                                         VuuroToast.shared.show(vuuroLocalized("This room's outline was too small or flat to keep — discarding it."))
+                                        continueAfterRoomResolved()
                                     }
-                                    continueAfterRoomResolved()
                                 },
                                 onDiscard: {
                                     self.partialRoomFailureMessage = nil
