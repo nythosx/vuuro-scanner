@@ -16,6 +16,15 @@ final class DollhouseGltfWriter
     private const MAX_OPENING_WALL_DISTANCE_M = 0.6;
     private const MAX_TRIANGLES = 150000;
     private const MAX_TEXTURE_EDGE_PX = 1600;
+    private const DOOR_HEIGHT_M = 2.05;
+    private const WINDOW_SILL_M = 0.9;
+    private const WINDOW_HEIGHT_M = 1.2;
+    private const OTHER_OPENING_HEIGHT_M = 1.0;
+    private const FRAME_POST_M = 0.04;
+    private const FRAME_EXTRA_DEPTH_M = 0.03;
+    private const DOOR_COLOR = [1.0, 0.51, 0.07, 1.0];
+    private const WINDOW_COLOR = [0.18, 0.76, 1.0, 1.0];
+    private const OTHER_OPENING_COLOR = [0.55, 0.55, 0.56, 1.0];
 
     public function write(array $floorPlan, ?callable $photoLoader = null): string
     {
@@ -406,17 +415,120 @@ final class DollhouseGltfWriter
                 }
             }
 
-            foreach (self::wallSegments($a, $len, $ux, $uz, $openings) as $seg) {
-                $startT = $seg[0] <= 1e-6 ? -$innerHalf : $seg[0];
-                $endT = $seg[1] >= $len - 1e-6 ? $len + $innerHalf : $seg[1];
-                $pa = [$a[0] + $ux * $startT, $a[1] + $uz * $startT];
-                $pb = [$a[0] + $ux * $endT, $a[1] + $uz * $endT];
+            $at = static fn (float $t): array => [$a[0] + $ux * $t, $a[1] + $uz * $t];
+            $spans = self::openingSpans($a, $len, $ux, $uz, $height, $openings);
+            $cursor = 0.0;
+            $pieces = [];
+            foreach ($spans as $span) {
+                if ($span['t0'] > $cursor + 1e-6) {
+                    $pieces[] = [$cursor, $span['t0'], 0.0, $height];
+                }
+                if ($span['y0'] > 1e-4) {
+                    $pieces[] = [$span['t0'], $span['t1'], 0.0, $span['y0']];
+                }
+                if ($span['y1'] < $height - 1e-4) {
+                    $pieces[] = [$span['t0'], $span['t1'], $span['y1'], $height];
+                }
+                $cursor = max($cursor, $span['t1']);
+            }
+            if ($cursor < $len - 1e-6) {
+                $pieces[] = [$cursor, $len, 0.0, $height];
+            }
+            foreach ($pieces as [$t0, $t1, $y0, $y1]) {
+                $startT = $t0 <= 1e-6 ? -$innerHalf : $t0;
+                $endT = $t1 >= $len - 1e-6 ? $len + $innerHalf : $t1;
                 self::appendWallBoxToBuckets(
-                    $pa, $pb, $ux, $uz, $nx, $nz, $innerHalf, $outerHalf, $height, $pose,
+                    $at($startT), $at($endT), $ux, $uz, $nx, $nz, $innerHalf, $outerHalf, $y0, $y1, $pose,
                     $wallPhoto, $headingDeg, $wallColor, $flat, $texturedWalls
                 );
             }
+            $frameInner = $innerHalf + self::FRAME_EXTRA_DEPTH_M;
+            $frameOuter = $outerHalf + self::FRAME_EXTRA_DEPTH_M;
+            foreach ($spans as $span) {
+                $post = min(self::FRAME_POST_M, ($span['t1'] - $span['t0']) / 4, ($span['y1'] - $span['y0']) / 4);
+                if ($post <= 0) {
+                    continue;
+                }
+                $color = $span['color'];
+                $bars = [
+                    [$span['t0'], $span['t0'] + $post, $span['y0'], $span['y1']],
+                    [$span['t1'] - $post, $span['t1'], $span['y0'], $span['y1']],
+                    [$span['t0'], $span['t1'], $span['y1'] - $post, $span['y1']],
+                ];
+                if ($span['y0'] > 1e-4) {
+                    $bars[] = [$span['t0'], $span['t1'], $span['y0'], $span['y0'] + $post];
+                }
+                foreach ($bars as [$t0, $t1, $y0, $y1]) {
+                    self::appendWallBoxToBuckets(
+                        $at($t0), $at($t1), $ux, $uz, $nx, $nz, $frameInner, $frameOuter, $y0, $y1, $pose,
+                        null, null, $color, $flat, $texturedWalls
+                    );
+                }
+            }
         }
+    }
+
+    private static function openingSpans(array $a, float $len, float $ux, float $uz, float $height, array $openings): array
+    {
+        $spans = [];
+        foreach ($openings as $opening) {
+            $pos = $opening['position_m'] ?? null;
+            if (!is_array($pos) || count($pos) < 2) {
+                continue;
+            }
+            $px = (float) $pos[0];
+            $pz = (float) $pos[1];
+            $t = ($px - $a[0]) * $ux + ($pz - $a[1]) * $uz;
+            $perp = abs(($px - $a[0]) * $uz - ($pz - $a[1]) * $ux);
+            if ($perp > self::MAX_OPENING_WALL_DISTANCE_M || $t < -0.3 || $t > $len + 0.3) {
+                continue;
+            }
+            $category = (string) ($opening['category'] ?? 'opening');
+            $rawWidth = $opening['width_m'] ?? null;
+            if (is_numeric($rawWidth) && (float) $rawWidth >= 0.2 && (float) $rawWidth <= 6.0) {
+                $width = (float) $rawWidth;
+            } else {
+                $width = match ($category) {
+                    'door' => 0.9,
+                    'window' => 1.2,
+                    default => 0.8,
+                };
+            }
+            $t0 = max(0.0, $t - $width / 2);
+            $t1 = min($len, $t + $width / 2);
+            if ($t1 - $t0 < 1e-3) {
+                continue;
+            }
+            if ($category === 'door') {
+                [$y0, $y1, $color] = [0.0, min(self::DOOR_HEIGHT_M, $height), self::DOOR_COLOR];
+            } elseif ($category === 'window') {
+                $sill = min(self::WINDOW_SILL_M, $height - 0.1);
+                [$y0, $y1, $color] = [$sill, min($sill + self::WINDOW_HEIGHT_M, $height), self::WINDOW_COLOR];
+            } else {
+                [$y0, $y1, $color] = [0.0, min(self::OTHER_OPENING_HEIGHT_M, $height), self::OTHER_OPENING_COLOR];
+            }
+            if ($y1 - $y0 < 1e-3) {
+                continue;
+            }
+            $spans[] = ['t0' => $t0, 't1' => $t1, 'y0' => $y0, 'y1' => $y1, 'color' => $color];
+        }
+        usort($spans, static fn (array $x, array $y) => $x['t0'] <=> $y['t0']);
+        $merged = [];
+        foreach ($spans as $span) {
+            $last = $merged === [] ? null : $merged[count($merged) - 1];
+            if ($last !== null && $span['t0'] < $last['t1']) {
+                $merged[count($merged) - 1] = [
+                    't0' => $last['t0'],
+                    't1' => max($last['t1'], $span['t1']),
+                    'y0' => min($last['y0'], $span['y0']),
+                    'y1' => max($last['y1'], $span['y1']),
+                    'color' => $last['color'],
+                ];
+            } else {
+                $merged[] = $span;
+            }
+        }
+        return $merged;
     }
 
     private static function appendWallBoxToBuckets(
@@ -428,7 +540,8 @@ final class DollhouseGltfWriter
         float $nz,
         float $innerHalf,
         float $outerHalf,
-        float $height,
+        float $y0,
+        float $y1,
         array $pose,
         ?array $wallPhoto,
         ?float $headingDeg,
@@ -436,14 +549,14 @@ final class DollhouseGltfWriter
         array &$flat,
         array &$texturedWalls
     ): void {
-        $iA0 = self::posePoint($pose, $a[0] + $nx * $innerHalf, 0.0, $a[1] + $nz * $innerHalf);
-        $iB0 = self::posePoint($pose, $b[0] + $nx * $innerHalf, 0.0, $b[1] + $nz * $innerHalf);
-        $iAh = self::posePoint($pose, $a[0] + $nx * $innerHalf, $height, $a[1] + $nz * $innerHalf);
-        $iBh = self::posePoint($pose, $b[0] + $nx * $innerHalf, $height, $b[1] + $nz * $innerHalf);
-        $oA0 = self::posePoint($pose, $a[0] - $nx * $outerHalf, 0.0, $a[1] - $nz * $outerHalf);
-        $oB0 = self::posePoint($pose, $b[0] - $nx * $outerHalf, 0.0, $b[1] - $nz * $outerHalf);
-        $oAh = self::posePoint($pose, $a[0] - $nx * $outerHalf, $height, $a[1] - $nz * $outerHalf);
-        $oBh = self::posePoint($pose, $b[0] - $nx * $outerHalf, $height, $b[1] - $nz * $outerHalf);
+        $iA0 = self::posePoint($pose, $a[0] + $nx * $innerHalf, $y0, $a[1] + $nz * $innerHalf);
+        $iB0 = self::posePoint($pose, $b[0] + $nx * $innerHalf, $y0, $b[1] + $nz * $innerHalf);
+        $iAh = self::posePoint($pose, $a[0] + $nx * $innerHalf, $y1, $a[1] + $nz * $innerHalf);
+        $iBh = self::posePoint($pose, $b[0] + $nx * $innerHalf, $y1, $b[1] + $nz * $innerHalf);
+        $oA0 = self::posePoint($pose, $a[0] - $nx * $outerHalf, $y0, $a[1] - $nz * $outerHalf);
+        $oB0 = self::posePoint($pose, $b[0] - $nx * $outerHalf, $y0, $b[1] - $nz * $outerHalf);
+        $oAh = self::posePoint($pose, $a[0] - $nx * $outerHalf, $y1, $a[1] - $nz * $outerHalf);
+        $oBh = self::posePoint($pose, $b[0] - $nx * $outerHalf, $y1, $b[1] - $nz * $outerHalf);
 
         $inwardNormal = self::poseNormal($pose, $nx, 0.0, $nz);
         $outwardNormal = self::poseNormal($pose, -$nx, 0.0, -$nz);
@@ -452,25 +565,37 @@ final class DollhouseGltfWriter
 
         $uvs = null;
         if ($wallPhoto !== null && $headingDeg !== null) {
-            $localA0 = [$a[0] + $nx * $innerHalf, 0.0, $a[1] + $nz * $innerHalf];
-            $localB0 = [$b[0] + $nx * $innerHalf, 0.0, $b[1] + $nz * $innerHalf];
-            $localBh = [$b[0] + $nx * $innerHalf, $height, $b[1] + $nz * $innerHalf];
-            $localAh = [$a[0] + $nx * $innerHalf, $height, $a[1] + $nz * $innerHalf];
+            $localA0 = [$a[0] + $nx * $innerHalf, $y0, $a[1] + $nz * $innerHalf];
+            $localB0 = [$b[0] + $nx * $innerHalf, $y0, $b[1] + $nz * $innerHalf];
+            $localBh = [$b[0] + $nx * $innerHalf, $y1, $b[1] + $nz * $innerHalf];
+            $localAh = [$a[0] + $nx * $innerHalf, $y1, $a[1] + $nz * $innerHalf];
             $uvs = self::wallFaceUvs($wallPhoto, $headingDeg, [$localA0, $localB0, $localBh, $localAh]);
         }
 
         if ($uvs !== null) {
-            $bucket = [
-                'positions' => [],
-                'normals' => [],
-                'uvs' => [],
-                'indices' => [],
-                'imageBytes' => $wallPhoto['imageBytes'],
-                'imageMime' => $wallPhoto['imageMime'],
-                'photoId' => $wallPhoto['photo_id'] ?? '',
-            ];
-            self::appendQuadToBucket($bucket, [$iA0, $iB0, $iBh, $iAh], $inwardNormal, $wallColor, $uvs);
-            $texturedWalls[] = $bucket;
+            $photoId = (string) ($wallPhoto['photo_id'] ?? '');
+            $bucketIndex = null;
+            if ($photoId !== '') {
+                foreach ($texturedWalls as $index => $existing) {
+                    if (($existing['photoId'] ?? '') === $photoId) {
+                        $bucketIndex = $index;
+                        break;
+                    }
+                }
+            }
+            if ($bucketIndex === null) {
+                $texturedWalls[] = [
+                    'positions' => [],
+                    'normals' => [],
+                    'uvs' => [],
+                    'indices' => [],
+                    'imageBytes' => $wallPhoto['imageBytes'],
+                    'imageMime' => $wallPhoto['imageMime'],
+                    'photoId' => $photoId,
+                ];
+                $bucketIndex = count($texturedWalls) - 1;
+            }
+            self::appendQuadToBucket($texturedWalls[$bucketIndex], [$iA0, $iB0, $iBh, $iAh], $inwardNormal, $wallColor, $uvs);
         } else {
             self::appendQuadToBucket($flat, [$iA0, $iB0, $iBh, $iAh], $inwardNormal, $wallColor, null);
         }

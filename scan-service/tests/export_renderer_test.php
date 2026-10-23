@@ -825,6 +825,32 @@ $pdfLines = (new ReflectionMethod($pdfRenderer, 'wrapTextLines'))->invoke($pdfRe
 $pdfEncoded = array_map(static fn (string $l): string => (new ReflectionMethod($pdfRenderer, 'toWinAnsi'))->invoke($pdfRenderer, $l), $pdfLines);
 x_check('a long accented word in the PDF is not turned into dashes', !str_contains(implode('', $pdfEncoded), '-') && implode('', $pdfEncoded) === str_repeat("\xE9", 120), json_encode(array_map('bin2hex', $pdfEncoded)));
 
+echo "\n== FloorPlanPdfRenderer: small JPEGs are embedded as they are ==\n";
+$embed = new ReflectionMethod(FloorPlanPdfRenderer::class, 'toEmbeddableJpeg');
+$embed->setAccessible(true);
+$jpegOf = static function (int $w, int $h): string {
+    $img = imagecreatetruecolor($w, $h);
+    imagefilledrectangle($img, 0, 0, $w, $h, imagecolorallocate($img, 90, 140, 200));
+    ob_start();
+    imagejpeg($img, null, 80);
+    $bytes = (string) ob_get_clean();
+    imagedestroy($img);
+    return $bytes;
+};
+$small = $jpegOf(800, 600);
+$smallResult = $embed->invoke(new FloorPlanPdfRenderer(), $small);
+x_check('a JPEG within the size cap is embedded without re-encoding', ($smallResult['jpeg'] ?? null) === $small && ($smallResult['width'] ?? 0) === 800 && ($smallResult['height'] ?? 0) === 600);
+$large = $jpegOf(2400, 1200);
+$largeResult = $embed->invoke(new FloorPlanPdfRenderer(), $large);
+x_check('a JPEG over the cap is still scaled down', ($largeResult['width'] ?? 0) === 1600 && ($largeResult['height'] ?? 0) === 800, json_encode([$largeResult['width'] ?? null, $largeResult['height'] ?? null]));
+ob_start();
+$pngImg = imagecreatetruecolor(40, 30);
+imagepng($pngImg);
+$png = (string) ob_get_clean();
+imagedestroy($pngImg);
+$pngResult = $embed->invoke(new FloorPlanPdfRenderer(), $png);
+x_check('a PNG is still converted to JPEG', is_array($pngResult) && str_starts_with($pngResult['jpeg'], "\xFF\xD8"));
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

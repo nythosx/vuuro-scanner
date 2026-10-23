@@ -384,6 +384,14 @@ final class FloorPlanPdfRenderer
 
     private function toEmbeddableJpeg(string $imageBytes): ?array
     {
+        $info = @getimagesizefromstring($imageBytes);
+        if (is_array($info)
+            && ($info['mime'] ?? null) === 'image/jpeg'
+            && ($info['channels'] ?? 3) === 3
+            && (int) $info[0] >= 1 && (int) $info[1] >= 1
+            && max((int) $info[0], (int) $info[1]) <= self::MAX_EMBEDDED_IMAGE_DIMENSION_PX) {
+            return ['jpeg' => $imageBytes, 'width' => (int) $info[0], 'height' => (int) $info[1]];
+        }
         $image = @imagecreatefromstring($imageBytes);
         if ($image === false) {
             return null;

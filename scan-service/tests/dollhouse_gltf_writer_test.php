@@ -336,6 +336,36 @@ $singleFloorJson = dg_parse_json_chunk((new DollhouseGltfWriter())->write(dg_pla
 $singlePose = $singleFloorJson['scenes'][0]['extras']['room_poses'][0] ?? [];
 dg_check('a one-floor plan keeps its rooms where they were captured', ($singlePose['origin_x'] ?? null) == 0.0 && ($singlePose['base_y'] ?? null) == 0.0, json_encode($singlePose));
 
+echo "\n== Web dollhouse shows doors and windows like the app ==\n";
+$doorRoom = dg_room('door-room', [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]]);
+$doorRoom['openings'] = [['opening_id' => 'd1', 'category' => 'door', 'position_m' => [2.0, 0.0], 'width_m' => 0.9, 'confidence' => 'high']];
+$doorPoints = dg_positions((new DollhouseGltfWriter())->write(dg_plan([$doorRoom]), fn (string $url): ?string => null));
+$aboveDoor = array_filter($doorPoints, static fn ($p) => abs($p[0] - 1.55) < 0.005 && abs($p[1] - 2.05) < 0.005 && abs(abs($p[2]) - 0.15) < 0.005);
+dg_check('there is wall above the door', $aboveDoor !== []);
+$postInner = array_filter($doorPoints, static fn ($p) => abs($p[0] - (1.55 + 0.04)) < 0.005 && $p[1] < 2.0);
+dg_check('the door has a thin frame post on its side', $postInner !== []);
+$insideDoor = array_filter($doorPoints, static fn ($p) => $p[0] > 1.65 && $p[0] < 2.35 && $p[1] > 0.01 && $p[1] < 1.9 && abs($p[2]) < 0.3);
+dg_check('the doorway itself stays open', $insideDoor === [], count($insideDoor) . ' vertices inside the doorway');
+
+$windowRoom = dg_room('window-room', [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]]);
+$windowRoom['openings'] = [['opening_id' => 'w1', 'category' => 'window', 'position_m' => [2.0, 0.0], 'width_m' => 1.2, 'confidence' => 'high']];
+$windowPoints = dg_positions((new DollhouseGltfWriter())->write(dg_plan([$windowRoom]), fn (string $url): ?string => null));
+$belowWindow = array_filter($windowPoints, static fn ($p) => abs($p[0] - 1.4) < 0.005 && abs($p[1] - 0.9) < 0.005 && abs(abs($p[2]) - 0.15) < 0.005);
+$aboveWindow = array_filter($windowPoints, static fn ($p) => abs($p[0] - 1.4) < 0.005 && abs($p[1] - 2.1) < 0.005 && abs(abs($p[2]) - 0.15) < 0.005);
+dg_check('there is wall below the window', $belowWindow !== []);
+dg_check('there is wall above the window', $aboveWindow !== []);
+
+$texturedDoorPlan = dg_plan([$doorRoom]);
+$texturedDoorPlan['rooms'][0]['heading_deg'] = 0.0;
+$texturedDoorPlan['photos_360'] = [[
+    'photo_id' => 'photo-door', 'room_id' => 'door-room', 'url' => 'test://door.jpg',
+    'position_m' => [2.0, 2.5], 'heading_deg' => 180.0, 'captured_at' => gmdate('c'),
+]];
+$texturedDoorJson = dg_parse_json_chunk((new DollhouseGltfWriter())->write($texturedDoorPlan, fn (string $url): ?string => $photoJpeg));
+$texturedPrimitives = array_filter($texturedDoorJson['meshes'][0]['primitives'] ?? [], static fn ($p) => isset($p['attributes']['TEXCOORD_0']));
+dg_check('wall pieces around a door that share one photo are one textured primitive', count($texturedPrimitives) === 1, count($texturedPrimitives) . ' textured primitives');
+dg_check('the shared photo is embedded once', count($texturedDoorJson['images'] ?? []) === 1);
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");
