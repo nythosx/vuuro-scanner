@@ -293,7 +293,7 @@
       var activeRoom = state.data.rooms[state.roomIndex];
       if (activeRoom && els.minimap) {
         els.minimap.hidden = false;
-        window.TourPlan.renderMinimap(els.minimap, state.data.rooms, activeRoom.room_id);
+        window.TourPlan.renderMinimap(els.minimap, state.data.rooms, activeRoom.room_id, state.photoIndex);
       }
     } else if (els.minimap) {
       els.minimap.hidden = true;

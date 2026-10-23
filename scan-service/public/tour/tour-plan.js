@@ -153,7 +153,7 @@
     return true;
   }
 
-  function renderMinimap(container, rooms, activeRoomId) {
+  function renderMinimap(container, rooms, activeRoomId, activePhotoIndex) {
     while (container.firstChild) {
       container.removeChild(container.firstChild);
     }
@@ -199,6 +199,17 @@
       active.points.forEach(function (p) { cx += p[0]; cz += p[1]; });
       cx /= active.points.length;
       cz /= active.points.length;
+      var activePhotos = Array.isArray(active.room.photos) ? active.room.photos : [];
+      var activePhoto = activePhotos[activePhotoIndex];
+      var activePos = activePhoto && Array.isArray(activePhoto.position_m) ? activePhoto.position_m : null;
+      if (activePos && activePos.length >= 2) {
+        var px = Number(activePos[0]) + active.ox;
+        var pz = Number(activePos[1]) + active.oz;
+        if (isFinite(px) && isFinite(pz)) {
+          cx = px;
+          cz = pz;
+        }
+      }
       var dot = toPx([cx, cz]);
       var circle = document.createElementNS(NS, 'circle');
       circle.setAttribute('cx', dot[0].toFixed(1));
