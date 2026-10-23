@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct RoomPhotoCaptureOverlay: View {
     @ObservedObject var coordinator: RoomPhotoCaptureCoordinator
@@ -66,6 +67,7 @@ struct RoomPhotoCaptureOverlay: View {
         .animation(.easeOut(duration: 0.25), value: showOnboarding)
         .animation(.easeOut(duration: 0.3), value: toastMessage)
         .onAppear {
+            UIApplication.shared.isIdleTimerDisabled = true
             if !onboardingSeen {
                 showOnboarding = true
             }

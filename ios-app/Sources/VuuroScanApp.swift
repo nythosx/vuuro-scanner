@@ -867,7 +867,10 @@ private struct RoomCaptureFlowStep: View {
 
     @MainActor
     private func finishPhotoStepOrSubmit() async {
+        photoCaptureContext?.coordinator.stopWalkSampling()
+        photoCaptureContext?.coordinator.recordFinishCoverage()
         photoCaptureContext = nil
+        UIApplication.shared.isIdleTimerDisabled = false
         guard let room = coordinator.capturedRoom else { return }
         let export = CapturedRoomExporter.export(
             room,
