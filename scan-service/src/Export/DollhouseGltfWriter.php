@@ -8,6 +8,7 @@ final class DollhouseGltfWriter
 {
     private const WALL_THICKNESS_M = 0.20;
     private const SEAM_OVERLAP_M = 0.015;
+    private const FLOOR_STACK_GAP_M = 0.6;
     private const DEFAULT_HEIGHT_M = 2.4;
     private const FLOOR_COLOR = [0.90, 0.86, 0.78, 1.0];
     private const WALL_COLOR = [0.95, 0.94, 0.92, 1.0];
@@ -103,7 +104,19 @@ final class DollhouseGltfWriter
             throw new \InvalidArgumentException('The captured rooms produced no usable 3D geometry.');
         }
 
-        return self::packGlbMulti($flat, $texturedWalls);
+        $roomPoses = [];
+        foreach ($rooms as $i => $room) {
+            $pose = $layout['poses'][$i];
+            $roomPoses[] = [
+                'room_id' => (string) ($room['room_id'] ?? ''),
+                'origin_x' => (float) $pose['originX'],
+                'origin_z' => (float) $pose['originZ'],
+                'rotation_rad' => (float) $pose['rotationRad'],
+                'base_y' => (float) ($pose['baseY'] ?? 0.0),
+            ];
+        }
+
+        return self::packGlbMulti($flat, $texturedWalls, $roomPoses);
     }
 
     private static function capTextureSize(string $bytes, string $mime, int $width, int $height): array
@@ -188,7 +201,55 @@ final class DollhouseGltfWriter
                 $rooms[$i]['openings'] = $deduped[$k]['openings'] ?? [];
             }
         }
-        return ['rooms' => $rooms, 'poses' => $poses, 'edgeTiers' => $edgeTiers];
+        return ['rooms' => $rooms, 'poses' => self::stackFloors($rooms, $poses), 'edgeTiers' => $edgeTiers];
+    }
+
+    private static function stackFloors(array $rooms, array $poses): array
+    {
+        $floors = [];
+        foreach ($rooms as $i => $room) {
+            $name = trim((string) ($room['floor'] ?? ''));
+            $key = mb_strtolower($name, 'UTF-8');
+            $floors[$key]['name'] = $name;
+            $floors[$key]['rooms'][] = $i;
+        }
+        if (count($floors) < 2) {
+            return $poses;
+        }
+        $order = array_keys($floors);
+        usort($order, static function (string $a, string $b) use ($floors): int {
+            $rankA = $floors[$a]['name'] === '' ? -1000 : FloorGroups::floorRank($floors[$a]['name']);
+            $rankB = $floors[$b]['name'] === '' ? -1000 : FloorGroups::floorRank($floors[$b]['name']);
+            return $rankA <=> $rankB;
+        });
+
+        $baseY = 0.0;
+        foreach ($order as $key) {
+            $minX = INF;
+            $minZ = INF;
+            $tallest = 0.0;
+            foreach ($floors[$key]['rooms'] as $i) {
+                foreach ($rooms[$i]['outline_m'] ?? [] as $p) {
+                    if (!is_array($p) || count($p) < 2) {
+                        continue;
+                    }
+                    [$wx, $wz] = RoomFusionSolver::transformPoint($poses[$i], (float) $p[0], (float) $p[1]);
+                    $minX = min($minX, $wx);
+                    $minZ = min($minZ, $wz);
+                }
+                $height = $rooms[$i]['height_m'] ?? null;
+                $tallest = max($tallest, is_numeric($height) && (float) $height > 0 ? (float) $height : self::DEFAULT_HEIGHT_M);
+            }
+            $shiftX = is_finite($minX) ? $minX : 0.0;
+            $shiftZ = is_finite($minZ) ? $minZ : 0.0;
+            foreach ($floors[$key]['rooms'] as $i) {
+                $poses[$i]['originX'] -= $shiftX;
+                $poses[$i]['originZ'] -= $shiftZ;
+                $poses[$i]['baseY'] = $baseY;
+            }
+            $baseY += $tallest + self::FLOOR_STACK_GAP_M;
+        }
+        return $poses;
     }
 
     private static function appendRoomTextured(
@@ -251,7 +312,7 @@ final class DollhouseGltfWriter
     private static function posePoint(array $pose, float $x, float $y, float $z): array
     {
         [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $x, $z);
-        return [$wx, $y, $wz];
+        return [$wx, $y + (float) ($pose['baseY'] ?? 0.0), $wz];
     }
 
     private static function poseNormal(array $pose, float $nx, float $ny, float $nz): array
@@ -269,9 +330,9 @@ final class DollhouseGltfWriter
         }
         $base = intdiv(count($flat['positions']), 3);
         foreach ($outline as $p) {
-            [$wx, , $wz] = self::posePoint($pose, $p[0], 0.0, $p[1]);
+            [$wx, $wy, $wz] = self::posePoint($pose, $p[0], 0.0, $p[1]);
             $flat['positions'][] = $wx;
-            $flat['positions'][] = 0.0;
+            $flat['positions'][] = $wy;
             $flat['positions'][] = $wz;
             $flat['normals'][] = 0.0;
             $flat['normals'][] = 1.0;
@@ -476,7 +537,7 @@ final class DollhouseGltfWriter
         $bucket['indices'][] = $base + 3;
     }
 
-    private static function packGlbMulti(array $flat, array $texturedWalls): string
+    private static function packGlbMulti(array $flat, array $texturedWalls, array $roomPoses = []): string
     {
         $bin = '';
         $bufferViews = [];
@@ -587,7 +648,7 @@ final class DollhouseGltfWriter
         $gltf = [
             'asset' => ['version' => '2.0', 'generator' => 'Vuuro Scan'],
             'scene' => 0,
-            'scenes' => [['nodes' => [0]]],
+            'scenes' => [$roomPoses === [] ? ['nodes' => [0]] : ['nodes' => [0], 'extras' => ['room_poses' => $roomPoses]]],
             'nodes' => [['mesh' => 0]],
             'meshes' => [['primitives' => $primitives]],
             'accessors' => $accessors,

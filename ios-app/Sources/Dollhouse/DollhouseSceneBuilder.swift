@@ -165,12 +165,10 @@ enum DollhouseSceneBuilder {
             let textNode = SCNNode(geometry: text)
             textNode.name = "roomLabel-\(section.id)"
             textNode.scale = SCNVector3(0.4, 0.4, 0.4)
-            let cx = (section.boundsMin.x + section.boundsMax.x) * 0.5
             let cz = (section.boundsMin.z + section.boundsMax.z) * 0.5
-            let cy = section.boundsMax.y + 0.35
             let (minBound, maxBound) = text.boundingBox
             let textWidth = (maxBound.x - minBound.x) * 0.4
-            textNode.position = SCNVector3(cx - textWidth * 0.5, cy, cz)
+            textNode.position = SCNVector3(section.boundsMin.x - textWidth - 0.4, section.boundsMin.y + 0.3, cz)
             root.addChildNode(textNode)
         }
     }

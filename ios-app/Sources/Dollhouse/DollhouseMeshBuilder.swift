@@ -45,6 +45,7 @@ enum DollhouseConstants {
     static let largePlanRoomThreshold = 12
     static let maxTriangles = 150_000
     static let sectionVerticalGapM: Float = 1.5
+    static let floorStackGapM: Float = 0.6
     static let seamOverlapM: Float = 0.015
     static let weldGridM: Float = 0.001
     static let doorHeightM: Float = 2.05
@@ -149,13 +150,42 @@ struct DollhouseMeshBuilder {
         }
 
         let sections = makeFloorSections(rooms: rooms)
-        var sectionOffsetZ: Float = 0.0
-        var sectionSummaries: [DollhouseFloorSection] = []
+        var floorLevels: [String] = []
+        for section in sections.reversed() where !floorLevels.contains(section.floorKey) {
+            floorLevels.append(section.floorKey)
+        }
+        let stacksFloors = floorLevels.count > 1
+        var sectionOffsetZByFloor: [String: Float] = [:]
+        var floorBaseY: [String: Float] = [:]
+        var nextFloorBaseY: Float = 0
+        for floorKey in floorLevels {
+            floorBaseY[floorKey] = nextFloorBaseY
+            let floorRooms = sections.filter { $0.floorKey == floorKey }.flatMap(\.rooms)
+            let tallest = floorRooms.map { room -> Float in
+                if let height = room.heightM, height > 0 { return Float(height) }
+                return DollhouseConstants.defaultHeightM
+            }.max() ?? DollhouseConstants.defaultHeightM
+            nextFloorBaseY += tallest + DollhouseConstants.floorStackGapM
+        }
+        var summariesByIndex: [Int: DollhouseFloorSection] = [:]
         var allHotspots: [DollhouseHotspot] = []
 
-        for (sectionIndex, section) in sections.enumerated() {
+        let buildOrder = sections.indices.sorted { lhs, rhs in
+            let left = floorLevels.firstIndex(of: sections[lhs].floorKey) ?? 0
+            let right = floorLevels.firstIndex(of: sections[rhs].floorKey) ?? 0
+            if left != right { return left < right }
+            return lhs < rhs
+        }
+
+        for sectionIndex in buildOrder {
+            let section = sections[sectionIndex]
             let weldedOutlines = weldSectionOutlines(rooms: section.rooms)
-            let sectionOrigin = SIMD3<Float>(0.0, 0.0, sectionOffsetZ - localMinZ(of: section.rooms, weldedOutlines: weldedOutlines))
+            let sectionOffsetZ = sectionOffsetZByFloor[section.floorKey] ?? 0
+            let sectionOrigin = SIMD3<Float>(
+                stacksFloors ? -localMinX(weldedOutlines: weldedOutlines) : 0.0,
+                floorBaseY[section.floorKey] ?? 0,
+                sectionOffsetZ - localMinZ(of: section.rooms, weldedOutlines: weldedOutlines)
+            )
             var sectionMin = SIMD3<Float>(repeating: .infinity)
             var sectionMax = SIMD3<Float>(repeating: -.infinity)
 
@@ -188,17 +218,18 @@ struct DollhouseMeshBuilder {
             }
 
             if sectionMin.x.isFinite && sectionMax.x.isFinite {
-                sectionSummaries.append(DollhouseFloorSection(
+                summariesByIndex[sectionIndex] = DollhouseFloorSection(
                     id: "section-\(sectionIndex)",
                     title: section.title,
                     roomIds: section.rooms.map(\.roomId),
                     originOffset: sectionOrigin,
                     boundsMin: sectionMin,
                     boundsMax: sectionMax
-                ))
-                sectionOffsetZ += (sectionMax.z - sectionMin.z) + DollhouseConstants.sectionVerticalGapM
+                )
+                sectionOffsetZByFloor[section.floorKey] = sectionOffsetZ + (sectionMax.z - sectionMin.z) + DollhouseConstants.sectionVerticalGapM
             }
         }
+        let sectionSummaries = sections.indices.compactMap { summariesByIndex[$0] }
 
         guard hasGeometry else { throw DollhouseMeshBuilderError.emptyGeometry }
 
@@ -230,6 +261,11 @@ struct DollhouseMeshBuilder {
     }
 
     // MARK: - Section geometry
+
+    private static func localMinX(weldedOutlines: [String: [SIMD2<Float>]]) -> Float {
+        let minX = weldedOutlines.values.flatMap { $0 }.map(\.x).min() ?? 0
+        return minX.isFinite ? minX : 0
+    }
 
     private static func localMinZ(of rooms: [FloorPlan.Room], weldedOutlines: [String: [SIMD2<Float>]]) -> Float {
         var minZ = Float.infinity
@@ -343,6 +379,7 @@ struct DollhouseMeshBuilder {
     private struct Section {
         let title: String
         let rooms: [FloorPlan.Room]
+        let floorKey: String
     }
 
     private static func makeFloorSections(rooms: [FloorPlan.Room]) -> [Section] {
@@ -377,12 +414,12 @@ struct DollhouseMeshBuilder {
             let floorName = floorTitles[floorKey] ?? ""
             if subgroups.count == 1 {
                 let title = floorName.isEmpty ? "Floor not set" : floorName
-                sections.append(Section(title: title, rooms: subgroups[0]))
+                sections.append(Section(title: title, rooms: subgroups[0], floorKey: floorKey))
                 continue
             }
             for (index, subgroup) in subgroups.enumerated() {
                 let base = floorName.isEmpty ? "Floor not set" : floorName
-                sections.append(Section(title: "\(base) \u{00B7} \(vuuroLocalized("part")) \(index + 1)", rooms: subgroup))
+                sections.append(Section(title: "\(base) \u{00B7} \(vuuroLocalized("part")) \(index + 1)", rooms: subgroup, floorKey: floorKey))
             }
         }
         return sections

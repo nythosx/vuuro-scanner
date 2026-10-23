@@ -314,6 +314,28 @@ $floorsPoints = dg_positions((new DollhouseGltfWriter())->write(dg_plan([$left, 
 $crossFloor = dg_band($floorsPoints, 2.6, 3.0, 5.5);
 dg_check('rooms on different floors are not joined into one interior wall', $crossFloor !== null && abs($crossFloor[0] - 3.85) < 0.03, 'band ' . json_encode($crossFloor));
 
+echo "\n== Web dollhouse stacks floors and tells the viewer where each room went ==\n";
+$groundRoom = dg_room('ground', [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]]);
+$firstRoom = dg_room('first', [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]]);
+$firstRoom['floor'] = 'First';
+$firstRoom['structure_origin_m'] = [10.0, 5.0];
+$stackedGlb = (new DollhouseGltfWriter())->write(dg_plan([$firstRoom, $groundRoom]), fn (string $url): ?string => null);
+$stackedPoints = dg_positions($stackedGlb);
+$minY = min(array_column($stackedPoints, 1));
+$maxY = max(array_column($stackedPoints, 1));
+dg_check('the ground floor stays on the ground', abs($minY) < 1e-3, "min y $minY");
+dg_check('the first floor sits above the ground floor', $maxY > 2.6 + 0.6 + 2.6 - 0.01, "max y $maxY");
+$stackedJson = dg_parse_json_chunk($stackedGlb);
+$poses = $stackedJson['scenes'][0]['extras']['room_poses'] ?? [];
+$byId = array_column($poses, null, 'room_id');
+dg_check('the GLB lists a pose for every room', isset($byId['ground'], $byId['first']), json_encode(array_keys($byId)));
+dg_check('the first floor pose is lifted above the ground floor', ($byId['first']['base_y'] ?? 0) > 3.0 && ($byId['ground']['base_y'] ?? 1) == 0.0, json_encode($poses));
+dg_check('stacked floors share one footprint', abs(($byId['first']['origin_x'] ?? 99) - ($byId['ground']['origin_x'] ?? -99)) < 1e-6, json_encode($poses));
+
+$singleFloorJson = dg_parse_json_chunk((new DollhouseGltfWriter())->write(dg_plan([$groundRoom]), fn (string $url): ?string => null));
+$singlePose = $singleFloorJson['scenes'][0]['extras']['room_poses'][0] ?? [];
+dg_check('a one-floor plan keeps its rooms where they were captured', ($singlePose['origin_x'] ?? null) == 0.0 && ($singlePose['base_y'] ?? null) == 0.0, json_encode($singlePose));
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

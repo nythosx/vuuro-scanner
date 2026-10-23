@@ -29,7 +29,10 @@
     if (!json || !bin) {
       throw new Error('GLB is missing its JSON or BIN chunk');
     }
-    return extractParts(json, bin);
+    var result = extractParts(json, bin);
+    var scene = json.scenes && json.scenes[json.scene || 0];
+    result.roomPoses = scene && scene.extras && Array.isArray(scene.extras.room_poses) ? scene.extras.room_poses : null;
+    return result;
   }
 
   function extractParts(gltf, bin) {

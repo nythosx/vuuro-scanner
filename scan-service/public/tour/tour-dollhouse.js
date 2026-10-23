@@ -29,7 +29,7 @@
       })
       .then(function (buffer) {
         var gltf = window.TourDollhouseGlb.parse(buffer);
-        var hotspots = buildHotspots(rooms || []);
+        var hotspots = buildHotspots(rooms || [], gltf.roomPoses);
         var stage = buildStage(viewport, onBackToPlan);
         var viewer = new Viewer(stage.canvas, gltf, hotspots, stage.hotspotLayer, onHotspotTap);
         activeViewer = viewer;
@@ -98,7 +98,21 @@
     }
   }
 
-  function buildHotspots(rooms) {
+  function poseFor(roomPoses, room) {
+    if (!Array.isArray(roomPoses) || !room || typeof room.room_id !== 'string') {
+      return null;
+    }
+    for (var i = 0; i < roomPoses.length; i++) {
+      var pose = roomPoses[i];
+      if (pose && pose.room_id === room.room_id
+        && isFinite(Number(pose.origin_x)) && isFinite(Number(pose.origin_z))) {
+        return pose;
+      }
+    }
+    return null;
+  }
+
+  function buildHotspots(rooms, roomPoses) {
     var allHaveOrigin = rooms.length > 0 && rooms.every(function (room) {
       var origin = room.structure_origin_m;
       return Array.isArray(origin) && origin.length === 2
@@ -136,10 +150,22 @@
         if (!isFinite(px) || !isFinite(pz)) {
           continue;
         }
+        var world = [px + ox, height / 2, pz + oz];
+        var pose = poseFor(roomPoses, room);
+        if (pose) {
+          var rotation = Number(pose.rotation_rad) || 0;
+          var cos = Math.cos(rotation);
+          var sin = Math.sin(rotation);
+          world = [
+            px * cos - pz * sin + Number(pose.origin_x),
+            (Number(pose.base_y) || 0) + height / 2,
+            px * sin + pz * cos + Number(pose.origin_z)
+          ];
+        }
         hotspots.push({
           roomIndex: i,
           photoIndex: p,
-          world: [px + ox, height / 2, pz + oz],
+          world: world,
           roomHeight: height,
           label: (room.label || '') + ' photo ' + (p + 1)
         });

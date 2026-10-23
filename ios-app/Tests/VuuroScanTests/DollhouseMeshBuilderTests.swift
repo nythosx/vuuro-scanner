@@ -255,13 +255,11 @@ final class DollhouseMeshBuilderTests: XCTestCase {
         let ground = roomJSON(id: "room-ground", origin: "[0, -5]", floor: "Ground")
         let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(attic),\(ground)]"))
         XCTAssertEqual(scene.floorSections.map(\.title), ["Attic", "Ground"])
-        func zRange(_ roomId: String) -> (Float, Float) {
-            let zs = scene.meshes.filter { $0.path.components.contains("Room-\(roomId)") }.flatMap { $0.vertices.map(\.position.z) }
-            return (zs.min()!, zs.max()!)
+        func yRange(_ roomId: String) -> (Float, Float) {
+            let ys = scene.meshes.filter { $0.path.components.contains("Room-\(roomId)") }.flatMap { $0.vertices.map(\.position.y) }
+            return (ys.min()!, ys.max()!)
         }
-        let atticRange = zRange("room-attic")
-        let groundRange = zRange("room-ground")
-        XCTAssertLessThan(atticRange.1, groundRange.0)
+        XCTAssertLessThan(yRange("room-ground").1, yRange("room-attic").0, "the attic must sit above the ground floor, not overlap it")
     }
 
     private func walls(_ scene: DollhouseScene, room roomId: String) -> [DollhouseMesh] {
@@ -391,10 +389,38 @@ final class DollhouseMeshBuilderTests: XCTestCase {
         let attic = roomJSON(id: "room-attic", origin: "[0, 0]", floor: "Attic")
         let ground = roomJSON(id: "room-ground", origin: "[0, 4]", floor: "Ground")
         let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(attic),\(ground)]"))
-        let wallZ = scene.meshes.filter { $0.layer == .wallsAndFloors }.flatMap { $0.vertices.map(\.position.z) }
-        XCTAssertFalse(wallZ.isEmpty, "no walls rendered")
-        let span = wallZ.max()! - wallZ.min()!
-        XCTAssertGreaterThan(span, 5.5, "sections overlap because localMinZ double-counts the Z origin")
+        func range(_ roomId: String, _ axis: (SIMD3<Float>) -> Float) -> (Float, Float) {
+            let values = scene.meshes.filter { $0.path.components.contains("Room-\(roomId)") }.flatMap { $0.vertices.map { axis($0.position) } }
+            return (values.min()!, values.max()!)
+        }
+        XCTAssertLessThan(range("room-ground") { $0.y }.1, range("room-attic") { $0.y }.0, "floors must be stacked, not overlapping")
+        XCTAssertEqual(range("room-ground") { $0.z }.0, range("room-attic") { $0.z }.0, accuracy: 0.01, "stacked floors line up on the same footprint")
+        XCTAssertEqual(range("room-ground") { $0.x }.0, range("room-attic") { $0.x }.0, accuracy: 0.01, "stacked floors line up on the same footprint")
+    }
+
+    func testFloorsStackFromTheGroundUp() throws {
+        let first = roomJSON(id: "room-first", origin: "[2, 7]", floor: "First")
+        let ground = roomJSON(id: "room-ground", origin: "[0, 0]", floor: "Ground")
+        let attic = roomJSON(id: "room-attic", origin: "[-3, 1]", floor: "Attic")
+        let scene = try DollhouseMeshBuilder.build(
+            rooms: try makeRooms("[\(first),\(ground),\(attic)]"),
+            configuration: DollhouseBuildConfiguration(mode: .dollhouse)
+        )
+        func floorY(_ roomId: String) -> Float {
+            scene.meshes.filter { $0.path.components.contains("Room-\(roomId)") }.flatMap { $0.vertices.map(\.position.y) }.min()!
+        }
+        XCTAssertEqual(floorY("room-ground"), 0, accuracy: 0.01)
+        XCTAssertGreaterThan(floorY("room-first"), floorY("room-ground") + 2.6)
+        XCTAssertGreaterThan(floorY("room-attic"), floorY("room-first") + 2.6)
+    }
+
+    func testOneFloorWithTwoPartsStillSitsSideBySide() throws {
+        let first = roomJSON(id: "room-a", origin: "null")
+        let second = roomJSON(id: "room-b", origin: "null")
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(first),\(second)]"))
+        let ys = scene.meshes.flatMap { $0.vertices.map(\.position.y) }
+        XCTAssertEqual(ys.min()!, 0, accuracy: 0.01, "parts of the same floor stay on the ground")
+        XCTAssertEqual(scene.floorSections.count, 2)
     }
 
     func testHeadingOnlyKeptWhenRoomsAgree() throws {
