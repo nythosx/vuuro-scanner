@@ -224,6 +224,29 @@ final class DollhouseMeshBuilderTests: XCTestCase {
         XCTAssertEqual(xs.max()! - xs.min()!, 0.8, accuracy: 0.01)
     }
 
+    func testDoorIsAnOpeningYouCanSeeThrough() throws {
+        let opening = "[{\"opening_id\":\"d1\",\"category\":\"door\",\"position_m\":[2.0,0.0],\"width_m\":0.9,\"confidence\":\"high\"}]"
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(roomJSON(openings: opening))]"))
+        let door = try XCTUnwrap(meshes(scene, named: "Opening-d1").first)
+        let post = DollhouseConstants.doorFrameInsetM
+        let top = DollhouseConstants.doorHeightM
+        for vertex in door.vertices where vertex.position.y < top - post - 0.001 {
+            XCTAssertGreaterThanOrEqual(abs(vertex.position.x - 2.0), 0.45 - post - 0.001, "the door frame must leave the doorway open, found a vertex at x \(vertex.position.x)")
+        }
+        let ys = door.vertices.map(\.position.y)
+        XCTAssertEqual(ys.max()!, top, accuracy: 0.01)
+    }
+
+    func testWallPiecesBesideADoorAreClosedAtTheDoorway() throws {
+        let opening = "[{\"opening_id\":\"d1\",\"category\":\"door\",\"position_m\":[2.0,0.0],\"width_m\":0.9,\"confidence\":\"high\"}]"
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(roomJSON(openings: opening))]"))
+        let before = try XCTUnwrap(meshes(scene, named: "Wall-0-0").first)
+        let capFacingDoor = before.vertices.contains { vertex in
+            vertex.normal.x > 0.99 && abs(vertex.position.x - 1.55) < 0.01
+        }
+        XCTAssertTrue(capFacingDoor, "the wall piece before the door needs an end face at the doorway")
+    }
+
     func testSectionsDoNotOverlapWhenAFusedFloorHasNegativeOrigins() throws {
         let attic = roomJSON(id: "room-attic", origin: "[0, 0]", floor: "Attic")
         let ground = roomJSON(id: "room-ground", origin: "[0, -5]", floor: "Ground")

@@ -826,12 +826,13 @@ struct DollhouseMeshBuilder {
 
         var sideVerts: [DollhouseVertex] = []
         var sideIndices: [UInt32] = []
-        if extendAtStart {
-            appendWallFace(vertices: &sideVerts, indices: &sideIndices, corners: [w0, o0, o1, w1], expectedNormal: downNormal)
-            appendWallFace(vertices: &sideVerts, indices: &sideIndices, corners: [w3, w2, o2, o3], expectedNormal: upNormal)
-        } else {
-            appendWallFace(vertices: &sideVerts, indices: &sideIndices, corners: [w0, o0, o1, w1], expectedNormal: negAlongNormal)
-            appendWallFace(vertices: &sideVerts, indices: &sideIndices, corners: [w3, w2, o2, o3], expectedNormal: alongNormal)
+        appendWallFace(vertices: &sideVerts, indices: &sideIndices, corners: [w0, o0, o1, w1], expectedNormal: downNormal)
+        appendWallFace(vertices: &sideVerts, indices: &sideIndices, corners: [w3, w2, o2, o3], expectedNormal: upNormal)
+        if !extendAtStart {
+            appendWallFace(vertices: &sideVerts, indices: &sideIndices, corners: [w0, o0, o3, w3], expectedNormal: negAlongNormal)
+        }
+        if !extendAtEnd {
+            appendWallFace(vertices: &sideVerts, indices: &sideIndices, corners: [w1, o1, o2, w2], expectedNormal: alongNormal)
         }
 
         if let inwardUVs, let wallImageBytes {
@@ -892,8 +893,39 @@ struct DollhouseMeshBuilder {
         default: material = DollhouseMaterial.otherOpening
         }
         let depth = thickness + DollhouseConstants.frameDepthM
-        let size = SIMD3<Float>(opening.widthM, opening.heightM, depth)
-        return makeBox(center: center3D, size: size, yaw: yaw, base: SIMD3<Float>(0, 0, 0), material: material, layer: opening.layer, path: path)
+        let post = min(DollhouseConstants.doorFrameInsetM, opening.widthM / 4, opening.heightM / 4)
+        guard post > 0 else { return nil }
+        let zero = SIMD3<Float>(0, 0, 0)
+        let sideOffset = opening.widthM / 2 - post / 2
+        var parts: [DollhouseMesh] = []
+        for side: Float in [-1, 1] {
+            let postCenter = centerOnWall + unit * (side * sideOffset)
+            parts.append(makeBox(
+                center: SIMD3<Float>(postCenter.x + base.x, center3D.y, postCenter.y + base.z),
+                size: SIMD3<Float>(post, opening.heightM, depth),
+                yaw: yaw, base: zero, material: material, layer: opening.layer, path: path
+            ))
+        }
+        parts.append(makeBox(
+            center: SIMD3<Float>(center3D.x, base.y + opening.y0 + opening.heightM - post / 2, center3D.z),
+            size: SIMD3<Float>(opening.widthM, post, depth),
+            yaw: yaw, base: zero, material: material, layer: opening.layer, path: path
+        ))
+        if opening.y0 > 0.0001 {
+            parts.append(makeBox(
+                center: SIMD3<Float>(center3D.x, base.y + opening.y0 + post / 2, center3D.z),
+                size: SIMD3<Float>(opening.widthM, post, depth),
+                yaw: yaw, base: zero, material: material, layer: opening.layer, path: path
+            ))
+        }
+        var vertices: [DollhouseVertex] = []
+        var indices: [UInt32] = []
+        for part in parts {
+            let offset = UInt32(vertices.count)
+            vertices.append(contentsOf: part.vertices)
+            indices.append(contentsOf: part.indices.map { $0 + offset })
+        }
+        return DollhouseMesh(vertices: vertices, indices: indices, material: material, layer: opening.layer, path: path)
     }
 
     private static func makeFloorMesh(outline: [SIMD2<Float>], base: SIMD3<Float>, material: DollhouseMaterial, layer: DollhouseLayer, path: DollhouseNodePath) -> DollhouseMesh {
