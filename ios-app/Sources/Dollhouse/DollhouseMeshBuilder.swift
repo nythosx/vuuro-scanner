@@ -246,10 +246,15 @@ struct DollhouseMeshBuilder {
         )
     }
 
-    static func buildForExport(rooms: [FloorPlan.Room], maxTriangles: Int = DollhouseConstants.maxTriangles) throws -> DollhouseScene {
-        let full = try build(rooms: rooms, configuration: DollhouseBuildConfiguration(mode: .dollhouse))
+    static func buildForExport(
+        rooms: [FloorPlan.Room],
+        photos360: [FloorPlan.Photo360] = [],
+        photoBytesByURL: [String: Data] = [:],
+        maxTriangles: Int = DollhouseConstants.maxTriangles
+    ) throws -> DollhouseScene {
+        let full = try build(rooms: rooms, configuration: DollhouseBuildConfiguration(mode: .dollhouse), photos360: photos360, photoBytesByURL: photoBytesByURL)
         if full.totalTriangles <= maxTriangles { return full }
-        let reduced = try build(rooms: rooms, configuration: DollhouseBuildConfiguration(mode: .dollhouse, showFurniture: false))
+        let reduced = try build(rooms: rooms, configuration: DollhouseBuildConfiguration(mode: .dollhouse, showFurniture: false), photos360: photos360, photoBytesByURL: photoBytesByURL)
         if reduced.totalTriangles <= maxTriangles { return reduced }
         throw DollhouseMeshBuilderError.tooManyTriangles
     }

@@ -1,4 +1,6 @@
 import ModelIO
+import SceneKit
+import UIKit
 import XCTest
 @testable import VuuroScan
 
@@ -27,6 +29,62 @@ final class DollhouseUSDZExporterTests: XCTestCase {
             .appendingPathComponent("dollhouse-usdz-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    private func texturedScene() throws -> DollhouseScene {
+        let json = roomJSON().replacingOccurrences(of: "\"open_edges\": []", with: "\"open_edges\": [], \"heading_deg\": 0.0")
+        let photo = FloorPlan.Photo360(
+            photoId: "p1",
+            roomId: "room-1",
+            url: "test://room/photo.jpg",
+            positionM: [2.0, 0.5],
+            headingDeg: 0.0,
+            capturedAt: "2026-10-23T00:00:00Z"
+        )
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 16, height: 16)).image { context in
+            UIColor.orange.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 16, height: 16))
+        }
+        let bytes = try XCTUnwrap(image.jpegData(compressionQuality: 0.8))
+        return try DollhouseMeshBuilder.buildForExport(
+            rooms: try makeRooms("[\(json)]"),
+            photos360: [photo],
+            photoBytesByURL: ["test://room/photo.jpg": bytes]
+        )
+    }
+
+    func testExportBuildCarriesWallPhotos() throws {
+        let scene = try texturedScene()
+        XCTAssertTrue(scene.meshes.contains { $0.material.imageData != nil }, "the export build must keep the tour photo on the wall it faces")
+    }
+
+    func testWallTexturesAreWrittenAsFilesForTheUSDZ() throws {
+        let scene = try texturedScene()
+        let scnScene = DollhouseSceneBuilder.buildScene(from: scene, includeAnnotations: false)
+        let dir = try tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        DollhouseUSDZExporter.linkTexturesToFiles(in: scnScene.rootNode, directory: dir)
+        var linked: [URL] = []
+        var leftAsImages = 0
+        scnScene.rootNode.enumerateHierarchy { node, _ in
+            for material in node.geometry?.materials ?? [] {
+                if let url = material.diffuse.contents as? URL { linked.append(url) }
+                if material.diffuse.contents is UIImage { leftAsImages += 1 }
+            }
+        }
+        XCTAssertFalse(linked.isEmpty)
+        XCTAssertEqual(leftAsImages, 0)
+        XCTAssertTrue(linked.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+    }
+
+    func testTexturedExportWritesAReadableFile() throws {
+        let scene = try texturedScene()
+        let dir = try tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("textured.usdz")
+        try DollhouseUSDZExporter.export(scene, to: url)
+        let size = (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
+        XCTAssertGreaterThan(size, 100)
     }
 
     func testExportWritesAReadableFile() throws {

@@ -1114,11 +1114,13 @@ struct ScanResultsReportView: View {
         isExportingUSDZ = true
         defer { isExportingUSDZ = false }
         let rooms = floorPlan.rooms
+        let photos360 = floorPlan.photos360 ?? []
         let sessionId = entry.sessionId
         let propertyId = entry.propertyId
         let unitId = entry.unitId
         do {
             PerfTrace.begin(.usdzExport)
+            let photoBytes = await DollhousePhotoFetcher.fetch(photos360, accessToken: entry.accessToken, client: client)
             let url = try ExportNaming.url(
                 sessionId: sessionId,
                 property: propertyId,
@@ -1129,7 +1131,7 @@ struct ScanResultsReportView: View {
                 ext: "usdz"
             )
             try await Task.detached(priority: .userInitiated) {
-                let scene = try DollhouseMeshBuilder.buildForExport(rooms: rooms)
+                let scene = try DollhouseMeshBuilder.buildForExport(rooms: rooms, photos360: photos360, photoBytesByURL: photoBytes)
                 try DollhouseUSDZExporter.export(scene, to: url)
             }.value
             PerfTrace.end(.usdzExport, detail: "\(rooms.count) rooms")
