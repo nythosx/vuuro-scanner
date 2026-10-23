@@ -32,6 +32,10 @@ enum DraftStore {
             .appendingPathComponent("VuuroScan", isDirectory: true)
             .appendingPathComponent("drafts", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var excluded = dir
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? excluded.setResourceValues(values)
         return dir
     }
 
@@ -68,7 +72,7 @@ enum DraftStore {
         }
         ioQueue.async {
             if let data = try? JSONEncoder().encode(snapshot) {
-                try? data.write(to: url, options: .atomic)
+                try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
             }
         }
     }
