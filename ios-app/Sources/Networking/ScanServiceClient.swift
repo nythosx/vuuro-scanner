@@ -777,6 +777,23 @@ struct ScanServiceClient {
         return try await send(request, timeoutSeconds: timeoutSeconds)
     }
 
+    private struct ClientEventBody<Payload: Encodable>: Encodable {
+        let kind: String
+        let payload: Payload
+    }
+
+    private struct ClientEventResponse: Decodable {
+        let kind: String
+    }
+
+    func postClientEvent<Payload: Encodable>(sessionId: String, accessToken: String, kind: String, payload: Payload) async throws {
+        let _: ClientEventResponse = try await post(
+            path: "/scan-sessions/\(sessionId)/client-events",
+            body: ClientEventBody(kind: kind, payload: payload),
+            accessToken: accessToken
+        )
+    }
+
     private static let requestTimeoutSeconds: TimeInterval = 25
 
     private func get<Response: Decodable>(path: String, accessToken: String?) async throws -> Response {

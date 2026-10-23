@@ -903,6 +903,7 @@ struct MultiRoomCaptureFlowView: View {
     @MainActor
     private func finishPhotoStepAndContinue() async {
         photoCaptureContext?.coordinator.stopWalkSampling()
+        photoCaptureContext?.coordinator.recordFinishCoverage()
         photoCaptureContext = nil
         await checkRescanThenContinue()
     }

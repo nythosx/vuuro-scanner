@@ -8,12 +8,35 @@ struct RoomPhotoMetadata: Codable, Equatable {
     let pitchDeg: Double
 }
 
+struct RoomPhotoFinishCoverage: Codable, Equatable {
+    let overall: Double
+    let position: Double
+    let walls: Double
+    let ready: Bool
+    let wallsTotal: Int
+    let wallsCovered: Int
+    let cellsTotal: Int
+    let cellsCovered: Int
+
+    enum CodingKeys: String, CodingKey {
+        case overall
+        case position
+        case walls
+        case ready
+        case wallsTotal = "walls_total"
+        case wallsCovered = "walls_covered"
+        case cellsTotal = "cells_total"
+        case cellsCovered = "cells_covered"
+    }
+}
+
 struct RoomPhotoManifest: Codable, Equatable {
     let captureGroupId: String
     let roomKey: String
     let structureOriginM: [Double]?
     let capturedAt: Date
     var photos: [RoomPhotoMetadata]
+    var finishCoverage: RoomPhotoFinishCoverage? = nil
 }
 
 @MainActor
@@ -85,6 +108,13 @@ final class RoomPhotoStore {
 
         var manifest = try loadManifest(captureGroupId: captureGroupId, roomKey: roomKey)
         manifest.photos.removeAll { $0.localId == localId }
+        try writeManifest(manifest, captureGroupId: captureGroupId, roomKey: roomKey)
+    }
+
+    func saveFinishCoverage(_ coverage: RoomPhotoFinishCoverage, captureGroupId: String, roomKey: String) throws {
+        guard fileManager.fileExists(atPath: manifestURL(captureGroupId: captureGroupId, roomKey: roomKey).path) else { return }
+        var manifest = try loadManifest(captureGroupId: captureGroupId, roomKey: roomKey)
+        manifest.finishCoverage = coverage
         try writeManifest(manifest, captureGroupId: captureGroupId, roomKey: roomKey)
     }
 

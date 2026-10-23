@@ -713,6 +713,9 @@ function renderDetail(data, sessionId) {
     '<h2>Notes (' + notes.length + ')</h2>' +
     (noteItems ? '<ul class="notes-list">' + noteItems + '</ul>' : emptyHtml('No notes attached.')) +
 
+    '<h2>Photo step diagnostics</h2>' +
+    '<div id="clientEvents">' + loadingHtml('Loading photo step diagnostics…') + '</div>' +
+
     '<h2>Access log</h2>' +
     '<div id="accessLog">' + loadingHtml('Loading access log…') + '</div>';
 
@@ -726,6 +729,7 @@ function renderDetail(data, sessionId) {
   }
   photos.forEach((p) => loadPhotoThumb(p));
   loadAccessLog(sessionId);
+  loadClientEvents(sessionId);
 
   container.querySelectorAll('[data-export]').forEach((btn) => {
     btn.addEventListener('click', () => downloadExport(sessionId, btn.getAttribute('data-export'), data));
@@ -954,6 +958,58 @@ function loadPhotoThumb(photo) {
   } else {
     clearLoading();
     showPlaceholder('External photo - not rendered');
+  }
+}
+
+function percentText(value) {
+  return typeof value === 'number' && isFinite(value) ? Math.round(value * 100) + '%' : '–';
+}
+
+function clientEventSummaryHtml(event) {
+  const p = event.payload || {};
+  const lines = [];
+  lines.push('<strong>' + escapeHtml(formatTimestamp(event.occurred_at)) + '</strong>' +
+    ' · ' + escapeHtml(p.trigger === 'manual_retry' ? 'Upload retried from the app' : 'After scan') +
+    (p.build ? ' · build ' + escapeHtml(String(p.build)) : ''));
+  lines.push('Photos on the phone: ' + escapeHtml(String(p.photos_taken ?? '–')) +
+    ' · uploaded: ' + escapeHtml(String(p.photos_uploaded ?? '–')) +
+    ' · failed: ' + escapeHtml(String(p.photos_failed ?? '–')));
+  lines.push('Matched to rooms: ' + escapeHtml(String(p.pairing || '–')) +
+    ' (' + escapeHtml(String(p.server_room_count ?? '–')) + ' room(s) on the server)' +
+    (p.skip_reason ? ' · stopped: ' + escapeHtml(String(p.skip_reason)) : ''));
+  (Array.isArray(p.rooms) ? p.rooms : []).forEach((room, i) => {
+    const c = room.coverage;
+    lines.push('Room ' + (i + 1) + ': ' + escapeHtml(String(room.photos ?? 0)) + ' photo(s)' +
+      (c ? ' · coverage at Finish ' + percentText(c.overall) + ' (position ' + percentText(c.position) +
+        ', walls ' + percentText(c.walls) + ' = ' + escapeHtml(String(c.walls_covered ?? '–')) + '/' +
+        escapeHtml(String(c.walls_total ?? '–')) + ')' + (c.ready ? ' · ready' : ' · not ready') : ' · no coverage recorded'));
+  });
+  const failures = Array.isArray(p.failures) ? p.failures : [];
+  failures.slice(0, 10).forEach((f) => {
+    lines.push('Failed ' + escapeHtml(String(f.photo_id || '')) + ': ' + escapeHtml(String(f.reason || '')));
+  });
+  if (failures.length > 10) lines.push('…and ' + (failures.length - 10) + ' more failure(s)');
+  return '<li>' + lines.join('<br>') + '</li>';
+}
+
+async function loadClientEvents(sessionId) {
+  const container = $('#clientEvents');
+  if (!container) return;
+  try {
+    const data = await apiJson('/scan-sessions/' + encodeURIComponent(sessionId) + '/client-events');
+    if (state.currentSessionId !== sessionId) return;
+    const events = data.client_events || [];
+    if (events.length === 0) {
+      container.innerHTML = emptyHtml('No photo step reports from the app yet.');
+      return;
+    }
+    container.innerHTML = '<ul class="notes-list">' + events.slice().reverse().map(clientEventSummaryHtml).join('') + '</ul>';
+  } catch (err) {
+    if (state.currentSessionId !== sessionId) return;
+    renderError(container, 'Failed to load photo step diagnostics: ' + friendlyApiError(err), () => {
+      container.innerHTML = loadingHtml('Loading photo step diagnostics…');
+      loadClientEvents(sessionId);
+    });
   }
 }
 

@@ -66,7 +66,8 @@ struct PendingTourPhotosBanner: View {
                 captureGroupId: groupId,
                 session: session,
                 floorPlan: floorPlan,
-                store: .shared
+                store: .shared,
+                trigger: "manual_retry"
             )
             uploaded += outcome.photosUploaded
             failed += outcome.photosFailed

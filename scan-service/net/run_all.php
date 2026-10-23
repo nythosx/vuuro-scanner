@@ -49,6 +49,7 @@ $groups = [
             ['verify_photo_360.php'],
             ['verify_tour.php'],
             ['verify_dollhouse_texturing.php'],
+            ['verify_client_events.php', $adminKey],
         ],
     ],
     [

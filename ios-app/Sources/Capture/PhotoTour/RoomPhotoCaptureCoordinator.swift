@@ -90,6 +90,30 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         startWalkSampling()
     }
 
+    var finishCoverage: RoomPhotoFinishCoverage {
+        RoomPhotoFinishCoverage(
+            overall: coverageTracker.overallCoverage,
+            position: coverageTracker.positionCoverage,
+            walls: coverageTracker.wallCoverage,
+            ready: coverageTracker.isReadyToFinish,
+            wallsTotal: coverageTracker.totalWallCount,
+            wallsCovered: coverageTracker.coveredWallCount,
+            cellsTotal: coverageTracker.totalCellCount,
+            cellsCovered: coverageTracker.coveredCellCount
+        )
+    }
+
+    func recordFinishCoverage() {
+        do {
+            try store.saveFinishCoverage(finishCoverage, captureGroupId: captureGroupId, roomKey: roomKey)
+        } catch {
+            DiagnosticsLog.shared.record(
+                "Photo360: could not save coverage at Finish for \(roomKey): \(error.localizedDescription)",
+                category: .error
+            )
+        }
+    }
+
     func stopWalkSampling() {
         walkSamplingTask?.cancel()
         walkSamplingTask = nil

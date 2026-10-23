@@ -151,3 +151,12 @@ CREATE TABLE IF NOT EXISTS tour_asset (
     viewer_ready INTEGER NOT NULL DEFAULT 0,
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+
+CREATE TABLE IF NOT EXISTS client_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_session_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    occurred_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_client_events_session ON client_events (scan_session_id, id);

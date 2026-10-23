@@ -544,7 +544,7 @@ function purgeExpiredSessions(ScanSessionRepository $repo, \VuuroScan\ServiceSet
     return $purged;
 }
 
-const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload', 'compare', 'read_tour'];
+const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'view_client_events', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload', 'compare', 'read_tour'];
 const ADMIN_WRITE_ACTIONS = ['publish_to_platform'];
 
 function compareRequested(): bool
@@ -2543,6 +2543,54 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/compare$#', $path,
         'later' => comparisonScanSummary($later, $laterPlan),
         ...ScanComparison::compare($earlierPlan, $laterPlan, $areaChangeM2, $areaChangePercent),
     ]);
+    return;
+}
+
+const CLIENT_EVENT_KINDS = ['photo_step_summary'];
+const MAX_CLIENT_EVENT_BYTES = 64 * 1024;
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/client-events$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'client_event');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+
+    if (rateLimited($repo, $sessionId . ':client_event', 60, 300)) {
+        return;
+    }
+
+    if (strlen($rawRequestBody) > MAX_CLIENT_EVENT_BYTES) {
+        respondError(413, 'client_event_too_large', 'This diagnostics report is too large.', ['max_bytes' => MAX_CLIENT_EVENT_BYTES]);
+        return;
+    }
+    $body = json_body($rawRequestBody);
+    $kind = $body['kind'] ?? null;
+    if (!is_string($kind) || !in_array($kind, CLIENT_EVENT_KINDS, true)) {
+        respondError(422, 'unknown_client_event_kind', "Please send a known 'kind'.", ['allowed' => CLIENT_EVENT_KINDS]);
+        return;
+    }
+    $payload = $body['payload'] ?? null;
+    if (!is_array($payload) || ($payload !== [] && array_is_list($payload))) {
+        respondError(422, 'client_event_payload_must_be_object', "'payload' must be a JSON object.");
+        return;
+    }
+
+    respond(201, $repo->addClientEvent($sessionId, $kind, $payload));
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/client-events$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'view_client_events');
+    if ($session === null) {
+        return;
+    }
+
+    if (rateLimited($repo, $session['id'] . ':view_client_events', 120, 300)) {
+        return;
+    }
+
+    respond(200, ['scan_session_id' => $session['id'], 'client_events' => $repo->clientEvents($session['id'])]);
     return;
 }
 

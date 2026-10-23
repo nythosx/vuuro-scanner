@@ -19,18 +19,88 @@ struct RoomPhotoUploadOutcome: Equatable {
 }
 
 @MainActor
+final class RoomPhotoUploadTrace {
+    var batches: [RoomPhotoManifest] = []
+    var serverRoomCount = 0
+    var pairing = "not_attempted"
+    var failures: [PhotoStepSummary.Failure] = []
+}
+
+@MainActor
 enum RoomPhotoUploader {
     static func uploadAll(
         captureGroupId: String,
         session: ScanSessionResponse,
         floorPlan: FloorPlan,
         store: RoomPhotoStore,
-        client: ScanServiceClient = ScanServiceClient()
+        client: ScanServiceClient = ScanServiceClient(),
+        trigger: String = "after_scan"
+    ) async -> RoomPhotoUploadOutcome {
+        let trace = RoomPhotoUploadTrace()
+        let outcome = await performUpload(
+            captureGroupId: captureGroupId,
+            session: session,
+            floorPlan: floorPlan,
+            store: store,
+            client: client,
+            trace: trace
+        )
+        if !trace.batches.isEmpty || outcome.skipReason != nil {
+            let report = summary(captureGroupId: captureGroupId, trigger: trigger, trace: trace, outcome: outcome)
+            do {
+                try await client.postClientEvent(
+                    sessionId: session.id,
+                    accessToken: session.accessToken,
+                    kind: PhotoStepSummary.kind,
+                    payload: report
+                )
+            } catch {
+                DiagnosticsLog.shared.record(
+                    "Photo360: could not send the photo step report for \(session.id): \(error.localizedDescription)",
+                    category: .error
+                )
+            }
+        }
+        return outcome
+    }
+
+    static func summary(
+        captureGroupId: String,
+        trigger: String,
+        trace: RoomPhotoUploadTrace,
+        outcome: RoomPhotoUploadOutcome
+    ) -> PhotoStepSummary {
+        PhotoStepSummary(
+            build: BuildInfo.commitSHA,
+            trigger: trigger,
+            captureGroupId: captureGroupId,
+            serverRoomCount: trace.serverRoomCount,
+            pairing: trace.pairing,
+            photosTaken: trace.batches.reduce(0) { $0 + $1.photos.count },
+            photosUploaded: outcome.photosUploaded,
+            photosFailed: outcome.photosFailed,
+            skipReason: outcome.skipReason,
+            failures: Array(trace.failures.prefix(50)),
+            rooms: trace.batches.map {
+                PhotoStepSummary.Room(roomKey: $0.roomKey, photos: $0.photos.count, coverage: $0.finishCoverage)
+            }
+        )
+    }
+
+    private static func performUpload(
+        captureGroupId: String,
+        session: ScanSessionResponse,
+        floorPlan: FloorPlan,
+        store: RoomPhotoStore,
+        client: ScanServiceClient,
+        trace: RoomPhotoUploadTrace
     ) async -> RoomPhotoUploadOutcome {
         let batches: [RoomPhotoManifest]
         do {
             batches = try store.allBatches(captureGroupId: captureGroupId)
+            trace.batches = batches
         } catch {
+            trace.pairing = "read_error"
             DiagnosticsLog.shared.record(
                 "Photo360: could not read local batches for \(captureGroupId): \(error.localizedDescription)",
                 category: .error
@@ -45,7 +115,9 @@ enum RoomPhotoUploader {
         guard !batches.isEmpty else { return .none }
 
         let serverRooms = roomsForCaptureGroup(floorPlan.rooms, captureGroupId: captureGroupId)
+        trace.serverRoomCount = serverRooms.count
         guard !serverRooms.isEmpty else {
+            trace.pairing = "no_server_rooms"
             DiagnosticsLog.shared.record(
                 "Photo360: no server rooms carry this capture group \(captureGroupId); leaving \(batches.count) batch(es) on disk",
                 category: .info
@@ -65,9 +137,10 @@ enum RoomPhotoUploader {
             )
         }
 
-        let pairing = pair(batches: batches, serverRooms: serverRooms)
+        let paired = pairWithMethod(batches: batches, serverRooms: serverRooms)
+        trace.pairing = paired?.method ?? "failed"
 
-        guard let matched = pairing else {
+        guard let matched = paired?.pairs else {
             DiagnosticsLog.shared.record(
                 "Photo360: could not pair local batches with server rooms in \(captureGroupId); leaving photos on disk",
                 category: .error
@@ -96,7 +169,7 @@ enum RoomPhotoUploader {
                         skipReason: nil
                     )
                 }
-                let ok = await uploadOne(
+                let failure = await uploadOne(
                     photo: photo,
                     batch: batch,
                     roomId: roomId,
@@ -104,10 +177,11 @@ enum RoomPhotoUploader {
                     store: store,
                     client: client
                 )
-                if ok {
-                    uploaded += 1
-                } else {
+                if let failure {
                     failed += 1
+                    trace.failures.append(PhotoStepSummary.Failure(photoId: photo.localId, reason: failure))
+                } else {
+                    uploaded += 1
                 }
             }
         }
@@ -128,22 +202,29 @@ enum RoomPhotoUploader {
         batches: [RoomPhotoManifest],
         serverRooms: [FloorPlan.Room]
     ) -> [(batch: RoomPhotoManifest, roomId: String)]? {
+        pairWithMethod(batches: batches, serverRooms: serverRooms)?.pairs
+    }
+
+    static func pairWithMethod(
+        batches: [RoomPhotoManifest],
+        serverRooms: [FloorPlan.Room]
+    ) -> (pairs: [(batch: RoomPhotoManifest, roomId: String)], method: String)? {
         if let byOrigin = pairByStructureOrigin(batches: batches, serverRooms: serverRooms) {
-            return byOrigin
+            return (byOrigin, "origin")
         }
         if let greedy = pairGreedy(batches: batches, serverRooms: serverRooms) {
             DiagnosticsLog.shared.record(
                 "Photo360: paired all \(greedy.count) local batch(es) by origin; \(serverRooms.count - greedy.count) server room(s) have no tour photos",
                 category: .info
             )
-            return greedy
+            return (greedy, "origin_partial")
         }
         if batches.count == 1, serverRooms.count == 1 {
             DiagnosticsLog.shared.record(
                 "Photo360: origins did not match, pairing the only local batch with the only server room \(serverRooms[0].roomId)",
                 category: .info
             )
-            return [(batch: batches[0], roomId: serverRooms[0].roomId)]
+            return ([(batch: batches[0], roomId: serverRooms[0].roomId)], "single_room")
         }
         if serverRooms.allSatisfy({ $0.structureOriginM == nil }),
            let positional = pairPositionally(batches: batches, serverRooms: serverRooms) {
@@ -151,7 +232,7 @@ enum RoomPhotoUploader {
                 "Photo360: server rooms carry no origin, pairing \(positional.count) batch(es) in capture order",
                 category: .info
             )
-            return positional
+            return (positional, "capture_order")
         }
         return nil
     }
@@ -282,7 +363,7 @@ enum RoomPhotoUploader {
         session: ScanSessionResponse,
         store: RoomPhotoStore,
         client: ScanServiceClient
-    ) async -> Bool {
+    ) async -> String? {
         let data: Data
         do {
             data = try store.loadPhotoData(
@@ -295,7 +376,7 @@ enum RoomPhotoUploader {
                 "Photo360: photo file missing for \(photo.localId): \(error.localizedDescription)",
                 category: .error
             )
-            return false
+            return "photo file missing on the phone: \(error.localizedDescription)"
         }
 
         do {
@@ -308,15 +389,67 @@ enum RoomPhotoUploader {
                 headingDeg: photo.headingDeg,
                 idempotencyKey: photo.localId
             )
-            return true
+            return nil
         } catch is CancellationError {
-            return false
+            return "cancelled"
         } catch {
             DiagnosticsLog.shared.record(
                 "Photo360: upload failed for \(photo.localId): \(error.localizedDescription)",
                 category: .error
             )
-            return false
+            return error.localizedDescription
         }
+    }
+}
+
+struct PhotoStepSummary: Encodable {
+    static let kind = "photo_step_summary"
+
+    struct Failure: Encodable {
+        let photoId: String
+        let reason: String
+
+        enum CodingKeys: String, CodingKey {
+            case photoId = "photo_id"
+            case reason
+        }
+    }
+
+    struct Room: Encodable {
+        let roomKey: String
+        let photos: Int
+        let coverage: RoomPhotoFinishCoverage?
+
+        enum CodingKeys: String, CodingKey {
+            case roomKey = "room_key"
+            case photos
+            case coverage
+        }
+    }
+
+    let build: String
+    let trigger: String
+    let captureGroupId: String
+    let serverRoomCount: Int
+    let pairing: String
+    let photosTaken: Int
+    let photosUploaded: Int
+    let photosFailed: Int
+    let skipReason: String?
+    let failures: [Failure]
+    let rooms: [Room]
+
+    enum CodingKeys: String, CodingKey {
+        case build
+        case trigger
+        case captureGroupId = "capture_group_id"
+        case serverRoomCount = "server_room_count"
+        case pairing
+        case photosTaken = "photos_taken"
+        case photosUploaded = "photos_uploaded"
+        case photosFailed = "photos_failed"
+        case skipReason = "skip_reason"
+        case failures
+        case rooms
     }
 }

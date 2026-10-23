@@ -198,6 +198,7 @@ final class ScanSessionRepository
             $this->db->prepare('DELETE FROM floor_plans WHERE scan_session_id = :id')->execute(['id' => $id]);
             $this->db->prepare('DELETE FROM idempotency_keys WHERE scan_session_id = :id')->execute(['id' => $id]);
             $this->db->prepare('DELETE FROM access_log WHERE scan_session_id = :id')->execute(['id' => $id]);
+            $this->db->prepare('DELETE FROM client_events WHERE scan_session_id = :id')->execute(['id' => $id]);
             $this->db->prepare('DELETE FROM scan_sessions WHERE id = :id')->execute(['id' => $id]);
         });
     }
@@ -313,6 +314,51 @@ final class ScanSessionRepository
         );
         $stmt->execute(['id' => $sessionId]);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public const CLIENT_EVENTS_KEPT_PER_SESSION = 50;
+
+    public function addClientEvent(string $sessionId, string $kind, array $payload): array
+    {
+        $occurredAt = gmdate('c');
+        $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        $this->withWriteLock(function () use ($sessionId, $kind, $json, $occurredAt) {
+            $this->db->prepare(
+                'INSERT INTO client_events (scan_session_id, kind, payload_json, occurred_at) VALUES (:session_id, :kind, :payload, :occurred_at)'
+            )->execute([
+                'session_id' => $sessionId,
+                'kind' => $kind,
+                'payload' => $json,
+                'occurred_at' => $occurredAt,
+            ]);
+            $stmt = $this->db->prepare(
+                'DELETE FROM client_events WHERE scan_session_id = :session_id AND id NOT IN (
+                    SELECT id FROM client_events WHERE scan_session_id = :session_id ORDER BY id DESC LIMIT :keep
+                )'
+            );
+            $stmt->bindValue(':session_id', $sessionId, PDO::PARAM_STR);
+            $stmt->bindValue(':keep', self::CLIENT_EVENTS_KEPT_PER_SESSION, PDO::PARAM_INT);
+            $stmt->execute();
+        });
+        return ['kind' => $kind, 'payload' => $payload, 'occurred_at' => $occurredAt];
+    }
+
+    public function clientEvents(string $sessionId): array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT kind, payload_json, occurred_at FROM client_events WHERE scan_session_id = :id ORDER BY id ASC'
+        );
+        $stmt->execute(['id' => $sessionId]);
+        $events = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $payload = json_decode((string) $row['payload_json'], true);
+            $events[] = [
+                'kind' => $row['kind'],
+                'payload' => is_array($payload) ? $payload : [],
+                'occurred_at' => $row['occurred_at'],
+            ];
+        }
+        return $events;
     }
 
     public function markCaptured(string $id): void

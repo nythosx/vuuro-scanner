@@ -158,6 +158,87 @@ final class RoomPhotoUploaderTests: XCTestCase {
         XCTAssertEqual(RoomPhotoUploader.pendingPhotoCount(floorPlan: plan, store: store), [:])
     }
 
+    func testPairingReportsHowBatchesWereMatched() throws {
+        let single = RoomPhotoUploader.pairWithMethod(
+            batches: [batch("a", origin: [3.0, 3.0])],
+            serverRooms: [try room("room-1", origin: nil)]
+        )
+        XCTAssertEqual(single?.method, "single_room")
+
+        let byOrigin = RoomPhotoUploader.pairWithMethod(
+            batches: [batch("a", origin: [0.0, 0.0]), batch("b", origin: [5.0, 0.0])],
+            serverRooms: [try room("room-1", origin: [0.0, 0.0]), try room("room-2", origin: [5.0, 0.0])]
+        )
+        XCTAssertEqual(byOrigin?.method, "origin")
+
+        let inOrder = RoomPhotoUploader.pairWithMethod(
+            batches: [batch("a", origin: [0.0, 0.0]), batch("b", origin: [5.0, 0.0])],
+            serverRooms: [try room("room-1", origin: nil), try room("room-2", origin: nil)]
+        )
+        XCTAssertEqual(inOrder?.method, "capture_order")
+    }
+
+    func testPhotoStepSummaryEncodesWhatAdminShows() throws {
+        let trace = RoomPhotoUploadTrace()
+        var manifest = batch("room-key", origin: nil)
+        manifest.photos = [
+            RoomPhotoMetadata(localId: "p1", capturedAt: Date(), positionM: [1, 1], headingDeg: 0, pitchDeg: 0),
+            RoomPhotoMetadata(localId: "p2", capturedAt: Date(), positionM: [2, 1], headingDeg: 90, pitchDeg: 0),
+        ]
+        manifest.finishCoverage = RoomPhotoFinishCoverage(
+            overall: 0.66, position: 0.57, walls: 0.75, ready: false,
+            wallsTotal: 8, wallsCovered: 6, cellsTotal: 62, cellsCovered: 35
+        )
+        trace.batches = [manifest]
+        trace.serverRoomCount = 1
+        trace.pairing = "single_room"
+        trace.failures = [PhotoStepSummary.Failure(photoId: "p2", reason: "The request timed out.")]
+        let outcome = RoomPhotoUploadOutcome(batchesConsidered: 1, photosUploaded: 1, photosFailed: 1, skipReason: nil)
+
+        let summary = RoomPhotoUploader.summary(captureGroupId: "walk-1", trigger: "after_scan", trace: trace, outcome: outcome)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(summary)) as? [String: Any])
+
+        XCTAssertEqual(json["photos_taken"] as? Int, 2)
+        XCTAssertEqual(json["photos_uploaded"] as? Int, 1)
+        XCTAssertEqual(json["photos_failed"] as? Int, 1)
+        XCTAssertEqual(json["pairing"] as? String, "single_room")
+        XCTAssertEqual(json["server_room_count"] as? Int, 1)
+        XCTAssertEqual(json["capture_group_id"] as? String, "walk-1")
+        XCTAssertEqual(json["trigger"] as? String, "after_scan")
+        XCTAssertNotNil(json["build"] as? String)
+        let failures = try XCTUnwrap(json["failures"] as? [[String: Any]])
+        XCTAssertEqual(failures.first?["photo_id"] as? String, "p2")
+        let rooms = try XCTUnwrap(json["rooms"] as? [[String: Any]])
+        let coverage = try XCTUnwrap(rooms.first?["coverage"] as? [String: Any])
+        XCTAssertEqual(coverage["walls_total"] as? Int, 8)
+        XCTAssertEqual(coverage["walls_covered"] as? Int, 6)
+        XCTAssertEqual(coverage["ready"] as? Bool, false)
+    }
+
+    func testCoverageAtFinishIsSavedWithThePhotos() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = RoomPhotoStore(rootDirectory: dir)
+        let coverage = RoomPhotoFinishCoverage(
+            overall: 0.5, position: 0.5, walls: 0.5, ready: false,
+            wallsTotal: 4, wallsCovered: 2, cellsTotal: 12, cellsCovered: 6
+        )
+        try store.saveFinishCoverage(coverage, captureGroupId: "walk-1", roomKey: "nothing-yet")
+        XCTAssertEqual(try store.allBatches(captureGroupId: "walk-1"), [])
+
+        try store.savePhoto(
+            Data([0xFF, 0xD8, 0xFF]),
+            metadata: RoomPhotoMetadata(localId: "p1", capturedAt: Date(), positionM: [1, 1], headingDeg: 0, pitchDeg: 0),
+            captureGroupId: "walk-1",
+            roomKey: "room-key",
+            structureOriginM: nil
+        )
+        try store.saveFinishCoverage(coverage, captureGroupId: "walk-1", roomKey: "room-key")
+        let saved = try store.allBatches(captureGroupId: "walk-1")
+        XCTAssertEqual(saved.first?.finishCoverage, coverage)
+        XCTAssertEqual(saved.first?.photos.count, 1)
+    }
+
     func testPermutationsProducesFactorialCounts() {
         XCTAssertEqual(RoomPhotoUploader.permutations([Int]()).count, 1)
         XCTAssertEqual(RoomPhotoUploader.permutations([1]).count, 1)
