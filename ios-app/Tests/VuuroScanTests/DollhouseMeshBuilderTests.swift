@@ -226,15 +226,18 @@ final class DollhouseMeshBuilderTests: XCTestCase {
 
     func testDoorIsAnOpeningYouCanSeeThrough() throws {
         let opening = "[{\"opening_id\":\"d1\",\"category\":\"door\",\"position_m\":[2.0,0.0],\"width_m\":0.9,\"confidence\":\"high\"}]"
-        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(roomJSON(openings: opening))]"))
+        let scene = try DollhouseMeshBuilder.build(
+            rooms: try makeRooms("[\(roomJSON(openings: opening))]"),
+            configuration: DollhouseBuildConfiguration(mode: .dollhouse)
+        )
         let door = try XCTUnwrap(meshes(scene, named: "Opening-d1").first)
         let post = DollhouseConstants.doorFrameInsetM
-        let top = DollhouseConstants.doorHeightM
-        for vertex in door.vertices where vertex.position.y < top - post - 0.001 {
-            XCTAssertGreaterThanOrEqual(abs(vertex.position.x - 2.0), 0.45 - post - 0.001, "the door frame must leave the doorway open, found a vertex at x \(vertex.position.x)")
-        }
+        XCTAssertEqual(door.triangleCount, 36, "a door is two posts and a lintel, not one solid block")
+        let postInnerFaces = door.vertices.filter { abs(abs($0.position.x - 2.0) - (0.45 - post)) < 0.001 }
+        XCTAssertFalse(postInnerFaces.isEmpty, "the posts must leave the doorway open between them")
         let ys = door.vertices.map(\.position.y)
-        XCTAssertEqual(ys.max()!, top, accuracy: 0.01)
+        XCTAssertEqual(ys.max()!, DollhouseConstants.doorHeightM, accuracy: 0.01)
+        XCTAssertEqual(ys.min()!, 0, accuracy: 0.01)
     }
 
     func testWallPiecesBesideADoorAreClosedAtTheDoorway() throws {
