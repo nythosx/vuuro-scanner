@@ -132,21 +132,21 @@ imagedestroy($img);
 @unlink($tmpJpg);
 check('photo 360 upload accepted (HTTP 201)', $uploadStatus === 201, "got HTTP $uploadStatus " . json_encode($uploadBody));
 
-echo "\n== GLB after the photo: still flat, no tour viewer has a textured shader ==\n";
+echo "\n== GLB after the photo: the photographed wall is now textured ==\n";
 [$texStatus, $texType, $texBytes] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/dollhouse.glb", null, $accessToken);
 check('dollhouse.glb returns HTTP 200 after the photo', $texStatus === 200);
 check('dollhouse.glb is still model/gltf-binary', stripos($texType, 'model/gltf-binary') !== false, $texType);
 $texJson = dollhouse_tex_glb_json($texBytes);
 check('GLB after photo still parses', is_array($texJson));
-check('GLB after photo still has no images array', is_array($texJson) && !isset($texJson['images']));
-check('GLB after photo still has exactly one primitive', is_array($texJson) && count($texJson['meshes'][0]['primitives'] ?? []) === 1);
+check('GLB after photo now has an images array', is_array($texJson) && isset($texJson['images']) && count($texJson['images']) === 1);
+check('GLB after photo has a flat primitive plus a textured one', is_array($texJson) && count($texJson['meshes'][0]['primitives'] ?? []) === 2);
 
-echo "\n== ETag is unaffected by photos (export never reads them) ==\n";
+echo "\n== ETag changes when a tour photo is added (export now reads them) ==\n";
 [, $texHeaders] = net_http_headers('GET', "$baseUrl/scan-sessions/$sessionId/export/dollhouse.glb", $accessToken);
 preg_match('/^ETag:\s*(.+)$/mi', $texHeaders, $texEtagMatch);
 $texEtag = trim($texEtagMatch[1] ?? '');
 check('response after photo still carries an ETag', $texEtag !== '');
-check('the ETag is unchanged after the photo was added', $texEtag === $baselineEtag);
+check('the ETag changes after a tour photo is added', $texEtag !== $baselineEtag);
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {

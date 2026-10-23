@@ -11,7 +11,8 @@ final class DollhouseWallTexturingTests: XCTestCase {
         id: String = "room-1",
         outline: String = "[[0,0],[4,0],[4,3],[0,3]]",
         height: String = "2.6",
-        headingDeg: String = "0.0"
+        headingDeg: String = "0.0",
+        origin: String = "null"
     ) -> String {
         """
         {
@@ -19,7 +20,7 @@ final class DollhouseWallTexturingTests: XCTestCase {
           "bounding_dimensions_m": {"width_m": 4.0, "length_m": 3.0},
           "confidence": "high", "outline_m": \(outline),
           "coverage": {"score": 90, "confidence_counts": {"high": 1, "medium": 0, "low": 0}, "usable": true, "message": null},
-          "openings": [], "objects": [], "structure_origin_m": null, "room_type": null,
+          "openings": [], "objects": [], "structure_origin_m": \(origin), "room_type": null,
           "floor": "Ground", "capture_group_id": null, "joined_to_group_id": null,
           "height_m": \(height), "open_edges": [], "heading_deg": \(headingDeg)
         }
@@ -130,6 +131,28 @@ final class DollhouseWallTexturingTests: XCTestCase {
         )
         XCTAssertGreaterThan(texturedMaterialCount(scene), 0)
         XCTAssertGreaterThan(texturedVertexCount(scene), 0)
+    }
+
+    func testFusedRoomWithOriginStillTexturesItsWall() throws {
+        let plan = try rooms("[\(roomJSON(origin: "[4, 0]"))]")
+        let wallPhoto = photo(roomId: "room-1", position: [2.0, 0.5], headingDeg: 0.0)
+        let bytes = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10])
+        let scene = try DollhouseMeshBuilder.build(
+            rooms: plan,
+            configuration: DollhouseBuildConfiguration(mode: .dollhouse),
+            photos360: [wallPhoto],
+            photoBytesByURL: ["test://room/photo.jpg": bytes]
+        )
+        XCTAssertGreaterThan(texturedMaterialCount(scene), 0)
+        for mesh in scene.meshes where mesh.material.imageData != nil {
+            let xs = mesh.vertices.map(\.position.x)
+            XCTAssertGreaterThanOrEqual(xs.min()!, 3.5)
+            XCTAssertLessThanOrEqual(xs.max()!, 8.5)
+            for vertex in mesh.vertices {
+                guard let uv = vertex.uv else { return XCTFail("textured vertex without uv") }
+                XCTAssertTrue((0...1).contains(uv.x) && (0...1).contains(uv.y))
+            }
+        }
     }
 
     func testPerformanceModeSuppressesTexturing() throws {

@@ -252,7 +252,6 @@ final class DollhouseMeshBuilderTests: XCTestCase {
     }
 
     func testSharedWallIsDrawnOnceAsInteriorWall() throws {
-        throw XCTSkip("Failing on CI (x86_64/arm64) with a result that doesn't match hand-traced expected geometry - needs the actual assertion failure values from the .xcresult to pin down, not yet understood.")
         let left = roomJSON(id: "room-a", origin: "[0, 0]")
         let right = roomJSON(id: "room-b", origin: "[4, 0]")
         let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(left),\(right)]"), configuration: DollhouseBuildConfiguration(mode: .dollhouse))
@@ -316,6 +315,60 @@ final class DollhouseMeshBuilderTests: XCTestCase {
                 return XCTFail("unexpected error \(error)")
             }
         }
+    }
+
+    func testFusedRoomFurnitureStaysInsideItsWalls() throws {
+        let furniture = "[{\"object_id\":\"o1\",\"category\":\"sofa\",\"position_m\":[2,1.5],\"dimensions_m\":[2,0.8,0.9],\"confidence\":\"high\",\"custom_name\":null,\"excluded\":false}]"
+        let room = roomJSON(id: "room-fz", origin: "[4, 4]", objects: furniture)
+        let scene = try DollhouseMeshBuilder.build(
+            rooms: try makeRooms("[\(room)]"),
+            configuration: DollhouseBuildConfiguration(mode: .dollhouse))
+        let wallMeshes = scene.meshes.filter { $0.layer == .wallsAndFloors }
+        let furnitureMeshes = scene.meshes.filter { $0.layer == .furniture }
+        let wallX = wallMeshes.flatMap { $0.vertices.map(\.position.x) }
+        let wallZ = wallMeshes.flatMap { $0.vertices.map(\.position.z) }
+        let fx = furnitureMeshes.flatMap { $0.vertices.map(\.position.x) }
+        let fz = furnitureMeshes.flatMap { $0.vertices.map(\.position.z) }
+        XCTAssertFalse(wallX.isEmpty, "no walls rendered")
+        XCTAssertFalse(fx.isEmpty, "no furniture rendered")
+        XCTAssertEqual((fx.min()! + fx.max()!) / 2, (wallX.min()! + wallX.max()!) / 2, accuracy: 0.5, "furniture is shifted in X relative to its walls — the room origin was applied twice or not at all")
+        XCTAssertEqual((fz.min()! + fz.max()!) / 2, (wallZ.min()! + wallZ.max()!) / 2, accuracy: 0.5, "furniture is shifted in Z relative to its walls — the room origin was applied twice or not at all")
+    }
+
+    func testFusedRoomOpeningStaysAtItsWall() throws {
+        let doorOpening = "[{\"opening_id\":\"d1\",\"category\":\"door\",\"position_m\":[2,0],\"width_m\":0.9,\"confidence\":\"high\"}]"
+        let room = roomJSON(id: "room-op", origin: "[4, 0]", openings: doorOpening)
+        let scene = try DollhouseMeshBuilder.build(
+            rooms: try makeRooms("[\(room)]"),
+            configuration: DollhouseBuildConfiguration(mode: .dollhouse))
+        let doors = scene.meshes.filter { $0.layer == .doors }
+        XCTAssertEqual(doors.count, 1, "door was not rendered on its wall")
+        let xs = doors[0].vertices.map(\.position.x)
+        let centerX = (xs.min()! + xs.max()!) / 2
+        XCTAssertEqual(centerX, 6.0, accuracy: 0.3, "door should be at world X 6, not local X 2")
+    }
+
+    func testDegenerateHigherFloorDoesNotBreakLowerFloorDollhouse() throws {
+        let attic = roomJSON(id: "room-attic", outline: "[[0,0],[0,0],[0,0]]", origin: "[0, 0]", floor: "Attic")
+        let ground = roomJSON(id: "room-ground", origin: "[0, 0]", floor: "Ground")
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(attic),\(ground)]"))
+        XCTAssertGreaterThan(scene.meshes.count, 0, "ground floor should have rendered")
+        for mesh in scene.meshes {
+            for v in mesh.vertices {
+                XCTAssertTrue(v.position.z.isFinite, "vertex pushed to -inf by empty higher section")
+                XCTAssertFalse(v.position.z.isNaN, "vertex is NaN")
+            }
+        }
+    }
+
+    func testMultiSectionWithDifferentZOriginsDoesNotOverlap() throws {
+        let attic = roomJSON(id: "room-attic", origin: "[0, 0]", floor: "Attic")
+        let ground = roomJSON(id: "room-ground", origin: "[0, 4]", floor: "Ground")
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(attic),\(ground)]"))
+        let wallZ = scene.meshes.filter { $0.layer == .wallsAndFloors }.flatMap { $0.vertices.map(\.position.z) }
+        XCTAssertFalse(wallZ.isEmpty, "no walls rendered")
+        let span = wallZ.max()! - wallZ.min()!
+        XCTAssertGreaterThan(span, 5.5, "sections overlap because localMinZ double-counts the Z origin")
     }
 
     func testHeadingOnlyKeptWhenRoomsAgree() throws {

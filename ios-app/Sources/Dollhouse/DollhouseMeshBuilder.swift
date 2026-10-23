@@ -156,8 +156,8 @@ struct DollhouseMeshBuilder {
         for (sectionIndex, section) in sections.enumerated() {
             let weldedOutlines = weldSectionOutlines(rooms: section.rooms)
             let sectionOrigin = SIMD3<Float>(0.0, 0.0, sectionOffsetZ - localMinZ(of: section.rooms, weldedOutlines: weldedOutlines))
-            var sectionMin = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
-            var sectionMax = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+            var sectionMin = SIMD3<Float>(repeating: .infinity)
+            var sectionMax = SIMD3<Float>(repeating: -.infinity)
 
             let sectionSharedEdges = findSharedEdges(section.rooms, weldedOutlines: weldedOutlines)
             for room in section.rooms {
@@ -232,11 +232,10 @@ struct DollhouseMeshBuilder {
     // MARK: - Section geometry
 
     private static func localMinZ(of rooms: [FloorPlan.Room], weldedOutlines: [String: [SIMD2<Float>]]) -> Float {
-        var minZ = Float.greatestFiniteMagnitude
+        var minZ = Float.infinity
         for room in rooms {
-            let originZ = Float(room.structureOriginM?.dropFirst().first ?? 0)
             for point in weldedOutlines[room.roomId] ?? [] {
-                minZ = min(minZ, originZ + point.y)
+                minZ = min(minZ, point.y)
             }
         }
         return minZ.isFinite ? minZ : 0
@@ -472,7 +471,9 @@ struct DollhouseMeshBuilder {
             : requestedHeight
 
         let roomOrigin = SIMD3<Float>(Float(room.structureOriginM?.first ?? 0), 0, Float(room.structureOriginM?.dropFirst().first ?? 0))
-        let base = sectionOrigin + roomOrigin
+        let base = sectionOrigin
+        let localBase = base + roomOrigin
+        let originXZ = SIMD2<Float>(roomOrigin.x, roomOrigin.z)
         let roomHeadingDeg: Float? = room.headingDeg.map { Float($0) }
 
         let roomKey = room.roomId
@@ -518,8 +519,8 @@ struct DollhouseMeshBuilder {
             let wallPhoto: FloorPlan.Photo360?
             if let roomHeadingDeg, !photos360.isEmpty, !configuration.performanceMode {
                 wallPhoto = WallTextureProjection.pickWallPhoto(
-                    wallA: a,
-                    wallB: b,
+                    wallA: a - originXZ,
+                    wallB: b - originXZ,
                     inwardNormal: inwardNormal2D,
                     roomHeadingDeg: roomHeadingDeg,
                     wallHeightM: wallHeight,
@@ -529,7 +530,7 @@ struct DollhouseMeshBuilder {
                 wallPhoto = nil
             }
 
-            let openings = planOpenings(on: room, edgeIndex: index, a: a, b: b, unit: unit, length: length, roomHeight: wallHeight)
+            let openings = planOpenings(on: room, edgeIndex: index, a: a, b: b, unit: unit, length: length, roomHeight: wallHeight, originXZ: originXZ)
             let segments = subdivideEdge(edgeLength: length, roomHeight: wallHeight, openings: openings)
 
             for (segmentIndex, segment) in segments.enumerated() {
@@ -550,6 +551,7 @@ struct DollhouseMeshBuilder {
                     extendAtEnd: segment.t1 >= length - 0.0001,
                     wallPhoto: wallPhoto,
                     roomHeadingDeg: roomHeadingDeg,
+                    photoOriginXZ: originXZ,
                     photoBytesByURL: photoBytesByURL
                 )
                 meshes.append(contentsOf: meshList)
@@ -580,12 +582,12 @@ struct DollhouseMeshBuilder {
                 let yaw = Float(object.yawDeg ?? 0) * .pi / 180.0
                 let color = DollhousePalette.furnitureColor(for: object.category)
                 let material = DollhouseMaterial.furniture(named: "furniture-\(object.category)", color: color)
-                let mesh = makeBox(center: SIMD3<Float>(position.x, dims.y / 2, position.y), size: dims, yaw: yaw, base: base, material: material, layer: .furniture, path: roomPath.appending("Object-\(object.objectId)"))
+                let mesh = makeBox(center: SIMD3<Float>(position.x, dims.y / 2, position.y), size: dims, yaw: yaw, base: localBase, material: material, layer: .furniture, path: roomPath.appending("Object-\(object.objectId)"))
                 meshes.append(mesh)
             }
         }
 
-        let hotspots = makeHotspots(photos360: photos360, roomId: roomKey, base: base)
+        let hotspots = makeHotspots(photos360: photos360, roomId: roomKey, base: localBase)
 
         return RoomBuildResult(meshes: meshes, estimatedHeight: estimated, hotspots: hotspots)
     }
@@ -599,12 +601,13 @@ struct DollhouseMeshBuilder {
         b: SIMD2<Float>,
         unit: SIMD2<Float>,
         length: Float,
-        roomHeight: Float
+        roomHeight: Float,
+        originXZ: SIMD2<Float>
     ) -> [PlannedOpening] {
         var planned: [PlannedOpening] = []
         for opening in room.openings {
             guard opening.positionM.count >= 2 else { continue }
-            let point = SIMD2<Float>(Float(opening.positionM[0]), Float(opening.positionM[1]))
+            let point = SIMD2<Float>(Float(opening.positionM[0]), Float(opening.positionM[1])) + originXZ
             let t = simd_dot(point - a, unit)
             let onEdge = t >= -0.05 && t <= length + 0.05
             guard onEdge else { continue }
@@ -761,6 +764,7 @@ struct DollhouseMeshBuilder {
         extendAtEnd: Bool,
         wallPhoto: FloorPlan.Photo360?,
         roomHeadingDeg: Float?,
+        photoOriginXZ: SIMD2<Float>,
         photoBytesByURL: [String: Data]
     ) -> [DollhouseMesh] {
         let direction = b - a
@@ -802,7 +806,7 @@ struct DollhouseMeshBuilder {
         if let wallPhoto, let roomHeadingDeg,
            let bytes = photoBytesByURL[wallPhoto.url], !bytes.isEmpty {
             func wallLocal(_ p: SIMD2<Float>, _ y: Float) -> SIMD3<Float> {
-                SIMD3<Float>(p.x, y, p.y)
+                SIMD3<Float>(p.x - photoOriginXZ.x, y, p.y - photoOriginXZ.y)
             }
             let lw0 = wallLocal(innerA, y0)
             let lw1 = wallLocal(innerB, y0)

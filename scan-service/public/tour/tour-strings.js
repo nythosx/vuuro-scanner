@@ -26,7 +26,8 @@
       webgl_unavailable: 'WebGL is not available in this browser',
       prev_room_aria: 'Previous room',
       next_room_aria: 'Next room',
-      tour_mode_aria: 'Tour view mode'
+      tour_mode_aria: 'Tour view mode',
+      popout_full_tour: 'Open full tour'
     },
     nl: {
       loading_tour: 'Rondleiding laden\u2026',
@@ -52,7 +53,8 @@
       webgl_unavailable: 'WebGL is niet beschikbaar in deze browser',
       prev_room_aria: 'Vorige ruimte',
       next_room_aria: 'Volgende ruimte',
-      tour_mode_aria: 'Rondleiding weergavemodus'
+      tour_mode_aria: 'Rondleiding weergavemodus',
+      popout_full_tour: 'Open volledige rondleiding'
     }
   };
 

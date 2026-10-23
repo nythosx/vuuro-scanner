@@ -29,10 +29,10 @@
     if (!json || !bin) {
       throw new Error('GLB is missing its JSON or BIN chunk');
     }
-    return extractMesh(json, bin);
+    return extractParts(json, bin);
   }
 
-  function extractMesh(gltf, bin) {
+  function extractParts(gltf, bin) {
     function readAccessor(index) {
       var accessor = gltf.accessors[index];
       var bufferView = gltf.bufferViews[accessor.bufferView];
@@ -53,6 +53,30 @@
       }
       throw new Error('unsupported accessor componentType ' + accessor.componentType);
     }
+
+    var images = (gltf.images || []).map(function (image) {
+      var bufferView = gltf.bufferViews[image.bufferView];
+      var byteOffset = bufferView.byteOffset || 0;
+      return {
+        bytes: bin.subarray(byteOffset, byteOffset + bufferView.byteLength),
+        mime: image.mimeType || 'image/jpeg'
+      };
+    });
+
+    function imageIndexForMaterial(materialIndex) {
+      if (materialIndex === undefined || !gltf.materials) {
+        return null;
+      }
+      var material = gltf.materials[materialIndex];
+      var pbr = material && material.pbrMetallicRoughness;
+      var baseColorTexture = pbr && pbr.baseColorTexture;
+      if (!baseColorTexture || !gltf.textures) {
+        return null;
+      }
+      var texture = gltf.textures[baseColorTexture.index];
+      return texture ? texture.source : null;
+    }
+
     var primitives = [];
     for (var m = 0; m < gltf.meshes.length; m++) {
       var mesh = gltf.meshes[m];
@@ -65,63 +89,36 @@
     if (primitives.length === 0) {
       throw new Error('GLB contains no primitives');
     }
-    if (primitives.length === 1) {
-      var single = primitives[0];
-      var singlePos = readAccessor(single.attributes.POSITION);
-      var singleNrm = single.attributes.NORMAL !== undefined ? readAccessor(single.attributes.NORMAL) : null;
-      var singleCol = single.attributes.COLOR_0 !== undefined ? readAccessor(single.attributes.COLOR_0) : null;
-      var singleIdx = readAccessor(single.indices);
-      return { positions: singlePos, normals: singleNrm, colors: singleCol, indices: singleIdx };
-    }
-    var totalVertices = 0;
-    var totalIndices = 0;
-    for (var pi = 0; pi < primitives.length; pi++) {
-      totalVertices += gltf.accessors[primitives[pi].attributes.POSITION].count;
-      totalIndices += gltf.accessors[primitives[pi].indices].count;
-    }
-    var positions = new Float32Array(totalVertices * 3);
-    var normals = new Float32Array(totalVertices * 3);
-    var colors = new Float32Array(totalVertices * 4);
-    var indices = new Uint32Array(totalIndices);
-    var vOffset = 0;
-    var iOffset = 0;
-    for (var pj = 0; pj < primitives.length; pj++) {
-      var prim = primitives[pj];
-      var vCount = gltf.accessors[prim.attributes.POSITION].count;
-      var pPos = readAccessor(prim.attributes.POSITION);
-      positions.set(pPos, vOffset * 3);
-      if (prim.attributes.NORMAL !== undefined) {
-        var pNrm = readAccessor(prim.attributes.NORMAL);
-        normals.set(pNrm, vOffset * 3);
-      }
+
+    var parts = primitives.map(function (prim) {
+      var positions = readAccessor(prim.attributes.POSITION);
+      var normals = prim.attributes.NORMAL !== undefined ? readAccessor(prim.attributes.NORMAL) : null;
+      var uvs = prim.attributes.TEXCOORD_0 !== undefined ? readAccessor(prim.attributes.TEXCOORD_0) : null;
+      var colors = null;
       if (prim.attributes.COLOR_0 !== undefined) {
-        var pCol = readAccessor(prim.attributes.COLOR_0);
+        var raw = readAccessor(prim.attributes.COLOR_0);
         var isVec4 = gltf.accessors[prim.attributes.COLOR_0].type === 'VEC4';
         var comps = isVec4 ? 4 : 3;
+        var vCount = raw.length / comps;
+        colors = new Float32Array(vCount * 4);
         for (var cv = 0; cv < vCount; cv++) {
-          var cbase = (vOffset + cv) * 4;
-          colors[cbase] = pCol[cv * comps];
-          colors[cbase + 1] = pCol[cv * comps + 1];
-          colors[cbase + 2] = pCol[cv * comps + 2];
-          colors[cbase + 3] = isVec4 ? pCol[cv * comps + 3] : 1.0;
-        }
-      } else {
-        for (var dv = 0; dv < vCount; dv++) {
-          var dbase = (vOffset + dv) * 4;
-          colors[dbase] = 0.85;
-          colors[dbase + 1] = 0.84;
-          colors[dbase + 2] = 0.82;
-          colors[dbase + 3] = 1.0;
+          colors[cv * 4] = raw[cv * comps];
+          colors[cv * 4 + 1] = raw[cv * comps + 1];
+          colors[cv * 4 + 2] = raw[cv * comps + 2];
+          colors[cv * 4 + 3] = isVec4 ? raw[cv * comps + 3] : 1.0;
         }
       }
-      var pIdx = readAccessor(prim.indices);
-      for (var k = 0; k < pIdx.length; k++) {
-        indices[iOffset + k] = pIdx[k] + vOffset;
-      }
-      vOffset += vCount;
-      iOffset += pIdx.length;
-    }
-    return { positions: positions, normals: normals, colors: colors, indices: indices };
+      return {
+        positions: positions,
+        normals: normals,
+        uvs: uvs,
+        colors: colors,
+        indices: readAccessor(prim.indices),
+        imageIndex: imageIndexForMaterial(prim.material)
+      };
+    });
+
+    return { parts: parts, images: images };
   }
 
   window.TourDollhouseGlb = { parse: parseGlb };
