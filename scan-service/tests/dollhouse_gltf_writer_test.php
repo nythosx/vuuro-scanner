@@ -247,6 +247,73 @@ dg_check('the flat path emits exactly one primitive', isset($flatOnlyJson['meshe
 dg_check('the flat path has no images array', !isset($flatOnlyJson['images']));
 dg_check('the flat path has no samplers array', !isset($flatOnlyJson['samplers']));
 
+echo "\n== Web dollhouse draws a wall shared by two rooms once, like the app ==\n";
+function dg_positions(string $glb): array
+{
+    $json = dg_parse_json_chunk($glb);
+    $totalLen = unpack('V', substr($glb, 8, 4))[1];
+    $offset = 12;
+    $bin = '';
+    while ($offset + 8 <= $totalLen) {
+        $len = unpack('V', substr($glb, $offset, 4))[1];
+        $type = unpack('V', substr($glb, $offset + 4, 4))[1];
+        if ($type === 0x004E4942) {
+            $bin = substr($glb, $offset + 8, $len);
+        }
+        $offset += 8 + $len;
+    }
+    $points = [];
+    foreach ($json['meshes'] ?? [] as $mesh) {
+        foreach ($mesh['primitives'] ?? [] as $primitive) {
+            $accessor = $json['accessors'][$primitive['attributes']['POSITION']];
+            $view = $json['bufferViews'][$accessor['bufferView']];
+            $start = ($view['byteOffset'] ?? 0) + ($accessor['byteOffset'] ?? 0);
+            $floats = unpack('g*', substr($bin, $start, $accessor['count'] * 12));
+            $floats = array_values($floats);
+            for ($k = 0; $k + 2 < count($floats); $k += 3) {
+                $points[] = [$floats[$k], $floats[$k + 1], $floats[$k + 2]];
+            }
+        }
+    }
+    return $points;
+}
+
+function dg_band(array $points, float $height, float $xMin, float $xMax): ?array
+{
+    $xs = [];
+    foreach ($points as [$x, $y, $z]) {
+        if (abs($y - $height) < 1e-3 && $x >= $xMin && $x <= $xMax) {
+            $xs[] = $x;
+        }
+    }
+    return $xs === [] ? null : [min($xs), max($xs)];
+}
+
+$left = dg_room('left', [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]]);
+$left['open_edges'] = [0, 2];
+$right = dg_room('right', [[0.0, 0.0], [3.0, 0.0], [3.0, 3.0], [0.0, 3.0]]);
+$right['structure_origin_m'] = [4.2, 0.0];
+$right['open_edges'] = [0, 2];
+$fusedPoints = dg_positions((new DollhouseGltfWriter())->write(dg_plan([$left, $right]), fn (string $url): ?string => null));
+$seam = dg_band($fusedPoints, 2.6, 3.0, 5.5);
+$outer = dg_band($fusedPoints, 2.6, -1.0, 1.0);
+dg_check('the shared wall uses the thin interior thickness on the room side', $seam !== null && abs($seam[0] - 3.94) < 0.03, 'seam band ' . json_encode($seam));
+dg_check('the shared wall fills the gap between the rooms once instead of two thick walls', $seam !== null && ($seam[1] - $seam[0]) < 0.38, 'seam band ' . json_encode($seam));
+dg_check('an outside wall keeps the exterior thickness', $outer !== null && abs(($outer[1] - $outer[0]) - 0.30) < 0.02, 'outer band ' . json_encode($outer));
+
+$openRoom = dg_room('open', [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]]);
+$openRoom['open_edges'] = [0, 1, 2];
+$openPoints = dg_positions((new DollhouseGltfWriter())->write(dg_plan([$openRoom]), fn (string $url): ?string => null));
+dg_check('an open edge gets no wall', dg_band($openPoints, 2.6, 3.5, 4.5) === null, json_encode(dg_band($openPoints, 2.6, 3.5, 4.5)));
+dg_check('the other walls are still drawn', dg_band($openPoints, 2.6, -1.0, 1.0) !== null);
+
+$upstairs = $right;
+$upstairs['room_id'] = 'upstairs';
+$upstairs['floor'] = 'First';
+$floorsPoints = dg_positions((new DollhouseGltfWriter())->write(dg_plan([$left, $upstairs]), fn (string $url): ?string => null));
+$crossFloor = dg_band($floorsPoints, 2.6, 3.0, 5.5);
+dg_check('rooms on different floors are not joined into one interior wall', $crossFloor !== null && abs($crossFloor[0] - 3.85) < 0.03, 'band ' . json_encode($crossFloor));
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");
