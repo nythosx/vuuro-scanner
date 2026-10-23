@@ -55,8 +55,6 @@ struct ScanResultsReportView: View {
     @State private var usdzURL: URL?
     @State private var showFullScreen3D = false
     @State private var hotspotPhotoTarget: HotspotPhotoTarget?
-    @State private var pendingTourPhotos: [String: Int] = [:]
-    @State private var isUploadingTourPhotos = false
 
     private var exportUnit: MeasurementUnit {
         MeasurementUnit(rawValue: exportUnitRaw) ?? .metric
@@ -129,7 +127,12 @@ struct ScanResultsReportView: View {
                         if !reportUses3D {
                             placementBanner
                         }
-                        pendingTourPhotosBanner
+                        PendingTourPhotosBanner(
+                            floorPlan: floorPlan,
+                            session: entry.asResumableSession(),
+                            identifierPrefix: "report",
+                            onUploaded: { await load() }
+                        )
                         if onContinueScan != nil && DeviceCapability.canCaptureRooms {
                             continueScanButton
                         }
@@ -1008,81 +1011,6 @@ struct ScanResultsReportView: View {
         }
     }
 
-    @ViewBuilder
-    private var pendingTourPhotosBanner: some View {
-        let total = pendingTourPhotos.values.reduce(0, +)
-        if total > 0 {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(String(format: vuuroLocalized("%lld tour photo(s) are still only on this phone"), total))
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(VuuroColor.textPrimary)
-                Text(vuuroLocalized("They were not uploaded with this scan. Upload them now to add them to the tour."))
-                    .font(.system(size: 13))
-                    .foregroundStyle(VuuroColor.textSecondary)
-                Button {
-                    Task { await uploadPendingTourPhotos() }
-                } label: {
-                    if isUploadingTourPhotos {
-                        ProgressView()
-                    } else {
-                        Text(vuuroLocalized("Upload tour photos"))
-                    }
-                }
-                .accessibilityIdentifier("report.uploadPendingTourPhotos")
-                .buttonStyle(.vuuroOutlineSmall)
-                .disabled(isUploadingTourPhotos)
-            }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(VuuroColor.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 14))
-            .padding(.horizontal, 20)
-            .padding(.bottom, 12)
-        }
-    }
-
-    @MainActor
-    private func refreshPendingTourPhotos() {
-        guard let floorPlan else {
-            pendingTourPhotos = [:]
-            return
-        }
-        pendingTourPhotos = RoomPhotoUploader.pendingPhotoCount(floorPlan: floorPlan, store: .shared)
-    }
-
-    @MainActor
-    private func uploadPendingTourPhotos() async {
-        guard let floorPlan, !isUploadingTourPhotos else { return }
-        isUploadingTourPhotos = true
-        defer { isUploadingTourPhotos = false }
-        let session = entry.asResumableSession()
-        var uploaded = 0
-        var failed = 0
-        var skipReason: String?
-        for groupId in pendingTourPhotos.keys.sorted() {
-            let outcome = await RoomPhotoUploader.uploadAll(
-                captureGroupId: groupId,
-                session: session,
-                floorPlan: floorPlan,
-                store: .shared
-            )
-            uploaded += outcome.photosUploaded
-            failed += outcome.photosFailed
-            if let reason = outcome.skipReason { skipReason = reason }
-        }
-        DiagnosticsLog.shared.record(
-            "Photo360: manual retry for \(entry.sessionId) uploaded \(uploaded), failed \(failed)\(skipReason.map { ", skipped: \($0)" } ?? "")",
-            category: failed > 0 || skipReason != nil ? .error : .info
-        )
-        if let skipReason {
-            VuuroToast.shared.show(skipReason)
-        } else if failed > 0 {
-            VuuroToast.shared.show(String(format: vuuroLocalized("%lld tour photo(s) couldn't be uploaded"), failed))
-        } else if uploaded > 0 {
-            VuuroToast.shared.show(String(format: vuuroLocalized("%lld tour photo(s) uploaded"), uploaded))
-        }
-        await load()
-    }
-
     private var openFullScreen3DButton: some View {
         Button {
             showFullScreen3D = true
@@ -1255,7 +1183,6 @@ struct ScanResultsReportView: View {
             await loadDeletionStatus()
         }
         await sessionFetch.value
-        refreshPendingTourPhotos()
         await imageFetch.value
         await deletionFetch.value
     }

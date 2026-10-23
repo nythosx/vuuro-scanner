@@ -159,6 +159,12 @@ struct ResultSummaryView: View {
                                 floorPlanCard
                             }
                             placementBanner
+                            PendingTourPhotosBanner(
+                                floorPlan: currentFloorPlan,
+                                session: session,
+                                identifierPrefix: "result",
+                                onUploaded: { await reloadFloorPlanAfterTourPhotos() }
+                            )
                             separatePlans
                             ExportStyleSection(style: $exportStyle)
                         }
@@ -766,6 +772,18 @@ struct ResultSummaryView: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
+    }
+
+    @MainActor
+    private func reloadFloorPlanAfterTourPhotos() async {
+        do {
+            currentFloorPlan = try await client.fetchSession(sessionId: session.id, accessToken: session.accessToken)
+        } catch {
+            DiagnosticsLog.shared.record(
+                "Could not refresh the plan after uploading tour photos for \(session.id): \(error.localizedDescription)",
+                category: .error
+            )
+        }
     }
 
     @ViewBuilder
