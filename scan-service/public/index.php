@@ -1659,6 +1659,16 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
         return;
     }
 
+    $zoomRaw = $_POST['zoom'] ?? '1.0';
+    if (!is_string($zoomRaw) || !is_numeric($zoomRaw)) {
+        respondError(422, 'invalid_zoom', "'zoom' must be numeric when given.");
+        return;
+    }
+    $zoomValue = (float) $zoomRaw;
+    if (!is_finite($zoomValue) || $zoomValue < 1.0 || $zoomValue > 2.0) {
+        respondError(422, 'invalid_zoom', "'zoom' must be between 1.0 and 2.0.");
+        return;
+    }
     $roomId = isset($_POST['room_id']) && is_string($_POST['room_id']) ? trim($_POST['room_id']) : '';
     if ($roomId === '') {
         $repo->logAccess($sessionId, 'upload_photo_360', 'rejected_missing_room');
@@ -1722,7 +1732,8 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
             $positionZ,
             $headingDeg,
             gmdate('c'),
-            $idempotencyKey
+            $idempotencyKey,
+            $zoomValue
         );
     } catch (\PDOException $e) {
         @unlink($storageDir . '/' . $filename);

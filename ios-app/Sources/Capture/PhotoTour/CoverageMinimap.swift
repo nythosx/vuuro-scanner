@@ -24,13 +24,13 @@ struct CoverageMinimap: View {
         .accessibilityIdentifier("coverage.minimap")
         .accessibilityLabel(String(
             format: vuuroLocalized("Coverage map. %d%% of the room walked, %d%% of walls photographed."),
-            Int(coverage.positionCoverage * 100),
+            Int(coverage.walkablePositionCoverage * 100),
             Int(coverage.wallCoverage * 100)
         ))
     }
 
     private func draw(in context: inout GraphicsContext, mapping: Mapping) {
-        let coveredCells = coverage.coveredCells
+        let coveredCells = coverage.seenCells
         for cell in coverage.inRoomCells {
             let cellMinX = coverage.gridOrigin.x + Double(cell.x) * coverage.cellSizeM
             let cellMinZ = coverage.gridOrigin.y + Double(cell.z) * coverage.cellSizeM

@@ -2,12 +2,37 @@ import CoreGraphics
 import Foundation
 import simd
 
+enum PhotoTourStrings {
+    static var start: String { vuuroLocalized("Point the camera at a wall to start.") }
+    static var ready: String { vuuroLocalized("You can finish. Tap Finish when ready.") }
+    static var lastWall: String { vuuroLocalized("Aim at the last uncovered wall, marked in red.") }
+    static func wallsLeft(_ n: Int) -> String {
+        String(format: vuuroLocalized("Aim at the red walls on the minimap \u{2014} %d left."), n)
+    }
+    static var walkGrey: String { vuuroLocalized("Walk into the grey areas on the minimap to cover them.") }
+    static func finishAnywayWalls(_ n: Int) -> String {
+        n == 1
+            ? vuuroLocalized("1 wall hasn't been photographed. The tour will be missing that view.")
+            : String(format: vuuroLocalized("%d walls haven't been photographed. The tour will be missing those views."), n)
+    }
+    static func finishAnywayWalk(_ pct: Int) -> String {
+        String(format: vuuroLocalized("You've walked %d%% of the open floor. Walking through the grey areas will make the tour richer."), pct)
+    }
+    static var finishAnywayOk: String { vuuroLocalized("You can finish anyway, or keep scanning for a better tour.") }
+    static func photoCapBanner(wallsLeft: Int, pct: Int) -> String {
+        String(format: vuuroLocalized("Photo limit reached. %d wall(s) left \u{00B7} %d%% walked. Tap Finish to complete."), wallsLeft, pct)
+    }
+}
+
 struct RoomPhotoCoverage: Equatable {
     static let minimumWallLengthM = 0.5
     static let collinearAngleDeg = 10.0
     static let collinearOffsetM = 0.3
     static let readyWallCoverage = 0.8
     static let readyPositionCoverage = 0.5
+    static let standableMarginM = 1.0
+    static let walkReachRadiusM = 1.0
+    static let maxWalkJumpM = 3.0
 
     struct Cell: Hashable {
         let x: Int
@@ -35,6 +60,9 @@ struct RoomPhotoCoverage: Equatable {
     private(set) var walkedCells: Set<Cell>
     private(set) var coveredWalls: Set<Int>
     private(set) var recordedPositions: [SIMD2<Double>]
+    let walkableCells: Set<Cell>
+    private(set) var reachedCells: Set<Cell>
+    private(set) var walkedPositions: [SIMD2<Double>]
 
     init(outline: [CGPoint], cellSizeM: Double = 1.0, roomHeadingDeg: Double? = nil) {
         let points = outline.map { SIMD2<Double>(Double($0.x), Double($0.y)) }
@@ -45,12 +73,15 @@ struct RoomPhotoCoverage: Equatable {
         self.walkedCells = []
         self.coveredWalls = []
         self.recordedPositions = []
+        self.reachedCells = []
+        self.walkedPositions = []
 
         guard points.count >= 3 else {
             self.gridOrigin = SIMD2<Double>(0, 0)
             self.gridWidth = 0
             self.gridDepth = 0
             self.inRoomCells = []
+            self.walkableCells = []
             self.walls = []
             return
         }
@@ -76,6 +107,11 @@ struct RoomPhotoCoverage: Equatable {
             }
         }
         self.inRoomCells = cells
+        let core = cells.filter { cell in
+            let center = SIMD2<Double>(minX + (Double(cell.x) + 0.5) * cellSizeM, minZ + (Double(cell.z) + 0.5) * cellSizeM)
+            return Self.distanceToOutline(points, center) >= Self.standableMarginM
+        }
+        self.walkableCells = core.isEmpty ? cells : core
 
         var area2 = 0.0
         for i in 0..<points.count {
@@ -157,9 +193,20 @@ struct RoomPhotoCoverage: Equatable {
 
     mutating func recordWalk(positionM: CGPoint) {
         let pos = SIMD2<Double>(Double(positionM.x), Double(positionM.y))
+        var path = [pos]
+        if let previous = walkedPositions.last, simd_length(pos - previous) <= Self.maxWalkJumpM {
+            path = samplesAlong(from: previous, to: pos)
+            for cell in cellsAlong(from: previous, to: pos) {
+                walkedCells.insert(cell)
+            }
+        }
         if let cell = cellFor(pos) {
             walkedCells.insert(cell)
         }
+        for point in path {
+            markReached(around: point)
+        }
+        walkedPositions.append(pos)
     }
 
     var coveredCells: Set<Cell> {
@@ -170,6 +217,66 @@ struct RoomPhotoCoverage: Equatable {
         photoCells.removeAll()
         coveredWalls.removeAll()
         recordedPositions.removeAll()
+    }
+
+    private func samplesAlong(from a: SIMD2<Double>, to b: SIMD2<Double>) -> [SIMD2<Double>] {
+        let length = simd_length(b - a)
+        let step = max(cellSizeM * 0.5, 0.1)
+        let steps = max(1, Int(ceil(length / step)))
+        return (0...steps).map { i in
+            let t = Double(i) / Double(steps)
+            return a + (b - a) * t
+        }
+    }
+
+    private func cellsAlong(from a: SIMD2<Double>, to b: SIMD2<Double>) -> Set<Cell> {
+        Set(samplesAlong(from: a, to: b).compactMap { cellFor($0) })
+    }
+
+    private mutating func markReached(around pos: SIMD2<Double>) {
+        let r = Self.walkReachRadiusM
+        let rSq = r * r
+        guard gridWidth > 0, gridDepth > 0 else { return }
+        let ixMin = max(0, Int(floor((pos.x - r - gridOrigin.x) / cellSizeM)))
+        let ixMax = min(gridWidth - 1, Int(floor((pos.x + r - gridOrigin.x) / cellSizeM)))
+        let izMin = max(0, Int(floor((pos.y - r - gridOrigin.y) / cellSizeM)))
+        let izMax = min(gridDepth - 1, Int(floor((pos.y + r - gridOrigin.y) / cellSizeM)))
+        guard ixMin <= ixMax, izMin <= izMax else { return }
+        for ix in ixMin...ixMax {
+            for iz in izMin...izMax {
+                let cell = Cell(x: ix, z: iz)
+                guard inRoomCells.contains(cell) else { continue }
+                let cx = gridOrigin.x + (Double(ix) + 0.5) * cellSizeM
+                let cz = gridOrigin.y + (Double(iz) + 0.5) * cellSizeM
+                let dx = cx - pos.x
+                let dz = cz - pos.y
+                if dx * dx + dz * dz <= rSq {
+                    reachedCells.insert(cell)
+                }
+            }
+        }
+    }
+
+    var seenCells: Set<Cell> {
+        coveredCells.union(reachedCells)
+    }
+
+    var walkablePositionCoverage: Double {
+        guard !walkableCells.isEmpty else { return 0 }
+        return Double(seenCells.intersection(walkableCells).count) / Double(walkableCells.count)
+    }
+
+    static func distanceToOutline(_ points: [SIMD2<Double>], _ p: SIMD2<Double>) -> Double {
+        var best = Double.infinity
+        for i in 0..<points.count {
+            let a = points[i]
+            let b = points[(i + 1) % points.count]
+            let ab = b - a
+            let lengthSq = simd_length_squared(ab)
+            let t = lengthSq > 1e-12 ? min(1, max(0, simd_dot(p - a, ab) / lengthSq)) : 0
+            best = min(best, simd_length(p - (a + ab * t)))
+        }
+        return best
     }
 
     var positionCoverage: Double {
@@ -183,36 +290,52 @@ struct RoomPhotoCoverage: Equatable {
     }
 
     var overallCoverage: Double {
-        guard !inRoomCells.isEmpty || !walls.isEmpty else { return 0 }
-        return 0.5 * positionCoverage + 0.5 * wallCoverage
+        guard !walkableCells.isEmpty || !walls.isEmpty else { return 0 }
+        return 0.5 * walkablePositionCoverage + 0.5 * wallCoverage
     }
 
     var isReadyToFinish: Bool {
-        positionCoverage >= Self.readyPositionCoverage && wallCoverage >= Self.readyWallCoverage
+        walkablePositionCoverage >= Self.readyPositionCoverage && wallCoverage >= Self.readyWallCoverage
     }
 
     var uncoveredWalls: [Wall] {
         walls.filter { !coveredWalls.contains($0.index) }
     }
 
-    var nextAction: String? {
-        if recordedPositions.isEmpty {
-            return "Point the camera at a wall to start."
+    enum NextGate: Equatable {
+        case start
+        case ready
+        case walls(remaining: Int)
+        case position
+    }
+
+    struct NextAction: Equatable {
+        let gate: NextGate
+        let message: String
+    }
+
+    var nextActionStructured: NextAction? {
+        if recordedPositions.isEmpty && walkedPositions.isEmpty {
+            return NextAction(gate: .start, message: PhotoTourStrings.start)
         }
         if isReadyToFinish {
-            return "You can finish. Tap Finish when ready."
+            return NextAction(gate: .ready, message: PhotoTourStrings.ready)
         }
         let uncovered = uncoveredWalls
         if !uncovered.isEmpty {
             if uncovered.count == 1 {
-                return "Aim at the last uncovered wall, marked in red."
+                return NextAction(gate: .walls(remaining: 1), message: PhotoTourStrings.lastWall)
             }
-            return "Aim at the red walls on the minimap \u{2014} \(uncovered.count) left."
+            return NextAction(gate: .walls(remaining: uncovered.count), message: PhotoTourStrings.wallsLeft(uncovered.count))
         }
-        if positionCoverage < Self.readyPositionCoverage {
-            return "Walk into the grey areas on the minimap to cover them."
+        if walkablePositionCoverage < Self.readyPositionCoverage {
+            return NextAction(gate: .position, message: PhotoTourStrings.walkGrey)
         }
         return nil
+    }
+
+    var nextAction: String? {
+        nextActionStructured?.message
     }
 
     func directionVector(cameraHeadingDeg: Double) -> SIMD2<Double> {

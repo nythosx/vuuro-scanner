@@ -16,11 +16,28 @@ struct RoomPhotoCaptureOverlay: View {
     @State private var flashVisible = false
     @State private var toastMessage: String?
     @State private var toastTask: Task<Void, Never>?
+    @State private var zoom: CGFloat = 1.0
+    @State private var baseZoom: CGFloat = 1.0
 
     var body: some View {
         ZStack {
-            LiveCameraPreview(arSession: coordinator.session)
-                .ignoresSafeArea()
+            ZStack {
+                LiveCameraPreview(arSession: coordinator.session)
+                    .scaleEffect(zoom)
+            }
+            .clipped()
+            .ignoresSafeArea()
+            .gesture(
+                MagnificationGesture()
+                    .onChanged { value in
+                        let newZoom = max(1.0, min(2.0, baseZoom * value))
+                        zoom = newZoom
+                        coordinator.zoom = newZoom
+                    }
+                    .onEnded { _ in
+                        baseZoom = zoom
+                    }
+            )
 
             Color.white
                 .opacity(flashVisible ? 0.6 : 0)
@@ -71,6 +88,9 @@ struct RoomPhotoCaptureOverlay: View {
             if !onboardingSeen {
                 showOnboarding = true
             }
+            zoom = 1.0
+            baseZoom = 1.0
+            coordinator.zoom = 1.0
         }
         .onDisappear {
             toastTask?.cancel()
@@ -186,6 +206,9 @@ struct RoomPhotoCaptureOverlay: View {
             } else {
                 infoRow
                     .transition(.opacity.combined(with: .offset(y: 10)))
+            }
+            if coordinator.isMaximumReached && !coordinator.coverage.isReadyToFinish {
+                photoCapBanner
             }
             errorLine
             controlsRow
@@ -303,7 +326,7 @@ struct RoomPhotoCaptureOverlay: View {
             }
             Text(String(
                 format: "Pos %d%% · Walls %d%%",
-                Int(coordinator.coverage.positionCoverage * 100),
+                Int(coordinator.coverage.walkablePositionCoverage * 100),
                 Int(coordinator.coverage.wallCoverage * 100)
             ))
             .font(.system(size: 11))
@@ -624,14 +647,28 @@ struct RoomPhotoCaptureOverlay: View {
 
     private var finishAnywayMessage: String {
         let uncoveredWallCount = coordinator.coverage.uncoveredWalls.count
-        let positionPct = Int(coordinator.coverage.positionCoverage * 100)
+        let positionPct = Int(coordinator.coverage.walkablePositionCoverage * 100)
         if uncoveredWallCount > 0 {
-            return "\(uncoveredWallCount) wall\(uncoveredWallCount == 1 ? "" : "s") \(uncoveredWallCount == 1 ? "hasn't" : "haven't") been photographed. The tour will be missing those views."
+            return PhotoTourStrings.finishAnywayWalls(uncoveredWallCount)
         }
         if positionPct < Int(RoomPhotoCoverage.readyPositionCoverage * 100) {
-            return "You've walked \(positionPct)% of the room. Walking through the grey areas will make the tour richer."
+            return PhotoTourStrings.finishAnywayWalk(positionPct)
         }
-        return "You can finish anyway, or keep scanning for a better tour."
+        return PhotoTourStrings.finishAnywayOk
+    }
+
+    private var photoCapBanner: some View {
+        let wallsLeft = coordinator.coverage.uncoveredWalls.count
+        let posPct = Int(coordinator.coverage.walkablePositionCoverage * 100)
+        return Text(PhotoTourStrings.photoCapBanner(wallsLeft: wallsLeft, pct: posPct))
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Color(red: 1.0, green: 0.85, blue: 0.4))
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.black.opacity(0.55), in: Capsule())
+            .accessibilityIdentifier("photoTour.photoCapBanner")
     }
 
     private var outlineCGPoints: [CGPoint] {

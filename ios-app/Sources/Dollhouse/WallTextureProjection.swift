@@ -29,8 +29,9 @@ enum WallTextureProjection {
         let xCam = dx * rx + dz * rz
         let yCam = dy
 
-        let halfH = tan(horizontalFovDeg * .pi / 180.0 / 2.0)
-        let halfV = tan(verticalFovDeg * .pi / 180.0 / 2.0)
+        let photoZoom = Float(photo.zoom ?? 1.0)
+        let halfH = tan(horizontalFovDeg * .pi / 180.0 / 2.0) / photoZoom
+        let halfV = tan(verticalFovDeg * .pi / 180.0 / 2.0) / photoZoom
 
         let u = 0.5 + xCam / (2.0 * halfH * zCam)
         let v = 0.5 - yCam / (2.0 * halfV * zCam)
@@ -64,7 +65,6 @@ enum WallTextureProjection {
         let midZ = (wallA.y + wallB.y) / 2.0
         let midHeightY = wallHeightM / 2.0
         let wallLength = simd_length(wallB - wallA)
-        let halfH = tan(horizontalFovDeg * .pi / 180.0 / 2.0)
 
         var best: FloorPlan.Photo360?
         var bestScore: Float = -.infinity
@@ -83,6 +83,8 @@ enum WallTextureProjection {
             let camZ = Float(photo.positionM[1])
             let zCam = (midX - camX) * forward.x + (midZ - camZ) * forward.y
             if zCam < minDepthM { continue }
+            let photoZoom = Float(photo.zoom ?? 1.0)
+            let halfH = tan(horizontalFovDeg * .pi / 180.0 / 2.0) / photoZoom
             let coveredSpan = 2.0 * halfH * zCam
             if wallLength > maxWallLengthPerSpan * coveredSpan { continue }
             let dist = simd_length(SIMD2<Float>(midX - camX, midZ - camZ))

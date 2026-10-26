@@ -19,11 +19,12 @@ final class Photo360Repository
         float $positionZ,
         float $headingDeg,
         string $capturedAt,
-        string $idempotencyKey
+        string $idempotencyKey,
+        float $zoom = 1.0
     ): array {
         $stmt = $this->pdo->prepare(
-            'INSERT INTO photo_360 (session_id, room_id, url, position_x, position_z, heading_deg, captured_at, idempotency_key)
-             VALUES (:session_id, :room_id, :url, :position_x, :position_z, :heading_deg, :captured_at, :idempotency_key)'
+            'INSERT INTO photo_360 (session_id, room_id, url, position_x, position_z, heading_deg, zoom, captured_at, idempotency_key)
+             VALUES (:session_id, :room_id, :url, :position_x, :position_z, :heading_deg, :zoom, :captured_at, :idempotency_key)'
         );
         $stmt->execute([
             ':session_id' => $sessionId,
@@ -32,6 +33,7 @@ final class Photo360Repository
             ':position_x' => $positionX,
             ':position_z' => $positionZ,
             ':heading_deg' => $headingDeg,
+            ':zoom' => $zoom,
             ':captured_at' => $capturedAt,
             ':idempotency_key' => $idempotencyKey,
         ]);
@@ -96,6 +98,7 @@ final class Photo360Repository
             'url' => (string) $row['url'],
             'position_m' => [(float) $row['position_x'], (float) $row['position_z']],
             'heading_deg' => (float) $row['heading_deg'],
+            'zoom' => (float) ($row['zoom'] ?? 1.0),
             'captured_at' => (string) $row['captured_at'],
         ];
     }

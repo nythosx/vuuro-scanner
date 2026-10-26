@@ -112,6 +112,21 @@ check('retry returns the SAME photo_id', ($retryBody['photo_id'] ?? null) === $p
 );
 check('a fresh Idempotency-Key stores a new photo (HTTP 201)', $secondStatus === 201, "got HTTP $secondStatus");
 check('the second photo has a different photo_id', ($secondBody['photo_id'] ?? null) !== $photoId);
+check('a photo sent without zoom is stored at 1x', ($uploadBody['zoom'] ?? null) === 1.0, json_encode($uploadBody));
+
+[$zoomStatus, $zoomBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', array_merge($fields, ['zoom' => '1.500']), $accessToken, 'key-360-zoom'
+);
+check('a zoomed photo keeps its zoom', $zoomStatus === 201 && ($zoomBody['zoom'] ?? null) === 1.5, "got HTTP $zoomStatus: " . json_encode($zoomBody));
+
+[$badZoomStatus, $badZoomBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', array_merge($fields, ['zoom' => '3']), $accessToken, 'key-360-bad-zoom'
+);
+check('zoom above 2x is rejected with 422 invalid_zoom',
+    $badZoomStatus === 422 && ($badZoomBody['error'] ?? null) === 'invalid_zoom',
+    "got HTTP $badZoomStatus: " . json_encode($badZoomBody));
 
 echo "\n== Missing / malformed fields ==\n";
 [$noKeyStatus, $noKeyBody] = photo_360_upload(

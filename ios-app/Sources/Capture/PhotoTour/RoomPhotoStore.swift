@@ -6,6 +6,33 @@ struct RoomPhotoMetadata: Codable, Equatable {
     let positionM: [Double]
     let headingDeg: Double
     let pitchDeg: Double
+    let zoom: Double
+
+    init(
+        localId: String,
+        capturedAt: Date,
+        positionM: [Double],
+        headingDeg: Double,
+        pitchDeg: Double,
+        zoom: Double = 1.0
+    ) {
+        self.localId = localId
+        self.capturedAt = capturedAt
+        self.positionM = positionM
+        self.headingDeg = headingDeg
+        self.pitchDeg = pitchDeg
+        self.zoom = zoom
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        localId = try c.decode(String.self, forKey: .localId)
+        capturedAt = try c.decode(Date.self, forKey: .capturedAt)
+        positionM = try c.decode([Double].self, forKey: .positionM)
+        headingDeg = try c.decode(Double.self, forKey: .headingDeg)
+        pitchDeg = try c.decode(Double.self, forKey: .pitchDeg)
+        zoom = try c.decodeIfPresent(Double.self, forKey: .zoom) ?? 1.0
+    }
 }
 
 struct RoomPhotoFinishCoverage: Codable, Equatable {

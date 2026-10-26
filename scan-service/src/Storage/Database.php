@@ -73,6 +73,13 @@ final class Database
                 throw $e;
             }
         }
+        try {
+            $pdo->exec("ALTER TABLE photo_360 ADD COLUMN zoom REAL NOT NULL DEFAULT 1.0");
+        } catch (\PDOException $e) {
+            if (!str_contains($e->getMessage(), 'duplicate column name')) {
+                throw $e;
+            }
+        }
         self::hashPlaintextTokens($pdo);
 
         return $pdo;

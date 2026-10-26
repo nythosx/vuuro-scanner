@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS photo_360 (
     position_x REAL NOT NULL,
     position_z REAL NOT NULL,
     heading_deg REAL NOT NULL,
+    zoom REAL NOT NULL DEFAULT 1.0,
     captured_at TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

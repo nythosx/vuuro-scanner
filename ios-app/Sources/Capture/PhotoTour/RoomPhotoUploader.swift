@@ -387,6 +387,7 @@ enum RoomPhotoUploader {
                 imageData: data,
                 positionM: photo.positionM,
                 headingDeg: photo.headingDeg,
+                zoom: photo.zoom,
                 idempotencyKey: photo.localId
             )
             return nil

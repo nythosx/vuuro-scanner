@@ -51,6 +51,10 @@ expect('serialize url', $serialized['url'], '/photo-uploads/a.jpg');
 expect('serialize position_m', $serialized['position_m'], [1.2, 3.4]);
 expect('serialize heading_deg', $serialized['heading_deg'], 90.0);
 expect('serialize captured_at', $serialized['captured_at'], '2026-10-12T10:00:00+00:00');
+expect('serialize zoom defaults to 1.0', $serialized['zoom'], 1.0);
+
+$zoomed = $repo->insert('s-3', 'r-1', '/photo-uploads/z.jpg', 1.0, 1.0, 0.0, '2026-10-12T10:04:00+00:00', 'key-z', 1.75);
+expect('serialize zoom keeps the stored value', $repo->serialize($zoomed)['zoom'], 1.75);
 
 expect('serializeList count', count($repo->serializeList($repo->listBySession('s-1'))), 3);
 expect('serializedForSession count', count($repo->serializedForSession('s-1')), 3);

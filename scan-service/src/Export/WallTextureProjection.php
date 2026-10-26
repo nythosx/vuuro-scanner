@@ -36,8 +36,10 @@ final class WallTextureProjection
         $xCam = $dx * $rx + $dz * $rz;
         $yCam = $dy;
 
-        $halfH = tan(deg2rad(self::HORIZONTAL_FOV_DEG / 2.0));
-        $halfV = tan(deg2rad(self::VERTICAL_FOV_DEG / 2.0));
+        $photoZoom = isset($photo['zoom']) ? (float) $photo['zoom'] : 1.0;
+        if (!is_finite($photoZoom) || $photoZoom < 1.0) $photoZoom = 1.0;
+        $halfH = tan(deg2rad(self::HORIZONTAL_FOV_DEG / 2.0)) / $photoZoom;
+        $halfV = tan(deg2rad(self::VERTICAL_FOV_DEG / 2.0)) / $photoZoom;
 
         $u = 0.5 + $xCam / (2.0 * $halfH * $zCam);
         $v = 0.5 - $yCam / (2.0 * $halfV * $zCam);
@@ -76,8 +78,6 @@ final class WallTextureProjection
         $midZ = ($az + $bz) / 2.0;
         $midHeightY = $wallHeightM / 2.0;
         $wallLength = hypot($bx - $ax, $bz - $az);
-        $halfH = tan(deg2rad(self::HORIZONTAL_FOV_DEG / 2.0));
-
         $best = null;
         $bestScore = -INF;
         foreach ($photos as $photo) {
@@ -104,6 +104,9 @@ final class WallTextureProjection
             if ($zCam < self::MIN_DEPTH_M) {
                 continue;
             }
+            $photoZoom = isset($photo['zoom']) ? (float) $photo['zoom'] : 1.0;
+            if (!is_finite($photoZoom) || $photoZoom < 1.0) $photoZoom = 1.0;
+            $halfH = tan(deg2rad(self::HORIZONTAL_FOV_DEG / 2.0)) / $photoZoom;
             $coveredSpan = 2.0 * $halfH * $zCam;
             if ($wallLength > self::MAX_WALL_LENGTH_PER_SPAN * $coveredSpan) {
                 continue;

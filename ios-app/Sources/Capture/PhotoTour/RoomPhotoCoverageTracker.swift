@@ -31,6 +31,7 @@ struct RoomPhotoCoverageTracker {
     }
 
     var positionCoverage: Double { coverage.positionCoverage }
+    var walkablePositionCoverage: Double { coverage.walkablePositionCoverage }
     var wallCoverage: Double { coverage.wallCoverage }
     var overallCoverage: Double { coverage.overallCoverage }
     var isReadyToFinish: Bool { coverage.isReadyToFinish }

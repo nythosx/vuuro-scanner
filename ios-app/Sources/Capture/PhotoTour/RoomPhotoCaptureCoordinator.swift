@@ -11,6 +11,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     @Published private(set) var coveragePercent: Double = 0
     @Published private(set) var lastError: String?
     @Published private(set) var isCapturing: Bool = false
+    var zoom: CGFloat = 1.0
 
     let minimumPhotos: Int
     let maximumPhotos: Int
@@ -45,7 +46,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         initialCameraYawDeg: Double?,
         store: RoomPhotoStore,
         minimumPhotos: Int = 15,
-        maximumPhotos: Int = 30
+        maximumPhotos: Int = 60
     ) {
         self.arSession = arSession
         self.roomNumber = roomNumber
@@ -93,7 +94,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     var finishCoverage: RoomPhotoFinishCoverage {
         RoomPhotoFinishCoverage(
             overall: coverageTracker.overallCoverage,
-            position: coverageTracker.positionCoverage,
+            position: coverageTracker.walkablePositionCoverage,
             walls: coverageTracker.wallCoverage,
             ready: coverageTracker.isReadyToFinish,
             wallsTotal: coverageTracker.totalWallCount,
@@ -162,7 +163,9 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
             lastError = "Could not read the camera frame."
             return
         }
-        let image = UIImage(cgImage: cgImage, scale: 1.0, orientation: .right)
+        let rawImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: .right)
+        let effectiveZoom = max(1.0, min(2.0, Double(zoom)))
+        let image = Self.crop(rawImage, toZoom: effectiveZoom)
 
         guard let jpegData = Self.downsampleAndEncode(image) else {
             lastError = "Could not encode the photo."
@@ -189,7 +192,8 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
             capturedAt: Date(),
             positionM: [localX, localZ],
             headingDeg: headingDeg,
-            pitchDeg: pitchDeg
+            pitchDeg: pitchDeg,
+            zoom: effectiveZoom
         )
 
         do {
@@ -325,6 +329,22 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         let forward = transform.columns.2
         let y = max(-1.0, min(1.0, Double(-forward.y)))
         return asin(y) * 180.0 / .pi
+    }
+
+    private static func crop(_ image: UIImage, toZoom zoom: Double) -> UIImage {
+        guard zoom > 1.001, let cg = image.cgImage else { return image }
+        let width = CGFloat(cg.width)
+        let height = CGFloat(cg.height)
+        let cropWidth = width / CGFloat(zoom)
+        let cropHeight = height / CGFloat(zoom)
+        let cropRect = CGRect(
+            x: (width - cropWidth) / 2,
+            y: (height - cropHeight) / 2,
+            width: cropWidth,
+            height: cropHeight
+        )
+        guard let cropped = cg.cropping(to: cropRect) else { return image }
+        return UIImage(cgImage: cropped, scale: image.scale, orientation: image.imageOrientation)
     }
 
     private static let maxEdge: CGFloat = 4096

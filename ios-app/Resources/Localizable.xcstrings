@@ -8064,6 +8064,310 @@
                     }
                 }
             }
+        },
+        "Point the camera at a wall to start.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Point the camera at a wall to start."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Richt de camera op een muur om te beginnen."
+                    }
+                }
+            }
+        },
+        "You can finish. Tap Finish when ready.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "You can finish. Tap Finish when ready."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Je kunt afronden. Tik op Afronden als je klaar bent."
+                    }
+                }
+            }
+        },
+        "Aim at the last uncovered wall, marked in red.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Aim at the last uncovered wall, marked in red."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Richt op de laatste onbedekte muur, gemarkeerd in rood."
+                    }
+                }
+            }
+        },
+        "Aim at the red walls on the minimap — %d left.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Aim at the red walls on the minimap — %d left."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Richt op de rode muren op de minimap — nog %d."
+                    }
+                }
+            }
+        },
+        "Walk into the grey areas on the minimap to cover them.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Walk into the grey areas on the minimap to cover them."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Loop naar de grijze gebieden op de minimap om ze te bedekken."
+                    }
+                }
+            }
+        },
+        "1 wall hasn't been photographed. The tour will be missing that view.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "1 wall hasn't been photographed. The tour will be missing that view."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "1 muur is nog niet gefotografeerd. De tour mist dat aanzicht."
+                    }
+                }
+            }
+        },
+        "%d walls haven't been photographed. The tour will be missing those views.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%d walls haven't been photographed. The tour will be missing those views."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%d muren zijn nog niet gefotografeerd. De tour mist die aanzichten."
+                    }
+                }
+            }
+        },
+        "You've walked %d%% of the open floor. Walking through the grey areas will make the tour richer.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "You've walked %d%% of the open floor. Walking through the grey areas will make the tour richer."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Je hebt %d%% van de vrije vloer gelopen. Door de grijze gebieden te lopen wordt de tour rijker."
+                    }
+                }
+            }
+        },
+        "You can finish anyway, or keep scanning for a better tour.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "You can finish anyway, or keep scanning for a better tour."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Je kunt alsnog afronden, of doorgaan voor een betere tour."
+                    }
+                }
+            }
+        },
+        "Photo limit reached. %d wall(s) left · %d%% walked. Tap Finish to complete.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Photo limit reached. %d wall(s) left · %d%% walked. Tap Finish to complete."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Fotolimiet bereikt. Nog %d muur/muren · %d%% gelopen. Tik op Afronden om te voltooien."
+                    }
+                }
+            }
+        },
+        "Coverage map. %d%% of the room walked, %d%% of walls photographed.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Coverage map. %d%% of the room walked, %d%% of walls photographed."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Dekkingskaart. %d%% van de ruimte gelopen, %d%% van de muren gefotografeerd."
+                    }
+                }
+            }
+        },
+        "Fit the whole plan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Fit the whole plan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Hele plattegrond tonen"
+                    }
+                }
+            }
+        },
+        "Go to the next room": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Go to the next room"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Naar de volgende ruimte"
+                    }
+                }
+            }
+        },
+        "Zoom in": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Zoom in"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Inzoomen"
+                    }
+                }
+            }
+        },
+        "Zoom out": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Zoom out"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Uitzoomen"
+                    }
+                }
+            }
+        },
+        "View settings": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "View settings"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Weergave-instellingen"
+                    }
+                }
+            }
+        },
+        "Zoom speed": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Zoom speed"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Zoomsnelheid"
+                    }
+                }
+            }
+        },
+        "Rotation speed": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Rotation speed"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Draaisnelheid"
+                    }
+                }
+            }
+        },
+        "Reset to defaults": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Reset to defaults"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Standaardwaarden herstellen"
+                    }
+                }
+            }
         }
     },
     "version": "1.0"
