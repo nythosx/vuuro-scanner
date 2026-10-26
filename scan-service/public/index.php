@@ -2423,7 +2423,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/dollhouse\.
         respondError(422, 'no_floor_plan_geometry', 'This is a notes-only session, so there is no 3D geometry to draw.');
         return;
     }
-    $glbEtag = '"' . md5($session['id'] . '|' . json_encode($floorPlan['rooms'], JSON_THROW_ON_ERROR)
+    $glbEtag = '"' . md5(DollhouseGltfWriter::VERSION . '|' . $session['id'] . '|' . json_encode($floorPlan['rooms'], JSON_THROW_ON_ERROR)
         . '|' . json_encode($floorPlan['photos_360'] ?? [], JSON_THROW_ON_ERROR)) . '"';
     $clientEtag = $_SERVER['HTTP_IF_NONE_MATCH'] ?? '';
     if (is_string($clientEtag) && trim($clientEtag) === $glbEtag) {

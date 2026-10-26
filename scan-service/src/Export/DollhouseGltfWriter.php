@@ -6,7 +6,9 @@ namespace VuuroScan\Export;
 
 final class DollhouseGltfWriter
 {
-    private const WALL_THICKNESS_M = 0.20;
+    public const VERSION = 'glb-3';
+    private const WALL_THICKNESS_M = 0.10;
+    private const WALL_THICKNESS_SCALE = 0.5;
     private const SEAM_OVERLAP_M = 0.015;
     private const FLOOR_STACK_GAP_M = 0.6;
     private const DEFAULT_HEIGHT_M = 2.4;
@@ -164,12 +166,19 @@ final class DollhouseGltfWriter
         if ($candidates === []) {
             return [];
         }
+        $byFloor = [];
+        foreach ($candidates as $ci => $room) {
+            $byFloor[mb_strtolower(trim((string) ($room['floor'] ?? '')), 'UTF-8')][] = $ci;
+        }
         $flagged = [];
-        foreach (FusionOverlapDetector::detect($candidates) as $ci) {
-            $orig = $candidateIndex[$ci] ?? null;
-            $roomId = $orig !== null ? ($rooms[$orig]['room_id'] ?? null) : null;
-            if (is_string($roomId) && $roomId !== '') {
-                $flagged[$roomId] = true;
+        foreach ($byFloor as $members) {
+            $subset = array_map(static fn (int $ci): array => $candidates[$ci], $members);
+            foreach (FusionOverlapDetector::detect($subset) as $k) {
+                $orig = $candidateIndex[$members[$k] ?? -1] ?? null;
+                $roomId = $orig !== null ? ($rooms[$orig]['room_id'] ?? null) : null;
+                if (is_string($roomId) && $roomId !== '') {
+                    $flagged[$roomId] = true;
+                }
             }
         }
         return $flagged;
@@ -354,8 +363,8 @@ final class DollhouseGltfWriter
         }
         foreach ($triangles as $tri) {
             $flat['indices'][] = $base + $tri[0];
-            $flat['indices'][] = $base + $tri[1];
             $flat['indices'][] = $base + $tri[2];
+            $flat['indices'][] = $base + $tri[1];
         }
     }
 
@@ -393,7 +402,7 @@ final class DollhouseGltfWriter
             $nz = $ux * $inward;
 
             $interior = isset($roomEdgeTiers[$i]);
-            $innerHalf = FloorPlanPalette::wallThicknessM(false, $interior) / 2;
+            $innerHalf = FloorPlanPalette::wallThicknessM(false, $interior) * self::WALL_THICKNESS_SCALE / 2;
             $seamGap = $roomEdgeTiers[$i] ?? null;
             $outerHalf = is_float($seamGap) ? max($innerHalf, $seamGap / 2 + self::SEAM_OVERLAP_M) : $innerHalf;
 
@@ -634,6 +643,12 @@ final class DollhouseGltfWriter
         array $color,
         ?array $uvs
     ): void {
+        if (self::quadFacesAway($corners, $normal)) {
+            $corners = [$corners[0], $corners[3], $corners[2], $corners[1]];
+            if ($uvs !== null) {
+                $uvs = [$uvs[0], $uvs[3], $uvs[2], $uvs[1]];
+            }
+        }
         $base = intdiv(count($bucket['positions']), 3);
         for ($i = 0; $i < 4; $i++) {
             $c = $corners[$i];
@@ -1003,8 +1018,8 @@ final class DollhouseGltfWriter
         }
         foreach ($triangles as $tri) {
             $indices[] = $base + $tri[0];
-            $indices[] = $base + $tri[1];
             $indices[] = $base + $tri[2];
+            $indices[] = $base + $tri[1];
         }
     }
 
@@ -1111,8 +1126,24 @@ final class DollhouseGltfWriter
         self::appendQuad($iB0, $oB0, $oBh, $iBh, [$ux, 0.0, $uz], $positions, $normals, $colors, $indices);
     }
 
+    private static function quadFacesAway(array $corners, array $normal): bool
+    {
+        [$a, $b, $c] = [$corners[0], $corners[1], $corners[2]];
+        $e1 = [$b[0] - $a[0], $b[1] - $a[1], $b[2] - $a[2]];
+        $e2 = [$c[0] - $a[0], $c[1] - $a[1], $c[2] - $a[2]];
+        $cross = [
+            $e1[1] * $e2[2] - $e1[2] * $e2[1],
+            $e1[2] * $e2[0] - $e1[0] * $e2[2],
+            $e1[0] * $e2[1] - $e1[1] * $e2[0],
+        ];
+        return $cross[0] * $normal[0] + $cross[1] * $normal[1] + $cross[2] * $normal[2] < 0;
+    }
+
     private static function appendQuad(array $p0, array $p1, array $p2, array $p3, array $normal, array &$positions, array &$normals, array &$colors, array &$indices): void
     {
+        if (self::quadFacesAway([$p0, $p1, $p2], $normal)) {
+            [$p1, $p3] = [$p3, $p1];
+        }
         $base = intdiv(count($positions), 3);
         foreach ([$p0, $p1, $p2, $p3] as $p) {
             $positions[] = $p[0];
@@ -1138,10 +1169,12 @@ final class DollhouseGltfWriter
         if (count($polygon) < 3) {
             return [];
         }
-        if (self::signedArea($polygon) < 0) {
+        $last = count($polygon) - 1;
+        $reversed = self::signedArea($polygon) < 0;
+        if ($reversed) {
             $polygon = array_reverse($polygon);
         }
-        $indices = range(0, count($polygon) - 1);
+        $indices = range(0, $last);
         $triangles = [];
         $guard = 0;
         while (count($indices) > 3 && $guard < 10000) {
@@ -1181,9 +1214,12 @@ final class DollhouseGltfWriter
             }
         }
         if (count($indices) === 3) {
-            $triangles[] = $indices;
+            $triangles[] = array_values($indices);
         }
-        return $triangles;
+        if (!$reversed) {
+            return $triangles;
+        }
+        return array_map(static fn (array $tri): array => [$last - $tri[0], $last - $tri[1], $last - $tri[2]], $triangles);
     }
 
     private static function signedArea(array $polygon): float

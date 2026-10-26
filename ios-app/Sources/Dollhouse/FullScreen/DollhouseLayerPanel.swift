@@ -10,7 +10,6 @@ struct DollhouseLayerPanel: View {
         .windows,
         .openings,
         .furniture,
-        .ceiling,
         .roomLabels,
         .hotspotMarkers,
     ]

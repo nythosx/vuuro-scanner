@@ -297,9 +297,9 @@ $right['open_edges'] = [0, 2];
 $fusedPoints = dg_positions((new DollhouseGltfWriter())->write(dg_plan([$left, $right]), fn (string $url): ?string => null));
 $seam = dg_band($fusedPoints, 2.6, 3.0, 5.5);
 $outer = dg_band($fusedPoints, 2.6, -1.0, 1.0);
-dg_check('the shared wall uses the thin interior thickness on the room side', $seam !== null && abs($seam[0] - 3.94) < 0.03, 'seam band ' . json_encode($seam));
+dg_check('the shared wall uses the thin interior thickness on the room side', $seam !== null && abs($seam[0] - 3.97) < 0.02, 'seam band ' . json_encode($seam));
 dg_check('the shared wall fills the gap between the rooms once instead of two thick walls', $seam !== null && ($seam[1] - $seam[0]) < 0.38, 'seam band ' . json_encode($seam));
-dg_check('an outside wall keeps the exterior thickness', $outer !== null && abs(($outer[1] - $outer[0]) - 0.30) < 0.02, 'outer band ' . json_encode($outer));
+dg_check('an outside wall keeps the exterior thickness', $outer !== null && abs(($outer[1] - $outer[0]) - 0.15) < 0.02, 'outer band ' . json_encode($outer));
 
 $openRoom = dg_room('open', [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]]);
 $openRoom['open_edges'] = [0, 1, 2];
@@ -312,7 +312,7 @@ $upstairs['room_id'] = 'upstairs';
 $upstairs['floor'] = 'First';
 $floorsPoints = dg_positions((new DollhouseGltfWriter())->write(dg_plan([$left, $upstairs]), fn (string $url): ?string => null));
 $crossFloor = dg_band($floorsPoints, 2.6, 3.0, 5.5);
-dg_check('rooms on different floors are not joined into one interior wall', $crossFloor !== null && abs($crossFloor[0] - 3.85) < 0.03, 'band ' . json_encode($crossFloor));
+dg_check('rooms on different floors are not joined into one interior wall', $crossFloor !== null && abs($crossFloor[0] - 3.925) < 0.02, 'band ' . json_encode($crossFloor));
 
 echo "\n== Web dollhouse stacks floors and tells the viewer where each room went ==\n";
 $groundRoom = dg_room('ground', [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]]);
@@ -340,7 +340,7 @@ echo "\n== Web dollhouse shows doors and windows like the app ==\n";
 $doorRoom = dg_room('door-room', [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]]);
 $doorRoom['openings'] = [['opening_id' => 'd1', 'category' => 'door', 'position_m' => [2.0, 0.0], 'width_m' => 0.9, 'confidence' => 'high']];
 $doorPoints = dg_positions((new DollhouseGltfWriter())->write(dg_plan([$doorRoom]), fn (string $url): ?string => null));
-$aboveDoor = array_filter($doorPoints, static fn ($p) => abs($p[0] - 1.55) < 0.005 && abs($p[1] - 2.05) < 0.005 && abs(abs($p[2]) - 0.15) < 0.005);
+$aboveDoor = array_filter($doorPoints, static fn ($p) => abs($p[0] - 1.55) < 0.005 && abs($p[1] - 2.05) < 0.005 && abs(abs($p[2]) - 0.075) < 0.005);
 dg_check('there is wall above the door', $aboveDoor !== []);
 $postInner = array_filter($doorPoints, static fn ($p) => abs($p[0] - (1.55 + 0.04)) < 0.005 && $p[1] < 2.0);
 dg_check('the door has a thin frame post on its side', $postInner !== []);
@@ -350,8 +350,8 @@ dg_check('the doorway itself stays open', $insideDoor === [], count($insideDoor)
 $windowRoom = dg_room('window-room', [[0.0, 0.0], [4.0, 0.0], [4.0, 3.0], [0.0, 3.0]]);
 $windowRoom['openings'] = [['opening_id' => 'w1', 'category' => 'window', 'position_m' => [2.0, 0.0], 'width_m' => 1.2, 'confidence' => 'high']];
 $windowPoints = dg_positions((new DollhouseGltfWriter())->write(dg_plan([$windowRoom]), fn (string $url): ?string => null));
-$belowWindow = array_filter($windowPoints, static fn ($p) => abs($p[0] - 1.4) < 0.005 && abs($p[1] - 0.9) < 0.005 && abs(abs($p[2]) - 0.15) < 0.005);
-$aboveWindow = array_filter($windowPoints, static fn ($p) => abs($p[0] - 1.4) < 0.005 && abs($p[1] - 2.1) < 0.005 && abs(abs($p[2]) - 0.15) < 0.005);
+$belowWindow = array_filter($windowPoints, static fn ($p) => abs($p[0] - 1.4) < 0.005 && abs($p[1] - 0.9) < 0.005 && abs(abs($p[2]) - 0.075) < 0.005);
+$aboveWindow = array_filter($windowPoints, static fn ($p) => abs($p[0] - 1.4) < 0.005 && abs($p[1] - 2.1) < 0.005 && abs(abs($p[2]) - 0.075) < 0.005);
 dg_check('there is wall below the window', $belowWindow !== []);
 dg_check('there is wall above the window', $aboveWindow !== []);
 
@@ -365,6 +365,96 @@ $texturedDoorJson = dg_parse_json_chunk((new DollhouseGltfWriter())->write($text
 $texturedPrimitives = array_filter($texturedDoorJson['meshes'][0]['primitives'] ?? [], static fn ($p) => isset($p['attributes']['TEXCOORD_0']));
 dg_check('wall pieces around a door that share one photo are one textured primitive', count($texturedPrimitives) === 1, count($texturedPrimitives) . ' textured primitives');
 dg_check('the shared photo is embedded once', count($texturedDoorJson['images'] ?? []) === 1);
+
+function dg_accessor(string $glb, array $json, int $index): array
+{
+    $totalLen = unpack('V', substr($glb, 8, 4))[1];
+    $offset = 12;
+    $bin = '';
+    while ($offset + 8 <= $totalLen) {
+        $len = unpack('V', substr($glb, $offset, 4))[1];
+        if (unpack('V', substr($glb, $offset + 4, 4))[1] === 0x004E4942) {
+            $bin = substr($glb, $offset + 8, $len);
+        }
+        $offset += 8 + $len;
+    }
+    $accessor = $json['accessors'][$index];
+    $view = $json['bufferViews'][$accessor['bufferView']];
+    $start = ($view['byteOffset'] ?? 0) + ($accessor['byteOffset'] ?? 0);
+    $width = ['SCALAR' => 1, 'VEC2' => 2, 'VEC3' => 3, 'VEC4' => 4][$accessor['type']];
+    $format = $accessor['componentType'] === 5125 ? 'V*' : 'g*';
+    $values = array_values(unpack($format, substr($bin, $start, $accessor['count'] * $width * 4)));
+    return $width === 1 ? $values : array_chunk($values, $width);
+}
+
+function dg_backfacing_triangles(string $glb): int
+{
+    $json = dg_parse_json_chunk($glb);
+    $wrong = 0;
+    foreach ($json['meshes'] ?? [] as $mesh) {
+        foreach ($mesh['primitives'] ?? [] as $primitive) {
+            $positions = dg_accessor($glb, $json, $primitive['attributes']['POSITION']);
+            $normals = dg_accessor($glb, $json, $primitive['attributes']['NORMAL']);
+            $indices = dg_accessor($glb, $json, $primitive['indices']);
+            for ($t = 0; $t + 2 < count($indices); $t += 3) {
+                [$a, $b, $c] = [$positions[$indices[$t]], $positions[$indices[$t + 1]], $positions[$indices[$t + 2]]];
+                $e1 = [$b[0] - $a[0], $b[1] - $a[1], $b[2] - $a[2]];
+                $e2 = [$c[0] - $a[0], $c[1] - $a[1], $c[2] - $a[2]];
+                $cross = [$e1[1] * $e2[2] - $e1[2] * $e2[1], $e1[2] * $e2[0] - $e1[0] * $e2[2], $e1[0] * $e2[1] - $e1[1] * $e2[0]];
+                $n = $normals[$indices[$t]];
+                if ($cross[0] * $n[0] + $cross[1] * $n[1] + $cross[2] * $n[2] < 0) {
+                    $wrong++;
+                }
+            }
+        }
+    }
+    return $wrong;
+}
+
+function dg_overlap_vertices(string $glb): int
+{
+    $json = dg_parse_json_chunk($glb);
+    $red = 0;
+    foreach ($json['meshes'][0]['primitives'] ?? [] as $primitive) {
+        if (!isset($primitive['attributes']['COLOR_0'])) {
+            continue;
+        }
+        foreach (dg_accessor($glb, $json, $primitive['attributes']['COLOR_0']) as $color) {
+            if (abs($color[0] - 0.84) < 0.01 && abs($color[1] - 0.27) < 0.01) {
+                $red++;
+            }
+        }
+    }
+    return $red;
+}
+
+echo "\n== Every triangle faces the way its normal points ==\n";
+$windingPlan = dg_plan([
+    dg_room('r1', [[0, 0], [4, 0], [4, 3], [0, 3]]),
+    dg_room('r2', [[4, 0], [4, 3], [7, 3], [7, 0]]),
+]);
+$windingPlan['rooms'][0]['openings'] = [[
+    'opening_id' => 'd1', 'category' => 'door', 'width_m' => 0.9, 'height_m' => 2.0,
+    'position_m' => [2.0, 0.0], 'confidence' => 'high',
+]];
+$w = dg_backfacing_triangles((new DollhouseGltfWriter())->write($windingPlan));
+dg_check('flat GLB has no back-facing triangles', $w === 0, "$w back-facing");
+$windingPlan['rooms'][0]['heading_deg'] = 0.0;
+$windingPlan['photos_360'] = $facingPlan['photos_360'];
+$w = dg_backfacing_triangles((new DollhouseGltfWriter())->write($windingPlan, fn (string $url): ?string => $photoJpeg));
+dg_check('textured GLB has no back-facing triangles', $w === 0, "$w back-facing");
+
+echo "\n== Rooms stacked on two floors are not an overlap ==\n";
+$upper = dg_room('u1', [[0, 0], [4, 0], [4, 3], [0, 3]]);
+$upper['floor'] = '1st floor';
+$stackedPlan = dg_plan([dg_room('g1', [[0, 0], [4, 0], [4, 3], [0, 3]]), $upper]);
+$stackedPlan['photos_360'] = [];
+$red = dg_overlap_vertices((new DollhouseGltfWriter())->write($stackedPlan, fn (string $url): ?string => null));
+dg_check('no overlap colour on rooms stacked on two floors', $red === 0, "$red red vertices");
+$sameFloor = dg_plan([dg_room('a1', [[0, 0], [4, 0], [4, 3], [0, 3]]), dg_room('a2', [[1, 0], [5, 0], [5, 3], [1, 3]])]);
+$sameFloor['photos_360'] = [];
+$red = dg_overlap_vertices((new DollhouseGltfWriter())->write($sameFloor, fn (string $url): ?string => null));
+dg_check('rooms that overlap on the same floor are still flagged', $red > 0, 'no red vertices');
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {

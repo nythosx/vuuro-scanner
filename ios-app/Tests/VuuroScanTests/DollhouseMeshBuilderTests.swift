@@ -423,6 +423,33 @@ final class DollhouseMeshBuilderTests: XCTestCase {
         XCTAssertEqual(scene.floorSections.count, 2)
     }
 
+    func testRoomLabelSitsAboveTheRoomCentre() throws {
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(roomJSON())]"), configuration: DollhouseBuildConfiguration(mode: .dollhouse))
+        let label = try XCTUnwrap(scene.roomLabels.first)
+        XCTAssertEqual(label.floorCenter.x, 2, accuracy: 0.01)
+        XCTAssertEqual(label.floorCenter.z, 1.5, accuracy: 0.01)
+        XCTAssertEqual(label.areaM2, 12, accuracy: 0.01)
+        XCTAssertGreaterThan(label.labelHeightM, 2.6)
+    }
+
+    func testJoinedScanSharesASectionWithTheScanItContinues() throws {
+        let first = roomJSON(id: "room-a", origin: "[0, 0]")
+            .replacingOccurrences(of: "\"capture_group_id\": null", with: "\"capture_group_id\": \"g1\"")
+        let second = roomJSON(id: "room-b", outline: "[[4,0],[7,0],[7,3],[4,3]]", origin: "[0, 0]")
+            .replacingOccurrences(of: "\"capture_group_id\": null, \"joined_to_group_id\": null", with: "\"capture_group_id\": \"g2\", \"joined_to_group_id\": \"g1\"")
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(first),\(second)]"))
+        XCTAssertEqual(scene.floorSections.count, 1)
+    }
+
+    func testCompassStaysOnAPlanWithTwoFloors() throws {
+        func room(_ id: String, _ floor: String) -> String {
+            roomJSON(id: id, origin: "[0, 0]", floor: floor).replacingOccurrences(of: "\"open_edges\": []", with: "\"open_edges\": [], \"heading_deg\": 90")
+        }
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(room("room-g", "Ground")),\(room("room-a", "Attic"))]"))
+        XCTAssertEqual(scene.floorSections.count, 2)
+        XCTAssertEqual(scene.headingDeg ?? -1, 90, accuracy: 0.01)
+    }
+
     func testHeadingOnlyKeptWhenRoomsAgree() throws {
         func room(_ id: String, _ origin: String, _ heading: String) -> String {
             roomJSON(id: id, origin: origin).replacingOccurrences(of: "\"open_edges\": []", with: "\"open_edges\": [], \"heading_deg\": \(heading)")

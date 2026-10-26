@@ -17,6 +17,18 @@ final class DollhouseCamera: NSObject {
 
     private var hasFramed = false
 
+    static let zoomSpeedKey = "dollhouseZoomSpeed"
+    static let rotationSpeedKey = "dollhouseRotationSpeed"
+    static let defaultZoomSpeed = 1.0
+    static let defaultRotationSpeed = 1.0
+
+    private static func storedSpeed(_ key: String, fallback: Double) -> Float {
+        guard let value = UserDefaults.standard.object(forKey: key) as? Double, value.isFinite, value > 0 else {
+            return Float(fallback)
+        }
+        return Float(value)
+    }
+
     func attach(to view: SCNView, cameraNode: SCNNode, framing scene: DollhouseScene) {
         self.view = view
         self.cameraNode = cameraNode
@@ -104,7 +116,7 @@ final class DollhouseCamera: NSObject {
         guard let view else { return }
         let translation = gesture.translation(in: view)
         gesture.setTranslation(.zero, in: view)
-        let sensitivity: Float = 0.008
+        let sensitivity: Float = 0.008 * Self.storedSpeed(Self.rotationSpeedKey, fallback: Self.defaultRotationSpeed)
         yaw -= Float(translation.x) * sensitivity
         pitch += Float(translation.y) * sensitivity
         pitch = max(0.05, min(Float.pi / 2 - 0.05, pitch))
@@ -124,9 +136,37 @@ final class DollhouseCamera: NSObject {
     @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
         let scale = Float(gesture.scale)
         gesture.scale = 1
-        distance /= scale
+        guard scale > 0 else { return }
+        distance /= pow(scale, Self.storedSpeed(Self.zoomSpeedKey, fallback: Self.defaultZoomSpeed))
         distance = max(1.5, min(200, distance))
         update()
+    }
+
+    func fitAll() {
+        pitch = .pi / 4
+        target = defaultTarget
+        distance = defaultDistance
+        animateUpdate()
+    }
+
+    func zoom(by factor: Float) {
+        distance = max(1.5, min(200, distance * factor))
+        animateUpdate()
+    }
+
+    func focus(on room: DollhouseRoomLabel) {
+        let size = max(sqrt(max(room.areaM2, 1)), 2)
+        target = room.floorCenter + SIMD3<Float>(0, 0.4, 0)
+        pitch = 35 * .pi / 180
+        distance = max(size * 1.5, 3)
+        animateUpdate()
+    }
+
+    private func animateUpdate() {
+        SCNTransaction.begin()
+        SCNTransaction.animationDuration = 0.35
+        update()
+        SCNTransaction.commit()
     }
 
     @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {

@@ -97,6 +97,14 @@ struct DollhouseFloorSection: Equatable, Identifiable {
     let boundsMax: SIMD3<Float>
 }
 
+struct DollhouseRoomLabel: Equatable, Identifiable {
+    let id: String
+    let text: String
+    let floorCenter: SIMD3<Float>
+    let labelHeightM: Float
+    let areaM2: Float
+}
+
 struct DollhouseScene {
     let meshes: [DollhouseMesh]
     let boundsMin: SIMD3<Float>
@@ -108,6 +116,7 @@ struct DollhouseScene {
     var headingDeg: Double? = nil
     var degenerateRoomCount: Int = 0
     var hotspots: [DollhouseHotspot] = []
+    var roomLabels: [DollhouseRoomLabel] = []
 
     var boundsCenter: SIMD3<Float> { (boundsMin + boundsMax) * 0.5 }
     var boundsSize: SIMD3<Float> { boundsMax - boundsMin }

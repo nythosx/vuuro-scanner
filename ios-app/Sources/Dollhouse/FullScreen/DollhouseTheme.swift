@@ -25,14 +25,14 @@ enum DollhouseTheme: String, CaseIterable, Identifiable {
     var exteriorWallColor: SIMD4<Float> {
         switch self {
         case .light: return SIMD4(0.82, 0.81, 0.79, 1.0)
-        case .dark: return SIMD4(0.28, 0.28, 0.30, 1.0)
+        case .dark: return SIMD4(0.80, 0.78, 0.75, 1.0)
         }
     }
 
     var interiorWallColor: SIMD4<Float> {
         switch self {
         case .light: return SIMD4(0.90, 0.89, 0.87, 1.0)
-        case .dark: return SIMD4(0.34, 0.34, 0.36, 1.0)
+        case .dark: return SIMD4(0.68, 0.66, 0.63, 1.0)
         }
     }
 
@@ -42,10 +42,6 @@ enum DollhouseTheme: String, CaseIterable, Identifiable {
 
     var windowColor: SIMD4<Float> {
         SIMD4(0.18, 0.76, 1.0, 1.0)
-    }
-
-    var wallEdgeEnabled: Bool {
-        self == .dark
     }
 
     var environmentIntensity: CGFloat {

@@ -446,7 +446,12 @@
     });
     canvas.addEventListener('wheel', function (event) {
       event.preventDefault();
-      self.distance *= Math.pow(1.0015, event.deltaY);
+      var delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 400 : 1);
+      if (event.ctrlKey) {
+        delta *= 8;
+      }
+      delta = Math.max(-200, Math.min(200, delta));
+      self.distance *= Math.pow(1.0015, delta);
       self.distance = Math.max(1, Math.min(500, self.distance));
       self.render();
     }, { passive: false });

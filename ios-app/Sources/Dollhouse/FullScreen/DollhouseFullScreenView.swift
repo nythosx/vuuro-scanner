@@ -14,7 +14,10 @@ struct DollhouseFullScreenView: View {
 
     @State private var visibility = DollhouseLayerVisibility()
     @State private var showLayers = false
+    @State private var showViewSettings = false
     @State private var selectedFloorIndex: Int? = nil
+    @State private var allFloorSections: [DollhouseFloorSection] = []
+    @State private var focusedRoomIndex = -1
 
     @State private var camera = DollhouseCamera()
     @State private var scene: DollhouseScene?
@@ -36,7 +39,11 @@ struct DollhouseFullScreenView: View {
     }
 
     private var floorSections: [DollhouseFloorSection] {
-        scene?.floorSections ?? []
+        allFloorSections.isEmpty ? (scene?.floorSections ?? []) : allFloorSections
+    }
+
+    private var roomsByArea: [DollhouseRoomLabel] {
+        (scene?.roomLabels ?? []).sorted { $0.areaM2 > $1.areaM2 }
     }
 
     private var visibleRooms: [FloorPlan.Room] {
@@ -80,6 +87,26 @@ struct DollhouseFullScreenView: View {
                     onShowLayers: { showLayers = true }
                 )
             }
+
+            if scene != nil {
+                HStack {
+                    Spacer()
+                    DollhouseCameraButtons(
+                        theme: theme,
+                        canEnterRoom: !roomsByArea.isEmpty,
+                        onFit: {
+                            focusedRoomIndex = -1
+                            camera.fitAll()
+                        },
+                        onEnterRoom: enterNextRoom,
+                        onZoomIn: { camera.zoom(by: 0.72) },
+                        onZoomOut: { camera.zoom(by: 1.39) },
+                        onShowSettings: { showViewSettings = true }
+                    )
+                }
+                .padding(.trailing, 16)
+                .frame(maxHeight: .infinity)
+            }
         }
         .task(id: buildToken) {
             rebuild()
@@ -87,6 +114,11 @@ struct DollhouseFullScreenView: View {
         .sheet(isPresented: $showLayers) {
             DollhouseLayerPanel(visibility: $visibility)
                 .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showViewSettings) {
+            DollhouseViewSettingsPanel()
+                .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
         }
         .onChange(of: visibility) { _, _ in rebuild() }
@@ -116,14 +148,23 @@ struct DollhouseFullScreenView: View {
         }
     }
 
+    private func enterNextRoom() {
+        let ordered = roomsByArea
+        guard !ordered.isEmpty else { return }
+        focusedRoomIndex = (focusedRoomIndex + 1) % ordered.count
+        camera.focus(on: ordered[focusedRoomIndex])
+    }
+
     private func rebuild() {
         buildTask?.cancel()
+        focusedRoomIndex = -1
         isLoading = true
         errorMessage = nil
         scene = nil
         scnScene = nil
 
         let roomsForBuild = visibleRooms
+        let buildsAllFloors = roomsForBuild.count == rooms.count
         guard !roomsForBuild.isEmpty else {
             isLoading = false
             return
@@ -174,6 +215,9 @@ struct DollhouseFullScreenView: View {
                     return BuiltDollhouse(scene: dollhouse, scnScene: scene)
                 }.value
                 guard !Task.isCancelled else { return }
+                if buildsAllFloors {
+                    allFloorSections = built.scene.floorSections
+                }
                 scene = built.scene
                 scnScene = built.scnScene
                 isLoading = false

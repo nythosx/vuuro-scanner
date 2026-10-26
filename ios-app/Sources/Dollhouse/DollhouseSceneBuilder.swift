@@ -36,7 +36,8 @@ enum DollhouseSceneBuilder {
         addLights(to: scene, theme: theme)
 
         if includeAnnotations, visibility.roomLabels {
-            addFloorLabels(to: root, dollhouse: dollhouse)
+            addFloorLabels(to: root, dollhouse: dollhouse, theme: theme)
+            addRoomLabels(to: root, dollhouse: dollhouse, theme: theme)
         }
         if includeAnnotations, visibility.hotspotMarkers {
             addHotspots(to: root, dollhouse: dollhouse)
@@ -100,9 +101,6 @@ enum DollhouseSceneBuilder {
         material.roughness.contents = NSNumber(value: mesh.material.roughness)
         material.metalness.contents = NSNumber(value: mesh.material.metalness)
         material.isDoubleSided = false
-        if theme.wallEdgeEnabled && (mesh.material == DollhouseMaterial.exteriorWall || mesh.material == DollhouseMaterial.interiorWall) {
-            material.fillMode = .lines
-        }
         geometry.materials = [material]
         return geometry
     }
@@ -152,24 +150,55 @@ enum DollhouseSceneBuilder {
         scene.rootNode.addChildNode(directional)
     }
 
-    private static func addFloorLabels(to root: SCNNode, dollhouse: DollhouseScene) {
+    private static func addFloorLabels(to root: SCNNode, dollhouse: DollhouseScene, theme: DollhouseTheme) {
         for section in dollhouse.floorSections where dollhouse.floorSections.count > 1 && !section.title.isEmpty && !section.title.hasPrefix("Floor not set") && section.boundsMin.x.isFinite && section.boundsMax.x.isFinite {
             let text = SCNText(string: section.title, extrusionDepth: 0.02)
             text.font = UIFont.systemFont(ofSize: 1.0, weight: .semibold)
             text.flatness = 0.05
             let textMaterial = SCNMaterial()
-            textMaterial.diffuse.contents = UIColor(white: 0.1, alpha: 1.0)
+            textMaterial.diffuse.contents = theme == .light ? UIColor(white: 0.1, alpha: 1.0) : UIColor(white: 0.92, alpha: 1.0)
             textMaterial.lightingModel = .constant
             textMaterial.isDoubleSided = true
             text.materials = [textMaterial]
             let textNode = SCNNode(geometry: text)
-            textNode.name = "roomLabel-\(section.id)"
+            textNode.name = "floorLabel-\(section.id)"
             textNode.scale = SCNVector3(0.4, 0.4, 0.4)
             let cz = (section.boundsMin.z + section.boundsMax.z) * 0.5
             let (minBound, maxBound) = text.boundingBox
             let textWidth = (maxBound.x - minBound.x) * 0.4
             textNode.position = SCNVector3(section.boundsMin.x - textWidth - 0.4, section.boundsMin.y + 0.3, cz)
             root.addChildNode(textNode)
+        }
+    }
+
+    private static func addRoomLabels(to root: SCNNode, dollhouse: DollhouseScene, theme: DollhouseTheme) {
+        for label in dollhouse.roomLabels where !label.text.isEmpty && label.floorCenter.x.isFinite && label.floorCenter.z.isFinite {
+            let small = label.areaM2 < 4
+            let maxCharacters = small ? 10 : 22
+            let shown = label.text.count > maxCharacters ? String(label.text.prefix(maxCharacters - 1)) + "\u{2026}" : label.text
+            let text = SCNText(string: shown, extrusionDepth: 0.01)
+            text.font = UIFont.systemFont(ofSize: 1.0, weight: .semibold)
+            text.flatness = 0.05
+            let material = SCNMaterial()
+            material.diffuse.contents = theme == .light ? UIColor(white: 0.12, alpha: 1.0) : UIColor(white: 0.95, alpha: 1.0)
+            material.lightingModel = .constant
+            material.isDoubleSided = true
+            material.readsFromDepthBuffer = false
+            text.materials = [material]
+            let textNode = SCNNode(geometry: text)
+            let (minBound, maxBound) = text.boundingBox
+            textNode.pivot = SCNMatrix4MakeTranslation((minBound.x + maxBound.x) / 2, (minBound.y + maxBound.y) / 2, 0)
+            let scale: Float = small ? 0.22 : 0.3
+            textNode.scale = SCNVector3(scale, scale, scale)
+            textNode.renderingOrder = 10
+            let node = SCNNode()
+            node.name = "roomLabel-\(label.id)"
+            node.position = SCNVector3(label.floorCenter.x, label.floorCenter.y + label.labelHeightM, label.floorCenter.z)
+            let billboard = SCNBillboardConstraint()
+            billboard.freeAxes = .all
+            node.constraints = [billboard]
+            node.addChildNode(textNode)
+            root.addChildNode(node)
         }
     }
 
@@ -191,33 +220,71 @@ enum DollhouseSceneBuilder {
     private static func addCompass(to root: SCNNode, dollhouse: DollhouseScene, theme: DollhouseTheme) {
         guard let rawHeadingDeg = dollhouse.headingDeg, rawHeadingDeg.isFinite, dollhouse.boundsMin.x.isFinite else { return }
         let headingDeg = ((rawHeadingDeg.truncatingRemainder(dividingBy: 360)) + 360).truncatingRemainder(dividingBy: 360)
-        let compassText = SCNText(string: "N", extrusionDepth: 0.02)
-        compassText.font = UIFont.systemFont(ofSize: 1.2, weight: .bold)
-        compassText.flatness = 0.05
-        let compassMaterial = SCNMaterial()
-        compassMaterial.diffuse.contents = UIColor(red: 0.84, green: 0.27, blue: 0.24, alpha: 1.0)
-        compassMaterial.lightingModel = .constant
-        compassMaterial.isDoubleSided = true
-        compassText.materials = [compassMaterial]
-        let compassNode = SCNNode(geometry: compassText)
-        compassNode.name = "compassN"
-        compassNode.scale = SCNVector3(0.4, 0.4, 0.4)
-        let baseX = dollhouse.boundsMin.x - 0.8
-        let baseZ = dollhouse.boundsMin.z - 0.8
-        let baseY = dollhouse.boundsMin.y + 0.1
-        compassNode.position = SCNVector3(baseX, baseY, baseZ)
-        root.addChildNode(compassNode)
+        let bounds = dollhouse.boundsSize
+        let span = max(bounds.x, bounds.z)
+        let margin = max(span * 0.08, 0.8)
+        let arrowLength = max(span * 0.15, 1.2)
+        let shaftRadius = arrowLength * 0.035
+        let headRadius = arrowLength * 0.10
+        let headHeight = arrowLength * 0.22
+        let labelSize = arrowLength * 0.35
+
+        let red = UIColor(red: 0.84, green: 0.27, blue: 0.24, alpha: 1.0)
+        let dark = theme == .light
+            ? UIColor(white: 0.15, alpha: 1.0)
+            : UIColor(white: 0.85, alpha: 1.0)
+
+        let compassGroup = SCNNode()
+        compassGroup.name = "compass"
+        let baseX = dollhouse.boundsMin.x - margin
+        let baseZ = dollhouse.boundsMin.z - margin
+        let baseY = dollhouse.boundsMin.y + 0.02
+        compassGroup.position = SCNVector3(baseX, baseY, baseZ)
+
+        let shaftGeom = SCNCylinder(radius: CGFloat(shaftRadius), height: CGFloat(arrowLength))
+        shaftGeom.firstMaterial?.diffuse.contents = dark
+        shaftGeom.firstMaterial?.lightingModel = .constant
+        let shaftNode = SCNNode(geometry: shaftGeom)
+        shaftNode.name = "compassShaft"
+        shaftNode.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
+        shaftNode.position = SCNVector3(0, 0, arrowLength * 0.5)
+        compassGroup.addChildNode(shaftNode)
+
+        let headGeom = SCNCone(topRadius: 0, bottomRadius: CGFloat(headRadius), height: CGFloat(headHeight))
+        headGeom.firstMaterial?.diffuse.contents = red
+        headGeom.firstMaterial?.lightingModel = .constant
+        let headNode = SCNNode(geometry: headGeom)
+        headNode.name = "compassHead"
+        headNode.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
+        headNode.position = SCNVector3(0, 0, arrowLength + headHeight * 0.5)
+        compassGroup.addChildNode(headNode)
+
+        let textGeom = SCNText(string: "N", extrusionDepth: 0.02)
+        textGeom.font = UIFont.systemFont(ofSize: CGFloat(labelSize), weight: .bold)
+        textGeom.flatness = 0.05
+        let textMaterial = SCNMaterial()
+        textMaterial.diffuse.contents = red
+        textMaterial.lightingModel = .constant
+        textMaterial.isDoubleSided = true
+        textGeom.materials = [textMaterial]
+        let textNode = SCNNode(geometry: textGeom)
+        textNode.name = "compassLabel"
+        let (minBound, maxBound) = textGeom.boundingBox
+        textNode.pivot = SCNMatrix4MakeTranslation(
+            (minBound.x + maxBound.x) / 2,
+            (minBound.y + maxBound.y) / 2,
+            0
+        )
+        textNode.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
+        let labelNode = SCNNode()
+        labelNode.position = SCNVector3(0, labelSize * 0.35, arrowLength + headHeight + labelSize * 0.5)
+        labelNode.eulerAngles = SCNVector3(0, Float.pi, 0)
+        labelNode.addChildNode(textNode)
+        compassGroup.addChildNode(labelNode)
+
         let headingRad = Float(headingDeg) * .pi / 180.0
-        let length: Float = 1.5
-        let dx = sin(headingRad)
-        let dz = cos(headingRad)
-        let lineGeom = SCNBox(width: 0.06, height: 0.02, length: CGFloat(length), chamferRadius: 0)
-        lineGeom.firstMaterial?.diffuse.contents = UIColor(red: 0.84, green: 0.27, blue: 0.24, alpha: 1.0)
-        lineGeom.firstMaterial?.lightingModel = .constant
-        let lineNode = SCNNode(geometry: lineGeom)
-        lineNode.name = "compassLine"
-        lineNode.position = SCNVector3(baseX + dx * length * 0.5, baseY, baseZ + dz * length * 0.5)
-        lineNode.eulerAngles = SCNVector3(0, atan2(dx, dz), 0)
-        root.addChildNode(lineNode)
+        compassGroup.eulerAngles = SCNVector3(0, headingRad, 0)
+
+        root.addChildNode(compassGroup)
     }
 }

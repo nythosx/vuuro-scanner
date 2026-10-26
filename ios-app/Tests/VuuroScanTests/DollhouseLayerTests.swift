@@ -120,6 +120,27 @@ final class DollhouseLayerTests: XCTestCase {
         XCTAssertTrue(hotspotNodes.isEmpty)
     }
 
+    func testRoomLabelsFollowTheLabelsLayer() throws {
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(roomJSON())]"))
+        XCTAssertEqual(scene.roomLabels.map(\.id), ["room-1"])
+        let shown = DollhouseSceneBuilder.buildScene(from: scene, visibility: DollhouseLayerVisibility(), theme: .light)
+        XCTAssertNotNil(shown.rootNode.childNode(withName: "roomLabel-room-1", recursively: true))
+        var visibility = DollhouseLayerVisibility()
+        visibility.roomLabels = false
+        let hidden = DollhouseSceneBuilder.buildScene(from: scene, visibility: visibility, theme: .light)
+        XCTAssertNil(hidden.rootNode.childNode(withName: "roomLabel-room-1", recursively: true))
+    }
+
+    func testDarkThemeDrawsSolidWalls() throws {
+        let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(roomJSON())]"))
+        let darkScene = DollhouseSceneBuilder.buildScene(from: scene, visibility: DollhouseLayerVisibility(), theme: .dark)
+        let wallMaterials = darkScene.rootNode.childNodes(passingTest: { _, _ in true })
+            .compactMap(\.geometry?.firstMaterial)
+            .filter { $0.name == DollhouseMaterial.exteriorWall.name || $0.name == DollhouseMaterial.interiorWall.name }
+        XCTAssertFalse(wallMaterials.isEmpty)
+        XCTAssertTrue(wallMaterials.allSatisfy { $0.fillMode == .fill })
+    }
+
     func testDarkThemeChangesWallColor() throws {
         let scene = try DollhouseMeshBuilder.build(rooms: try makeRooms("[\(roomJSON())]"))
         let lightScene = DollhouseSceneBuilder.buildScene(from: scene, visibility: DollhouseLayerVisibility(), theme: .light)

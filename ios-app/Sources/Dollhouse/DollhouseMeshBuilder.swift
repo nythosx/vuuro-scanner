@@ -38,8 +38,8 @@ enum DollhouseMeshBuilderError: Error, LocalizedError {
 enum DollhouseConstants {
     static let defaultHeightM: Float = 2.4
     static let cutawayHeightM: Float = 1.2
-    static let exteriorWallThicknessM: Float = 0.30
-    static let interiorWallThicknessM: Float = 0.12
+    static let exteriorWallThicknessM: Float = 0.15
+    static let interiorWallThicknessM: Float = 0.06
     static let maxOpeningWallDistanceM: Float = 0.6
     static let minRoomAreaM2: Float = 0.25
     static let largePlanRoomThreshold = 12
@@ -169,6 +169,7 @@ struct DollhouseMeshBuilder {
         }
         var summariesByIndex: [Int: DollhouseFloorSection] = [:]
         var allHotspots: [DollhouseHotspot] = []
+        var allRoomLabels: [DollhouseRoomLabel] = []
 
         let buildOrder = sections.indices.sorted { lhs, rhs in
             let left = floorLevels.firstIndex(of: sections[lhs].floorKey) ?? 0
@@ -215,6 +216,7 @@ struct DollhouseMeshBuilder {
                     }
                 }
                 allHotspots.append(contentsOf: result.hotspots)
+                if let label = result.label { allRoomLabels.append(label) }
             }
 
             if sectionMin.x.isFinite && sectionMax.x.isFinite {
@@ -240,9 +242,10 @@ struct DollhouseMeshBuilder {
             roomCount: rooms.count,
             floorSections: sectionSummaries,
             usedEstimatedHeight: usedEstimatedHeight,
-            headingDeg: sections.count == 1 ? agreedHeading(rooms) : nil,
+            headingDeg: agreedHeading(rooms),
             degenerateRoomCount: degenerateRoomCount,
-            hotspots: allHotspots
+            hotspots: allHotspots,
+            roomLabels: allRoomLabels
         )
     }
 
@@ -435,7 +438,7 @@ struct DollhouseMeshBuilder {
         var buckets: [String: [FloorPlan.Room]] = [:]
         for room in rooms {
             let key: String
-            if let group = room.captureGroupId ?? room.joinedToGroupId {
+            if let group = room.joinedToGroupId ?? room.captureGroupId {
                 key = "group:" + group
             } else if room.structureOriginM != nil {
                 key = "fused-ungrouped"
@@ -480,6 +483,7 @@ struct DollhouseMeshBuilder {
         let estimatedHeight: Bool
         var degenerate: Bool = false
         var hotspots: [DollhouseHotspot] = []
+        var label: DollhouseRoomLabel? = nil
     }
 
     private static func buildRoom(
@@ -630,8 +634,16 @@ struct DollhouseMeshBuilder {
         }
 
         let hotspots = makeHotspots(photos360: photos360, roomId: roomKey, base: localBase)
+        let centroid = outlineCentroid(outline)
+        let label = DollhouseRoomLabel(
+            id: roomKey,
+            text: room.label,
+            floorCenter: SIMD3<Float>(centroid.x + base.x, base.y, centroid.y + base.z),
+            labelHeightM: wallHeight + 0.35,
+            areaM2: area
+        )
 
-        return RoomBuildResult(meshes: meshes, estimatedHeight: estimated, hotspots: hotspots)
+        return RoomBuildResult(meshes: meshes, estimatedHeight: estimated, hotspots: hotspots, label: label)
     }
 
     // MARK: - Openings & subdivision
@@ -1124,6 +1136,22 @@ struct DollhouseMeshBuilder {
 }
 
 private extension DollhouseMeshBuilder {
+    static func outlineCentroid(_ outline: [SIMD2<Float>]) -> SIMD2<Float> {
+        var twiceArea: Float = 0
+        var sum = SIMD2<Float>(0, 0)
+        for index in outline.indices {
+            let a = outline[index]
+            let b = outline[(index + 1) % outline.count]
+            let cross = a.x * b.y - b.x * a.y
+            twiceArea += cross
+            sum += (a + b) * cross
+        }
+        guard abs(twiceArea) > 1e-6 else {
+            return outline.reduce(SIMD2<Float>(0, 0), +) / Float(max(outline.count, 1))
+        }
+        return sum / (3 * twiceArea)
+    }
+
     static func makeHotspots(photos360: [FloorPlan.Photo360], roomId: String, base: SIMD3<Float>) -> [DollhouseHotspot] {
         guard !photos360.isEmpty else { return [] }
         return photos360.compactMap { photo in
