@@ -639,6 +639,7 @@ function renderDetail(data, sessionId) {
   const rooms = data.rooms || [];
   const photos = data.photos || [];
   const notes = data.notes || [];
+  const photos360 = data.photos_360 || [];
   const totalArea = rooms.reduce((sum, r) => sum + (Number(r.floor_area_m2) || 0), 0);
 
   const roomRows = rooms.map((r) => {
@@ -710,6 +711,9 @@ function renderDetail(data, sessionId) {
     '<h2>Photos (' + photos.length + ')</h2>' +
     (photos.length === 0 ? emptyHtml('No photos attached.') : '<div id="photosGrid" class="photos-grid"></div>') +
 
+    '<h2>Tour photos (' + photos360.length + ')</h2>' +
+    (photos360.length === 0 ? emptyHtml('No tour photos captured.') : '<div id="photos360Grid" class="photos-grid"></div>') +
+
     '<h2>Notes (' + notes.length + ')</h2>' +
     (noteItems ? '<ul class="notes-list">' + noteItems + '</ul>' : emptyHtml('No notes attached.')) +
 
@@ -728,6 +732,8 @@ function renderDetail(data, sessionId) {
     });
   }
   photos.forEach((p) => loadPhotoThumb(p));
+  const roomLabels = new Map(rooms.map((r) => [r.room_id, r.label]));
+  photos360.forEach((p) => loadTourPhotoThumb(p, roomLabels));
   loadAccessLog(sessionId);
   loadClientEvents(sessionId);
 
@@ -801,6 +807,41 @@ function showToast(message) {
   toast.style.opacity = '1';
   clearTimeout(toast._hideTimer);
   toast._hideTimer = setTimeout(() => { toast.style.opacity = '0'; }, 2000);
+}
+
+function openPhotoLightbox(src, caption) {
+  let overlay = document.getElementById('photoLightbox');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'photoLightbox';
+    overlay.className = 'photo-lightbox hidden';
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.classList.add('hidden');
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') overlay.classList.add('hidden');
+    });
+  }
+  overlay.innerHTML = '';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'photo-lightbox-close';
+  close.setAttribute('aria-label', 'Close');
+  close.textContent = '\u00D7';
+  close.addEventListener('click', () => overlay.classList.add('hidden'));
+  overlay.appendChild(close);
+  const image = document.createElement('img');
+  image.src = src;
+  image.alt = caption || 'Tour photo';
+  overlay.appendChild(image);
+  if (caption) {
+    const cap = document.createElement('div');
+    cap.className = 'photo-lightbox-caption';
+    cap.textContent = caption;
+    overlay.appendChild(cap);
+  }
+  overlay.classList.remove('hidden');
 }
 
 function copyToClipboard(text, label) {
@@ -959,6 +1000,60 @@ function loadPhotoThumb(photo) {
     clearLoading();
     showPlaceholder('External photo - not rendered');
   }
+}
+
+function loadTourPhotoThumb(photo, roomLabels) {
+  if (!photo || !photo.url) return;
+  const sessionId = state.currentSessionId;
+  const grid = $('#photos360Grid');
+  if (!grid) return;
+  const wrapper = document.createElement('div');
+  wrapper.className = 'photo-thumb photo-loading';
+  const img = document.createElement('img');
+  img.alt = 'Tour photo';
+  wrapper.appendChild(img);
+  const caption = document.createElement('div');
+  caption.className = 'photo-caption';
+  const roomLabel = (roomLabels && roomLabels.get(photo.room_id)) || photo.room_id || 'unknown room';
+  const heading = typeof photo.heading_deg === 'number' ? Math.round(photo.heading_deg) + '\u00B0' : '';
+  const pos = Array.isArray(photo.position_m) && photo.position_m.length >= 2
+    ? `${Number(photo.position_m[0]).toFixed(1)}, ${Number(photo.position_m[1]).toFixed(1)} m`
+    : '';
+  caption.textContent = [roomLabel, heading, pos].filter(Boolean).join(' \u00B7 ');
+  wrapper.appendChild(caption);
+  grid.appendChild(wrapper);
+
+  const clearLoading = () => wrapper.classList.remove('photo-loading');
+  const showPlaceholder = (text) => {
+    wrapper.classList.add('photo-failed');
+    if (img.parentNode) img.remove();
+    const placeholder = document.createElement('div');
+    placeholder.className = 'photo-thumb-placeholder';
+    placeholder.textContent = text;
+    wrapper.insertBefore(placeholder, wrapper.firstChild);
+  };
+
+  const hostedPath = serverHostedPath(photo.url);
+  if (!hostedPath) {
+    clearLoading();
+    showPlaceholder('External photo - not rendered');
+    return;
+  }
+  apiBlob(hostedPath).then((blob) => {
+    if (state.currentSessionId !== sessionId) return;
+    const url = trackBlobUrl(URL.createObjectURL(blob));
+    img.dataset.blobUrl = url;
+    img.style.cursor = 'zoom-in';
+    img.onload = clearLoading;
+    img.onerror = () => { clearLoading(); showPlaceholder('Failed to load'); };
+    img.addEventListener('click', () => {
+      if (img.src) openPhotoLightbox(img.src, caption.textContent);
+    });
+    img.src = url;
+  }).catch(() => {
+    clearLoading();
+    showPlaceholder('Failed to load');
+  });
 }
 
 function percentText(value) {
