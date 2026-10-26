@@ -106,14 +106,23 @@ final class RoomPhotoCoverageTrackerTests: XCTestCase {
         XCTAssertFalse(tracker.isReadyToFinish)
     }
 
-    func testFourStrategicShotsCoverAllWallsButNotRoom() {
+    func testFourStrategicShotsCoverAllWallsButNotALargeRoom() {
+        var tracker = RoomPhotoCoverageTracker(outline: rectangle(9, 6))
+        for heading in [0.0, 90.0, 180.0, 270.0] {
+            tracker.record(positionM: CGPoint(x: 4.5, y: 3), cameraHeadingDeg: heading)
+        }
+        XCTAssertEqual(tracker.wallCoverage, 1.0, accuracy: 1e-9)
+        XCTAssertLessThan(tracker.walkablePositionCoverage, 0.5)
+        XCTAssertFalse(tracker.isReadyToFinish)
+    }
+
+    func testFourShotsFromTheMiddleFinishASmallRoom() {
         var tracker = RoomPhotoCoverageTracker(outline: rectangle())
         for heading in [0.0, 90.0, 180.0, 270.0] {
             tracker.record(positionM: CGPoint(x: 2, y: 1.5), cameraHeadingDeg: heading)
         }
         XCTAssertEqual(tracker.wallCoverage, 1.0, accuracy: 1e-9)
-        XCTAssertEqual(tracker.positionCoverage, 1.0 / 12.0, accuracy: 1e-9)
-        XCTAssertFalse(tracker.isReadyToFinish)
+        XCTAssertTrue(tracker.isReadyToFinish)
     }
 
     func testWalkingEveryCellAndFacingEveryWallReachesReady() {
@@ -147,9 +156,9 @@ final class RoomPhotoCoverageTrackerTests: XCTestCase {
     }
 
     func testNextActionPromptsWalkingWhenWallsCovered() {
-        var tracker = RoomPhotoCoverageTracker(outline: rectangle())
+        var tracker = RoomPhotoCoverageTracker(outline: rectangle(9, 6))
         for heading in [0.0, 90.0, 180.0, 270.0] {
-            tracker.record(positionM: CGPoint(x: 2, y: 1.5), cameraHeadingDeg: heading)
+            tracker.record(positionM: CGPoint(x: 4.5, y: 3), cameraHeadingDeg: heading)
         }
         let action = tracker.coverage.nextActionStructured
         guard let action else { return XCTFail("expected a next action") }
