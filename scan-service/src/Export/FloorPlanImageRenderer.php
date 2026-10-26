@@ -761,9 +761,11 @@ final class FloorPlanImageRenderer
             ];
         };
 
-        $xBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 0);
+        $xBreakpoints = DimensionRuns::forFused($rooms, $poses, $fusion['edgeTiers'], 0);
+        if (count($xBreakpoints) < 2) { $xBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 0); }
         $this->drawHorizontalDimensionChain($image, $xBreakpoints, $dimensionLineY, $toPx, $unit, $dimColor);
-        $zBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 1);
+        $zBreakpoints = DimensionRuns::forFused($rooms, $poses, $fusion['edgeTiers'], 1);
+        if (count($zBreakpoints) < 2) { $zBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 1); }
         $this->drawVerticalDimensionChain($image, $zBreakpoints, $planLeft + 14, $toPx, $unit, $dimColor);
 
         $edgeTiers = $fusion['edgeTiers'];
@@ -1347,16 +1349,10 @@ final class FloorPlanImageRenderer
         }
         $centroidX = array_sum(array_column($outlineM, 0)) / $n;
         $centroidZ = array_sum(array_column($outlineM, 1)) / $n;
-        for ($i = 0; $i < $n; $i++) {
-            if (isset($roomEdgeTiers[$i])) {
-                continue;
-            }
-            [$ax, $az] = $outlineM[$i];
-            [$bx, $bz] = $outlineM[($i + 1) % $n];
-            $lengthM = sqrt(($bx - $ax) ** 2 + ($bz - $az) ** 2);
-            if ($lengthM < 0.3) {
-                continue;
-            }
+        foreach (DimensionRuns::straightWalls($outlineM, $roomEdgeTiers) as $wall) {
+            [$ax, $az] = $wall['a'];
+            [$bx, $bz] = $wall['b'];
+            $lengthM = $wall['length'];
             $midX = ($ax + $bx) / 2;
             $midZ = ($az + $bz) / 2;
             [$midX, $midZ] = $this->insetTowardCentroid($midX, $midZ, $centroidX, $centroidZ, -self::WALL_LABEL_INSET_M);
@@ -1402,8 +1398,8 @@ final class FloorPlanImageRenderer
         if ($xs === [] || $zs === []) return;
         $minLocalX = min($xs);
         $minLocalZ = min($zs);
-        $xBreak = $this->dedupValues($xs);
-        $zBreak = $this->dedupValues($zs);
+        $xBreak = $this->dedupValues(DimensionRuns::forOutline($rotated, 0, $room['open_edges'] ?? []));
+        $zBreak = $this->dedupValues(DimensionRuns::forOutline($rotated, 1, $room['open_edges'] ?? []));
         if (count($xBreak) < 2 || count($zBreak) < 2) return;
 
         $toPx = fn (float $rx, float $rz): array => [
