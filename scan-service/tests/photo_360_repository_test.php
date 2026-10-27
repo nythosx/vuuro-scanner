@@ -75,6 +75,22 @@ expect('deleteBySession returns count', $repo->deleteBySession('s-1'), 3);
 expect('post-delete list empty', $repo->listBySession('s-1'), []);
 expect('deleteBySession on empty is zero', $repo->deleteBySession('s-1'), 0);
 
+echo "\n== Phase 1 fields ==\n";
+$withStand = $repo->insert('s-lidar47', 'r-1', '/photo-uploads/stand.jpg', 1.0, 2.0, 90.0, '2026-10-27T10:00:00+00:00', 'key-stand', 1.0, 0.0, 'stand-abc123', '[1,0,0,0,0,1,0,0,0,0,1,0,0.5,1.4,2.0,1]', '[800.5,800.5,320.0,240.0]', 'https://scan.test/scan-sessions/s-lidar47/photo-uploads/stand.depth');
+$standSerialized = $repo->serialize($withStand);
+expect('serialize stand_id preserved', $standSerialized['stand_id'], 'stand-abc123');
+expect('serialize has_depth true', $standSerialized['has_depth'], true);
+expect('serialize camera_transform is 16-array', is_array($standSerialized['camera_transform']) && count($standSerialized['camera_transform']) === 16, true);
+expect('serialize intrinsics is 4-array', is_array($standSerialized['intrinsics']) && count($standSerialized['intrinsics']) === 4, true);
+expect('serialize omits depth_url', isset($standSerialized['depth_url']), false);
+
+$withoutNew = $repo->insert('s-lidar47', 'r-1', '/photo-uploads/plain.jpg', 2.0, 3.0, 180.0, '2026-10-27T10:01:00+00:00', 'key-plain');
+$plainSerialized = $repo->serialize($withoutNew);
+expect('serialize no stand_id defaults to empty', $plainSerialized['stand_id'], '');
+expect('serialize has_depth false', $plainSerialized['has_depth'], false);
+expect('serialize camera_transform null', $plainSerialized['camera_transform'], null);
+expect('serialize intrinsics null', $plainSerialized['intrinsics'], null);
+
 if ($failures > 0) {
     fwrite(STDERR, "\n$failures failure(s)\n");
     exit(1);

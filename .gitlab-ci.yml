@@ -29,6 +29,8 @@ scan-service-net:
     - php tests/joined_openings_test.php
     - php tests/floor_groups_join_test.php
     - php tests/photo_360_repository_test.php
+    - php tests/tour_stands_test.php
+    - php tests/tour_stand_strings_test.php
     - php net/run_all.php
   after_script:
     - Get-Process | Where-Object { $_.ProcessName -eq 'php' } | ForEach-Object { Stop-Process -Id $_.Id -Force }

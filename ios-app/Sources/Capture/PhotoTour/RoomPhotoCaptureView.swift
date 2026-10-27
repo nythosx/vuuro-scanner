@@ -7,6 +7,7 @@ struct RoomPhotoCaptureOverlay: View {
     let onFinish: () -> Void
 
     @AppStorage("photoTour.onboardingSeen.v2") private var onboardingSeen = false
+    @AppStorage("walkthroughCaptureEnabled") private var walkthroughCaptureEnabled = false
     @State private var showOnboarding = false
     @State private var showSkipConfirmation = false
     @State private var showFinishAnywayAlert = false
@@ -244,6 +245,7 @@ struct RoomPhotoCaptureOverlay: View {
                 infoRow
                     .transition(.opacity.combined(with: .offset(y: 10)))
             }
+            walkthroughBanner
             if coordinator.isMaximumReached {
                 photoCapBanner
             }
@@ -605,6 +607,75 @@ struct RoomPhotoCaptureOverlay: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var walkthroughBanner: some View {
+        if walkthroughCaptureEnabled {
+            if coordinator.isCapturingStand {
+                standProgressBanner
+            } else {
+                startStandButton
+            }
+        }
+    }
+
+    private var startStandButton: some View {
+        Button {
+            coordinator.startStand()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "figure.walk")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(vuuroLocalized("Start stand"))
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial, in: Capsule())
+            .background(Color.white.opacity(0.12), in: Capsule())
+        }
+        .accessibilityIdentifier("photoTour.startStand")
+        .buttonStyle(.plain)
+    }
+
+    private var standProgressBanner: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                Circle()
+                    .stroke(Color.white.opacity(0.2), lineWidth: 3)
+                    .frame(width: 26, height: 26)
+                Circle()
+                    .trim(from: 0, to: CGFloat(coordinator.standSectorCount) / 12.0)
+                    .stroke(VuuroColor.lime, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .frame(width: 26, height: 26)
+                    .rotationEffect(.degrees(-90))
+                Text("\(coordinator.standSectorCount)")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+            }
+            Text(String(format: vuuroLocalized("Stand %lld of 12"), coordinator.standSectorCount))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white)
+            Spacer(minLength: 0)
+            Button {
+                coordinator.stopStand()
+            } label: {
+                Text(vuuroLocalized("Done"))
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(VuuroColor.lime, in: Capsule())
+            }
+            .accessibilityIdentifier("photoTour.doneStand")
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .background(Color.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 14))
     }
 
     @ViewBuilder

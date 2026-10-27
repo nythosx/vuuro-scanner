@@ -14,6 +14,8 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     @Published private(set) var isTrackingLimited: Bool = false
     @Published private(set) var isHeldSideways: Bool = false
     private var lastTrackedPosition: CGPoint?
+    @Published private(set) var isCapturingStand: Bool = false
+    @Published private(set) var standSectorCount: Int = 0
     var zoom: CGFloat = 1.0
 
     let minimumPhotos: Int
@@ -38,6 +40,13 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
 
     private var coverageTracker: RoomPhotoCoverageTracker
     private(set) var photos: [RoomPhotoMetadata] = []
+    private let walkthroughEnabled: Bool
+    private var currentStandId: String? = nil
+    private var standYawAtStart: Double = 0
+    private var standCapturedSectors: Set<Int> = []
+    nonisolated(unsafe) private var standTask: Task<Void, Never>?
+    private static let standSectorCount = 12
+    private static let standSectorDeg = 30.0
 
     var session: ARSession { arSession }
     var coverage: RoomPhotoCoverage { coverageTracker.coverage }
@@ -53,8 +62,11 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         initialCameraYawDeg: Double?,
         store: RoomPhotoStore,
         minimumPhotos: Int = 15,
-        maximumPhotos: Int = 60
+        maximumPhotos: Int = 60,
+        walkthroughEnabled: Bool = false,
+        initialWorldMap: ARWorldMap? = nil
     ) {
+        self.walkthroughEnabled = walkthroughEnabled
         self.arSession = arSession
         self.roomNumber = roomNumber
         self.roomKey = roomKey
@@ -96,6 +108,9 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
 
         loadExistingPhotos()
         loadExistingWalk()
+        if walkthroughEnabled {
+            enableDepthIfAvailable(initialWorldMap: initialWorldMap)
+        }
         startWalkSampling()
     }
 
@@ -235,10 +250,13 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         let effectiveZoom = max(1.0, min(2.0, Double(zoom)))
         let image = Self.crop(rawImage, toZoom: effectiveZoom)
 
-        guard let jpegData = Self.downsampleAndEncode(image) else {
+        let croppedSize = image.size
+        guard let encoded = Self.downsampleAndEncode(image) else {
             lastError = "Could not encode the photo."
             return
         }
+        let jpegData = encoded.data
+        let jpegSize = encoded.size
 
         let t = frame.camera.transform.columns.3
         let worldX = Double(t.x)
@@ -255,13 +273,54 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
 
         let pitchDeg = Self.pitchDeg(frame.camera.transform)
 
+        let localId = UUID().uuidString
+        let standSnapshot = currentStandId
+        let localTransform = Self.localCameraTransform(
+            frame.camera.transform,
+            offsetX: outlineMinXZ.x,
+            offsetZ: outlineMinXZ.y
+        )
+        let jpegIntrinsics = Self.jpegIntrinsics(
+            camera: frame.camera,
+            rawWidth: Int(frame.camera.imageResolution.width),
+            rawHeight: Int(frame.camera.imageResolution.height),
+            cropWidth: Int(croppedSize.width),
+            cropHeight: Int(croppedSize.height),
+            jpegWidth: Int(jpegSize.width),
+            jpegHeight: Int(jpegSize.height)
+        )
+
+        var depthFile: String? = nil
+        var depthWidth: Int? = nil
+        var depthHeight: Int? = nil
+        if standSnapshot != nil, let sceneDepth = frame.sceneDepth {
+            if let extracted = Self.extractDepthData(sceneDepth) {
+                do {
+                    try store.saveDepth(extracted.data, localId: localId, captureGroupId: captureGroupId, roomKey: roomKey)
+                    depthFile = "\(localId).depth"
+                    depthWidth = extracted.width
+                    depthHeight = extracted.height
+                } catch {
+                    DiagnosticsLog.shared.record("stand depth write failed: \(error.localizedDescription)", category: .error)
+                }
+            } else {
+                DiagnosticsLog.shared.record("stand depth extraction failed", category: .error)
+            }
+        }
+
         let metadata = RoomPhotoMetadata(
-            localId: UUID().uuidString,
+            localId: localId,
             capturedAt: Date(),
             positionM: [localX, localZ],
             headingDeg: headingDeg,
             pitchDeg: pitchDeg,
-            zoom: effectiveZoom
+            zoom: effectiveZoom,
+            standId: standSnapshot,
+            cameraTransform: standSnapshot != nil ? localTransform : nil,
+            intrinsics: standSnapshot != nil ? jpegIntrinsics : nil,
+            depthFile: depthFile,
+            depthWidth: depthWidth,
+            depthHeight: depthHeight
         )
 
         do {
@@ -283,6 +342,163 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         } catch {
             lastError = "Could not save the photo: \(error.localizedDescription)"
         }
+    }
+
+    func enableDepthIfAvailable(initialWorldMap: ARWorldMap?) {
+        guard walkthroughEnabled else { return }
+        guard ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) else {
+            DiagnosticsLog.shared.record("sceneDepth not supported on this device; stand depth disabled", category: .info)
+            return
+        }
+        let configuration = ARWorldTrackingConfiguration()
+        configuration.frameSemantics.insert(.sceneDepth)
+        if let map = initialWorldMap {
+            configuration.initialWorldMap = map
+        }
+        arSession.run(configuration, options: [])
+    }
+
+    func startStand() {
+        guard walkthroughEnabled else { return }
+        guard !isCapturingStand else { return }
+        currentStandId = UUID().uuidString
+        standCapturedSectors = []
+        standSectorCount = 0
+        isCapturingStand = true
+        standYawAtStart = Self.currentNormalizedYaw(arSession)
+        standTask = Task { [weak self] in
+            guard let self else { return }
+            await self.captureStandSectorIfNew()
+            while !Task.isCancelled && self.standCapturedSectors.count < Self.standSectorCount {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                if Task.isCancelled { return }
+                await self.captureStandSectorIfNew()
+            }
+            if !Task.isCancelled && self.standCapturedSectors.count >= Self.standSectorCount {
+                self.stopStand()
+            }
+        }
+    }
+
+    func stopStand() {
+        standTask?.cancel()
+        standTask = nil
+        if isCapturingStand {
+            isCapturingStand = false
+        }
+        currentStandId = nil
+    }
+
+    private func captureStandSectorIfNew() async {
+        guard isCapturingStand, !isCapturing else { return }
+        if photos.count >= maximumPhotos {
+            stopStand()
+            return
+        }
+        let yaw = Self.currentNormalizedYaw(arSession)
+        var delta = (yaw - standYawAtStart).truncatingRemainder(dividingBy: 360)
+        if delta < 0 { delta += 360 }
+        let sector = Int(floor(delta / Self.standSectorDeg)) % Self.standSectorCount
+        if standCapturedSectors.contains(sector) { return }
+        standCapturedSectors.insert(sector)
+        standSectorCount = standCapturedSectors.count
+        await capturePhoto()
+    }
+
+    private static func currentNormalizedYaw(_ session: ARSession) -> Double {
+        guard let transform = session.currentFrame?.camera.transform else { return 0 }
+        var deg = yawDeg(transform)
+        deg = deg.truncatingRemainder(dividingBy: 360)
+        if deg < 0 { deg += 360 }
+        return deg
+    }
+
+    private static func localCameraTransform(_ transform: simd_float4x4, offsetX: Double, offsetZ: Double) -> [Double] {
+        var result: [Double] = []
+        for col in 0..<4 {
+            for row in 0..<4 {
+                var value = Double(transform[col][row])
+                if col == 3 && row == 0 { value -= offsetX }
+                else if col == 3 && row == 2 { value -= offsetZ }
+                result.append(value)
+            }
+        }
+        return result
+    }
+
+    private static func jpegIntrinsics(
+        camera: ARCamera,
+        rawWidth: Int,
+        rawHeight: Int,
+        cropWidth: Int,
+        cropHeight: Int,
+        jpegWidth: Int,
+        jpegHeight: Int
+    ) -> [Double]? {
+        guard rawWidth > 0, rawHeight > 0, cropWidth > 0, cropHeight > 0, jpegWidth > 0, jpegHeight > 0 else {
+            return nil
+        }
+        let intrinsics = camera.intrinsics
+        let fx = Double(intrinsics[0][0])
+        let fy = Double(intrinsics[1][1])
+        let cx = Double(intrinsics[2][0])
+        let cy = Double(intrinsics[2][1])
+        let cropX = (Double(rawWidth) - Double(cropWidth)) / 2.0
+        let cropY = (Double(rawHeight) - Double(cropHeight)) / 2.0
+        let cxC = cx - cropX
+        let cyC = cy - cropY
+        let fxD = fy
+        let fyD = fx
+        let cxD = Double(cropHeight) - cyC
+        let cyD = cxC
+        let scaleX = Double(jpegWidth) / Double(cropHeight)
+        let scaleY = Double(jpegHeight) / Double(cropWidth)
+        return [fxD * scaleX, fyD * scaleY, cxD * scaleX, cyD * scaleY]
+    }
+
+    private static func extractDepthData(_ sceneDepth: ARDepthData) -> (data: Data, width: Int, height: Int)? {
+        guard let confidence = sceneDepth.confidenceMap else { return nil }
+        let depthMap = sceneDepth.depthMap
+        let width = CVPixelBufferGetWidth(depthMap)
+        let height = CVPixelBufferGetHeight(depthMap)
+        guard width > 0, height > 0,
+              CVPixelBufferGetWidth(confidence) == width,
+              CVPixelBufferGetHeight(confidence) == height else {
+            return nil
+        }
+        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+        CVPixelBufferLockBaseAddress(confidence, .readOnly)
+        defer {
+            CVPixelBufferUnlockBaseAddress(confidence, .readOnly)
+            CVPixelBufferUnlockBaseAddress(depthMap, .readOnly)
+        }
+        guard let depthBase = CVPixelBufferGetBaseAddress(depthMap),
+              let confBase = CVPixelBufferGetBaseAddress(confidence) else {
+            return nil
+        }
+        let depthStride = CVPixelBufferGetBytesPerRow(depthMap)
+        let confStride = CVPixelBufferGetBytesPerRow(confidence)
+        let highLevel = UInt8(ARConfidenceLevel.high.rawValue)
+        var data = Data(count: width * height * MemoryLayout<UInt16>.size)
+        data.withUnsafeMutableBytes { (raw: UnsafeMutableRawBufferPointer) in
+            guard let output = raw.bindMemory(to: UInt16.self).baseAddress else { return }
+            for y in 0..<height {
+                let depthRow = depthBase.advanced(by: y * depthStride).assumingMemoryBound(to: Float32.self)
+                let confRow = confBase.advanced(by: y * confStride).assumingMemoryBound(to: UInt8.self)
+                for x in 0..<width {
+                    let isHigh = confRow[x] == highLevel
+                    let meters = depthRow[x]
+                    let millimeters: UInt16
+                    if isHigh && meters.isFinite && meters > 0 && meters < 65.5 {
+                        millimeters = UInt16(meters * 1000)
+                    } else {
+                        millimeters = 0
+                    }
+                    output[y * width + x] = millimeters.littleEndian
+                }
+            }
+        }
+        return (data, width, height)
     }
 
     private var thumbnailCache: [String: UIImage] = [:]
@@ -439,7 +655,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     private static let maxEdge: CGFloat = 4096
     private static let jpegQuality: CGFloat = 0.85
 
-    private static func downsampleAndEncode(_ image: UIImage) -> Data? {
+    private static func downsampleAndEncode(_ image: UIImage) -> (data: Data, size: CGSize)? {
         let size = image.size
         let longest = max(size.width, size.height)
         let scale = longest > maxEdge ? maxEdge / longest : 1
@@ -451,6 +667,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         let rendered = UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
             image.draw(in: CGRect(origin: .zero, size: targetSize))
         }
-        return rendered.jpegData(compressionQuality: jpegQuality)
+        guard let data = rendered.jpegData(compressionQuality: jpegQuality) else { return nil }
+        return (data, targetSize)
     }
 }

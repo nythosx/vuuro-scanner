@@ -87,6 +87,34 @@ final class Database
                 throw $e;
             }
         }
+        try {
+            $pdo->exec("ALTER TABLE photo_360 ADD COLUMN stand_id TEXT NOT NULL DEFAULT ''");
+        } catch (\PDOException $e) {
+            if (!str_contains($e->getMessage(), 'duplicate column name')) {
+                throw $e;
+            }
+        }
+        try {
+            $pdo->exec("ALTER TABLE photo_360 ADD COLUMN camera_transform TEXT NOT NULL DEFAULT ''");
+        } catch (\PDOException $e) {
+            if (!str_contains($e->getMessage(), 'duplicate column name')) {
+                throw $e;
+            }
+        }
+        try {
+            $pdo->exec("ALTER TABLE photo_360 ADD COLUMN intrinsics TEXT NOT NULL DEFAULT ''");
+        } catch (\PDOException $e) {
+            if (!str_contains($e->getMessage(), 'duplicate column name')) {
+                throw $e;
+            }
+        }
+        try {
+            $pdo->exec("ALTER TABLE photo_360 ADD COLUMN depth_url TEXT NOT NULL DEFAULT ''");
+        } catch (\PDOException $e) {
+            if (!str_contains($e->getMessage(), 'duplicate column name')) {
+                throw $e;
+            }
+        }
         self::hashPlaintextTokens($pdo);
 
         return $pdo;

@@ -1718,6 +1718,59 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
         return;
     }
 
+    $standIdRaw = $_POST['stand_id'] ?? '';
+    if (!is_string($standIdRaw)) {
+        respondError(422, 'invalid_stand_id', "'stand_id' must be a plain string when given.");
+        return;
+    }
+    $standIdValue = trim($standIdRaw);
+    if ($standIdValue !== '' && preg_match('/^[A-Za-z0-9-]{1,64}$/', $standIdValue) !== 1) {
+        respondError(422, 'invalid_stand_id', "'stand_id' must be 1-64 letters, digits or dashes when given.");
+        return;
+    }
+
+    $cameraTransformJson = '';
+    if (isset($_POST['camera_transform'])) {
+        $cameraTransformRaw = $_POST['camera_transform'];
+        if (!is_string($cameraTransformRaw)) {
+            respondError(422, 'invalid_camera_transform', "'camera_transform' must be a JSON array of 16 numbers.");
+            return;
+        }
+        $decodedTransform = json_decode($cameraTransformRaw, true);
+        if (!is_array($decodedTransform) || !array_is_list($decodedTransform) || count($decodedTransform) !== 16) {
+            respondError(422, 'invalid_camera_transform', "'camera_transform' must be a JSON array of 16 numbers.");
+            return;
+        }
+        foreach ($decodedTransform as $cameraComponent) {
+            if ((!is_int($cameraComponent) && !is_float($cameraComponent)) || !is_finite((float) $cameraComponent)) {
+                respondError(422, 'invalid_camera_transform', "'camera_transform' must contain only finite numbers.");
+                return;
+            }
+        }
+        $cameraTransformJson = json_encode($decodedTransform, JSON_THROW_ON_ERROR);
+    }
+
+    $intrinsicsJson = '';
+    if (isset($_POST['intrinsics'])) {
+        $intrinsicsRaw = $_POST['intrinsics'];
+        if (!is_string($intrinsicsRaw)) {
+            respondError(422, 'invalid_intrinsics', "'intrinsics' must be a JSON array of 4 numbers.");
+            return;
+        }
+        $decodedIntrinsics = json_decode($intrinsicsRaw, true);
+        if (!is_array($decodedIntrinsics) || !array_is_list($decodedIntrinsics) || count($decodedIntrinsics) !== 4) {
+            respondError(422, 'invalid_intrinsics', "'intrinsics' must be a JSON array of 4 numbers.");
+            return;
+        }
+        foreach ($decodedIntrinsics as $intrinsicComponent) {
+            if ((!is_int($intrinsicComponent) && !is_float($intrinsicComponent)) || !is_finite((float) $intrinsicComponent) || (float) $intrinsicComponent <= 0) {
+                respondError(422, 'invalid_intrinsics', "'intrinsics' must contain only finite positive numbers.");
+                return;
+            }
+        }
+        $intrinsicsJson = json_encode($decodedIntrinsics, JSON_THROW_ON_ERROR);
+    }
+
     $photoUploadId = ScanSessionRepository::uuid();
     $filename = $photoUploadId . '.' . PHOTO_UPLOAD_MIME_EXTENSIONS[$mime];
     $storageDir = __DIR__ . '/../data/photos/' . $sessionId;
@@ -1726,10 +1779,34 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
         respondError(500, 'internal_error', 'Could not create photo storage for this session.');
         return;
     }
+    $depthUrl = '';
+    if (isset($_FILES['depth']) && is_array($_FILES['depth'])) {
+        $depthFile = $_FILES['depth'];
+        if ($depthFile['error'] !== UPLOAD_ERR_OK) {
+            $depthTooLarge = in_array($depthFile['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true);
+            respondError(422, $depthTooLarge ? 'depth_too_large' : 'depth_upload_failed', $depthTooLarge ? 'The depth file is limited to 1 MB.' : 'The depth file upload failed.');
+            return;
+        }
+        if ($depthFile['size'] > 1024 * 1024) {
+            respondError(422, 'depth_too_large', 'The depth file is limited to 1 MB.');
+            return;
+        }
+    }
+
     if (!move_uploaded_file($file['tmp_name'], $storageDir . '/' . $filename)) {
         $repo->logAccess($sessionId, 'upload_photo_360', 'failed_storage_error');
         respondError(500, 'internal_error', 'Could not save the uploaded photo.');
         return;
+    }
+
+    if (isset($_FILES['depth']) && is_array($_FILES['depth']) && $_FILES['depth']['error'] === UPLOAD_ERR_OK) {
+        $depthFilename = $photoUploadId . '.depth';
+        if (!move_uploaded_file($_FILES['depth']['tmp_name'], $storageDir . '/' . $depthFilename)) {
+            @unlink($storageDir . '/' . $filename);
+            respondError(500, 'internal_error', 'Could not save the uploaded depth file.');
+            return;
+        }
+        $depthUrl = publicBaseUrl() . "/scan-sessions/{$sessionId}/photo-uploads/{$depthFilename}";
     }
 
     $url = publicBaseUrl() . "/scan-sessions/{$sessionId}/photo-uploads/{$filename}";
@@ -1744,7 +1821,11 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
             gmdate('c'),
             $idempotencyKey,
             $zoomValue,
-            $pitchValue
+            $pitchValue,
+            $standIdValue,
+            $cameraTransformJson,
+            $intrinsicsJson,
+            $depthUrl
         );
     } catch (\PDOException $e) {
         @unlink($storageDir . '/' . $filename);
@@ -2885,6 +2966,14 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
     $planImageUrl = $base . "/scan-sessions/{$sessionId}/export/floorplan.png?style=auto&lang=" . urlencode($tourLang) . "&unit=metric";
     $viewerUrl = $base . '/tour/' . rawurlencode($sessionId) . '?token=' . rawurlencode((string) (presented_token_with_query_fallback() ?? '')) . '&lang=' . rawurlencode($tourLang);
 
+    $tourRooms = [];
+    foreach ($floorPlan['rooms'] as $roomEntry) {
+        $entryCopy = $roomEntry;
+        $entryCopy['photos'] = $photosByRoom[(string) $roomEntry['room_id']] ?? [];
+        $tourRooms[] = $entryCopy;
+    }
+    $standsResult = \VuuroScan\Export\TourStands::compute($tourRooms);
+
     $rooms = [];
     foreach ($floorPlan['rooms'] as $room) {
         $rooms[] = [
@@ -2897,6 +2986,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
             'heading_deg' => $room['heading_deg'] ?? null,
             'overlap' => isset($overlapRoomIds[(string) $room['room_id']]),
             'photos' => $photosByRoom[(string) $room['room_id']] ?? [],
+            'stands' => $standsResult['stands_by_room'][(string) $room['room_id']] ?? [],
         ];
     }
 
@@ -2909,6 +2999,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
         'plan_image_url' => $planImageUrl,
         'dollhouse_glb_url' => $floorPlan['rooms'] !== [] ? ($base . "/scan-sessions/{$sessionId}/export/dollhouse.glb") : null,
         'rooms' => $rooms,
+        'features' => ['walkthrough' => $standsResult['walkthrough']],
     ]);
     return;
 }

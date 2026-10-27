@@ -26,10 +26,14 @@ function photo_360_upload(
     string $mimeType,
     array $fields,
     string $accessToken,
-    string $idempotencyKey
+    string $idempotencyKey,
+    ?string $depthPath = null
 ): array {
     $ch = curl_init($url);
     $postFields = ['photo' => new \CURLFile($filePath, $mimeType, basename($filePath))];
+    if ($depthPath !== null) {
+        $postFields['depth'] = new \CURLFile($depthPath, 'application/octet-stream', basename($depthPath));
+    }
     foreach ($fields as $name => $value) {
         $postFields[$name] = $value;
     }
@@ -201,6 +205,76 @@ check('wrong access token returns 401', $noAuthStatus === 401, "got HTTP $noAuth
 
 unlink($tmpImage);
 unlink($tmpTxt);
+
+$tmpImage = tempnam(sys_get_temp_dir(), 'photo360_') . '.jpg';
+$recreated = imagecreatetruecolor(64, 64);
+imagefilledrectangle($recreated, 0, 0, 64, 64, imagecolorallocate($recreated, 100, 150, 200));
+imagejpeg($recreated, $tmpImage, 90);
+imagedestroy($recreated);
+
+echo "\n== Phase 1 fields ==\n";
+$tmpDepth = tempnam(sys_get_temp_dir(), 'photo360_depth_') . '.bin';
+file_put_contents($tmpDepth, str_repeat("\x00", 256 * 192 * 2));
+$fullTransform = '[1,0,0,0,0,1,0,0,0,0,1,0,0.5,1.4,2.0,1]';
+$fullIntrinsics = '[800.5,800.5,320.0,240.0]';
+[$fullStatus, $fullBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg',
+    array_merge($fields, [
+        'stand_id' => 'stand-net-abc',
+        'camera_transform' => $fullTransform,
+        'intrinsics' => $fullIntrinsics,
+    ]),
+    $accessToken, 'key-360-full', $tmpDepth
+);
+check('full payload returns 201', $fullStatus === 201, "HTTP $fullStatus: " . json_encode($fullBody));
+check('full payload stand_id preserved', ($fullBody['stand_id'] ?? null) === 'stand-net-abc');
+check('full payload has_depth true', ($fullBody['has_depth'] ?? null) === true);
+check('full payload camera_transform is 16-array', is_array($fullBody['camera_transform'] ?? null) && count($fullBody['camera_transform']) === 16);
+check('full payload intrinsics is 4-array', is_array($fullBody['intrinsics'] ?? null) && count($fullBody['intrinsics']) === 4);
+check('full payload omits depth_url', isset($fullBody['depth_url']) === false);
+
+[$oldStatus, $oldBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', $fields, $accessToken, 'key-360-old'
+);
+check('old payload without new fields returns 201', $oldStatus === 201, "HTTP $oldStatus");
+check('old payload has_depth false', ($oldBody['has_depth'] ?? null) === false);
+check('old payload stand_id empty', ($oldBody['stand_id'] ?? null) === '');
+check('old payload camera_transform null', ($oldBody['camera_transform'] ?? null) === null);
+check('old payload intrinsics null', ($oldBody['intrinsics'] ?? null) === null);
+
+[$badStandStatus, $badStandBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', array_merge($fields, ['stand_id' => 'stand/id']), $accessToken, 'key-360-bad-stand'
+);
+check('bad stand_id returns 422 invalid_stand_id', $badStandStatus === 422 && ($badStandBody['error'] ?? null) === 'invalid_stand_id', "HTTP $badStandStatus: " . json_encode($badStandBody));
+
+[$shortTransformStatus, $shortTransformBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', array_merge($fields, ['camera_transform' => '[1,2,3]']), $accessToken, 'key-360-short-transform'
+);
+check('short camera_transform returns 422', $shortTransformStatus === 422 && ($shortTransformBody['error'] ?? null) === 'invalid_camera_transform', "HTTP $shortTransformStatus: " . json_encode($shortTransformBody));
+
+[$badIntrinsicsStatus, $badIntrinsicsBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', array_merge($fields, ['intrinsics' => '[1,2,3]']), $accessToken, 'key-360-bad-intrinsics'
+);
+check('bad intrinsics returns 422', $badIntrinsicsStatus === 422 && ($badIntrinsicsBody['error'] ?? null) === 'invalid_intrinsics', "HTTP $badIntrinsicsStatus: " . json_encode($badIntrinsicsBody));
+
+$oversizeDepth = tempnam(sys_get_temp_dir(), 'photo360_bigdepth_') . '.bin';
+file_put_contents($oversizeDepth, str_repeat("\x00", 1024 * 1024 + 1));
+[$bigDepthStatus, $bigDepthBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', $fields, $accessToken, 'key-360-big-depth', $oversizeDepth
+);
+check('oversize depth returns 422 depth_too_large', $bigDepthStatus === 422 && ($bigDepthBody['error'] ?? null) === 'depth_too_large', "HTTP $bigDepthStatus: " . json_encode($bigDepthBody));
+@unlink($oversizeDepth);
+
+[, $tourJson] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId/tour.json", null, $accessToken);
+check('tour.json does not leak depth_url', strpos(json_encode($tourJson), 'depth_url') === false);
+@unlink($tmpDepth);
+@unlink($tmpImage);
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
