@@ -55,6 +55,10 @@ expect('serialize zoom defaults to 1.0', $serialized['zoom'], 1.0);
 
 $zoomed = $repo->insert('s-3', 'r-1', '/photo-uploads/z.jpg', 1.0, 1.0, 0.0, '2026-10-12T10:04:00+00:00', 'key-z', 1.75);
 expect('serialize zoom keeps the stored value', $repo->serialize($zoomed)['zoom'], 1.75);
+expect('serialize pitch_deg defaults to 0.0', $serialized['pitch_deg'], 0.0);
+
+$tilted = $repo->insert('s-3', 'r-1', '/photo-uploads/t.jpg', 1.0, 1.0, 0.0, '2026-10-12T10:05:00+00:00', 'key-t', 1.0, -12.5);
+expect('serialize pitch_deg keeps the stored tilt', $repo->serialize($tilted)['pitch_deg'], -12.5);
 
 expect('serializeList count', count($repo->serializeList($repo->listBySession('s-1'))), 3);
 expect('serializedForSession count', count($repo->serializedForSession('s-1')), 3);

@@ -106,14 +106,15 @@ final class RoomPhotoCoverageTrackerTests: XCTestCase {
         XCTAssertFalse(tracker.isReadyToFinish)
     }
 
-    func testFourStrategicShotsCoverAllWallsButNotALargeRoom() {
+    func testWallsCoveredFinishALargeRoomWithoutWalking() {
         var tracker = RoomPhotoCoverageTracker(outline: rectangle(9, 6))
         for heading in [0.0, 90.0, 180.0, 270.0] {
             tracker.record(positionM: CGPoint(x: 4.5, y: 3), cameraHeadingDeg: heading)
         }
         XCTAssertEqual(tracker.wallCoverage, 1.0, accuracy: 1e-9)
         XCTAssertLessThan(tracker.walkablePositionCoverage, 0.5)
-        XCTAssertFalse(tracker.isReadyToFinish)
+        XCTAssertTrue(tracker.isReadyToFinish)
+        XCTAssertEqual(tracker.overallCoverage, 1.0, accuracy: 1e-9)
     }
 
     func testFourShotsFromTheMiddleFinishASmallRoom() {
@@ -155,14 +156,42 @@ final class RoomPhotoCoverageTrackerTests: XCTestCase {
         }
     }
 
-    func testNextActionPromptsWalkingWhenWallsCovered() {
+    func testNextActionIsReadyWhenWallsCoveredWithoutWalking() {
         var tracker = RoomPhotoCoverageTracker(outline: rectangle(9, 6))
         for heading in [0.0, 90.0, 180.0, 270.0] {
             tracker.record(positionM: CGPoint(x: 4.5, y: 3), cameraHeadingDeg: heading)
         }
-        let action = tracker.coverage.nextActionStructured
-        guard let action else { return XCTFail("expected a next action") }
-        XCTAssertEqual(action.gate, .position)
+        XCTAssertEqual(tracker.coverage.nextActionStructured?.gate, .ready)
+    }
+
+    func testDeviceAtticAtThePhotoCapCanFinish() {
+        let attic = [
+            CGPoint(x: 0.536, y: 10.77), CGPoint(x: 0.714, y: 8.983), CGPoint(x: 0, y: 8.912),
+            CGPoint(x: 0.499, y: 3.904), CGPoint(x: 0.888, y: 0), CGPoint(x: 6.648, y: 0.574),
+            CGPoint(x: 6.263, y: 4.438), CGPoint(x: 4.008, y: 4.214), CGPoint(x: 3.732, y: 6.991),
+            CGPoint(x: 5.979, y: 7.215), CGPoint(x: 5.758, y: 9.433), CGPoint(x: 5.116, y: 9.369),
+            CGPoint(x: 4.932, y: 11.208),
+        ]
+        var tracker = RoomPhotoCoverageTracker(outline: attic)
+        for heading in stride(from: 0.0, to: 360.0, by: 15.0) {
+            tracker.record(positionM: CGPoint(x: 2.5, y: 2.5), cameraHeadingDeg: heading)
+            tracker.record(positionM: CGPoint(x: 2.5, y: 8.5), cameraHeadingDeg: heading)
+        }
+        XCTAssertGreaterThanOrEqual(tracker.wallCoverage, RoomPhotoCoverage.readyWallCoverage)
+        XCTAssertLessThan(tracker.walkablePositionCoverage, RoomPhotoCoverage.readyPositionCoverage)
+        XCTAssertTrue(tracker.isReadyToFinish, "walking must not block Finish once the walls are covered")
+    }
+
+    func testMinimapCellsAreTheCellsThatCountAsWalked() {
+        let tracker = RoomPhotoCoverageTracker(outline: rectangle(9.0, 6.0))
+        XCTAssertEqual(tracker.coverage.minimapCells, tracker.coverage.walkableCells)
+    }
+
+    func testCellsNearTheWallsAreShownAsNotWalkable() {
+        let coverage = RoomPhotoCoverageTracker(outline: rectangle(9.0, 6.0)).coverage
+        XCTAssertFalse(coverage.notWalkableCells.isEmpty)
+        XCTAssertTrue(coverage.notWalkableCells.isDisjoint(with: coverage.walkableCells))
+        XCTAssertEqual(coverage.notWalkableCells.union(coverage.walkableCells), coverage.inRoomCells)
     }
 
     func testResetClearsEverything() {
@@ -347,6 +376,27 @@ final class RoomPhotoCoverageTrackerTests: XCTestCase {
         tracker.recordWalk(positionM: CGPoint(x: 1.5, y: 1.5))
         tracker.recordWalk(positionM: CGPoint(x: 7.5, y: 4.5))
         XCTAssertEqual(tracker.coverage.walkedCells.count, 2)
+    }
+
+    func testEndedWalkSegmentDoesNotJoinTheNextWalk() {
+        var tracker = RoomPhotoCoverageTracker(outline: rectangle(9.0, 6.0))
+        tracker.recordWalk(positionM: CGPoint(x: 1.5, y: 1.5))
+        tracker.endWalkSegment()
+        tracker.recordWalk(positionM: CGPoint(x: 3.5, y: 1.5))
+        XCTAssertEqual(tracker.coverage.walkedCells.count, 2)
+        tracker.recordWalk(positionM: CGPoint(x: 5.5, y: 1.5))
+        XCTAssertEqual(tracker.coverage.walkedCells.count, 4)
+    }
+
+    func testReplayingASavedWalkRestoresTheWalkedArea() {
+        var live = RoomPhotoCoverageTracker(outline: rectangle(9.0, 6.0))
+        let path = stride(from: 1.0, through: 8.0, by: 0.5).map { CGPoint(x: $0, y: 3.0) }
+        for point in path { live.recordWalk(positionM: point) }
+        var restored = RoomPhotoCoverageTracker(outline: rectangle(9.0, 6.0))
+        for point in path { restored.recordWalk(positionM: point) }
+        restored.endWalkSegment()
+        XCTAssertEqual(restored.coverage.walkedCells, live.coverage.walkedCells)
+        XCTAssertEqual(restored.walkablePositionCoverage, live.walkablePositionCoverage, accuracy: 1e-9)
     }
 
     func testWalkedRoomWithWallsCoveredIsReadyBeforeAnyCap() {

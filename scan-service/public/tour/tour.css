@@ -75,6 +75,18 @@ body {
   color: #111;
 }
 
+.tour-hint {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 8px 20px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.75);
+  text-align: center;
+}
+
+.tour-hint[hidden] { display: none; }
+
 .tour-viewport {
   position: relative;
   flex: 1 1 auto;
@@ -454,7 +466,10 @@ body {
   left: 20px;
   bottom: 20px;
   z-index: 3;
+  background: rgba(20, 20, 20, 0.78);
 }
+
+.tour-dollhouse-back:hover { background: rgba(20, 20, 20, 0.9); }
 
 @media (max-width: 480px) {
   .tour-dollhouse-back { left: 12px; bottom: 12px; }

@@ -145,6 +145,19 @@ final class RoomPhotoStore {
         try writeManifest(manifest, captureGroupId: captureGroupId, roomKey: roomKey)
     }
 
+    func saveWalkPaths(_ paths: [[[Double]]], captureGroupId: String, roomKey: String) throws {
+        let dir = batchDirectory(captureGroupId: captureGroupId, roomKey: roomKey)
+        try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+        let data = try JSONEncoder().encode(paths)
+        try data.write(to: walkPathsURL(captureGroupId: captureGroupId, roomKey: roomKey), options: [.atomic, .completeFileProtection])
+    }
+
+    func loadWalkPaths(captureGroupId: String, roomKey: String) -> [[[Double]]] {
+        let url = walkPathsURL(captureGroupId: captureGroupId, roomKey: roomKey)
+        guard let data = try? Data(contentsOf: url) else { return [] }
+        return (try? JSONDecoder().decode([[[Double]]].self, from: data)) ?? []
+    }
+
     func allBatches(captureGroupId: String) throws -> [RoomPhotoManifest] {
         let groupDir = captureGroupDirectory(captureGroupId: captureGroupId)
         guard fileManager.fileExists(atPath: groupDir.path) else { return [] }
@@ -181,6 +194,11 @@ final class RoomPhotoStore {
     private func manifestURL(captureGroupId: String, roomKey: String) -> URL {
         batchDirectory(captureGroupId: captureGroupId, roomKey: roomKey)
             .appendingPathComponent("manifest.json")
+    }
+
+    private func walkPathsURL(captureGroupId: String, roomKey: String) -> URL {
+        batchDirectory(captureGroupId: captureGroupId, roomKey: roomKey)
+            .appendingPathComponent("walk.json")
     }
 
     private func sanitized(_ value: String) -> String {

@@ -187,13 +187,13 @@ final class DollhouseCameraTests: XCTestCase {
         let firstNode = SCNNode()
         firstNode.camera = SCNCamera()
         camera.attach(to: firstView, cameraNode: firstNode, framing: scene)
-        XCTAssertEqual(ourRecognizerCount(firstView), 4, "first attach must install pan/pinch/two-finger-pan/double-tap")
+        XCTAssertEqual(ourRecognizerCount(firstView), 5, "first attach must install pan/pinch/two-finger-pan/twist/double-tap")
 
         let secondView = SCNView()
         let secondNode = SCNNode()
         secondNode.camera = SCNCamera()
         camera.attach(to: secondView, cameraNode: secondNode, framing: scene)
-        XCTAssertEqual(ourRecognizerCount(secondView), 4, "a rebuild swaps in a new SCNView (theme/mode/layer/floor toggle) — gestures must still work on it, not only the pose")
+        XCTAssertEqual(ourRecognizerCount(secondView), 5, "a rebuild swaps in a new SCNView (theme/mode/layer/floor toggle) — gestures must still work on it, not only the pose")
     }
 
     func testReattachingTheSameViewDoesNotDuplicateGestureRecognizers() {
@@ -206,7 +206,35 @@ final class DollhouseCameraTests: XCTestCase {
         camera.attach(to: view, cameraNode: node, framing: scene)
         camera.attach(to: view, cameraNode: node, framing: scene)
 
-        XCTAssertEqual(ourRecognizerCount(view), 4, "re-attaching the same view (e.g. a scene-data-only update) must not stack duplicate recognizers")
+        XCTAssertEqual(ourRecognizerCount(view), 5, "re-attaching the same view (e.g. a scene-data-only update) must not stack duplicate recognizers")
+    }
+
+    func testPinchZoomKeepsThePointUnderTheFingersInPlace() {
+        let target = SIMD3<Float>(0, 0, 0)
+        let focus = SIMD3<Float>(4, 0, 2)
+        let zoomed = DollhouseCamera.zoomedTarget(target: target, focus: focus, oldDistance: 10, newDistance: 5)
+        XCTAssertEqual(zoomed.x, 2, accuracy: 1e-5)
+        XCTAssertEqual(zoomed.z, 1, accuracy: 1e-5)
+        let unchanged = DollhouseCamera.zoomedTarget(target: target, focus: focus, oldDistance: 10, newDistance: 10)
+        XCTAssertEqual(unchanged, target)
+    }
+
+    func testSlowReleaseDoesNotGlide() {
+        XCTAssertFalse(DollhouseCamera.isFlick(CGPoint(x: 60, y: 40)))
+        XCTAssertTrue(DollhouseCamera.isFlick(CGPoint(x: 600, y: 0)))
+    }
+
+    func testSmallRotationDuringATwoFingerDragDoesNotSpin() {
+        XCTAssertFalse(DollhouseCamera.isDeliberateTwist(0.05))
+        XCTAssertFalse(DollhouseCamera.isDeliberateTwist(-0.1))
+        XCTAssertTrue(DollhouseCamera.isDeliberateTwist(0.3))
+        XCTAssertTrue(DollhouseCamera.isDeliberateTwist(-0.3))
+    }
+
+    func testFastFlickSpinIsCapped() {
+        XCTAssertEqual(DollhouseCamera.clampedSpin(40), DollhouseCamera.maximumSpinRadiansPerSecond)
+        XCTAssertEqual(DollhouseCamera.clampedSpin(-40), -DollhouseCamera.maximumSpinRadiansPerSecond)
+        XCTAssertEqual(DollhouseCamera.clampedSpin(1), 1)
     }
 
     func testDoubleTapResetsZoomDistance() {
@@ -229,6 +257,27 @@ final class DollhouseCameraTests: XCTestCase {
         camera.handleDoubleTap(doubleTap)
         let resetDistance = distance(from: node, to: scene.boundsCenter)
         XCTAssertEqual(resetDistance, defaultDistanceFromTarget, accuracy: 0.01, "double-tap must also reset zoom, not just yaw/pitch/target")
+    }
+
+    func testTwoFingerDragFollowsTheCameraDirection() {
+        let scene = makeScene(boundsMin: SIMD3(0, 0, 0), boundsMax: SIMD3(4, 2.6, 3))
+        let camera = DollhouseCamera()
+        let view = SCNView()
+        let node = SCNNode()
+        node.camera = SCNCamera()
+        camera.attach(to: view, cameraNode: node, framing: scene)
+        let toCamera = simd_normalize(SIMD3<Float>(node.position.x - scene.boundsCenter.x, 0, node.position.z - scene.boundsCenter.z))
+        let dragDown = simd_normalize(camera.groundPanOffset(dx: 0, dy: 100))
+        XCTAssertEqual(simd_dot(dragDown, toCamera), -1, accuracy: 0.001, "dragging down moves the view away from the camera, whatever the rotation")
+        let dragRight = camera.groundPanOffset(dx: 100, dy: 0)
+        XCTAssertEqual(simd_dot(dragRight, toCamera), 0, accuracy: 0.001)
+        XCTAssertEqual(dragRight.y, 0)
+    }
+
+    func testPitchStaysBetweenTopDownAndLevel() {
+        XCTAssertEqual(DollhouseCamera.clampedPitch(-1), 0.05)
+        XCTAssertEqual(DollhouseCamera.clampedPitch(3), Float.pi / 2 - 0.05)
+        XCTAssertEqual(DollhouseCamera.clampedPitch(0.5), 0.5)
     }
 
     func testContinuousGestureRecognizersAllowSimultaneousRecognition() {

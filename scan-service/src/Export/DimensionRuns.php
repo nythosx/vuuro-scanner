@@ -26,9 +26,112 @@ final class DimensionRuns
         return self::breakpoints($outlines, $axis);
     }
 
-    public static function forOutline(array $points, int $axis, array $openEdges = []): array
+    public static function forOutline(array $points, int $axis, array $openEdges = [], ?string $side = null): array
     {
-        return self::breakpoints([['points' => $points, 'skip' => array_flip($openEdges)]], $axis);
+        $outlines = [['points' => $points, 'skip' => array_flip($openEdges)]];
+        return $side === null ? self::breakpoints($outlines, $axis) : self::sideBreakpoints($outlines, $axis, $side);
+    }
+
+    public static function forFusedSide(array $rooms, array $poses, array $edgeTiers, int $axis, string $side): array
+    {
+        $outlines = [];
+        foreach ($rooms as $i => $room) {
+            $pose = $poses[$i] ?? ['originX' => 0.0, 'originZ' => 0.0, 'rotationRad' => 0.0];
+            $world = [];
+            foreach ($room['outline_m'] ?? [] as $p) {
+                $world[] = RoomFusionSolver::transformPoint($pose, (float) $p[0], (float) $p[1]);
+            }
+            $skip = array_flip($room['open_edges'] ?? []) + ($edgeTiers[$i] ?? []);
+            $outlines[] = ['points' => $world, 'skip' => $skip];
+        }
+        return self::sideBreakpoints($outlines, $axis, $side);
+    }
+
+    private static function sideBreakpoints(array $outlines, int $axis, string $side): array
+    {
+        $other = 1 - $axis;
+        $sinTol = sin(deg2rad(self::PERPENDICULAR_TOLERANCE_DEG));
+        $min = INF;
+        $max = -INF;
+        $walls = [];
+        foreach ($outlines as $outline) {
+            $points = $outline['points'];
+            $n = count($points);
+            if ($n < 3) {
+                continue;
+            }
+            foreach ($points as $p) {
+                $min = min($min, (float) $p[$axis]);
+                $max = max($max, (float) $p[$axis]);
+            }
+            for ($k = 0; $k < $n; $k++) {
+                if (isset($outline['skip'][$k])) {
+                    continue;
+                }
+                $a = $points[$k];
+                $b = $points[($k + 1) % $n];
+                $len = hypot((float) $b[0] - (float) $a[0], (float) $b[1] - (float) $a[1]);
+                $across = (float) $b[$other] - (float) $a[$other];
+                if ($len < self::MIN_WALL_M || abs($across) > $len * $sinTol) {
+                    continue;
+                }
+                $walls[] = [
+                    'lo' => min((float) $a[$axis], (float) $b[$axis]),
+                    'hi' => max((float) $a[$axis], (float) $b[$axis]),
+                    'at' => ((float) $a[$other] + (float) $b[$other]) / 2.0,
+                ];
+            }
+        }
+        if (!is_finite($min) || !is_finite($max)) {
+            return [];
+        }
+
+        $cuts = [$min, $max];
+        foreach ($walls as $wall) {
+            $cuts[] = $wall['lo'];
+            $cuts[] = $wall['hi'];
+        }
+        sort($cuts);
+        $stops = [];
+        foreach ($cuts as $c) {
+            if ($stops === [] || $c - end($stops) > self::MERGE_GAP_M) {
+                $stops[] = $c;
+            }
+        }
+
+        $facing = [];
+        for ($i = 0; $i < count($stops) - 1; $i++) {
+            $mid = ($stops[$i] + $stops[$i + 1]) / 2.0;
+            $best = null;
+            foreach ($walls as $wall) {
+                if ($wall['lo'] > $mid || $wall['hi'] < $mid) {
+                    continue;
+                }
+                if ($best === null || ($side === 'min' ? $wall['at'] < $best : $wall['at'] > $best)) {
+                    $best = $wall['at'];
+                }
+            }
+            $facing[] = $best;
+        }
+
+        $out = [$stops[0]];
+        for ($i = 1; $i < count($stops) - 1; $i++) {
+            $before = $facing[$i - 1];
+            $after = $facing[$i];
+            $same = $before === null || $after === null
+                ? $before === $after
+                : abs($before - $after) <= self::MIN_WALL_M;
+            if (!$same) {
+                $out[] = $stops[$i];
+            }
+        }
+        $out[] = end($stops);
+
+        return array_values(array_filter(
+            $out,
+            fn (float $v, int $i): bool => $i === 0 || $i === count($out) - 1 || ($v - $min > self::END_SNAP_M && $max - $v > self::END_SNAP_M),
+            ARRAY_FILTER_USE_BOTH
+        ));
     }
 
     public static function straightWalls(array $outline, array $skip = []): array

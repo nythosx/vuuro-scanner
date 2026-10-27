@@ -176,10 +176,13 @@
 
   function Viewer(canvas, mesh, hotspots, hotspotLayer, onHotspotTap) {
     this.canvas = canvas;
-    this.gl = canvas.getContext('webgl', { antialias: true, alpha: false });
+    var contextOptions = { antialias: true, alpha: false };
+    this.gl = canvas.getContext('webgl2', contextOptions) || canvas.getContext('webgl', contextOptions);
     if (!this.gl) {
       throw new Error(window.TourStrings.t('webgl_unavailable'));
     }
+    this.uintIndices = (typeof WebGL2RenderingContext !== 'undefined' && this.gl instanceof WebGL2RenderingContext)
+      || !!this.gl.getExtension('OES_element_index_uint');
     this.mesh = mesh;
     this.hotspots = hotspots;
     this.hotspotLayer = hotspotLayer;
@@ -289,9 +292,22 @@
       gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
     }
 
+    var indices = part.indices;
+    var indexType = gl.UNSIGNED_INT;
+    if (indices instanceof Uint16Array) {
+      indexType = gl.UNSIGNED_SHORT;
+    } else if (indices instanceof Uint8Array) {
+      indexType = gl.UNSIGNED_BYTE;
+    } else if (!this.uintIndices) {
+      if (vertexCount > 65535) {
+        throw new Error(window.TourStrings.t('webgl_unavailable'));
+      }
+      indices = Uint16Array.from(indices);
+      indexType = gl.UNSIGNED_SHORT;
+    }
     var idxBuf = gl.createBuffer();
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, part.indices, gl.STATIC_DRAW);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
 
     var texture = (part.imageIndex === null || part.imageIndex === undefined)
       ? null
@@ -303,7 +319,8 @@
       uvBuf: uvBuf,
       colBuf: colBuf,
       idxBuf: idxBuf,
-      indexCount: part.indices.length,
+      indexCount: indices.length,
+      indexType: indexType,
       texture: texture
     };
   };
@@ -572,7 +589,7 @@
     }
 
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, part.idxBuf);
-    gl.drawElements(gl.TRIANGLES, part.indexCount, gl.UNSIGNED_INT, 0);
+    gl.drawElements(gl.TRIANGLES, part.indexCount, part.indexType, 0);
   };
 
   Viewer.prototype.positionHotspots = function () {

@@ -15,6 +15,17 @@ final class RoomPhotoStoreTests: XCTestCase {
         try? FileManager.default.removeItem(at: tempDir)
     }
 
+    func testWalkPathsSurviveANewStore() throws {
+        let paths: [[[Double]]] = [[[0.5, 0.5], [1.5, 0.5]], [[3.0, 2.0]]]
+        try RoomPhotoStore(rootDirectory: tempDir).saveWalkPaths(paths, captureGroupId: "walk-1", roomKey: "room-a")
+        let reopened = RoomPhotoStore(rootDirectory: tempDir)
+        XCTAssertEqual(reopened.loadWalkPaths(captureGroupId: "walk-1", roomKey: "room-a"), paths)
+        XCTAssertEqual(reopened.loadWalkPaths(captureGroupId: "walk-1", roomKey: "room-b"), [])
+        XCTAssertEqual(try reopened.allBatches(captureGroupId: "walk-1"), [])
+        reopened.clearAll(captureGroupId: "walk-1")
+        XCTAssertEqual(reopened.loadWalkPaths(captureGroupId: "walk-1", roomKey: "room-a"), [])
+    }
+
     func testSaveAndLoadOnePhoto() throws {
         let store = RoomPhotoStore(rootDirectory: tempDir)
         let metadata = RoomPhotoMetadata(

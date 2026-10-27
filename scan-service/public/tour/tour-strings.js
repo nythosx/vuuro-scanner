@@ -27,7 +27,10 @@
       prev_room_aria: 'Previous room',
       next_room_aria: 'Next room',
       tour_mode_aria: 'Tour view mode',
-      popout_full_tour: 'Open full tour'
+      popout_full_tour: 'Open full tour',
+      hint_plan: 'Tap a room to open its photos.',
+      hint_photos: 'Use the arrows to see the next photo. Tap \u00D7 to go back to the plan.',
+      hint_dollhouse: 'Drag to rotate, pinch or scroll to zoom. Tap a dot to open its photo.'
     },
     nl: {
       loading_tour: 'Rondleiding laden\u2026',
@@ -54,7 +57,10 @@
       prev_room_aria: 'Vorige ruimte',
       next_room_aria: 'Volgende ruimte',
       tour_mode_aria: 'Rondleiding weergavemodus',
-      popout_full_tour: 'Open volledige rondleiding'
+      popout_full_tour: 'Open volledige rondleiding',
+      hint_plan: 'Tik op een ruimte om de foto\u2019s te openen.',
+      hint_photos: 'Gebruik de pijlen voor de volgende foto. Tik op \u00D7 om terug te gaan naar de plattegrond.',
+      hint_dollhouse: 'Sleep om te draaien, knijp of scroll om te zoomen. Tik op een punt om de foto te openen.'
     }
   };
 

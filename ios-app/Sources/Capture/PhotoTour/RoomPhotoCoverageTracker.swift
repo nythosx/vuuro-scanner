@@ -26,6 +26,10 @@ struct RoomPhotoCoverageTracker {
         coverage.recordWalk(positionM: positionM)
     }
 
+    mutating func endWalkSegment() {
+        coverage.endWalkSegment()
+    }
+
     mutating func reset() {
         coverage.reset()
     }
