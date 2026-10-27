@@ -8129,22 +8129,6 @@
                 }
             }
         },
-        "Walk into the grey areas on the minimap to cover them.": {
-            "localizations": {
-                "en": {
-                    "stringUnit": {
-                        "state": "translated",
-                        "value": "Walk into the grey areas on the minimap to cover them."
-                    }
-                },
-                "nl": {
-                    "stringUnit": {
-                        "state": "translated",
-                        "value": "Loop naar de grijze gebieden op de minimap om ze te bedekken."
-                    }
-                }
-            }
-        },
         "1 wall hasn't been photographed. The tour will be missing that view.": {
             "localizations": {
                 "en": {
@@ -8177,22 +8161,6 @@
                 }
             }
         },
-        "You've walked %d%% of the open floor. Walking through the grey areas will make the tour richer.": {
-            "localizations": {
-                "en": {
-                    "stringUnit": {
-                        "state": "translated",
-                        "value": "You've walked %d%% of the open floor. Walking through the grey areas will make the tour richer."
-                    }
-                },
-                "nl": {
-                    "stringUnit": {
-                        "state": "translated",
-                        "value": "Je hebt %d%% van de vrije vloer gelopen. Door de grijze gebieden te lopen wordt de tour rijker."
-                    }
-                }
-            }
-        },
         "You can finish anyway, or keep scanning for a better tour.": {
             "localizations": {
                 "en": {
@@ -8205,22 +8173,6 @@
                     "stringUnit": {
                         "state": "translated",
                         "value": "Je kunt alsnog afronden, of doorgaan voor een betere tour."
-                    }
-                }
-            }
-        },
-        "Photo limit reached. %d wall(s) left · %d%% walked. Tap Finish to complete.": {
-            "localizations": {
-                "en": {
-                    "stringUnit": {
-                        "state": "translated",
-                        "value": "Photo limit reached. %d wall(s) left · %d%% walked. Tap Finish to complete."
-                    }
-                },
-                "nl": {
-                    "stringUnit": {
-                        "state": "translated",
-                        "value": "Fotolimiet bereikt. Nog %d muur/muren · %d%% gelopen. Tik op Afronden om te voltooien."
                     }
                 }
             }
@@ -8365,6 +8317,374 @@
                     "stringUnit": {
                         "state": "translated",
                         "value": "Standaardwaarden herstellen"
+                    }
+                }
+            }
+        },
+        "Photo limit reached. Tap Finish to save the photos.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Photo limit reached. Tap Finish to save the photos."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Fotolimiet bereikt. Tik op Afronden om de foto's op te slaan."
+                    }
+                }
+            }
+        },
+        "Walked %d%% (optional)": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Walked %d%% (optional)"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%d%% gelopen (optioneel)"
+                    }
+                }
+            }
+        },
+        "This room will be in the tour with the plan and 3D only, no photos.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This room will be in the tour with the plan and 3D only, no photos."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Deze ruimte komt in de rondleiding met alleen de plattegrond en 3D, zonder foto's."
+                    }
+                }
+            }
+        },
+        "The %lld photos you took will be uploaded. Walls without a photo will be missing from the photo tour.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The %lld photos you took will be uploaded. Walls without a photo will be missing from the photo tour."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De %lld foto's die je hebt gemaakt worden geüpload. Muren zonder foto ontbreken in de fotorondleiding."
+                    }
+                }
+            }
+        },
+        "Photos show tenants what this room looks like": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Photos show tenants what this room looks like"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Foto's laten huurders zien hoe deze kamer eruitziet"
+                    }
+                }
+            }
+        },
+        "walls photographed": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "walls photographed"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "muren gefotografeerd"
+                    }
+                }
+            }
+        },
+        "walls photographed · ready": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "walls photographed · ready"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "muren gefotografeerd · klaar"
+                    }
+                }
+            }
+        },
+        "The scan measured the room's shape and size. These photos show what it looks like: tenants see them in the photo tour and as photo dots in the 3D view.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The scan measured the room's shape and size. These photos show what it looks like: tenants see them in the photo tour and as photo dots in the 3D view."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De scan heeft de vorm en maten van de ruimte gemeten. Deze foto's laten zien hoe de ruimte eruitziet: huurders zien ze in de fotorondleiding en als fotopunten in de 3D-weergave."
+                    }
+                }
+            }
+        },
+        "Hold the phone sideways to fit more of a wall in each photo.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Hold the phone sideways to fit more of a wall in each photo."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Houd de telefoon dwars, zodat er meer van een muur op elke foto past."
+                    }
+                }
+            }
+        },
+        "Photograph each red wall on the map. You can finish once the walls are covered.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Photograph each red wall on the map. You can finish once the walls are covered."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Fotografeer elke rode muur op de kaart. Je kunt afronden zodra de muren gedekt zijn."
+                    }
+                }
+            }
+        },
+        "Start where the scan ended and move slowly, so the dot on the map stays in the right place. Walking around is optional.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Start where the scan ended and move slowly, so the dot on the map stays in the right place. Walking around is optional."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Begin waar de scan eindigde en beweeg rustig, zodat de stip op de kaart op de juiste plek blijft. Rondlopen is optioneel."
+                    }
+                }
+            }
+        },
+        "Skip if you don't need photos. The room will then show the plan and 3D only.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Skip if you don't need photos. The room will then show the plan and 3D only."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Sla over als je geen foto's nodig hebt. De ruimte toont dan alleen de plattegrond en 3D."
+                    }
+                }
+            }
+        },
+        "How this step works": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "How this step works"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Hoe deze stap werkt"
+                    }
+                }
+            }
+        },
+        "Red walls still need a photo. Grey areas show where you have not walked yet. Striped areas are near a wall and do not need walking.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Red walls still need a photo. Grey areas show where you have not walked yet. Striped areas are near a wall and do not need walking."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Rode muren hebben nog een foto nodig. Grijze vlakken laten zien waar je nog niet hebt gelopen. Gestreepte vlakken liggen bij een muur en hoeven niet belopen te worden."
+                    }
+                }
+            }
+        },
+        "Leaves this room without photos. It will show the plan and 3D only.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Leaves this room without photos. It will show the plan and 3D only."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Verlaat deze ruimte zonder foto's. Er worden alleen de plattegrond en 3D getoond."
+                    }
+                }
+            }
+        },
+        "Saves the photos for this room and moves on.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Saves the photos for this room and moves on."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Slaat de foto's van deze ruimte op en gaat verder."
+                    }
+                }
+            }
+        },
+        "Take photo": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Take photo"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Foto maken"
+                    }
+                }
+            }
+        },
+        "The photo you took will be uploaded. Walls without a photo will be missing from the photo tour.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The photo you took will be uploaded. Walls without a photo will be missing from the photo tour."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De foto die je hebt gemaakt wordt geüpload. Muren zonder foto ontbreken in de fotorondleiding."
+                    }
+                }
+            }
+        },
+        "Turn the phone sideways for wider photos": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Turn the phone sideways for wider photos"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Draai de telefoon voor bredere foto's"
+                    }
+                }
+            }
+        },
+        "Finding your position. Hold still or move slowly.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Finding your position. Hold still or move slowly."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Je positie wordt gezocht. Houd stil of beweeg langzaam."
+                    }
+                }
+            }
+        },
+        "Walked": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Walked"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Gelopen"
+                    }
+                }
+            }
+        },
+        "Not walked yet": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Not walked yet"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Nog niet gelopen"
+                    }
+                }
+            }
+        },
+        "Near a wall, no need to walk": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Near a wall, no need to walk"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Bij een muur, hoeft niet"
                     }
                 }
             }

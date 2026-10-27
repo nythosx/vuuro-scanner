@@ -128,6 +128,22 @@ check('zoom above 2x is rejected with 422 invalid_zoom',
     $badZoomStatus === 422 && ($badZoomBody['error'] ?? null) === 'invalid_zoom',
     "got HTTP $badZoomStatus: " . json_encode($badZoomBody));
 
+check('a photo sent without tilt is stored level', ($uploadBody['pitch_deg'] ?? null) === 0.0, json_encode($uploadBody));
+
+[$tiltStatus, $tiltBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', array_merge($fields, ['pitch_deg' => '-12.50']), $accessToken, 'key-360-tilt'
+);
+check('a tilted photo keeps its tilt', $tiltStatus === 201 && ($tiltBody['pitch_deg'] ?? null) === -12.5, "got HTTP $tiltStatus: " . json_encode($tiltBody));
+
+[$badTiltStatus, $badTiltBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', array_merge($fields, ['pitch_deg' => '120']), $accessToken, 'key-360-bad-tilt'
+);
+check('tilt beyond 90 degrees is rejected with 422 invalid_pitch',
+    $badTiltStatus === 422 && ($badTiltBody['error'] ?? null) === 'invalid_pitch',
+    "got HTTP $badTiltStatus: " . json_encode($badTiltBody));
+
 echo "\n== Missing / malformed fields ==\n";
 [$noKeyStatus, $noKeyBody] = photo_360_upload(
     "$baseUrl/scan-sessions/$sessionId/photos-360",

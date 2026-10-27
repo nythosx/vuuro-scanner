@@ -81,6 +81,31 @@ dr_check('three rooms in a row give one outer dimension', dr_near($x, [0.0, 8.88
 $x = DimensionRuns::forFused($rooms, $poses, [], 0);
 dr_check('without shared-wall marks every wall still breaks', dr_near($x, [0.0, 2.30, 4.98, 8.88]), dr_show($x));
 
+echo "== Per side: each side shows only the walls that face it ==\n";
+$stepped = [[0.0, 0.0], [5.8, 0.0], [5.8, 3.9], [2.9, 3.9], [2.9, 6.7], [5.2, 6.7], [5.2, 8.9], [4.6, 8.9], [4.6, 10.8], [0.7, 10.8], [0.7, 9.0], [0.0, 9.0]];
+$top = DimensionRuns::forOutline($stepped, 0, [], 'min');
+dr_check('top side: the long straight wall is one dimension', dr_near($top, [0.0, 5.8]), dr_show($top));
+$bottom = DimensionRuns::forOutline($stepped, 0, [], 'max');
+dr_check('bottom side: the jogs on that side break the chain', dr_near($bottom, [0.0, 0.7, 4.6, 5.2, 5.8]), dr_show($bottom));
+$left = DimensionRuns::forOutline($stepped, 1, [], 'min');
+dr_check('left side: the long wall stays one dimension', dr_near($left, [0.0, 9.0, 10.8]), dr_show($left));
+$right = DimensionRuns::forOutline($stepped, 1, [], 'max');
+dr_check('right side: the recess and steps keep their breaks', dr_near($right, [0.0, 3.9, 6.7, 8.9, 10.8]), dr_show($right));
+
+$markAttic = [[0.536, 10.77], [0.714, 8.983], [0.0, 8.912], [0.499, 3.904], [0.888, 0.0], [6.648, 0.574], [6.263, 4.438], [4.008, 4.214], [3.732, 6.991], [5.979, 7.215], [5.758, 9.433], [5.116, 9.369], [4.932, 11.208]];
+$angle = -atan2(0.574, 5.76);
+$rotatedAttic = array_map(static fn (array $p): array => [$p[0] * cos($angle) - $p[1] * sin($angle), $p[0] * sin($angle) + $p[1] * cos($angle)], $markAttic);
+$atticTop = DimensionRuns::forOutline($rotatedAttic, 0, [], 'min');
+dr_check('device attic: the top wall is one dimension', count($atticTop) === 2, dr_show($atticTop));
+$atticLeft = DimensionRuns::forOutline($rotatedAttic, 1, [], 'min');
+dr_check('device attic: the long left wall is one 8.96 m dimension', count($atticLeft) === 3 && abs($atticLeft[1] - $atticLeft[0] - 8.96) < 0.02, dr_show($atticLeft));
+
+$splitWallAttic = [[1.79, 0.0], [4.10, 0.03], [6.85, -0.02], [10.74, 0.01], [10.75, 5.76], [6.85, 5.78], [4.10, 5.74], [1.80, 5.76], [1.79, 5.09], [0.0, 5.09], [0.01, 3.2], [0.0, 0.69], [1.78, 0.69]];
+$splitTop = DimensionRuns::forOutline($splitWallAttic, 0, [], 'min');
+dr_check('split long wall: top is the step plus one long dimension', count($splitTop) === 3 && abs($splitTop[2] - $splitTop[1] - 8.96) < 0.03, dr_show($splitTop));
+$splitRight = DimensionRuns::forOutline($splitWallAttic, 1, [], 'max');
+dr_check('split long wall: the straight right side is one dimension', count($splitRight) === 2, dr_show($splitRight));
+
 echo "== Rendered tile ==\n";
 $plan = [
     'property_id' => 'prop-dim-test',

@@ -185,13 +185,13 @@ el_check('the English PDF still reads in English', str_contains($englishText, 'F
 $dutchPdf = ExportLanguage::run('nl', static fn () => (new FloorPlanPdfRenderer())->render($plan, 'auto', null, 'metric', null, null, 'default'));
 $dutchText = el_pdf_text($dutchPdf);
 foreach ([
-    'Maten van de plattegrond', 'Doel: Eindinspectie   Gescand: 6 okt 2026', "22,50 m\u{00B2}", 'omtrek', 'betrouwbaarheid: hoog',
+    'Maten van de plattegrond', 'Doel: Eindinspectie   Gescand: 6 okt 2026', "22,50 m\u{00B2}", 'omtrek', 'scannauwkeurigheid: hoog',
     '1 deur, 2 ramen', '1 bank, 1 stoel', 'Woonkamer (Ruimte 1)', 'Notities voor de hele woning', 'labels: Schade',
     'Dit is GEEN gecertificeerde meting', 'Pagina 1 van',
 ] as $expected) {
     el_check("the Dutch PDF says '$expected'", str_contains($dutchText, $expected), $dutchText);
 }
-foreach (['Floor Plan Metrics', 'perimeter', 'confidence', 'Whole-unit notes', 'Page 1 of', ' sqm', 'Total indicative area', 'room(s)', 'Room 1'] as $english) {
+foreach (['Floor Plan Metrics', 'perimeter', 'confidence', 'scan accuracy', 'Whole-unit notes', 'Page 1 of', ' sqm', 'Total indicative area', 'room(s)', 'Room 1'] as $english) {
     el_check("the Dutch PDF no longer says '$english'", !str_contains($dutchText, $english));
 }
 el_check('user text is never translated', str_contains($dutchText, 'Slaapkamer één') && str_contains($dutchText, 'Keizersgracht 12'));

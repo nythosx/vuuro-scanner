@@ -614,6 +614,7 @@ struct ScanServiceClient {
         positionM: [Double],
         headingDeg: Double,
         zoom: Double = 1.0,
+        pitchDeg: Double = 0.0,
         idempotencyKey: String
     ) async throws -> Photo360UploadResponse {
         let boundary = "Boundary-\(UUID().uuidString)"
@@ -658,6 +659,11 @@ struct ScanServiceClient {
         append("--\(boundary)\(crlf)")
         append("Content-Disposition: form-data; name=\"zoom\"\(crlf)\(crlf)")
         append(String(format: "%.3f", zoom))
+        append(crlf)
+
+        append("--\(boundary)\(crlf)")
+        append("Content-Disposition: form-data; name=\"pitch_deg\"\(crlf)\(crlf)")
+        append(String(format: "%.2f", min(90, max(-90, pitchDeg.isFinite ? pitchDeg : 0))))
         append(crlf)
 
         append("--\(boundary)--\(crlf)")

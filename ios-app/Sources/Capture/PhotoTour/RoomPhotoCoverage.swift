@@ -9,19 +9,13 @@ enum PhotoTourStrings {
     static func wallsLeft(_ n: Int) -> String {
         String(format: vuuroLocalized("Aim at the red walls on the minimap \u{2014} %d left."), n)
     }
-    static var walkGrey: String { vuuroLocalized("Walk into the grey areas on the minimap to cover them.") }
     static func finishAnywayWalls(_ n: Int) -> String {
         n == 1
             ? vuuroLocalized("1 wall hasn't been photographed. The tour will be missing that view.")
             : String(format: vuuroLocalized("%d walls haven't been photographed. The tour will be missing those views."), n)
     }
-    static func finishAnywayWalk(_ pct: Int) -> String {
-        String(format: vuuroLocalized("You've walked %d%% of the open floor. Walking through the grey areas will make the tour richer."), pct)
-    }
     static var finishAnywayOk: String { vuuroLocalized("You can finish anyway, or keep scanning for a better tour.") }
-    static func photoCapBanner(wallsLeft: Int, pct: Int) -> String {
-        String(format: vuuroLocalized("Photo limit reached. %d wall(s) left \u{00B7} %d%% walked. Tap Finish to complete."), wallsLeft, pct)
-    }
+    static var photoCapBanner: String { vuuroLocalized("Photo limit reached. Tap Finish to save the photos.") }
 }
 
 struct RoomPhotoCoverage: Equatable {
@@ -63,6 +57,7 @@ struct RoomPhotoCoverage: Equatable {
     let walkableCells: Set<Cell>
     private(set) var reachedCells: Set<Cell>
     private(set) var walkedPositions: [SIMD2<Double>]
+    private var walkSegmentEnded = false
 
     init(outline: [CGPoint], cellSizeM: Double = 1.0, roomHeadingDeg: Double? = nil) {
         let points = outline.map { SIMD2<Double>(Double($0.x), Double($0.y)) }
@@ -194,7 +189,7 @@ struct RoomPhotoCoverage: Equatable {
     mutating func recordWalk(positionM: CGPoint) {
         let pos = SIMD2<Double>(Double(positionM.x), Double(positionM.y))
         var path = [pos]
-        if let previous = walkedPositions.last, simd_length(pos - previous) <= Self.maxWalkJumpM {
+        if !walkSegmentEnded, let previous = walkedPositions.last, simd_length(pos - previous) <= Self.maxWalkJumpM {
             path = samplesAlong(from: previous, to: pos)
             for cell in cellsAlong(from: previous, to: pos) {
                 walkedCells.insert(cell)
@@ -207,6 +202,11 @@ struct RoomPhotoCoverage: Equatable {
             markReached(around: point)
         }
         walkedPositions.append(pos)
+        walkSegmentEnded = false
+    }
+
+    mutating func endWalkSegment() {
+        walkSegmentEnded = true
     }
 
     var coveredCells: Set<Cell> {
@@ -257,6 +257,14 @@ struct RoomPhotoCoverage: Equatable {
         }
     }
 
+    var minimapCells: Set<Cell> {
+        walkableCells
+    }
+
+    var notWalkableCells: Set<Cell> {
+        inRoomCells.subtracting(walkableCells)
+    }
+
     var seenCells: Set<Cell> {
         coveredCells.union(reachedCells)
     }
@@ -290,12 +298,11 @@ struct RoomPhotoCoverage: Equatable {
     }
 
     var overallCoverage: Double {
-        guard !walkableCells.isEmpty || !walls.isEmpty else { return 0 }
-        return 0.5 * walkablePositionCoverage + 0.5 * wallCoverage
+        wallCoverage
     }
 
     var isReadyToFinish: Bool {
-        walkablePositionCoverage >= Self.readyPositionCoverage && wallCoverage >= Self.readyWallCoverage
+        wallCoverage >= Self.readyWallCoverage
     }
 
     var uncoveredWalls: [Wall] {
@@ -306,7 +313,6 @@ struct RoomPhotoCoverage: Equatable {
         case start
         case ready
         case walls(remaining: Int)
-        case position
     }
 
     struct NextAction: Equatable {
@@ -327,9 +333,6 @@ struct RoomPhotoCoverage: Equatable {
                 return NextAction(gate: .walls(remaining: 1), message: PhotoTourStrings.lastWall)
             }
             return NextAction(gate: .walls(remaining: uncovered.count), message: PhotoTourStrings.wallsLeft(uncovered.count))
-        }
-        if walkablePositionCoverage < Self.readyPositionCoverage {
-            return NextAction(gate: .position, message: PhotoTourStrings.walkGrey)
         }
         return nil
     }

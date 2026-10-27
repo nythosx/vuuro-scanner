@@ -392,7 +392,7 @@ SVG;
             if (($room['volume_m3_indicative'] ?? null) !== null) {
                 $parts[] = ExportLanguage::t('%s indicative', UnitFormatter::volume($room['volume_m3_indicative'], $unit));
             }
-            $parts[] = ExportLanguage::t('%s confidence', ExportLanguage::t((string) $room['confidence']));
+            $parts[] = ExportLanguage::t('scan accuracy %s', ExportLanguage::t((string) $room['confidence']));
             $lines[] = "  [{$this->displayLabel($room)}] " . implode(' — ', $parts);
         }
         return $lines;
@@ -1010,9 +1010,12 @@ SVG;
         if ($xs === [] || $zs === []) return '';
         $minLocalX = min($xs);
         $minLocalZ = min($zs);
-        $xBreak = $this->dedupValues(DimensionRuns::forOutline($rotated, 0, $room['open_edges'] ?? []));
-        $zBreak = $this->dedupValues(DimensionRuns::forOutline($rotated, 1, $room['open_edges'] ?? []));
-        if (count($xBreak) < 2 || count($zBreak) < 2) return '';
+        $openEdges = $room['open_edges'] ?? [];
+        $xBreak = $this->dedupValues(DimensionRuns::forOutline($rotated, 0, $openEdges, 'min'));
+        $xBreakBottom = $this->dedupValues(DimensionRuns::forOutline($rotated, 0, $openEdges, 'max'));
+        $zBreak = $this->dedupValues(DimensionRuns::forOutline($rotated, 1, $openEdges, 'min'));
+        $zBreakRight = $this->dedupValues(DimensionRuns::forOutline($rotated, 1, $openEdges, 'max'));
+        if (count($xBreak) < 2 || count($zBreak) < 2 || count($xBreakBottom) < 2 || count($zBreakRight) < 2) return '';
 
         $toPx = fn (float $rx, float $rz): array => [
             self::TILE_PADDING + (int) round(($rx - $minLocalX) * self::PX_PER_M),
@@ -1039,7 +1042,7 @@ SVG;
         }
 
         $prev = null;
-        foreach ($xBreak as $xv) {
+        foreach ($xBreakBottom as $xv) {
             [$px] = $toPx($xv, $zBreak[0]);
             if ($prev !== null) {
                 $out .= '<line x1="' . $prev[0] . '" y1="' . $bottomY . '" x2="' . $px . '" y2="' . $bottomY . '" marker-start="url(#ar-s)" marker-end="url(#ar-e)"/>';
@@ -1062,7 +1065,7 @@ SVG;
         }
 
         $prev = null;
-        foreach ($zBreak as $zv) {
+        foreach ($zBreakRight as $zv) {
             [, $py] = $toPx($xBreak[0], $zv);
             if ($prev !== null) {
                 $out .= '<line x1="' . $rightX . '" y1="' . $prev[0] . '" x2="' . $rightX . '" y2="' . $py . '" marker-start="url(#ar-s)" marker-end="url(#ar-e)"/>';
@@ -1135,7 +1138,7 @@ SVG;
         if (!$this->planStyle->showMetrics) {
             return $out;
         }
-        $metrics = ExportLanguage::t('%s — %s perimeter — %s confidence', UnitFormatter::area($room['floor_area_m2'], $unit), UnitFormatter::length($room['perimeter_m'], $unit), ExportLanguage::t((string) $room['confidence']));
+        $metrics = ExportLanguage::t('%s — %s perimeter — scan accuracy %s', UnitFormatter::area($room['floor_area_m2'], $unit), UnitFormatter::length($room['perimeter_m'], $unit), ExportLanguage::t((string) $room['confidence']));
         $out .= '<text x="0" y="' . ($labelY + 16) . '" font-size="10" fill="' . self::SUBTEXT . '">' . $this->esc($metrics) . '</text>';
         $lineY = $labelY + 32;
         if (($room['height_m'] ?? null) !== null) {
@@ -1227,12 +1230,12 @@ SVG;
         }
 
         $dimY = $headerHeight + 14;
-        $xBreakpoints = DimensionRuns::forFused($rooms, $poses, $fusion['edgeTiers'], 0);
+        $xBreakpoints = DimensionRuns::forFusedSide($rooms, $poses, $fusion['edgeTiers'], 0, 'min');
         if (count($xBreakpoints) < 2) { $xBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 0); }
         $body .= $this->horizontalDimensionChainSvg($xBreakpoints, $dimY, $toPx, $unit);
 
         $dimX = $planLeft + 14;
-        $zBreakpoints = DimensionRuns::forFused($rooms, $poses, $fusion['edgeTiers'], 1);
+        $zBreakpoints = DimensionRuns::forFusedSide($rooms, $poses, $fusion['edgeTiers'], 1, 'min');
         if (count($zBreakpoints) < 2) { $zBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 1); }
         $body .= $this->verticalDimensionChainSvg($zBreakpoints, $dimX, $toPx, $unit);
 

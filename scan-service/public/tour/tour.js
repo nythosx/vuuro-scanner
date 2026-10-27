@@ -28,6 +28,7 @@
     els.roomSequence = document.getElementById('tour-room-sequence');
     els.roomPrev = document.getElementById('tour-room-prev');
     els.roomNext = document.getElementById('tour-room-next');
+    els.hint = document.getElementById('tour-hint');
 
     if (els.roomPrev) {
       els.roomPrev.addEventListener('click', function () { stepRoom(-1); });
@@ -283,6 +284,11 @@
   }
 
   function renderChrome() {
+    if (els.hint) {
+      var hintKey = state.mode === 'photos' ? 'hint_photos' : state.mode === 'dollhouse' ? 'hint_dollhouse' : 'hint_plan';
+      els.hint.textContent = window.TourStrings.t(hintKey);
+      els.hint.hidden = false;
+    }
     els.minimap.hidden = state.mode !== 'photos';
     els.info.hidden = state.mode !== 'photos';
     var showRoomNav = state.mode === 'photos' && state.roomsWithPhotos.length > 1;

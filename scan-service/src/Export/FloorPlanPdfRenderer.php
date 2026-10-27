@@ -361,7 +361,7 @@ final class FloorPlanPdfRenderer
                 array_values($objectCounts)
             ))), 'style' => 'sub'];
         }
-        $lines[] = ['text' => ExportLanguage::t('Confidence: %s', ExportLanguage::t((string) $room['confidence'])), 'style' => 'sub'];
+        $lines[] = ['text' => ExportLanguage::t('Scan accuracy: %s', ExportLanguage::t((string) $room['confidence'])), 'style' => 'sub'];
         if ($planStyle->showNotes) {
             foreach ($floorPlan['notes'] ?? [] as $note) {
                 if (($note['room_id'] ?? null) !== $room['room_id']) {
@@ -562,7 +562,7 @@ final class FloorPlanPdfRenderer
             $bulletHex = FloorPlanPalette::roomAccentFor($roomTypeValue) ?? '#9a958a';
             $add(
                 ExportLanguage::t(
-                    '%-20s %12s   %14s   confidence: %s',
+                    '%-20s %12s   %14s   scan accuracy: %s',
                     $roomLabel,
                     UnitFormatter::area($room['floor_area_m2'], $unit),
                     ExportLanguage::t('%s perimeter', UnitFormatter::length($room['perimeter_m'], $unit)),

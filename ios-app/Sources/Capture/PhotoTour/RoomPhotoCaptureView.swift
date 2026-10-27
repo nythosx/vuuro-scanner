@@ -6,7 +6,7 @@ struct RoomPhotoCaptureOverlay: View {
     let onSkip: () -> Void
     let onFinish: () -> Void
 
-    @AppStorage("photoTour.onboardingSeen") private var onboardingSeen = false
+    @AppStorage("photoTour.onboardingSeen.v2") private var onboardingSeen = false
     @State private var showOnboarding = false
     @State private var showSkipConfirmation = false
     @State private var showFinishAnywayAlert = false
@@ -149,13 +149,28 @@ struct RoomPhotoCaptureOverlay: View {
                     .tracking(-0.3)
                     .foregroundStyle(.white)
                     .shadow(color: .black.opacity(0.9), radius: 3, y: 1)
-                Text("Photos for this room")
+                Text("Photos show tenants what this room looks like")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.6))
                     .shadow(color: .black.opacity(0.9), radius: 2, y: 1)
             }
 
             Spacer(minLength: 0)
+
+            Button {
+                showOnboarding = true
+            } label: {
+                Image(systemName: "questionmark")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .background(Color.white.opacity(0.15), in: Circle())
+                    .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
+            }
+            .accessibilityLabel("How this step works")
+            .accessibilityIdentifier("photoTour.help")
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 20)
         .padding(.top, 16)
@@ -172,7 +187,29 @@ struct RoomPhotoCaptureOverlay: View {
 
     @ViewBuilder
     private var floatingHint: some View {
-        if let hint = coordinator.coverage.nextAction {
+        if coordinator.isTrackingLimited {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(.white)
+                Text("Finding your position. Hold still or move slowly.")
+                    .font(.system(size: 12, weight: .medium))
+                    .tracking(-0.1)
+                    .foregroundStyle(Color.white.opacity(0.95))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(.ultraThinMaterial, in: Capsule())
+            .background(VuuroColor.danger.opacity(0.25), in: Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+            .shadow(color: .black.opacity(0.6), radius: 4, y: 1)
+            .frame(maxWidth: .infinity)
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("photoTour.trackingLimited")
+        } else if let hint = coordinator.coverage.nextAction {
             let ready = coordinator.coverage.isReadyToFinish
             HStack(spacing: 6) {
                 Image(systemName: ready ? "checkmark.circle.fill" : "lightbulb.fill")
@@ -207,10 +244,13 @@ struct RoomPhotoCaptureOverlay: View {
                 infoRow
                     .transition(.opacity.combined(with: .offset(y: 10)))
             }
-            if coordinator.isMaximumReached && !coordinator.coverage.isReadyToFinish {
+            if coordinator.isMaximumReached {
                 photoCapBanner
             }
             errorLine
+            if !coordinator.isHeldSideways {
+                landscapePill
+            }
             controlsRow
         }
         .animation(.easeOut(duration: 0.3), value: showExpandedMinimap)
@@ -230,6 +270,24 @@ struct RoomPhotoCaptureOverlay: View {
             )
             .ignoresSafeArea(edges: .bottom)
         )
+    }
+
+    private var landscapePill: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "rectangle.landscape.rotate")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(VuuroColor.accent)
+            Text("Turn the phone sideways for wider photos")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.12), in: Capsule())
+        .overlay(Capsule().stroke(Color.white.opacity(0.15), lineWidth: 1))
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("photoTour.landscapeHint")
     }
 
     private var infoRow: some View {
@@ -268,6 +326,7 @@ struct RoomPhotoCaptureOverlay: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Open coverage map")
+        .accessibilityHint("Red walls still need a photo. Grey areas show where you have not walked yet. Striped areas are near a wall and do not need walking.")
         .accessibilityIdentifier("photoTour.minimapExpand")
     }
 
@@ -275,10 +334,10 @@ struct RoomPhotoCaptureOverlay: View {
         Button {
             showExpandedMinimap = false
         } label: {
-            ZStack(alignment: .bottom) {
+            VStack(spacing: 8) {
                 liveMinimap(compact: false)
-                    .frame(maxWidth: 320, maxHeight: 220)
-                    .padding(.bottom, 18)
+                    .frame(maxWidth: 320, maxHeight: 180)
+                CoverageMinimapLegend()
                 Text("Tap to close")
                     .font(.system(size: 11, weight: .medium))
                     .tracking(0.2)
@@ -302,6 +361,7 @@ struct RoomPhotoCaptureOverlay: View {
                 currentPosition: coordinator.livePositionLocal(),
                 currentHeadingDeg: coordinator.liveHeadingDeg(),
                 compact: compact,
+                positionReliable: !coordinator.isTrackingLimited,
                 chromeless: true,
                 coveredWallColor: .white
             )
@@ -318,16 +378,15 @@ struct RoomPhotoCaptureOverlay: View {
                     .monospacedDigit()
                     .foregroundStyle(coordinator.coverage.isReadyToFinish ? VuuroColor.lime : VuuroColor.accent)
                     .shadow(color: .black.opacity(0.5), radius: 3, y: 1)
-                Text(coordinator.coverage.isReadyToFinish ? "photo coverage · ready" : "photo coverage")
+                Text(coordinator.coverage.isReadyToFinish ? LocalizedStringKey("walls photographed · ready") : LocalizedStringKey("walls photographed"))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
             Text(String(
-                format: "Pos %d%% · Walls %d%%",
-                Int(coordinator.coverage.walkablePositionCoverage * 100),
-                Int(coordinator.coverage.wallCoverage * 100)
+                format: vuuroLocalized("Walked %d%% (optional)"),
+                Int(coordinator.coverage.walkablePositionCoverage * 100)
             ))
             .font(.system(size: 11))
             .monospacedDigit()
@@ -494,13 +553,20 @@ struct RoomPhotoCaptureOverlay: View {
                     .tracking(-0.3)
                     .foregroundStyle(.white)
                     .padding(.bottom, 10)
-                Text("These photos turn this room into a walk-through tour. Walk through the room and take a photo of each wall: red walls on the map still need one. You're done when most walls are white and you've walked about half the room. This step is optional, tap Skip if you don't need a tour.")
+                Text("The scan measured the room's shape and size. These photos show what it looks like: tenants see them in the photo tour and as photo dots in the 3D view.")
                     .font(.system(size: 14))
                     .lineSpacing(3)
                     .foregroundStyle(.white.opacity(0.6))
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.bottom, 24)
+                    .padding(.bottom, 16)
+                VStack(alignment: .leading, spacing: 10) {
+                    onboardingTip("rectangle.landscape.rotate", "Hold the phone sideways to fit more of a wall in each photo.")
+                    onboardingTip("map", "Photograph each red wall on the map. You can finish once the walls are covered.")
+                    onboardingTip("figure.walk", "Start where the scan ended and move slowly, so the dot on the map stays in the right place. Walking around is optional.")
+                    onboardingTip("forward.end", "Skip if you don't need photos. The room will then show the plan and 3D only.")
+                }
+                .padding(.bottom, 24)
                 Button {
                     onboardingSeen = true
                     showOnboarding = false
@@ -527,6 +593,20 @@ struct RoomPhotoCaptureOverlay: View {
         .accessibilityIdentifier("photoTour.onboarding")
     }
 
+    private func onboardingTip(_ symbol: String, _ text: LocalizedStringKey) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(VuuroColor.accent)
+                .frame(width: 20)
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(.white.opacity(0.75))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     @ViewBuilder
     private var errorLine: some View {
         if let error = coordinator.lastError {
@@ -550,6 +630,7 @@ struct RoomPhotoCaptureOverlay: View {
                     .padding(.vertical, 10)
                     .frame(minWidth: 70, alignment: .leading)
             }
+            .accessibilityHint("Leaves this room without photos. It will show the plan and 3D only.")
             .accessibilityIdentifier("photoTour.skip")
             .buttonStyle(.plain)
 
@@ -560,7 +641,7 @@ struct RoomPhotoCaptureOverlay: View {
             Spacer(minLength: 0)
 
             Button {
-                if coordinator.coverage.isReadyToFinish {
+                if coordinator.coverage.isReadyToFinish || coordinator.isMaximumReached {
                     onFinish()
                 } else {
                     showFinishAnywayAlert = true
@@ -574,6 +655,7 @@ struct RoomPhotoCaptureOverlay: View {
                     .frame(minWidth: 70)
                     .background(finishBackground, in: Capsule())
             }
+            .accessibilityHint("Saves the photos for this room and moves on.")
             .accessibilityIdentifier("photoTour.finish")
             .buttonStyle(.plain)
             .disabled(coordinator.photoCount == 0)
@@ -610,6 +692,7 @@ struct RoomPhotoCaptureOverlay: View {
             .opacity(coordinator.isMaximumReached ? 0.4 : 1)
             .animation(.easeOut(duration: 0.1), value: coordinator.isCapturing)
         }
+        .accessibilityLabel("Take photo")
         .accessibilityIdentifier("photoTour.shutter")
         .buttonStyle(.plain)
         .disabled(coordinator.isCapturing || coordinator.isMaximumReached)
@@ -640,27 +723,24 @@ struct RoomPhotoCaptureOverlay: View {
 
     private var skipMessage: String {
         if coordinator.photoCount == 0 {
-            return "No photos have been taken for this room. It will be added to the tour without photos."
+            return vuuroLocalized("This room will be in the tour with the plan and 3D only, no photos.")
         }
-        return "\(coordinator.photoCount) photo\(coordinator.photoCount == 1 ? "" : "s") so far, less than the recommended \(coordinator.minimumPhotos). Photos you have already taken will be uploaded."
+        if coordinator.photoCount == 1 {
+            return vuuroLocalized("The photo you took will be uploaded. Walls without a photo will be missing from the photo tour.")
+        }
+        return String(format: vuuroLocalized("The %lld photos you took will be uploaded. Walls without a photo will be missing from the photo tour."), coordinator.photoCount)
     }
 
     private var finishAnywayMessage: String {
         let uncoveredWallCount = coordinator.coverage.uncoveredWalls.count
-        let positionPct = Int(coordinator.coverage.walkablePositionCoverage * 100)
         if uncoveredWallCount > 0 {
             return PhotoTourStrings.finishAnywayWalls(uncoveredWallCount)
-        }
-        if positionPct < Int(RoomPhotoCoverage.readyPositionCoverage * 100) {
-            return PhotoTourStrings.finishAnywayWalk(positionPct)
         }
         return PhotoTourStrings.finishAnywayOk
     }
 
     private var photoCapBanner: some View {
-        let wallsLeft = coordinator.coverage.uncoveredWalls.count
-        let posPct = Int(coordinator.coverage.walkablePositionCoverage * 100)
-        return Text(PhotoTourStrings.photoCapBanner(wallsLeft: wallsLeft, pct: posPct))
+        Text(PhotoTourStrings.photoCapBanner)
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(Color(red: 1.0, green: 0.85, blue: 0.4))
             .multilineTextAlignment(.center)

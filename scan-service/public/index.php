@@ -1605,7 +1605,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
     }
     $sessionId = $session['id'];
 
-    if (rateLimited($repo, $sessionId . ':upload_photo_360', 60, 300)) {
+    if (rateLimited($repo, $sessionId . ':upload_photo_360', 600, 300)) {
         return;
     }
 
@@ -1667,6 +1667,16 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
     $zoomValue = (float) $zoomRaw;
     if (!is_finite($zoomValue) || $zoomValue < 1.0 || $zoomValue > 2.0) {
         respondError(422, 'invalid_zoom', "'zoom' must be between 1.0 and 2.0.");
+        return;
+    }
+    $pitchRaw = $_POST['pitch_deg'] ?? '0';
+    if (!is_string($pitchRaw) || !is_numeric($pitchRaw)) {
+        respondError(422, 'invalid_pitch', "'pitch_deg' must be numeric when given.");
+        return;
+    }
+    $pitchValue = (float) $pitchRaw;
+    if (!is_finite($pitchValue) || $pitchValue < -90.0 || $pitchValue > 90.0) {
+        respondError(422, 'invalid_pitch', "'pitch_deg' must be between -90 and 90.");
         return;
     }
     $roomId = isset($_POST['room_id']) && is_string($_POST['room_id']) ? trim($_POST['room_id']) : '';
@@ -1733,7 +1743,8 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
             $headingDeg,
             gmdate('c'),
             $idempotencyKey,
-            $zoomValue
+            $zoomValue,
+            $pitchValue
         );
     } catch (\PDOException $e) {
         @unlink($storageDir . '/' . $filename);

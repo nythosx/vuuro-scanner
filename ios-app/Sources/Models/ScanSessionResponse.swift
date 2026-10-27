@@ -118,8 +118,9 @@ struct FloorPlan: Codable {
         let headingDeg: Double
         let capturedAt: String
         let zoom: Double?
+        let pitchDeg: Double?
 
-        init(photoId: String, roomId: String, url: String, positionM: [Double], headingDeg: Double, capturedAt: String, zoom: Double? = nil) {
+        init(photoId: String, roomId: String, url: String, positionM: [Double], headingDeg: Double, capturedAt: String, zoom: Double? = nil, pitchDeg: Double? = nil) {
             self.photoId = photoId
             self.roomId = roomId
             self.url = url
@@ -127,6 +128,7 @@ struct FloorPlan: Codable {
             self.headingDeg = headingDeg
             self.capturedAt = capturedAt
             self.zoom = zoom
+            self.pitchDeg = pitchDeg
         }
 
         enum CodingKeys: String, CodingKey {
@@ -137,6 +139,7 @@ struct FloorPlan: Codable {
             case headingDeg = "heading_deg"
             case capturedAt = "captured_at"
             case zoom
+            case pitchDeg = "pitch_deg"
         }
     }
 

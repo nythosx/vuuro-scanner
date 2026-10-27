@@ -401,7 +401,7 @@ final class FloorPlanImageRenderer
             if (($room['volume_m3_indicative'] ?? null) !== null) {
                 $parts[] = ExportLanguage::t('%s indicative', UnitFormatter::volume($room['volume_m3_indicative'], $unit));
             }
-            $parts[] = ExportLanguage::t('%s confidence', ExportLanguage::t((string) $room['confidence']));
+            $parts[] = ExportLanguage::t('scan accuracy %s', ExportLanguage::t((string) $room['confidence']));
             $lines[] = '  [' . $this->printable($this->displayLabel($room)) . '] ' . implode(' - ', $parts);
         }
         return $lines;
@@ -761,10 +761,10 @@ final class FloorPlanImageRenderer
             ];
         };
 
-        $xBreakpoints = DimensionRuns::forFused($rooms, $poses, $fusion['edgeTiers'], 0);
+        $xBreakpoints = DimensionRuns::forFusedSide($rooms, $poses, $fusion['edgeTiers'], 0, 'min');
         if (count($xBreakpoints) < 2) { $xBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 0); }
         $this->drawHorizontalDimensionChain($image, $xBreakpoints, $dimensionLineY, $toPx, $unit, $dimColor);
-        $zBreakpoints = DimensionRuns::forFused($rooms, $poses, $fusion['edgeTiers'], 1);
+        $zBreakpoints = DimensionRuns::forFusedSide($rooms, $poses, $fusion['edgeTiers'], 1, 'min');
         if (count($zBreakpoints) < 2) { $zBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 1); }
         $this->drawVerticalDimensionChain($image, $zBreakpoints, $planLeft + 14, $toPx, $unit, $dimColor);
 
@@ -1398,9 +1398,12 @@ final class FloorPlanImageRenderer
         if ($xs === [] || $zs === []) return;
         $minLocalX = min($xs);
         $minLocalZ = min($zs);
-        $xBreak = $this->dedupValues(DimensionRuns::forOutline($rotated, 0, $room['open_edges'] ?? []));
-        $zBreak = $this->dedupValues(DimensionRuns::forOutline($rotated, 1, $room['open_edges'] ?? []));
-        if (count($xBreak) < 2 || count($zBreak) < 2) return;
+        $openEdges = $room['open_edges'] ?? [];
+        $xBreak = $this->dedupValues(DimensionRuns::forOutline($rotated, 0, $openEdges, 'min'));
+        $xBreakBottom = $this->dedupValues(DimensionRuns::forOutline($rotated, 0, $openEdges, 'max'));
+        $zBreak = $this->dedupValues(DimensionRuns::forOutline($rotated, 1, $openEdges, 'min'));
+        $zBreakRight = $this->dedupValues(DimensionRuns::forOutline($rotated, 1, $openEdges, 'max'));
+        if (count($xBreak) < 2 || count($zBreak) < 2 || count($xBreakBottom) < 2 || count($zBreakRight) < 2) return;
 
         $toPx = fn (float $rx, float $rz): array => [
             $originX + self::TILE_PADDING + (int) round(($rx - $minLocalX) * self::PIXELS_PER_METER),
@@ -1425,7 +1428,7 @@ final class FloorPlanImageRenderer
         }
 
         $prev = null;
-        foreach ($xBreak as $xv) {
+        foreach ($xBreakBottom as $xv) {
             [$px] = $toPx($xv, $zBreak[0]);
             if ($prev !== null) {
                 $this->drawDimensionSegment($image, $prev[0], $bottomY, $px, $bottomY, $color);
@@ -1448,7 +1451,7 @@ final class FloorPlanImageRenderer
         }
 
         $prev = null;
-        foreach ($zBreak as $zv) {
+        foreach ($zBreakRight as $zv) {
             [, $py] = $toPx($xBreak[0], $zv);
             if ($prev !== null) {
                 $this->drawDimensionSegment($image, $rightX, $prev[0], $rightX, $py, $color);
@@ -1535,7 +1538,7 @@ final class FloorPlanImageRenderer
         if (!$this->planStyle->showMetrics) {
             return;
         }
-        $metrics = ExportLanguage::t('%s - %s perimeter - %s confidence', UnitFormatter::area($room['floor_area_m2'], $unit), UnitFormatter::length($room['perimeter_m'], $unit), ExportLanguage::t((string) $room['confidence']));
+        $metrics = ExportLanguage::t('%s - %s perimeter - scan accuracy %s', UnitFormatter::area($room['floor_area_m2'], $unit), UnitFormatter::length($room['perimeter_m'], $unit), ExportLanguage::t((string) $room['confidence']));
         $this->drawText($image, 2, $originX + self::TILE_PADDING, $labelY + 18, $metrics, $subtext);
         $lineY = $labelY + 32;
         if (($room['height_m'] ?? null) !== null) {

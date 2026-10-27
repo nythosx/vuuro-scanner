@@ -146,4 +146,35 @@ final class RoomPhotoCaptureCoordinatorTests: XCTestCase {
         let session = ARSession()
         XCTAssertNil(RoomPhotoCaptureCoordinator.cameraYawDeg(from: session))
     }
+
+    func testOnlyNormalTrackingMovesTheMinimapDot() {
+        XCTAssertTrue(RoomPhotoCaptureCoordinator.isTrackingNormal(.normal))
+        XCTAssertFalse(RoomPhotoCaptureCoordinator.isTrackingNormal(.limited(.relocalizing)))
+        XCTAssertFalse(RoomPhotoCaptureCoordinator.isTrackingNormal(.limited(.excessiveMotion)))
+        XCTAssertFalse(RoomPhotoCaptureCoordinator.isTrackingNormal(.notAvailable))
+    }
+
+    func testLandscapeHintHidesOnlyWhenThePhoneIsSideways() {
+        XCTAssertFalse(RoomPhotoCaptureCoordinator.isHeldSideways(.right))
+        XCTAssertFalse(RoomPhotoCaptureCoordinator.isHeldSideways(.left))
+        XCTAssertTrue(RoomPhotoCaptureCoordinator.isHeldSideways(.up))
+        XCTAssertTrue(RoomPhotoCaptureCoordinator.isHeldSideways(.down))
+    }
+
+    func testImageOrientationFollowsHowThePhoneIsHeld() {
+        func transform(imageX: SIMD3<Float>, imageY: SIMD3<Float>) -> simd_float4x4 {
+            simd_float4x4(
+                SIMD4<Float>(imageX, 0),
+                SIMD4<Float>(imageY, 0),
+                SIMD4<Float>(simd_cross(imageX, imageY), 0),
+                SIMD4<Float>(0, 0, 0, 1)
+            )
+        }
+        let portrait = transform(imageX: SIMD3<Float>(0, -1, 0), imageY: SIMD3<Float>(1, 0, 0))
+        let landscapeRight = transform(imageX: SIMD3<Float>(1, 0, 0), imageY: SIMD3<Float>(0, 1, 0))
+        let landscapeLeft = transform(imageX: SIMD3<Float>(-1, 0, 0), imageY: SIMD3<Float>(0, -1, 0))
+        XCTAssertEqual(RoomPhotoCaptureCoordinator.imageOrientation(portrait), .right)
+        XCTAssertEqual(RoomPhotoCaptureCoordinator.imageOrientation(landscapeRight), .up)
+        XCTAssertEqual(RoomPhotoCaptureCoordinator.imageOrientation(landscapeLeft), .down)
+    }
 }

@@ -28,6 +28,8 @@ final class RoomPhotoUploadTrace {
 
 @MainActor
 enum RoomPhotoUploader {
+    static let maxParallelUploads = 3
+
     static func uploadAll(
         captureGroupId: String,
         session: ScanSessionResponse,
@@ -153,37 +155,52 @@ enum RoomPhotoUploader {
             )
         }
 
+        var jobs: [(photo: RoomPhotoMetadata, batch: RoomPhotoManifest, roomId: String)] = []
+        for (batch, roomId) in matched {
+            for photo in batch.photos where isPlausiblePosition(photo.positionM) {
+                jobs.append((photo, batch, roomId))
+            }
+        }
+        let expected = jobs.count
+
         var uploaded = 0
         var failed = 0
-        var expected = 0
-        for (batch, roomId) in matched {
-            let photos = batch.photos.filter { isPlausiblePosition($0.positionM) }
-            guard !photos.isEmpty else { continue }
-            expected += photos.count
-            for photo in photos {
-                if Task.isCancelled {
-                    return RoomPhotoUploadOutcome(
-                        batchesConsidered: batches.count,
-                        photosUploaded: uploaded,
-                        photosFailed: failed,
-                        skipReason: nil
-                    )
+        await withTaskGroup(of: (String, String?).self) { group in
+            var next = 0
+            while next < jobs.count || !group.isEmpty {
+                while next < jobs.count, next - uploaded - failed < maxParallelUploads, !Task.isCancelled {
+                    let job = jobs[next]
+                    next += 1
+                    group.addTask { @MainActor in
+                        let failure = await RoomPhotoUploader.uploadOne(
+                            photo: job.photo,
+                            batch: job.batch,
+                            roomId: job.roomId,
+                            session: session,
+                            store: store,
+                            client: client
+                        )
+                        return (job.photo.localId, failure)
+                    }
                 }
-                let failure = await uploadOne(
-                    photo: photo,
-                    batch: batch,
-                    roomId: roomId,
-                    session: session,
-                    store: store,
-                    client: client
-                )
+                guard let result = await group.next() else { break }
+                let (photoId, failure) = result
                 if let failure {
                     failed += 1
-                    trace.failures.append(PhotoStepSummary.Failure(photoId: photo.localId, reason: failure))
+                    trace.failures.append(PhotoStepSummary.Failure(photoId: photoId, reason: failure))
                 } else {
                     uploaded += 1
                 }
             }
+        }
+
+        if Task.isCancelled {
+            return RoomPhotoUploadOutcome(
+                batchesConsidered: batches.count,
+                photosUploaded: uploaded,
+                photosFailed: failed,
+                skipReason: nil
+            )
         }
 
         if failed == 0 && expected > 0 && uploaded == expected {
@@ -388,6 +405,7 @@ enum RoomPhotoUploader {
                 positionM: photo.positionM,
                 headingDeg: photo.headingDeg,
                 zoom: photo.zoom,
+                pitchDeg: photo.pitchDeg,
                 idempotencyKey: photo.localId
             )
             return nil

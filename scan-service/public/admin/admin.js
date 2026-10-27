@@ -1019,7 +1019,10 @@ function loadTourPhotoThumb(photo, roomLabels) {
   const pos = Array.isArray(photo.position_m) && photo.position_m.length >= 2
     ? `${Number(photo.position_m[0]).toFixed(1)}, ${Number(photo.position_m[1]).toFixed(1)} m`
     : '';
-  caption.textContent = [roomLabel, heading, pos].filter(Boolean).join(' \u00B7 ');
+  const tilt = typeof photo.pitch_deg === 'number' && Math.round(photo.pitch_deg) !== 0
+    ? 'tilt ' + Math.round(photo.pitch_deg) + '\u00B0'
+    : '';
+  caption.textContent = [roomLabel, heading, tilt, pos].filter(Boolean).join(' \u00B7 ');
   wrapper.appendChild(caption);
   grid.appendChild(wrapper);
 

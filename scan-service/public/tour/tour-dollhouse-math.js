@@ -42,13 +42,13 @@
 
   function mat4Multiply(a, b) {
     var out = new Float32Array(16);
-    for (var i = 0; i < 4; i++) {
-      for (var j = 0; j < 4; j++) {
-        out[i * 4 + j] =
-          a[i * 4 + 0] * b[0 * 4 + j] +
-          a[i * 4 + 1] * b[1 * 4 + j] +
-          a[i * 4 + 2] * b[2 * 4 + j] +
-          a[i * 4 + 3] * b[3 * 4 + j];
+    for (var col = 0; col < 4; col++) {
+      for (var row = 0; row < 4; row++) {
+        out[col * 4 + row] =
+          a[0 * 4 + row] * b[col * 4 + 0] +
+          a[1 * 4 + row] * b[col * 4 + 1] +
+          a[2 * 4 + row] * b[col * 4 + 2] +
+          a[3 * 4 + row] * b[col * 4 + 3];
       }
     }
     return out;

@@ -11,6 +11,9 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     @Published private(set) var coveragePercent: Double = 0
     @Published private(set) var lastError: String?
     @Published private(set) var isCapturing: Bool = false
+    @Published private(set) var isTrackingLimited: Bool = false
+    @Published private(set) var isHeldSideways: Bool = false
+    private var lastTrackedPosition: CGPoint?
     var zoom: CGFloat = 1.0
 
     let minimumPhotos: Int
@@ -28,6 +31,10 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     private let store: RoomPhotoStore
     private let ciContext = CIContext()
     private var walkSamplingTask: Task<Void, Never>?
+    private var walkPaths: [[[Double]]] = []
+    private var unsavedWalkSamples = 0
+    static let walkSampleSpacingM = 0.25
+    static let walkSaveEverySamples = 8
 
     private var coverageTracker: RoomPhotoCoverageTracker
     private(set) var photos: [RoomPhotoMetadata] = []
@@ -88,6 +95,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         )
 
         loadExistingPhotos()
+        loadExistingWalk()
         startWalkSampling()
     }
 
@@ -118,6 +126,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     func stopWalkSampling() {
         walkSamplingTask?.cancel()
         walkSamplingTask = nil
+        saveWalkPaths()
     }
 
     private func startWalkSampling() {
@@ -131,12 +140,71 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     }
 
     private func sampleWalkPosition() {
-        guard let position = livePositionLocal() else { return }
+        guard let camera = arSession.currentFrame?.camera else { return }
+        let limited = !Self.isTrackingNormal(camera.trackingState)
+        if isTrackingLimited != limited {
+            isTrackingLimited = limited
+            if limited {
+                coverageTracker.endWalkSegment()
+                if walkPaths.last?.isEmpty == false {
+                    walkPaths.append([])
+                }
+            }
+        }
+        let sideways = Self.isHeldSideways(Self.imageOrientation(camera.transform))
+        if isHeldSideways != sideways {
+            isHeldSideways = sideways
+        }
+        guard !limited, let position = livePositionLocal() else { return }
         let before = coverageTracker.coveredCellCount
         coverageTracker.recordWalk(positionM: position)
+        appendWalkSample(position)
         if coverageTracker.coveredCellCount != before {
             coveragePercent = coverageTracker.overallCoverage
+            saveWalkPaths()
+        } else if unsavedWalkSamples >= Self.walkSaveEverySamples {
+            saveWalkPaths()
         }
+    }
+
+    private func appendWalkSample(_ position: CGPoint) {
+        let point = [Double(position.x), Double(position.y)]
+        guard var segment = walkPaths.last else {
+            walkPaths = [[point]]
+            unsavedWalkSamples += 1
+            return
+        }
+        if let last = segment.last, hypot(point[0] - last[0], point[1] - last[1]) < Self.walkSampleSpacingM {
+            return
+        }
+        segment.append(point)
+        walkPaths[walkPaths.count - 1] = segment
+        unsavedWalkSamples += 1
+    }
+
+    private func saveWalkPaths() {
+        guard unsavedWalkSamples > 0 else { return }
+        do {
+            try store.saveWalkPaths(walkPaths, captureGroupId: captureGroupId, roomKey: roomKey)
+            unsavedWalkSamples = 0
+        } catch {
+            DiagnosticsLog.shared.record(
+                "Photo360: could not save the walked area for \(roomKey): \(error.localizedDescription)",
+                category: .error
+            )
+        }
+    }
+
+    private func loadExistingWalk() {
+        let saved = store.loadWalkPaths(captureGroupId: captureGroupId, roomKey: roomKey)
+        for segment in saved {
+            for point in segment where point.count >= 2 {
+                coverageTracker.recordWalk(positionM: CGPoint(x: point[0], y: point[1]))
+            }
+            coverageTracker.endWalkSegment()
+        }
+        walkPaths = saved.filter { !$0.isEmpty } + [[]]
+        coveragePercent = coverageTracker.overallCoverage
     }
 
     var isMinimumReached: Bool { photos.count >= minimumPhotos }
@@ -163,7 +231,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
             lastError = "Could not read the camera frame."
             return
         }
-        let rawImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: .right)
+        let rawImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: Self.imageOrientation(frame.camera.transform))
         let effectiveZoom = max(1.0, min(2.0, Double(zoom)))
         let image = Self.crop(rawImage, toZoom: effectiveZoom)
 
@@ -261,12 +329,24 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     }
 
     func livePositionLocal() -> CGPoint? {
-        guard let transform = arSession.currentFrame?.camera.transform else { return nil }
-        let t = transform.columns.3
-        return CGPoint(
+        guard let camera = arSession.currentFrame?.camera else { return lastTrackedPosition }
+        guard Self.isTrackingNormal(camera.trackingState) else { return lastTrackedPosition }
+        let t = camera.transform.columns.3
+        let position = CGPoint(
             x: Double(t.x) - outlineMinXZ.x,
             y: Double(t.z) - outlineMinXZ.y
         )
+        lastTrackedPosition = position
+        return position
+    }
+
+    static func isTrackingNormal(_ state: ARCamera.TrackingState) -> Bool {
+        if case .normal = state { return true }
+        return false
+    }
+
+    static func isHeldSideways(_ orientation: UIImage.Orientation) -> Bool {
+        orientation == .up || orientation == .down
     }
 
     static func cameraYawDeg(from session: ARSession) -> Double? {
@@ -323,6 +403,15 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     static func yawDeg(_ transform: simd_float4x4) -> Double {
         let forward = transform.columns.2
         return atan2(Double(forward.z), Double(forward.x)) * 180.0 / .pi
+    }
+
+    static func imageOrientation(_ transform: simd_float4x4) -> UIImage.Orientation {
+        let upAlongImageX = Double(transform.columns.0.y)
+        let upAlongImageY = Double(transform.columns.1.y)
+        if abs(upAlongImageY) > abs(upAlongImageX) {
+            return upAlongImageY >= 0 ? .up : .down
+        }
+        return upAlongImageX <= 0 ? .right : .left
     }
 
     private static func pitchDeg(_ transform: simd_float4x4) -> Double {
