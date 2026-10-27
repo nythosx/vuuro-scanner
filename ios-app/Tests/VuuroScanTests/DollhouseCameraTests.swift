@@ -289,9 +289,9 @@ final class DollhouseCameraTests: XCTestCase {
         camera.attach(to: view, cameraNode: node, framing: scene)
 
         let continuous = (view.gestureRecognizers ?? []).filter { $0.name == "dollhouseCamera" && !($0 is UITapGestureRecognizer) }
-        XCTAssertEqual(continuous.count, 3, "expected pan, pinch, and two-finger pan")
+        XCTAssertEqual(continuous.count, 4, "expected pan, pinch, two-finger pan and twist")
         for recognizer in continuous {
-            XCTAssertNotNil(recognizer.delegate, "pan/pinch/two-finger-pan must have a delegate so they can recognize simultaneously — otherwise a one-finger drag that grows into a pinch drops one of them")
+            XCTAssertNotNil(recognizer.delegate, "pan/pinch/two-finger-pan/twist must have a delegate so they can recognize simultaneously — otherwise a one-finger drag that grows into a pinch drops one of them")
         }
     }
 }
