@@ -16,6 +16,14 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     private var lastTrackedPosition: CGPoint?
     @Published private(set) var isCapturingStand: Bool = false
     @Published private(set) var standSectorCount: Int = 0
+    @Published private(set) var capturedStandSectors: Set<Int> = []
+    private var standCellByPhotoId: [String: Int] = [:]
+    @Published private(set) var standPitchDeg: Double = 0
+    @Published private(set) var standMovingTooFast = false
+    @Published private(set) var standTrackingLimited = false
+    @Published private(set) var captureWarnings: [CaptureWarning] = []
+    @Published private(set) var suggestedStandPositionLocal: CGPoint?
+    @Published private(set) var standPositionsLocal: [CGPoint] = []
     var zoom: CGFloat = 1.0
 
     let minimumPhotos: Int
@@ -28,6 +36,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     private let structureOriginM: [Double]?
     private let outlineMinXZ: SIMD2<Double>
     private let outlineLocal: [CGPoint]
+    private let floorY: Double?
     private let initialCameraYawDeg: Double?
     private let initialCompassHeadingDeg: Double?
     private let store: RoomPhotoStore
@@ -43,10 +52,43 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     private let walkthroughEnabled: Bool
     private var currentStandId: String? = nil
     private var standYawAtStart: Double = 0
-    private var standCapturedSectors: Set<Int> = []
-    nonisolated(unsafe) private var standTask: Task<Void, Never>?
-    private static let standSectorCount = 12
+    private var standTask: Task<Void, Never>?
+    private var depthSwitchReference: (position: SIMD3<Float>, yawDeg: Double, at: Date)?
+    enum StandRow: CaseIterable {
+        case horizon, up, down, zenith, nadir
+    }
+
+    enum StandInstruction: Equatable {
+        case waitTracking, slowDown, levelPhone, turnSlowly, tiltUp, tiltDownLittle, turnTiltedUp, tiltDown, tiltUpLittle, turnTiltedDown, pointUp, pointDown, done
+    }
+
+    enum CaptureWarning: Equatable {
+        case tooHot, gettingHot, tooDark, nearWall
+    }
+
+    private var standLastSample: (yawDeg: Double, pitchDeg: Double)?
+    private var lightIsDark = false
+    static let darkIntensityBelow = 200.0
+    static let brightIntensityAbove = 350.0
+    static let standWallClearanceM = 0.5
+    static let standMinWallDistanceM = 0.8
+    static let nextStandSpacingM = 2.5
+    static let standGridStepM = 0.5
+    static let nextStandArrivedM = 0.6
+    static let standHorizonCells = 12
+    static let standTiltedCells = 6
+    static let standSectorTotal = standHorizonCells + 2 * standTiltedCells + 2
     private static let standSectorDeg = 30.0
+    private static let standTiltedSectorDeg = 60.0
+    static let standLevelLimitDeg = 15.0
+    static let standTiltMinDeg = 30.0
+    static let standTiltMaxDeg = 60.0
+    static let standPoleDeg = 72.0
+    static let standMaxStepDeg = 5.0
+    static let maximumStandPhotos = standSectorTotal * 4
+    static let depthSwitchJumpM: Float = 0.3
+    static let depthSwitchJumpDeg = 10.0
+    static let depthSwitchWindowSeconds = 3.0
 
     var session: ARSession { arSession }
     var coverage: RoomPhotoCoverage { coverageTracker.coverage }
@@ -63,8 +105,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         store: RoomPhotoStore,
         minimumPhotos: Int = 15,
         maximumPhotos: Int = 60,
-        walkthroughEnabled: Bool = false,
-        initialWorldMap: ARWorldMap? = nil
+        walkthroughEnabled: Bool = false
     ) {
         self.walkthroughEnabled = walkthroughEnabled
         self.arSession = arSession
@@ -78,6 +119,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         self.minimumPhotos = minimumPhotos
         self.maximumPhotos = maximumPhotos
 
+        self.floorY = room.floors.first.map { Double($0.transform.columns.3.y) }
         if let floor = room.floors.first {
             let transform = floor.transform
             let corners = floor.polygonCorners
@@ -109,9 +151,122 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         loadExistingPhotos()
         loadExistingWalk()
         if walkthroughEnabled {
-            enableDepthIfAvailable(initialWorldMap: initialWorldMap)
+            enableDepthIfAvailable()
         }
+        refreshStandSuggestion()
         startWalkSampling()
+    }
+
+    private func updateCaptureWarnings() {
+        var warnings: [CaptureWarning] = []
+        switch ProcessInfo.processInfo.thermalState {
+        case .critical: warnings.append(.tooHot)
+        case .serious: warnings.append(.gettingHot)
+        default: break
+        }
+        if let intensity = arSession.currentFrame?.lightEstimate?.ambientIntensity {
+            lightIsDark = Self.isDark(ambientIntensity: Double(intensity), wasDark: lightIsDark)
+        }
+        if lightIsDark { warnings.append(.tooDark) }
+        if walkthroughEnabled, currentStandId != nil, let position = livePositionLocal(), outlineLocal.count >= 3,
+           Self.distanceToOutline(position, outline: outlineLocal) < Self.standWallClearanceM {
+            warnings.append(.nearWall)
+        }
+        if warnings != captureWarnings { captureWarnings = warnings }
+    }
+
+    private func refreshStandSuggestion() {
+        guard walkthroughEnabled else { return }
+        var sums: [String: (x: Double, z: Double, count: Int)] = [:]
+        for photo in photos {
+            guard let standId = photo.standId, photo.positionM.count >= 2 else { continue }
+            let current = sums[standId] ?? (0, 0, 0)
+            sums[standId] = (current.x + photo.positionM[0], current.z + photo.positionM[1], current.count + 1)
+        }
+        let centers = sums.values.sorted { $0.x < $1.x }.map { CGPoint(x: $0.x / Double($0.count), y: $0.z / Double($0.count)) }
+        standPositionsLocal = centers
+        suggestedStandPositionLocal = Self.suggestNextStand(outline: outlineLocal, stands: centers)
+    }
+
+    func nextStandGuide() -> (distanceM: Double, relativeDeg: Double)? {
+        guard let target = suggestedStandPositionLocal,
+              let camera = arSession.currentFrame?.camera,
+              Self.isTrackingNormal(camera.trackingState) else { return nil }
+        let t = camera.transform
+        let dx = Double(target.x) - (Double(t.columns.3.x) - outlineMinXZ.x)
+        let dz = Double(target.y) - (Double(t.columns.3.z) - outlineMinXZ.y)
+        let fx = -Double(t.columns.2.x)
+        let fz = -Double(t.columns.2.z)
+        let relative = atan2(fx * dz - fz * dx, fx * dx + fz * dz) * 180 / .pi
+        return (sqrt(dx * dx + dz * dz), relative)
+    }
+
+    static func isDark(ambientIntensity: Double, wasDark: Bool) -> Bool {
+        wasDark ? ambientIntensity < brightIntensityAbove : ambientIntensity < darkIntensityBelow
+    }
+
+    static func distanceToOutline(_ p: CGPoint, outline: [CGPoint]) -> Double {
+        guard outline.count >= 2 else { return .infinity }
+        var best = Double.infinity
+        for i in 0..<outline.count {
+            let a = outline[i]
+            let b = outline[(i + 1) % outline.count]
+            let ex = b.x - a.x
+            let ez = b.y - a.y
+            let lengthSquared = ex * ex + ez * ez
+            var u = lengthSquared > 0 ? ((p.x - a.x) * ex + (p.y - a.y) * ez) / lengthSquared : 0
+            u = max(0, min(1, u))
+            let cx = a.x + ex * u - p.x
+            let cz = a.y + ez * u - p.y
+            best = min(best, Double(sqrt(cx * cx + cz * cz)))
+        }
+        return best
+    }
+
+    static func isInside(_ p: CGPoint, outline: [CGPoint]) -> Bool {
+        var inside = false
+        var j = outline.count - 1
+        for i in 0..<outline.count {
+            let a = outline[i]
+            let b = outline[j]
+            if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+                inside.toggle()
+            }
+            j = i
+        }
+        return inside
+    }
+
+    static func suggestNextStand(outline: [CGPoint], stands: [CGPoint]) -> CGPoint? {
+        guard outline.count >= 3 else { return nil }
+        let minX = outline.map(\.x).min() ?? 0
+        let maxX = outline.map(\.x).max() ?? 0
+        let minZ = outline.map(\.y).min() ?? 0
+        let maxZ = outline.map(\.y).max() ?? 0
+        var best: CGPoint?
+        var bestScore = -Double.infinity
+        var x = minX + standGridStepM / 2
+        while x < maxX {
+            var z = minZ + standGridStepM / 2
+            while z < maxZ {
+                let p = CGPoint(x: x, y: z)
+                if isInside(p, outline: outline) {
+                    let wallDistance = distanceToOutline(p, outline: outline)
+                    if wallDistance >= standMinWallDistanceM {
+                        let nearestStand = stands.map { Double(hypot($0.x - p.x, $0.y - p.y)) }.min() ?? 0
+                        let score = stands.isEmpty ? wallDistance : nearestStand
+                        if score > bestScore {
+                            bestScore = score
+                            best = p
+                        }
+                    }
+                }
+                z += standGridStepM
+            }
+            x += standGridStepM
+        }
+        if !stands.isEmpty && bestScore < nextStandSpacingM { return nil }
+        return best
     }
 
     var finishCoverage: RoomPhotoFinishCoverage {
@@ -139,6 +294,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     }
 
     func stopWalkSampling() {
+        stopStand()
         walkSamplingTask?.cancel()
         walkSamplingTask = nil
         saveWalkPaths()
@@ -155,6 +311,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     }
 
     private func sampleWalkPosition() {
+        updateCaptureWarnings()
         guard let camera = arSession.currentFrame?.camera else { return }
         let limited = !Self.isTrackingNormal(camera.trackingState)
         if isTrackingLimited != limited {
@@ -169,6 +326,9 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         let sideways = Self.isHeldSideways(Self.imageOrientation(camera.transform))
         if isHeldSideways != sideways {
             isHeldSideways = sideways
+        }
+        if !limited {
+            checkDepthSwitchJump(camera.transform)
         }
         guard !limited, let position = livePositionLocal() else { return }
         let before = coverageTracker.coveredCellCount
@@ -223,37 +383,50 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     }
 
     var isMinimumReached: Bool { photos.count >= minimumPhotos }
-    var isMaximumReached: Bool { photos.count >= maximumPhotos }
+    var wallPhotoCount: Int { photos.filter { $0.standId == nil }.count }
+    var standPhotoCount: Int { photos.count - wallPhotoCount }
+    var isMaximumReached: Bool { wallPhotoCount >= maximumPhotos }
+    var isStandBudgetReached: Bool { standPhotoCount >= Self.maximumStandPhotos }
     var roomLocalPhotoCount: Int { photos.count }
 
-    func capturePhoto() async {
-        guard !isCapturing else { return }
-        guard photos.count < maximumPhotos else {
-            lastError = "You have taken the maximum number of photos for this room."
-            return
+    @discardableResult
+    func capturePhoto() async -> Bool {
+        guard !isCapturing else { return false }
+        if currentStandId == nil {
+            guard !isMaximumReached else {
+                lastError = "You have taken the maximum number of photos for this room."
+                return false
+            }
+        } else {
+            guard !isStandBudgetReached else {
+                lastError = "You have taken the maximum number of stand photos for this room."
+                return false
+            }
         }
         isCapturing = true
         defer { isCapturing = false }
 
         guard let frame = arSession.currentFrame else {
             lastError = "The camera is not ready yet. Try again in a moment."
-            return
+            return false
         }
 
         let pixelBuffer = frame.capturedImage
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else {
             lastError = "Could not read the camera frame."
-            return
+            return false
         }
-        let rawImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: Self.imageOrientation(frame.camera.transform))
+        let orientation = Self.imageOrientation(frame.camera.transform)
+        let rawImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: orientation)
         let effectiveZoom = max(1.0, min(2.0, Double(zoom)))
         let image = Self.crop(rawImage, toZoom: effectiveZoom)
 
-        let croppedSize = image.size
+        let cropRawWidth = image.cgImage?.width ?? cgImage.width
+        let cropRawHeight = image.cgImage?.height ?? cgImage.height
         guard let encoded = Self.downsampleAndEncode(image) else {
             lastError = "Could not encode the photo."
-            return
+            return false
         }
         let jpegData = encoded.data
         let jpegSize = encoded.size
@@ -278,21 +451,30 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         let localTransform = Self.localCameraTransform(
             frame.camera.transform,
             offsetX: outlineMinXZ.x,
+            offsetY: floorY ?? 0,
             offsetZ: outlineMinXZ.y
         )
+        let rawIntrinsics = frame.camera.intrinsics
+        let rawWidth = Int(frame.camera.imageResolution.width)
+        let rawHeight = Int(frame.camera.imageResolution.height)
         let jpegIntrinsics = Self.jpegIntrinsics(
-            camera: frame.camera,
-            rawWidth: Int(frame.camera.imageResolution.width),
-            rawHeight: Int(frame.camera.imageResolution.height),
-            cropWidth: Int(croppedSize.width),
-            cropHeight: Int(croppedSize.height),
+            fx: Double(rawIntrinsics[0][0]),
+            fy: Double(rawIntrinsics[1][1]),
+            cx: Double(rawIntrinsics[2][0]),
+            cy: Double(rawIntrinsics[2][1]),
+            rawWidth: rawWidth,
+            rawHeight: rawHeight,
+            cropWidth: cropRawWidth,
+            cropHeight: cropRawHeight,
             jpegWidth: Int(jpegSize.width),
-            jpegHeight: Int(jpegSize.height)
+            jpegHeight: Int(jpegSize.height),
+            orientation: orientation
         )
 
         var depthFile: String? = nil
         var depthWidth: Int? = nil
         var depthHeight: Int? = nil
+        var depthIntrinsics: [Double]? = nil
         if standSnapshot != nil, let sceneDepth = frame.sceneDepth {
             if let extracted = Self.extractDepthData(sceneDepth) {
                 do {
@@ -300,6 +482,16 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
                     depthFile = "\(localId).depth"
                     depthWidth = extracted.width
                     depthHeight = extracted.height
+                    depthIntrinsics = Self.depthIntrinsics(
+                        fx: Double(rawIntrinsics[0][0]),
+                        fy: Double(rawIntrinsics[1][1]),
+                        cx: Double(rawIntrinsics[2][0]),
+                        cy: Double(rawIntrinsics[2][1]),
+                        rawWidth: rawWidth,
+                        rawHeight: rawHeight,
+                        depthWidth: extracted.width,
+                        depthHeight: extracted.height
+                    )
                 } catch {
                     DiagnosticsLog.shared.record("stand depth write failed: \(error.localizedDescription)", category: .error)
                 }
@@ -320,7 +512,8 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
             intrinsics: standSnapshot != nil ? jpegIntrinsics : nil,
             depthFile: depthFile,
             depthWidth: depthWidth,
-            depthHeight: depthHeight
+            depthHeight: depthHeight,
+            depthIntrinsics: depthIntrinsics
         )
 
         do {
@@ -339,42 +532,79 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
             photoCount = photos.count
             coveragePercent = coverageTracker.overallCoverage
             lastError = nil
+            return true
         } catch {
             lastError = "Could not save the photo: \(error.localizedDescription)"
+            return false
         }
     }
 
-    func enableDepthIfAvailable(initialWorldMap: ARWorldMap?) {
+    func enableDepthIfAvailable() {
         guard walkthroughEnabled else { return }
         guard ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) else {
             DiagnosticsLog.shared.record("sceneDepth not supported on this device; stand depth disabled", category: .info)
             return
         }
+        if let transform = arSession.currentFrame?.camera.transform {
+            depthSwitchReference = (
+                position: SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z),
+                yawDeg: Self.yawDeg(transform),
+                at: Date()
+            )
+        }
         let configuration = ARWorldTrackingConfiguration()
         configuration.frameSemantics.insert(.sceneDepth)
-        if let map = initialWorldMap {
-            configuration.initialWorldMap = map
-        }
         arSession.run(configuration, options: [])
+        DiagnosticsLog.shared.record("Photo360: depth switched on for \(roomKey)", category: .info)
+    }
+
+    private func checkDepthSwitchJump(_ transform: simd_float4x4) {
+        guard let reference = depthSwitchReference else { return }
+        let elapsed = Date().timeIntervalSince(reference.at)
+        let position = SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
+        let moved = simd_distance(position, reference.position)
+        var turned = abs(Self.yawDeg(transform) - reference.yawDeg).truncatingRemainder(dividingBy: 360)
+        if turned > 180 { turned = 360 - turned }
+        if moved > Self.depthSwitchJumpM || turned > Self.depthSwitchJumpDeg {
+            DiagnosticsLog.shared.record(
+                String(format: "Photo360: position jumped after the depth switch for %@: %.2f m, %.0f deg in %.1f s", roomKey, moved, turned, elapsed),
+                category: .error
+            )
+            depthSwitchReference = nil
+        } else if elapsed > Self.depthSwitchWindowSeconds {
+            DiagnosticsLog.shared.record(
+                String(format: "Photo360: no jump after the depth switch for %@ (%.2f m, %.0f deg)", roomKey, moved, turned),
+                category: .info
+            )
+            depthSwitchReference = nil
+        }
     }
 
     func startStand() {
         guard walkthroughEnabled else { return }
         guard !isCapturingStand else { return }
+        guard !isStandBudgetReached else {
+            lastError = "You have taken the maximum number of stand photos for this room."
+            return
+        }
         currentStandId = UUID().uuidString
-        standCapturedSectors = []
+        capturedStandSectors = []
+        standCellByPhotoId = [:]
         standSectorCount = 0
+        standLastSample = nil
+        standMovingTooFast = false
+        standTrackingLimited = false
         isCapturingStand = true
         standYawAtStart = Self.currentNormalizedYaw(arSession)
         standTask = Task { [weak self] in
             guard let self else { return }
             await self.captureStandSectorIfNew()
-            while !Task.isCancelled && self.standCapturedSectors.count < Self.standSectorCount {
+            while !Task.isCancelled && self.capturedStandSectors.count < Self.standSectorTotal {
                 try? await Task.sleep(nanoseconds: 150_000_000)
                 if Task.isCancelled { return }
                 await self.captureStandSectorIfNew()
             }
-            if !Task.isCancelled && self.standCapturedSectors.count >= Self.standSectorCount {
+            if !Task.isCancelled && self.capturedStandSectors.count >= Self.standSectorTotal {
                 self.stopStand()
             }
         }
@@ -387,22 +617,108 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
             isCapturingStand = false
         }
         currentStandId = nil
+        refreshStandSuggestion()
     }
 
     private func captureStandSectorIfNew() async {
         guard isCapturingStand, !isCapturing else { return }
-        if photos.count >= maximumPhotos {
+        if isStandBudgetReached {
             stopStand()
             return
         }
+        guard let camera = arSession.currentFrame?.camera else { return }
+        let trackingOK = Self.isTrackingNormal(camera.trackingState)
+        if standTrackingLimited == trackingOK { standTrackingLimited = !trackingOK }
+        guard trackingOK else { return }
         let yaw = Self.currentNormalizedYaw(arSession)
-        var delta = (yaw - standYawAtStart).truncatingRemainder(dividingBy: 360)
+        let pitch = Self.pitchDeg(camera.transform)
+        if abs(pitch - standPitchDeg) >= 2 { standPitchDeg = pitch }
+        let previous = standLastSample
+        standLastSample = (yaw, pitch)
+        let tooFast = previous.map { Self.standStepTooLarge(from: $0, toYawDeg: yaw, toPitchDeg: pitch) } ?? true
+        if standMovingTooFast != (tooFast && previous != nil) { standMovingTooFast = tooFast && previous != nil }
+        if tooFast { return }
+        guard let cell = Self.standCell(yawDeg: yaw, startYawDeg: standYawAtStart, pitchDeg: pitch) else { return }
+        if capturedStandSectors.contains(cell) { return }
+        let captured = await capturePhoto()
+        guard captured, isCapturingStand else { return }
+        capturedStandSectors.insert(cell)
+        if let photoId = photos.last?.localId {
+            standCellByPhotoId[photoId] = cell
+        }
+        standSectorCount = capturedStandSectors.count
+    }
+
+    var standInstruction: StandInstruction {
+        if standTrackingLimited { return .waitTracking }
+        if standMovingTooFast { return .slowDown }
+        return Self.standInstruction(captured: capturedStandSectors, pitchDeg: standPitchDeg)
+    }
+
+    static func standStepTooLarge(from previous: (yawDeg: Double, pitchDeg: Double), toYawDeg: Double, toPitchDeg: Double) -> Bool {
+        if abs(toPitchDeg) >= standPoleDeg && abs(previous.pitchDeg) >= standPoleDeg {
+            return abs(toPitchDeg - previous.pitchDeg) > standMaxStepDeg
+        }
+        var turned = abs(toYawDeg - previous.yawDeg).truncatingRemainder(dividingBy: 360)
+        if turned > 180 { turned = 360 - turned }
+        turned *= cos(toPitchDeg * .pi / 180)
+        return turned > standMaxStepDeg || abs(toPitchDeg - previous.pitchDeg) > standMaxStepDeg
+    }
+
+    static func standSector(yawDeg: Double, startYawDeg: Double) -> Int {
+        var delta = (yawDeg - startYawDeg).truncatingRemainder(dividingBy: 360)
         if delta < 0 { delta += 360 }
-        let sector = Int(floor(delta / Self.standSectorDeg)) % Self.standSectorCount
-        if standCapturedSectors.contains(sector) { return }
-        standCapturedSectors.insert(sector)
-        standSectorCount = standCapturedSectors.count
-        await capturePhoto()
+        return Int(floor(delta / standSectorDeg)) % standHorizonCells
+    }
+
+    static func standCells(_ row: StandRow) -> Range<Int> {
+        switch row {
+        case .horizon: return 0..<standHorizonCells
+        case .up: return standHorizonCells..<(standHorizonCells + standTiltedCells)
+        case .down: return (standHorizonCells + standTiltedCells)..<(standHorizonCells + 2 * standTiltedCells)
+        case .zenith: return (standSectorTotal - 2)..<(standSectorTotal - 1)
+        case .nadir: return (standSectorTotal - 1)..<standSectorTotal
+        }
+    }
+
+    static func standCell(yawDeg: Double, startYawDeg: Double, pitchDeg: Double) -> Int? {
+        if pitchDeg >= standPoleDeg { return standCells(.zenith).lowerBound }
+        if pitchDeg <= -standPoleDeg { return standCells(.nadir).lowerBound }
+        var delta = (yawDeg - startYawDeg).truncatingRemainder(dividingBy: 360)
+        if delta < 0 { delta += 360 }
+        if abs(pitchDeg) <= standLevelLimitDeg {
+            return standSector(yawDeg: yawDeg, startYawDeg: startYawDeg)
+        }
+        let tilted = Int(floor(delta / standTiltedSectorDeg)) % standTiltedCells
+        if pitchDeg >= standTiltMinDeg && pitchDeg <= standTiltMaxDeg {
+            return standCells(.up).lowerBound + tilted
+        }
+        if pitchDeg <= -standTiltMinDeg && pitchDeg >= -standTiltMaxDeg {
+            return standCells(.down).lowerBound + tilted
+        }
+        return nil
+    }
+
+    static func standInstruction(captured: Set<Int>, pitchDeg: Double) -> StandInstruction {
+        guard let row = StandRow.allCases.first(where: { !standCells($0).allSatisfy(captured.contains) }) else {
+            return .done
+        }
+        switch row {
+        case .horizon:
+            return abs(pitchDeg) > standLevelLimitDeg ? .levelPhone : .turnSlowly
+        case .up:
+            if pitchDeg < standTiltMinDeg { return .tiltUp }
+            if pitchDeg > standTiltMaxDeg { return .tiltDownLittle }
+            return .turnTiltedUp
+        case .down:
+            if pitchDeg > -standTiltMinDeg { return .tiltDown }
+            if pitchDeg < -standTiltMaxDeg { return .tiltUpLittle }
+            return .turnTiltedDown
+        case .zenith:
+            return .pointUp
+        case .nadir:
+            return .pointDown
+        }
     }
 
     private static func currentNormalizedYaw(_ session: ARSession) -> Double {
@@ -413,12 +729,13 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         return deg
     }
 
-    private static func localCameraTransform(_ transform: simd_float4x4, offsetX: Double, offsetZ: Double) -> [Double] {
+    static func localCameraTransform(_ transform: simd_float4x4, offsetX: Double, offsetY: Double, offsetZ: Double) -> [Double] {
         var result: [Double] = []
         for col in 0..<4 {
             for row in 0..<4 {
                 var value = Double(transform[col][row])
                 if col == 3 && row == 0 { value -= offsetX }
+                else if col == 3 && row == 1 { value -= offsetY }
                 else if col == 3 && row == 2 { value -= offsetZ }
                 result.append(value)
             }
@@ -426,39 +743,65 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         return result
     }
 
-    private static func jpegIntrinsics(
-        camera: ARCamera,
+    static func jpegIntrinsics(
+        fx: Double,
+        fy: Double,
+        cx: Double,
+        cy: Double,
         rawWidth: Int,
         rawHeight: Int,
         cropWidth: Int,
         cropHeight: Int,
         jpegWidth: Int,
-        jpegHeight: Int
+        jpegHeight: Int,
+        orientation: UIImage.Orientation
     ) -> [Double]? {
         guard rawWidth > 0, rawHeight > 0, cropWidth > 0, cropHeight > 0, jpegWidth > 0, jpegHeight > 0 else {
             return nil
         }
-        let intrinsics = camera.intrinsics
-        let fx = Double(intrinsics[0][0])
-        let fy = Double(intrinsics[1][1])
-        let cx = Double(intrinsics[2][0])
-        let cy = Double(intrinsics[2][1])
-        let cropX = (Double(rawWidth) - Double(cropWidth)) / 2.0
-        let cropY = (Double(rawHeight) - Double(cropHeight)) / 2.0
-        let cxC = cx - cropX
-        let cyC = cy - cropY
-        let fxD = fy
-        let fyD = fx
-        let cxD = Double(cropHeight) - cyC
-        let cyD = cxC
-        let scaleX = Double(jpegWidth) / Double(cropHeight)
-        let scaleY = Double(jpegHeight) / Double(cropWidth)
-        return [fxD * scaleX, fyD * scaleY, cxD * scaleX, cyD * scaleY]
+        let cw = Double(cropWidth)
+        let ch = Double(cropHeight)
+        let cxC = cx - (Double(rawWidth) - cw) / 2.0
+        let cyC = cy - (Double(rawHeight) - ch) / 2.0
+        let jw = Double(jpegWidth)
+        let jh = Double(jpegHeight)
+        switch orientation {
+        case .up, .upMirrored:
+            return [fx * jw / cw, fy * jh / ch, cxC * jw / cw, cyC * jh / ch]
+        case .down, .downMirrored:
+            return [fx * jw / cw, fy * jh / ch, (cw - cxC) * jw / cw, (ch - cyC) * jh / ch]
+        case .right, .rightMirrored:
+            return [fy * jw / ch, fx * jh / cw, (ch - cyC) * jw / ch, cxC * jh / cw]
+        case .left, .leftMirrored:
+            return [fy * jw / ch, fx * jh / cw, cyC * jw / ch, (cw - cxC) * jh / cw]
+        @unknown default:
+            return nil
+        }
+    }
+
+    static func depthIntrinsics(
+        fx: Double,
+        fy: Double,
+        cx: Double,
+        cy: Double,
+        rawWidth: Int,
+        rawHeight: Int,
+        depthWidth: Int,
+        depthHeight: Int
+    ) -> [Double]? {
+        guard rawWidth > 0, rawHeight > 0, depthWidth > 0, depthHeight > 0 else { return nil }
+        let sx = Double(depthWidth) / Double(rawWidth)
+        let sy = Double(depthHeight) / Double(rawHeight)
+        return [fx * sx, fy * sy, cx * sx, cy * sy]
     }
 
     private static func extractDepthData(_ sceneDepth: ARDepthData) -> (data: Data, width: Int, height: Int)? {
         guard let confidence = sceneDepth.confidenceMap else { return nil }
         let depthMap = sceneDepth.depthMap
+        guard CVPixelBufferGetPixelFormatType(depthMap) == kCVPixelFormatType_DepthFloat32,
+              CVPixelBufferGetPixelFormatType(confidence) == kCVPixelFormatType_OneComponent8 else {
+            return nil
+        }
         let width = CVPixelBufferGetWidth(depthMap)
         let height = CVPixelBufferGetHeight(depthMap)
         guard width > 0, height > 0,
@@ -526,9 +869,16 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
             )
             photos.removeAll { $0.localId == metadata.localId }
             thumbnailCache.removeValue(forKey: metadata.localId)
+            if let cell = standCellByPhotoId.removeValue(forKey: metadata.localId) {
+                capturedStandSectors.remove(cell)
+                standSectorCount = capturedStandSectors.count
+            }
             rebuildCoverage()
             photoCount = photos.count
             coveragePercent = coverageTracker.overallCoverage
+            if metadata.standId != nil {
+                refreshStandSuggestion()
+            }
             lastError = nil
         } catch {
             lastError = "Could not delete the photo: \(error.localizedDescription)"
@@ -630,7 +980,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         return upAlongImageX <= 0 ? .right : .left
     }
 
-    private static func pitchDeg(_ transform: simd_float4x4) -> Double {
+    static func pitchDeg(_ transform: simd_float4x4) -> Double {
         let forward = transform.columns.2
         let y = max(-1.0, min(1.0, Double(-forward.y)))
         return asin(y) * 180.0 / .pi

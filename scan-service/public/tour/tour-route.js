@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var MODES = { PLAN: 'plan', PHOTOS: 'photos', DOLLHOUSE: 'dollhouse' };
+  var MODES = { PLAN: 'plan', PHOTOS: 'photos', DOLLHOUSE: 'dollhouse', STAND: 'stand' };
 
   function parse(hash) {
     var raw = String(hash || '').replace(/^#/, '').replace(/^\//, '');
@@ -21,6 +21,15 @@
     if (parts[0] === 'dollhouse') {
       return { mode: MODES.DOLLHOUSE };
     }
+    if (parts[0] === 'stand') {
+      var sid = parts[1] ? decodeURIComponent(parts[1]) : '';
+      var pi = parseInt(parts[2], 10);
+      return {
+        mode: MODES.STAND,
+        standId: sid,
+        photoIndex: isFinite(pi) && pi >= 0 ? pi : 0
+      };
+    }
     return { mode: MODES.PLAN };
   }
 
@@ -30,6 +39,9 @@
     }
     if (s.mode === MODES.DOLLHOUSE) {
       return '#/dollhouse';
+    }
+    if (s.mode === MODES.STAND) {
+      return '#/stand/' + encodeURIComponent(s.standId || '') + '/' + (s.photoIndex || 0);
     }
     return '#/plan';
   }

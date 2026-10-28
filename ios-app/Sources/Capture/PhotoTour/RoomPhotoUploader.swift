@@ -396,6 +396,18 @@ enum RoomPhotoUploader {
             return "photo file missing on the phone: \(error.localizedDescription)"
         }
 
+        var depthData: Data? = nil
+        if photo.depthFile != nil {
+            do {
+                depthData = try store.loadDepth(localId: photo.localId, captureGroupId: batch.captureGroupId, roomKey: batch.roomKey)
+            } catch {
+                DiagnosticsLog.shared.record(
+                    "Photo360: depth file missing for \(photo.localId): \(error.localizedDescription)",
+                    category: .error
+                )
+            }
+        }
+
         do {
             _ = try await client.uploadPhoto360(
                 sessionId: session.id,
@@ -406,6 +418,13 @@ enum RoomPhotoUploader {
                 headingDeg: photo.headingDeg,
                 zoom: photo.zoom,
                 pitchDeg: photo.pitchDeg,
+                standId: photo.standId,
+                cameraTransform: photo.cameraTransform,
+                intrinsics: photo.intrinsics,
+                depthData: depthData,
+                depthWidth: depthData != nil ? photo.depthWidth : nil,
+                depthHeight: depthData != nil ? photo.depthHeight : nil,
+                depthIntrinsics: depthData != nil ? photo.depthIntrinsics : nil,
                 idempotencyKey: photo.localId
             )
             return nil

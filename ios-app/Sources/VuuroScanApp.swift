@@ -408,6 +408,7 @@ private struct RoomCaptureFlowStep: View {
     @State private var showFloorPrompt = false
     @State private var showHowToScan = false
     @State private var cameraDenied = CameraAccess.isDenied
+    @AppStorage("walkthroughCaptureEnabled") private var walkthroughCaptureEnabled = false
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
@@ -863,7 +864,8 @@ private struct RoomCaptureFlowStep: View {
             structureOriginM: origin,
             initialCompassHeadingDeg: heading,
             initialCameraYawDeg: cameraYaw,
-            store: .shared
+            store: .shared,
+            walkthroughEnabled: walkthroughCaptureEnabled
         )
         photoCaptureContext = PhotoCaptureContext(coordinator: photoCoordinator)
     }

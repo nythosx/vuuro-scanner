@@ -135,4 +135,74 @@ final class RoomPhotoStoreTests: XCTestCase {
         XCTAssertEqual(try store.allBatches(captureGroupId: "walk-1"), [])
         XCTAssertEqual(try store.allBatches(captureGroupId: "walk-2").count, 1)
     }
+
+    func testStandMetadataRoundTrips() throws {
+        let store = RoomPhotoStore(rootDirectory: tempDir)
+        let metadata = RoomPhotoMetadata(
+            localId: "stand-photo",
+            capturedAt: Date(timeIntervalSince1970: 1_000_000),
+            positionM: [1.25, 2.5],
+            headingDeg: 90,
+            pitchDeg: -5,
+            zoom: 1.5,
+            standId: "stand-abc",
+            cameraTransform: Array(repeating: 0.5, count: 16),
+            intrinsics: [800.5, 800.5, 320.0, 240.0],
+            depthFile: "stand-photo.depth",
+            depthWidth: 256,
+            depthHeight: 192
+        )
+        try store.savePhoto(
+            Data([0xFF, 0xD8, 0xFF]),
+            metadata: metadata,
+            captureGroupId: "walk-1",
+            roomKey: "room-a",
+            structureOriginM: nil
+        )
+        let manifest = try store.loadManifest(captureGroupId: "walk-1", roomKey: "room-a")
+        XCTAssertEqual(manifest.photos.count, 1)
+        let loaded = manifest.photos[0]
+        XCTAssertEqual(loaded.standId, "stand-abc")
+        XCTAssertEqual(loaded.cameraTransform, Array(repeating: 0.5, count: 16))
+        XCTAssertEqual(loaded.intrinsics, [800.5, 800.5, 320.0, 240.0])
+        XCTAssertEqual(loaded.depthFile, "stand-photo.depth")
+        XCTAssertEqual(loaded.depthWidth, 256)
+        XCTAssertEqual(loaded.depthHeight, 192)
+    }
+
+    func testOldManifestWithoutStandFieldsStillLoads() throws {
+        let store = RoomPhotoStore(rootDirectory: tempDir)
+        let metadata = RoomPhotoMetadata(
+            localId: "legacy-photo",
+            capturedAt: Date(timeIntervalSince1970: 1_000_000),
+            positionM: [1.0, 2.0],
+            headingDeg: 45,
+            pitchDeg: 0
+        )
+        try store.savePhoto(
+            Data([0xFF, 0xD8, 0xFF]),
+            metadata: metadata,
+            captureGroupId: "walk-1",
+            roomKey: "room-a",
+            structureOriginM: nil
+        )
+        let manifest = try store.loadManifest(captureGroupId: "walk-1", roomKey: "room-a")
+        let loaded = manifest.photos[0]
+        XCTAssertNil(loaded.standId)
+        XCTAssertNil(loaded.cameraTransform)
+        XCTAssertNil(loaded.intrinsics)
+        XCTAssertNil(loaded.depthFile)
+        XCTAssertNil(loaded.depthWidth)
+        XCTAssertNil(loaded.depthHeight)
+        XCTAssertEqual(loaded.positionM, [1.0, 2.0])
+        XCTAssertEqual(loaded.headingDeg, 45)
+    }
+
+    func testStandDepthRoundTrip() throws {
+        let store = RoomPhotoStore(rootDirectory: tempDir)
+        let depthBytes = Data([0x01, 0x00, 0x02, 0x00, 0x03, 0x00])
+        try store.saveDepth(depthBytes, localId: "depth-photo", captureGroupId: "walk-1", roomKey: "room-a")
+        let loaded = try store.loadDepth(localId: "depth-photo", captureGroupId: "walk-1", roomKey: "room-a")
+        XCTAssertEqual(loaded, depthBytes)
+    }
 }

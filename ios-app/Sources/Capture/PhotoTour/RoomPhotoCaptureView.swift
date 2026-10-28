@@ -7,6 +7,8 @@ struct RoomPhotoCaptureOverlay: View {
     let onFinish: () -> Void
 
     @AppStorage("photoTour.onboardingSeen.v2") private var onboardingSeen = false
+    @AppStorage("photoTour.standIntroSeen.v1") private var standIntroSeen = false
+    @State private var showStandIntro = false
     @AppStorage("walkthroughCaptureEnabled") private var walkthroughCaptureEnabled = false
     @State private var showOnboarding = false
     @State private var showSkipConfirmation = false
@@ -79,10 +81,16 @@ struct RoomPhotoCaptureOverlay: View {
                 onboardingOverlay
                     .transition(.opacity)
             }
+
+            if showStandIntro {
+                standIntroOverlay
+                    .transition(.opacity)
+            }
         }
         .background(Color.black)
         .animation(.easeOut(duration: 0.25), value: showGallery)
         .animation(.easeOut(duration: 0.25), value: showOnboarding)
+        .animation(.easeOut(duration: 0.25), value: showStandIntro)
         .animation(.easeOut(duration: 0.3), value: toastMessage)
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
@@ -95,6 +103,7 @@ struct RoomPhotoCaptureOverlay: View {
         }
         .onDisappear {
             toastTask?.cancel()
+            coordinator.stopStand()
         }
         .alert("Skip photos for this room?", isPresented: $showSkipConfirmation) {
             Button("Skip", role: .destructive, action: onSkip)
@@ -245,6 +254,7 @@ struct RoomPhotoCaptureOverlay: View {
                 infoRow
                     .transition(.opacity.combined(with: .offset(y: 10)))
             }
+            captureWarningsView
             walkthroughBanner
             if coordinator.isMaximumReached {
                 photoCapBanner
@@ -365,7 +375,9 @@ struct RoomPhotoCaptureOverlay: View {
                 compact: compact,
                 positionReliable: !coordinator.isTrackingLimited,
                 chromeless: true,
-                coveredWallColor: .white
+                coveredWallColor: .white,
+                standSpots: walkthroughCaptureEnabled ? coordinator.standPositionsLocal : [],
+                suggestedSpot: walkthroughCaptureEnabled && !coordinator.isCapturingStand ? coordinator.suggestedStandPositionLocal : nil
             )
         }
         .allowsHitTesting(false)
@@ -615,14 +627,40 @@ struct RoomPhotoCaptureOverlay: View {
             if coordinator.isCapturingStand {
                 standProgressBanner
             } else {
-                startStandButton
+                VStack(spacing: 8) {
+                    nextSpotPill
+                    startStandButton
+                }
             }
         }
     }
 
     private var startStandButton: some View {
+        HStack(spacing: 8) {
+            startStandMainButton
+            Button {
+                showStandIntro = true
+            } label: {
+                Image(systemName: "questionmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 32, height: 32)
+                    .background(.ultraThinMaterial, in: Circle())
+                    .background(Color.white.opacity(0.12), in: Circle())
+            }
+            .accessibilityLabel(Text(vuuroLocalized("How to take a 360 spot")))
+            .accessibilityIdentifier("photoTour.standHelp")
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var startStandMainButton: some View {
         Button {
-            coordinator.startStand()
+            if standIntroSeen {
+                coordinator.startStand()
+            } else {
+                showStandIntro = true
+            }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "figure.walk")
@@ -641,23 +679,24 @@ struct RoomPhotoCaptureOverlay: View {
     }
 
     private var standProgressBanner: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                Circle()
-                    .stroke(Color.white.opacity(0.2), lineWidth: 3)
-                    .frame(width: 26, height: 26)
-                Circle()
-                    .trim(from: 0, to: CGFloat(coordinator.standSectorCount) / 12.0)
-                    .stroke(VuuroColor.lime, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .frame(width: 26, height: 26)
-                    .rotationEffect(.degrees(-90))
-                Text("\(coordinator.standSectorCount)")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white)
+        HStack(spacing: 12) {
+            standRings
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Image(systemName: Self.standInstructionSymbol(coordinator.standInstruction))
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(VuuroColor.lime)
+                    Text(vuuroLocalized(Self.standInstructionKey(coordinator.standInstruction)))
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text(String(format: vuuroLocalized("Shot %lld of %lld"), coordinator.standSectorCount, RoomPhotoCaptureCoordinator.standSectorTotal))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.65))
             }
-            Text(String(format: vuuroLocalized("Stand %lld of 12"), coordinator.standSectorCount))
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("photoTour.standInstruction")
             Spacer(minLength: 0)
             Button {
                 coordinator.stopStand()
@@ -676,6 +715,225 @@ struct RoomPhotoCaptureOverlay: View {
         .padding(.vertical, 10)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
         .background(Color.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    @ViewBuilder
+    private var captureWarningsView: some View {
+        if !coordinator.captureWarnings.isEmpty {
+            VStack(spacing: 6) {
+                ForEach(coordinator.captureWarnings, id: \.self) { warning in
+                    HStack(spacing: 8) {
+                        Image(systemName: Self.warningSymbol(warning))
+                            .font(.system(size: 13, weight: .bold))
+                        Text(vuuroLocalized(Self.warningKey(warning)))
+                            .font(.system(size: 13, weight: .semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .foregroundStyle(warning == .tooHot ? Color.white : Color.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        warning == .tooHot ? Color(red: 0.86, green: 0.2, blue: 0.18) : Color(red: 1.0, green: 0.8, blue: 0.25),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    )
+                    .accessibilityElement(children: .combine)
+                }
+            }
+            .accessibilityIdentifier("photoTour.captureWarnings")
+        }
+    }
+
+    static func warningKey(_ warning: RoomPhotoCaptureCoordinator.CaptureWarning) -> String {
+        switch warning {
+        case .tooHot: return "The phone is too hot. Stop and let it cool down, or tracking will fail."
+        case .gettingHot: return "The phone is getting hot. Take a short break if the picture starts to stutter."
+        case .tooDark: return "It is too dark. Turn on the lights for sharper photos."
+        case .nearWall: return "Too close to a wall for a 360 spot. Step back a little."
+        }
+    }
+
+    static func warningSymbol(_ warning: RoomPhotoCaptureCoordinator.CaptureWarning) -> String {
+        switch warning {
+        case .tooHot, .gettingHot: return "thermometer"
+        case .tooDark: return "lightbulb.fill"
+        case .nearWall: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    @ViewBuilder
+    private var nextSpotPill: some View {
+        if coordinator.suggestedStandPositionLocal != nil {
+            TimelineView(.animation(minimumInterval: 0.2, paused: false)) { _ in
+                if let guide = coordinator.nextStandGuide() {
+                    HStack(spacing: 8) {
+                        if guide.distanceM <= RoomPhotoCaptureCoordinator.nextStandArrivedM {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(VuuroColor.lime)
+                            Text(vuuroLocalized("Good spot. Start the 360 spot here."))
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.white)
+                        } else {
+                            Image(systemName: "location.north.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(VuuroColor.lime)
+                                .rotationEffect(.degrees(guide.relativeDeg))
+                            Text(String(format: vuuroLocalized("Next 360 spot: %.1f m"), guide.distanceM))
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .monospacedDigit()
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .background(Color.black.opacity(0.3), in: Capsule())
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("photoTour.nextSpot")
+                }
+            }
+        }
+    }
+
+    private var standRings: some View {
+        ZStack {
+            standRing(RoomPhotoCaptureCoordinator.standCells(.up), diameter: 44)
+            standRing(RoomPhotoCaptureCoordinator.standCells(.horizon), diameter: 33)
+            standRing(RoomPhotoCaptureCoordinator.standCells(.down), diameter: 22)
+            VStack(spacing: 4) {
+                standPoleDot(RoomPhotoCaptureCoordinator.standCells(.zenith).lowerBound)
+                standPoleDot(RoomPhotoCaptureCoordinator.standCells(.nadir).lowerBound)
+            }
+        }
+        .frame(width: 48, height: 48)
+        .accessibilityHidden(true)
+    }
+
+    private func standRing(_ cells: Range<Int>, diameter: CGFloat) -> some View {
+        let count = CGFloat(cells.count)
+        return ZStack {
+            ForEach(Array(cells.enumerated()), id: \.element) { item in
+                Circle()
+                    .trim(from: CGFloat(item.offset) / count + 0.01, to: CGFloat(item.offset + 1) / count - 0.01)
+                    .stroke(
+                        coordinator.capturedStandSectors.contains(item.element) ? VuuroColor.lime : Color.white.opacity(0.22),
+                        style: StrokeStyle(lineWidth: 3, lineCap: .butt)
+                    )
+                    .frame(width: diameter, height: diameter)
+                    .rotationEffect(.degrees(-90))
+            }
+        }
+    }
+
+    private func standPoleDot(_ cell: Int) -> some View {
+        Circle()
+            .fill(coordinator.capturedStandSectors.contains(cell) ? VuuroColor.lime : Color.white.opacity(0.3))
+            .frame(width: 5, height: 5)
+    }
+
+    static func standInstructionKey(_ instruction: RoomPhotoCaptureCoordinator.StandInstruction) -> String {
+        switch instruction {
+        case .waitTracking: return "Move the phone slowly so it can find its place"
+        case .slowDown: return "Slow down a little"
+        case .levelPhone: return "Hold the phone level, at eye height"
+        case .turnSlowly: return "Turn slowly in place"
+        case .tiltUp: return "Now tilt the phone up"
+        case .tiltDownLittle: return "Tilt down a little"
+        case .turnTiltedUp: return "Keep it tilted up and turn slowly"
+        case .tiltDown: return "Now tilt the phone down"
+        case .tiltUpLittle: return "Tilt up a little"
+        case .turnTiltedDown: return "Keep it tilted down and turn slowly"
+        case .pointUp: return "Point the phone straight up at the ceiling"
+        case .pointDown: return "Point the phone straight down at the floor"
+        case .done: return "This spot is done"
+        }
+    }
+
+    static func standInstructionSymbol(_ instruction: RoomPhotoCaptureCoordinator.StandInstruction) -> String {
+        switch instruction {
+        case .waitTracking: return "location.magnifyingglass"
+        case .slowDown: return "tortoise.fill"
+        case .levelPhone: return "iphone"
+        case .turnSlowly, .turnTiltedUp, .turnTiltedDown: return "arrow.triangle.2.circlepath"
+        case .tiltUp, .tiltUpLittle: return "arrow.up"
+        case .tiltDown, .tiltDownLittle: return "arrow.down"
+        case .pointUp: return "arrow.up.to.line"
+        case .pointDown: return "arrow.down.to.line"
+        case .done: return "checkmark.circle.fill"
+        }
+    }
+
+    private var standIntroOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.7)
+                .background(.ultraThinMaterial)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                Image(systemName: "view.3d")
+                    .font(.system(size: 24))
+                    .foregroundStyle(VuuroColor.accent)
+                    .frame(width: 56, height: 56)
+                    .background(VuuroColor.accent.opacity(0.15), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .padding(.bottom, 16)
+                Text("Take a 360 spot")
+                    .font(.system(size: 19, weight: .bold))
+                    .tracking(-0.3)
+                    .foregroundStyle(.white)
+                    .padding(.bottom, 10)
+                Text("Tenants can stand here in the walk-through and look all around, including the floor and ceiling. The phone takes the photos for you.")
+                    .font(.system(size: 14))
+                    .lineSpacing(3)
+                    .foregroundStyle(.white.opacity(0.6))
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 16)
+                VStack(alignment: .leading, spacing: 10) {
+                    onboardingTip("figure.stand", "Pick a spot, like the middle of the room or a doorway, and keep your feet still.")
+                    onboardingTip("iphone", "Hold the phone upright at eye height, close to your body.")
+                    onboardingTip("arrow.triangle.2.circlepath", "Turn slowly in place. A photo is taken each time a new part of the ring can fill.")
+                    onboardingTip("arrow.up.and.down", "After the first round, tilt the phone up and turn again, then tilt it down and turn again.")
+                    onboardingTip("arrow.up.to.line", "Last, point the phone straight up at the ceiling and straight down at the floor.")
+                    onboardingTip("text.bubble", "Follow the line at the top of the screen. It tells you what to do next.")
+                }
+                .padding(.bottom, 24)
+                Button {
+                    standIntroSeen = true
+                    showStandIntro = false
+                    coordinator.startStand()
+                } label: {
+                    Text("Start this spot")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(VuuroColor.lime, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("photoTour.standIntroStart")
+                Button {
+                    showStandIntro = false
+                } label: {
+                    Text("Not now")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("photoTour.standIntroClose")
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 28)
+            .padding(.bottom, 16)
+            .background(Color(red: 28 / 255, green: 28 / 255, blue: 30 / 255), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(Color(white: 0.2), lineWidth: 1)
+            )
+            .padding(24)
+        }
+        .accessibilityIdentifier("photoTour.standIntro")
     }
 
     @ViewBuilder
@@ -766,7 +1024,7 @@ struct RoomPhotoCaptureOverlay: View {
         .accessibilityLabel("Take photo")
         .accessibilityIdentifier("photoTour.shutter")
         .buttonStyle(.plain)
-        .disabled(coordinator.isCapturing || coordinator.isMaximumReached)
+        .disabled(coordinator.isCapturing || coordinator.isMaximumReached || coordinator.isCapturingStand)
     }
 
     @MainActor

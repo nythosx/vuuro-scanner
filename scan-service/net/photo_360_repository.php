@@ -25,11 +25,14 @@ final class Photo360Repository
         string $standId = '',
         string $cameraTransformJson = '',
         string $intrinsicsJson = '',
-        string $depthUrl = ''
+        string $depthUrl = '',
+        int $depthWidth = 0,
+        int $depthHeight = 0,
+        string $depthIntrinsicsJson = ''
     ): array {
         $stmt = $this->pdo->prepare(
-            'INSERT INTO photo_360 (session_id, room_id, url, position_x, position_z, heading_deg, zoom, pitch_deg, stand_id, camera_transform, intrinsics, depth_url, captured_at, idempotency_key)
-             VALUES (:session_id, :room_id, :url, :position_x, :position_z, :heading_deg, :zoom, :pitch_deg, :stand_id, :camera_transform, :intrinsics, :depth_url, :captured_at, :idempotency_key)'
+            'INSERT INTO photo_360 (session_id, room_id, url, position_x, position_z, heading_deg, zoom, pitch_deg, stand_id, camera_transform, intrinsics, depth_url, depth_width, depth_height, depth_intrinsics, captured_at, idempotency_key)
+             VALUES (:session_id, :room_id, :url, :position_x, :position_z, :heading_deg, :zoom, :pitch_deg, :stand_id, :camera_transform, :intrinsics, :depth_url, :depth_width, :depth_height, :depth_intrinsics, :captured_at, :idempotency_key)'
         );
         $stmt->execute([
             ':session_id' => $sessionId,
@@ -44,6 +47,9 @@ final class Photo360Repository
             ':camera_transform' => $cameraTransformJson,
             ':intrinsics' => $intrinsicsJson,
             ':depth_url' => $depthUrl,
+            ':depth_width' => $depthWidth,
+            ':depth_height' => $depthHeight,
+            ':depth_intrinsics' => $depthIntrinsicsJson,
             ':captured_at' => $capturedAt,
             ':idempotency_key' => $idempotencyKey,
         ]);
@@ -114,6 +120,9 @@ final class Photo360Repository
             'has_depth' => ($row['depth_url'] ?? '') !== '',
             'camera_transform' => self::decodedJsonList($row['camera_transform'] ?? '', 16),
             'intrinsics' => self::decodedJsonList($row['intrinsics'] ?? '', 4),
+            'depth_width' => ($row['depth_url'] ?? '') !== '' && (int) ($row['depth_width'] ?? 0) > 0 ? (int) $row['depth_width'] : null,
+            'depth_height' => ($row['depth_url'] ?? '') !== '' && (int) ($row['depth_height'] ?? 0) > 0 ? (int) $row['depth_height'] : null,
+            'depth_intrinsics' => ($row['depth_url'] ?? '') !== '' ? self::decodedJsonList($row['depth_intrinsics'] ?? '', 4) : null,
             'captured_at' => (string) $row['captured_at'],
         ];
     }

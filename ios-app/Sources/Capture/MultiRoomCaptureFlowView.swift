@@ -50,6 +50,7 @@ struct MultiRoomCaptureFlowView: View {
     @State private var otherWalkthrough: WalkthroughState?
     @State private var showOtherWalkthroughPrompt = false
     @State private var photoCaptureContext: PhotoCaptureContext?
+    @AppStorage("walkthroughCaptureEnabled") private var walkthroughCaptureEnabled = false
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
@@ -918,7 +919,8 @@ struct MultiRoomCaptureFlowView: View {
             structureOriginM: origin,
             initialCompassHeadingDeg: heading,
             initialCameraYawDeg: cameraYaw,
-            store: .shared
+            store: .shared,
+            walkthroughEnabled: walkthroughCaptureEnabled
         )
         photoCaptureContext = PhotoCaptureContext(coordinator: photoCoordinator)
     }

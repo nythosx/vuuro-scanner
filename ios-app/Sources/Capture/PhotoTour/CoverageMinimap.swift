@@ -9,6 +9,8 @@ struct CoverageMinimap: View {
     var positionReliable: Bool = true
     var chromeless: Bool = false
     var coveredWallColor: Color = VuuroColor.textPrimary
+    var standSpots: [CGPoint] = []
+    var suggestedSpot: CGPoint? = nil
 
     var body: some View {
         GeometryReader { proxy in
@@ -93,6 +95,23 @@ struct CoverageMinimap: View {
             }
         }
 
+        for spot in standSpots {
+            let view = mapping.toView(spot)
+            let radius: CGFloat = compact ? 2.5 : 4
+            context.fill(
+                Path(ellipseIn: CGRect(x: view.x - radius, y: view.y - radius, width: radius * 2, height: radius * 2)),
+                with: .color(VuuroColor.lime)
+            )
+        }
+        if let suggested = suggestedSpot {
+            let view = mapping.toView(suggested)
+            let radius: CGFloat = compact ? 5 : 9
+            context.stroke(
+                Path(ellipseIn: CGRect(x: view.x - radius, y: view.y - radius, width: radius * 2, height: radius * 2)),
+                with: .color(VuuroColor.lime),
+                style: StrokeStyle(lineWidth: compact ? 1.5 : 2, dash: [3, 2])
+            )
+        }
         if let position = currentPosition {
             let posView = mapping.toView(position)
             let dotRadius: CGFloat = compact ? 3 : 5

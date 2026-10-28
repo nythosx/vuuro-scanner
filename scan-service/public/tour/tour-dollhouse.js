@@ -4,6 +4,8 @@
   var HOTSPOT_PIXEL_SIZE = 24;
   var MAX_OCCLUSION_TRIANGLES = 8000;
   var OCCLUSION_CLEARANCE_M = 0.05;
+  var FADE_EDGE_DISTANCE_M = 0.45;
+  var FADE_START = 0.05;
 
   var activeViewer = null;
 
@@ -33,9 +35,14 @@
         var gltf = window.TourDollhouseGlb.parse(buffer);
         var hotspots = buildHotspots(rooms || [], gltf.roomPoses);
         var stage = buildStage(viewport, onBackToPlan);
-        var viewer = new Viewer(stage.canvas, gltf, hotspots, stage.hotspotLayer, onHotspotTap);
+        var viewer = new Viewer(stage.canvas, gltf, hotspots, stage.hotspotLayer, onHotspotTap, rooms || []);
         activeViewer = viewer;
         viewer.start();
+        if (window.TourDollhousePaint && typeof buildUrl === 'function') {
+          viewer.cancelPaint = window.TourDollhousePaint.paint(rooms || [], gltf.roomPoses, buildUrl, function (part) {
+            viewer.addPart(part);
+          });
+        }
       })
       .catch(function (err) {
         renderFallback(viewport, onBackToPlan, window.TourStrings.t('dollhouse_load_failed', { reason: err && err.message ? err.message : 'unknown error' }));
@@ -50,7 +57,6 @@
     p.className = 'tour-status';
     p.textContent = window.TourStrings.t('loading_3d');
     stage.appendChild(p);
-    stage.appendChild(backButton(onBackToPlan));
     viewport.appendChild(stage);
   }
 
@@ -62,7 +68,6 @@
     p.className = 'tour-status';
     p.textContent = message;
     stage.appendChild(p);
-    stage.appendChild(backButton(onBackToPlan));
     viewport.appendChild(stage);
   }
 
@@ -79,19 +84,9 @@
     hotspotLayer.className = 'tour-dollhouse-hotspots';
     stage.appendChild(hotspotLayer);
 
-    stage.appendChild(backButton(onBackToPlan));
     viewport.appendChild(stage);
 
     return { stage: stage, canvas: canvas, hotspotLayer: hotspotLayer };
-  }
-
-  function backButton(onBackToPlan) {
-    var back = document.createElement('button');
-    back.type = 'button';
-    back.className = 'tour-btn tour-btn-back tour-dollhouse-back';
-    back.textContent = window.TourStrings.t('back_to_plan');
-    back.addEventListener('click', onBackToPlan);
-    return back;
   }
 
   function clearNode(node) {
@@ -176,7 +171,7 @@
     return hotspots;
   }
 
-  function Viewer(canvas, mesh, hotspots, hotspotLayer, onHotspotTap) {
+  function Viewer(canvas, mesh, hotspots, hotspotLayer, onHotspotTap, rooms) {
     this.canvas = canvas;
     var contextOptions = { antialias: true, alpha: false };
     this.gl = canvas.getContext('webgl2', contextOptions) || canvas.getContext('webgl', contextOptions);
@@ -204,6 +199,9 @@
     this.hotspotElements = [];
     this.parts = [];
     this.imageTextures = {};
+    this.paintedTextures = [];
+    this.cancelPaint = null;
+    this.edges = window.TourDollhousePaint ? window.TourDollhousePaint.wallEdges(rooms || [], mesh.roomPoses) : [];
     this.initGl();
     this.frameToBounds();
     this.bindControls();
@@ -217,15 +215,20 @@
       'attribute vec3 aNrm;',
       'attribute vec4 aCol;',
       'attribute vec2 aUV;',
+      'attribute vec3 aFade;',
       'uniform mat4 uMvp;',
       'varying vec3 vNrm;',
       'varying vec4 vCol;',
       'varying vec2 vUV;',
+      'varying vec3 vFade;',
+      'varying vec3 vPos;',
       'void main() {',
       '  gl_Position = uMvp * vec4(aPos, 1.0);',
       '  vNrm = aNrm;',
       '  vCol = aCol;',
       '  vUV = aUV;',
+      '  vFade = aFade;',
+      '  vPos = aPos;',
       '}'
     ].join('\n');
     var frag = [
@@ -233,16 +236,31 @@
       'varying vec3 vNrm;',
       'varying vec4 vCol;',
       'varying vec2 vUV;',
+      'varying vec3 vFade;',
+      'varying vec3 vPos;',
       'uniform sampler2D uSampler;',
       'uniform float uUseTexture;',
+      'uniform float uPainted;',
+      'uniform float uPass;',
+      'uniform vec3 uEye;',
       'void main() {',
       '  vec3 n = normalize(vNrm);',
+      '  if (uPainted > 0.5 && dot(n, uEye - vPos) < 0.0) discard;',
       '  vec3 light = normalize(vec3(0.35, 0.85, 0.4));',
       '  float diff = max(dot(n, light), 0.0);',
-      '  float ambient = 0.55;',
-      '  float shade = ambient + diff * 0.55;',
+      '  float shade = uPainted > 0.5 ? 0.9 + diff * 0.12 : 0.55 + diff * 0.55;',
       '  vec4 base = uUseTexture > 0.5 ? texture2D(uSampler, vUV) : vCol;',
-      '  gl_FragColor = vec4(base.rgb * shade, base.a);',
+      '  if (base.a < 0.5) discard;',
+      '  float alpha = 1.0;',
+      '  if (vFade.z > 0.5) {',
+      '    vec2 toEye = uEye.xz - vPos.xz;',
+      '    float len = length(toEye);',
+      '    float side = len > 0.0001 ? dot(vFade.xy, toEye / len) : 0.0;',
+      '    alpha = mix(1.0, 0.1, smoothstep(' + FADE_START.toFixed(2) + ', 0.35, -side));',
+      '  }',
+      '  if (uPass < 0.5 && alpha < 0.999) discard;',
+      '  if (uPass > 0.5 && alpha >= 0.999) discard;',
+      '  gl_FragColor = vec4(base.rgb * shade, alpha);',
       '}'
     ].join('\n');
     var program = compile(gl, vert, frag);
@@ -251,12 +269,17 @@
     this.aNrm = gl.getAttribLocation(program, 'aNrm');
     this.aCol = gl.getAttribLocation(program, 'aCol');
     this.aUV = gl.getAttribLocation(program, 'aUV');
+    this.aFade = gl.getAttribLocation(program, 'aFade');
     this.uMvp = gl.getUniformLocation(program, 'uMvp');
     this.uSampler = gl.getUniformLocation(program, 'uSampler');
     this.uUseTexture = gl.getUniformLocation(program, 'uUseTexture');
+    this.uPainted = gl.getUniformLocation(program, 'uPainted');
+    this.uPass = gl.getUniformLocation(program, 'uPass');
+    this.uEye = gl.getUniformLocation(program, 'uEye');
 
     gl.enable(gl.DEPTH_TEST);
-    gl.clearColor(0.94, 0.93, 0.90, 1.0);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.clearColor(0.105, 0.105, 0.11, 1.0);
 
     this.parts = this.mesh.parts.map(this.buildPart, this);
   };
@@ -312,9 +335,18 @@
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
 
-    var texture = (part.imageIndex === null || part.imageIndex === undefined)
-      ? null
-      : this.textureForImage(part.imageIndex);
+    var fades = part.fades || this.fadesFor(part.positions, part.normals);
+    part.fades = fades;
+    var fadeBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, fadeBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, fades, gl.STATIC_DRAW);
+
+    var texture = null;
+    if (part.canvas) {
+      texture = this.textureForCanvas(part.canvas);
+    } else if (part.imageIndex !== null && part.imageIndex !== undefined) {
+      texture = this.textureForImage(part.imageIndex);
+    }
 
     return {
       posBuf: posBuf,
@@ -322,10 +354,45 @@
       uvBuf: uvBuf,
       colBuf: colBuf,
       idxBuf: idxBuf,
+      fadeBuf: fadeBuf,
       indexCount: indices.length,
       indexType: indexType,
-      texture: texture
+      texture: texture,
+      painted: !!part.painted
     };
+  };
+
+  Viewer.prototype.fadesFor = function (positions, normals) {
+    var count = positions.length / 3;
+    var fades = new Float32Array(count * 3);
+    if (!normals || this.edges.length === 0) return fades;
+    for (var i = 0; i < count; i++) {
+      if (Math.abs(normals[i * 3 + 1]) > 0.5) continue;
+      var edge = window.TourDollhousePaint.nearestEdge(this.edges, positions[i * 3], positions[i * 3 + 2], FADE_EDGE_DISTANCE_M);
+      if (!edge || !edge.exterior) continue;
+      fades[i * 3] = edge.wnx;
+      fades[i * 3 + 1] = edge.wnz;
+      fades[i * 3 + 2] = 1;
+    }
+    return fades;
+  };
+
+  Viewer.prototype.addPart = function (part) {
+    if (this.destroyed) return;
+    this.parts.push(this.buildPart(part));
+  };
+
+  Viewer.prototype.textureForCanvas = function (canvas) {
+    var gl = this.gl;
+    var texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    this.paintedTextures.push(texture);
+    return texture;
   };
 
   Viewer.prototype.textureForImage = function (imageIndex) {
@@ -577,10 +644,20 @@
     var mvp = window.TourDollhouseMath.multiply(proj, view);
     this.mvp = mvp;
     gl.uniformMatrix4fv(this.uMvp, false, mvp);
+    gl.uniform3f(this.uEye, eye[0], eye[1], eye[2]);
 
+    gl.uniform1f(this.uPass, 0.0);
     for (var i = 0; i < this.parts.length; i++) {
       this.renderPart(this.parts[i]);
     }
+    gl.uniform1f(this.uPass, 1.0);
+    gl.enable(gl.BLEND);
+    gl.depthMask(false);
+    for (var j = 0; j < this.parts.length; j++) {
+      this.renderPart(this.parts[j]);
+    }
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
 
     this.positionHotspots();
   };
@@ -595,6 +672,16 @@
     gl.bindBuffer(gl.ARRAY_BUFFER, part.nrmBuf);
     gl.enableVertexAttribArray(this.aNrm);
     gl.vertexAttribPointer(this.aNrm, 3, gl.FLOAT, false, 0, 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, part.fadeBuf);
+    gl.enableVertexAttribArray(this.aFade);
+    gl.vertexAttribPointer(this.aFade, 3, gl.FLOAT, false, 0, 0);
+
+    gl.uniform1f(this.uPainted, part.painted ? 1.0 : 0.0);
+    if (part.painted) {
+      gl.enable(gl.POLYGON_OFFSET_FILL);
+      gl.polygonOffset(-1.0, -2.0);
+    }
 
     if (part.texture) {
       gl.bindBuffer(gl.ARRAY_BUFFER, part.uvBuf);
@@ -617,6 +704,9 @@
 
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, part.idxBuf);
     gl.drawElements(gl.TRIANGLES, part.indexCount, part.indexType, 0);
+    if (part.painted) {
+      gl.disable(gl.POLYGON_OFFSET_FILL);
+    }
   };
 
   Viewer.prototype.positionHotspots = function () {
@@ -637,7 +727,8 @@
         continue;
       }
       entry.el.style.display = 'block';
-      entry.el.style.transform = 'translate3d(' + (screen[0] - HOTSPOT_PIXEL_SIZE / 2) + 'px, ' + (screen[1] - HOTSPOT_PIXEL_SIZE / 2) + 'px, 0)';
+      entry.el.style.left = (screen[0] - HOTSPOT_PIXEL_SIZE / 2) + 'px';
+      entry.el.style.top = (screen[1] - HOTSPOT_PIXEL_SIZE / 2) + 'px';
     }
   };
 
@@ -654,18 +745,29 @@
       return null;
     }
     var tris = new Float32Array(total * 9);
+    var fades = new Float32Array(total * 5);
     var o = 0;
+    var f = 0;
     for (var pj = 0; pj < this.mesh.parts.length; pj++) {
       var pos = this.mesh.parts[pj].positions;
       var idx = this.mesh.parts[pj].indices;
+      var fd = this.mesh.parts[pj].fades;
       for (var k = 0; k < idx.length; k++) {
         var v = idx[k] * 3;
         tris[o++] = pos[v];
         tris[o++] = pos[v + 1];
         tris[o++] = pos[v + 2];
+        if (k % 3 === 0) {
+          fades[f++] = fd ? fd[v] : 0;
+          fades[f++] = fd ? fd[v + 1] : 0;
+          fades[f++] = fd ? fd[v + 2] : 0;
+          fades[f++] = pos[v];
+          fades[f++] = pos[v + 2];
+        }
       }
     }
     this.occluders = tris;
+    this.occluderFades = fades;
     return tris;
   };
 
@@ -685,7 +787,17 @@
     dy /= length;
     dz /= length;
     var limit = length - OCCLUSION_CLEARANCE_M;
+    var fades = this.occluderFades;
     for (var t = 0; t < tris.length; t += 9) {
+      var fo = (t / 9) * 5;
+      if (fades[fo + 2] > 0.5) {
+        var ex = eye[0] - fades[fo + 3];
+        var ez = eye[2] - fades[fo + 4];
+        var el = Math.sqrt(ex * ex + ez * ez) || 1;
+        if ((fades[fo] * ex + fades[fo + 1] * ez) / el < -FADE_START) {
+          continue;
+        }
+      }
       var e1x = tris[t + 3] - tris[t], e1y = tris[t + 4] - tris[t + 1], e1z = tris[t + 5] - tris[t + 2];
       var e2x = tris[t + 6] - tris[t], e2y = tris[t + 7] - tris[t + 1], e2z = tris[t + 8] - tris[t + 2];
       var px = dy * e2z - dz * e2y, py = dz * e2x - dx * e2z, pz = dx * e2y - dy * e2x;
@@ -753,6 +865,10 @@
   Viewer.prototype.stop = function () {
     this.running = false;
     this.destroyed = true;
+    if (this.cancelPaint) {
+      this.cancelPaint();
+      this.cancelPaint = null;
+    }
     var gl = this.gl;
     if (!gl) {
       return;
@@ -764,7 +880,12 @@
       if (part.uvBuf) gl.deleteBuffer(part.uvBuf);
       if (part.colBuf) gl.deleteBuffer(part.colBuf);
       if (part.idxBuf) gl.deleteBuffer(part.idxBuf);
+      if (part.fadeBuf) gl.deleteBuffer(part.fadeBuf);
     }
+    for (var t = 0; t < this.paintedTextures.length; t++) {
+      gl.deleteTexture(this.paintedTextures[t]);
+    }
+    this.paintedTextures = [];
     this.parts = [];
     for (var key in this.imageTextures) {
       if (Object.prototype.hasOwnProperty.call(this.imageTextures, key)) {

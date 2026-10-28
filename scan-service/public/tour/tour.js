@@ -12,14 +12,17 @@
     hasDollhouse: false,
     roomsWithPhotos: [],
     roomSequenceIndex: 0,
-    isEmbed: false
+    isEmbed: false,
+    features: null,
+    walkthroughMode: 'photos',
+    standId: null
   };
 
   var els = {};
 
   function boot() {
     els.viewport = document.getElementById('tour-viewport');
-    els.menu = document.getElementById('tour-menu');
+    els.toolbar = document.getElementById('tour-toolbar');
     els.minimap = document.getElementById('tour-minimap');
     els.info = document.getElementById('tour-info');
     els.infoRoom = document.getElementById('tour-info-room');
@@ -53,7 +56,7 @@
       setStatus(window.TourStrings.t('missing_token'), true);
       return;
     }
-    document.getElementById('tour-menu').setAttribute('aria-label', window.TourStrings.t('tour_mode_aria'));
+    els.toolbar.setAttribute('aria-label', window.TourStrings.t('tour_mode_aria'));
     var prevRoom = document.getElementById('tour-room-prev');
     var nextRoom = document.getElementById('tour-room-next');
     if (prevRoom) prevRoom.setAttribute('aria-label', window.TourStrings.t('prev_room_aria'));
@@ -82,6 +85,36 @@
 
   function readEmbed() {
     return new URLSearchParams(window.location.search).get('embed') === '1';
+  }
+
+  function readStartView() {
+    var view = new URLSearchParams(window.location.search).get('view');
+    return view === 'plan' || view === 'photos' || view === 'walkthrough' || view === 'dollhouse' ? view : 'all';
+  }
+
+  function applyStartView() {
+    var view = readStartView();
+    if (view === 'dollhouse' && state.hasDollhouse) {
+      state.mode = 'dollhouse';
+      return;
+    }
+    if (view === 'walkthrough' && state.features && state.features.walkthrough === true) {
+      var target = firstStandFromCurrent();
+      if (target) {
+        state.mode = 'stand';
+        state.walkthroughMode = 'stand';
+        state.roomIndex = target.roomIndex;
+        state.standId = target.standId;
+      }
+      return;
+    }
+    if (view === 'photos' && state.hasPhotos) {
+      state.mode = 'photos';
+      state.walkthroughMode = 'photos';
+      state.roomIndex = state.roomsWithPhotos[0];
+      state.roomSequenceIndex = 0;
+      state.photoIndex = 0;
+    }
   }
 
   function installEmbedChrome() {
@@ -143,6 +176,8 @@
       rooms: rawRooms,
       dollhouse_glb_url: data.dollhouse_glb_url || null
     };
+    state.features = data.features && typeof data.features === 'object' ? data.features : null;
+    state.walkthroughMode = readWalkthroughMode();
     state.roomsWithPhotos = computeRoomsWithPhotos(rawRooms);
     state.hasPhotos = state.roomsWithPhotos.length > 0;
     state.hasDollhouse = !!state.data.dollhouse_glb_url;
@@ -150,9 +185,32 @@
     state.roomIndex = 0;
     state.photoIndex = 0;
     state.roomSequenceIndex = 0;
-    applyParsedUrl(window.TourRoute.parse(window.location.hash));
+    var parsedStart = window.TourRoute.parse(window.location.hash);
+    applyParsedUrl(parsedStart);
+    var startHash = window.location.hash;
+    if (parsedStart.mode === window.TourRoute.MODES.PLAN && (startHash === '' || startHash === '#' || startHash === '#/')) {
+      applyStartView();
+    }
     window.TourRoute.replace(currentUrlState());
     render();
+  }
+
+  function readWalkthroughMode() {
+    if (!(state.features && state.features.walkthrough === true)) {
+      return 'photos';
+    }
+    try {
+      var stored = localStorage.getItem('tour.walkthrough');
+      if (stored === '0') return 'photos';
+      if (stored === '1') return 'stand';
+    } catch (err) {}
+    return 'stand';
+  }
+
+  function persistWalkthroughMode(mode) {
+    try {
+      localStorage.setItem('tour.walkthrough', mode === 'stand' ? '1' : '0');
+    } catch (err) {}
   }
 
   function computeRoomsWithPhotos(rooms) {
@@ -166,6 +224,26 @@
   }
 
   function applyParsedUrl(parsed) {
+    if (parsed.mode === window.TourRoute.MODES.STAND && state.hasPhotos) {
+      if (!(state.features && state.features.walkthrough === true)) {
+        state.mode = 'plan';
+        return;
+      }
+      for (var i = 0; i < state.data.rooms.length; i++) {
+        var stands = state.data.rooms[i].stands || [];
+        for (var j = 0; j < stands.length; j++) {
+          if (stands[j].stand_id === parsed.standId) {
+            state.mode = 'stand';
+            state.roomIndex = i;
+            state.standId = parsed.standId;
+            state.walkthroughMode = 'stand';
+            return;
+          }
+        }
+      }
+      state.mode = 'plan';
+      return;
+    }
     if (parsed.mode === window.TourRoute.MODES.PHOTOS && state.hasPhotos) {
       var roomIdx = parsed.roomIndex;
       if (state.roomsWithPhotos.indexOf(roomIdx) === -1) {
@@ -203,6 +281,9 @@
     if (state.mode === 'photos') {
       return { mode: 'photos', roomIndex: state.roomIndex, photoIndex: state.photoIndex };
     }
+    if (state.mode === 'stand') {
+      return { mode: 'stand', standId: state.standId, photoIndex: 0 };
+    }
     if (state.mode === 'dollhouse') {
       return { mode: 'dollhouse' };
     }
@@ -228,28 +309,102 @@
   }
 
   function renderMenu() {
-    var menu = els.menu;
-    clearNode(menu);
-    menu.hidden = false;
-    appendMenuButton('plan', window.TourStrings.t('menu_plan'));
+    var toolbar = els.toolbar;
+    clearNode(toolbar);
+    toolbar.hidden = false;
+    var walkthrough = state.hasPhotos && state.features && state.features.walkthrough === true;
     if (state.hasPhotos) {
-      appendMenuButton('photos', window.TourStrings.t('menu_photos'));
+      var single = document.createElement('div');
+      single.className = 'tour-stand-pill';
+      single.appendChild(toolbarButton('photos', window.TourStrings.t('menu_photos'), state.mode === 'photos', function () {
+        if (walkthrough) {
+          enterWalkthroughMode('photos');
+        } else {
+          switchMode('photos');
+        }
+      }));
+      toolbar.appendChild(single);
     }
+    var modes = document.createElement('div');
+    modes.className = 'tour-stand-pill';
     if (state.hasDollhouse) {
-      appendMenuButton('dollhouse', window.TourStrings.t('menu_dollhouse'));
+      modes.appendChild(toolbarButton('dollhouse', window.TourStrings.t('menu_dollhouse'), state.mode === 'dollhouse', function () { switchMode('dollhouse'); }));
+    }
+    modes.appendChild(toolbarButton('plan', window.TourStrings.t('menu_plan'), state.mode === 'plan', function () { switchMode('plan'); }));
+    if (walkthrough) {
+      modes.appendChild(toolbarButton('walk', window.TourStandStrings.t('toggle_walkthrough'), state.mode === 'stand', function () { enterWalkthroughMode('stand'); }));
+    }
+    toolbar.appendChild(modes);
+  }
+
+  function toolbarButton(icon, label, active, onClick) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tour-stand-tool' + (active ? ' is-active' : '');
+    btn.innerHTML = window.TourStands.icons[icon];
+    btn.setAttribute('aria-label', label);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.setAttribute('data-mode', icon);
+    btn.setAttribute('data-tip', label);
+    if (!active) btn.addEventListener('click', onClick);
+    return btn;
+  }
+
+  function enterWalkthroughMode(mode) {
+    state.walkthroughMode = mode;
+    persistWalkthroughMode(mode);
+    if (mode === 'stand') {
+      var target = firstStandFromCurrent();
+      if (target) {
+        state.mode = 'stand';
+        state.roomIndex = target.roomIndex;
+        state.standId = target.standId;
+        syncUrl(false);
+        render();
+        return;
+      }
+      state.mode = 'plan';
+      syncUrl(false);
+      render();
+      return;
+    }
+    if (state.roomsWithPhotos.length > 0) {
+      state.mode = 'photos';
+      state.roomIndex = state.roomsWithPhotos[0];
+      state.roomSequenceIndex = 0;
+      state.photoIndex = 0;
+      syncUrl(false);
+      render();
     }
   }
 
-  function appendMenuButton(mode, label) {
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'tour-menu-btn' + (state.mode === mode ? ' is-active' : '');
-    btn.textContent = label;
-    btn.setAttribute('data-mode', mode);
-    btn.addEventListener('click', function () {
-      switchMode(mode);
-    });
-    els.menu.appendChild(btn);
+  function firstStandFromCurrent() {
+    if (!state.data) return null;
+    var fallback = null;
+    var multi = null;
+    for (var i = 0; i < state.roomsWithPhotos.length; i++) {
+      var roomIndex = state.roomsWithPhotos[i];
+      var room = state.data.rooms[roomIndex];
+      var stands = room.stands || [];
+      var posed = {};
+      (room.photos || []).forEach(function (photo) {
+        if (Array.isArray(photo.camera_transform) && photo.camera_transform.length === 16) posed[photo.photo_id] = true;
+      });
+      for (var j = 0; j < stands.length; j++) {
+        var ids = stands[j].photo_ids || [];
+        var candidate = { roomIndex: roomIndex, standId: stands[j].stand_id };
+        if (ids.length > 1 && ids.some(function (id) { return posed[id]; })) {
+          return candidate;
+        }
+        if (ids.length > 1 && !multi) {
+          multi = candidate;
+        }
+        if (!fallback) {
+          fallback = candidate;
+        }
+      }
+    }
+    return multi || fallback;
   }
 
   function switchMode(mode) {
@@ -260,6 +415,10 @@
       state.roomIndex = state.roomsWithPhotos[0];
       state.roomSequenceIndex = 0;
       state.photoIndex = 0;
+    }
+    if (mode === 'stand') {
+      enterWalkthroughMode('stand');
+      return;
     }
     if (mode === 'dollhouse' && !state.hasDollhouse) {
       return;
@@ -273,18 +432,80 @@
     if (window.TourDollhouse && typeof window.TourDollhouse.stop === 'function') {
       window.TourDollhouse.stop();
     }
+    if (window.TourStands && typeof window.TourStands.destroy === 'function') {
+      window.TourStands.destroy();
+    }
     clearNode(els.viewport);
     if (state.mode === 'plan') {
       renderPlan();
     } else if (state.mode === 'photos') {
       renderPhotoTour();
+    } else if (state.mode === 'stand') {
+      renderStandView();
     } else if (state.mode === 'dollhouse') {
       renderDollhouse();
     }
   }
 
+  function renderStandView() {
+    if (!window.TourStands || !state.data) {
+      state.mode = 'plan';
+      renderViewport();
+      return;
+    }
+    var room = state.data.rooms[state.roomIndex];
+    if (!room) {
+      backToPlan();
+      return;
+    }
+    var stands = room.stands || [];
+    var currentStand = null;
+    for (var i = 0; i < stands.length; i++) {
+      if (stands[i].stand_id === state.standId) {
+        currentStand = stands[i];
+        break;
+      }
+    }
+    if (!currentStand) {
+      backToPlan();
+      return;
+    }
+    var allStands = {};
+    var allRooms = {};
+    for (var k = 0; k < state.data.rooms.length; k++) {
+      var r = state.data.rooms[k];
+      allStands[r.room_id] = r.stands || [];
+      allRooms[r.room_id] = r;
+    }
+    window.TourStands.render(els.viewport, currentStand, allStands, allRooms, {
+      roomId: room.room_id,
+      buildPhotoUrl: withToken,
+      onDollhouse: state.hasDollhouse ? function () { switchMode('dollhouse'); } : null,
+      onBackToPlan: backToPlan,
+      onNavigate: function (nextStandId, nextRoomId) {
+        for (var m = 0; m < state.data.rooms.length; m++) {
+          if (state.data.rooms[m].room_id === nextRoomId) {
+            state.roomIndex = m;
+            break;
+          }
+        }
+        state.standId = nextStandId;
+        state.mode = 'stand';
+        syncUrl(false);
+        render();
+      }
+    });
+  }
+
   function renderChrome() {
-    if (els.hint) {
+    var app = document.getElementById('tour-app');
+    if (app) {
+      app.classList.toggle('is-stand', state.mode === 'stand');
+    }
+    if (els.hint && state.mode === 'stand') {
+      els.hint.textContent = window.TourStandStrings.t('hint_stand');
+      els.hint.hidden = false;
+    } else if (els.hint) {
       var hintKey = state.mode === 'photos' ? 'hint_photos' : state.mode === 'dollhouse' ? 'hint_dollhouse' : 'hint_plan';
       els.hint.textContent = window.TourStrings.t(hintKey);
       els.hint.hidden = false;
@@ -301,7 +522,7 @@
         els.minimap.hidden = false;
         window.TourPlan.renderMinimap(els.minimap, state.data.rooms, activeRoom.room_id, state.photoIndex);
       }
-    } else if (els.minimap) {
+    } else if (els.minimap && state.mode !== 'stand') {
       els.minimap.hidden = true;
     }
     if (state.mode !== 'photos') {
@@ -335,6 +556,17 @@
     }
     if (!Array.isArray(room.photos) || room.photos.length === 0) {
       return;
+    }
+    if (state.walkthroughMode === 'stand' && state.features && state.features.walkthrough === true) {
+      var stands = room.stands || [];
+      if (stands.length > 0) {
+        state.roomIndex = index;
+        state.standId = stands[0].stand_id;
+        state.mode = 'stand';
+        syncUrl(false);
+        render();
+        return;
+      }
     }
     state.roomIndex = index;
     state.roomSequenceIndex = Math.max(0, state.roomsWithPhotos.indexOf(index));
@@ -434,6 +666,8 @@
   window.addEventListener('resize', function () {
     if (state.mode === 'plan' && state.data) {
       renderViewport();
+    } else if (state.mode === 'stand' && window.TourStands && window.TourStands.relayout) {
+      window.TourStands.relayout();
     }
   });
 

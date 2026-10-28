@@ -136,6 +136,9 @@ CREATE TABLE IF NOT EXISTS photo_360 (
     camera_transform TEXT NOT NULL DEFAULT '',
     intrinsics TEXT NOT NULL DEFAULT '',
     depth_url TEXT NOT NULL DEFAULT '',
+    depth_width INTEGER NOT NULL DEFAULT 0,
+    depth_height INTEGER NOT NULL DEFAULT 0,
+    depth_intrinsics TEXT NOT NULL DEFAULT '',
     captured_at TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

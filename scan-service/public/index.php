@@ -1580,7 +1580,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads/([a-
         return;
     }
 
-    if (rateLimited($repo, $session['id'] . ':read_photo_upload', 120, 300)) {
+    if (rateLimited($repo, $session['id'] . ':' . clientIp() . ':read_photo_upload', 600, 300)) {
         return;
     }
 
@@ -1594,6 +1594,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads/([a-
     $extension = pathinfo($filename, PATHINFO_EXTENSION);
     $mimeByExtension = array_flip(PHOTO_UPLOAD_MIME_EXTENSIONS);
     header('Content-Type: ' . ($mimeByExtension[$extension] ?? 'application/octet-stream'));
+    header('Cache-Control: private, max-age=86400, immutable');
     readfile($filePath);
     return;
 }
@@ -1793,6 +1794,48 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
         }
     }
 
+    $depthWidthValue = 0;
+    $depthHeightValue = 0;
+    if (isset($_POST['depth_width']) || isset($_POST['depth_height'])) {
+        $depthWidthRaw = $_POST['depth_width'] ?? null;
+        $depthHeightRaw = $_POST['depth_height'] ?? null;
+        if (!is_string($depthWidthRaw) || !is_string($depthHeightRaw)
+            || preg_match('/^[1-9][0-9]{0,3}$/', $depthWidthRaw) !== 1
+            || preg_match('/^[1-9][0-9]{0,3}$/', $depthHeightRaw) !== 1) {
+            respondError(422, 'invalid_depth_size', "'depth_width' and 'depth_height' must both be whole numbers from 1 to 9999.");
+            return;
+        }
+        $depthWidthValue = (int) $depthWidthRaw;
+        $depthHeightValue = (int) $depthHeightRaw;
+        $hasDepthFile = isset($_FILES['depth']) && is_array($_FILES['depth']) && $_FILES['depth']['error'] === UPLOAD_ERR_OK;
+        if (!$hasDepthFile || (int) $_FILES['depth']['size'] !== $depthWidthValue * $depthHeightValue * 2) {
+            respondError(422, 'invalid_depth_size', "'depth_width' x 'depth_height' x 2 bytes must match the uploaded depth file.");
+            return;
+        }
+    }
+
+    $depthIntrinsicsJson = '';
+    if (isset($_POST['depth_intrinsics'])) {
+        $depthIntrinsicsRaw = $_POST['depth_intrinsics'];
+        $decodedDepthIntrinsics = is_string($depthIntrinsicsRaw) ? json_decode($depthIntrinsicsRaw, true) : null;
+        if (!is_array($decodedDepthIntrinsics) || !array_is_list($decodedDepthIntrinsics) || count($decodedDepthIntrinsics) !== 4) {
+            respondError(422, 'invalid_depth_intrinsics', "'depth_intrinsics' must be a JSON array of 4 numbers.");
+            return;
+        }
+        foreach ($decodedDepthIntrinsics as $depthIntrinsicComponent) {
+            if ((!is_int($depthIntrinsicComponent) && !is_float($depthIntrinsicComponent)) || !is_finite((float) $depthIntrinsicComponent) || (float) $depthIntrinsicComponent <= 0) {
+                respondError(422, 'invalid_depth_intrinsics', "'depth_intrinsics' must contain only finite positive numbers.");
+                return;
+            }
+        }
+        $depthIntrinsicsJson = json_encode($decodedDepthIntrinsics, JSON_THROW_ON_ERROR);
+    }
+
+    if (isset($_FILES['depth']) && is_array($_FILES['depth']) && $_FILES['depth']['error'] === UPLOAD_ERR_OK && $depthWidthValue === 0) {
+        respondError(422, 'invalid_depth_size', "'depth_width' and 'depth_height' are required with a depth file.");
+        return;
+    }
+
     if (!move_uploaded_file($file['tmp_name'], $storageDir . '/' . $filename)) {
         $repo->logAccess($sessionId, 'upload_photo_360', 'failed_storage_error');
         respondError(500, 'internal_error', 'Could not save the uploaded photo.');
@@ -1825,10 +1868,16 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
             $standIdValue,
             $cameraTransformJson,
             $intrinsicsJson,
-            $depthUrl
+            $depthUrl,
+            $depthUrl !== '' ? $depthWidthValue : 0,
+            $depthUrl !== '' ? $depthHeightValue : 0,
+            $depthUrl !== '' ? $depthIntrinsicsJson : ''
         );
     } catch (\PDOException $e) {
         @unlink($storageDir . '/' . $filename);
+        if ($depthUrl !== '') {
+            @unlink($storageDir . '/' . $photoUploadId . '.depth');
+        }
         $existing = $photoRepo->findByIdempotencyKey($sessionId, $idempotencyKey);
         if ($existing !== null) {
             respond(200, $photoRepo->serialize($existing));
@@ -2984,6 +3033,11 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
             'outline_m' => $room['outline_m'],
             'structure_origin_m' => $room['structure_origin_m'] ?? null,
             'heading_deg' => $room['heading_deg'] ?? null,
+            'height_m' => isset($room['height_m']) && is_numeric($room['height_m']) && (float) $room['height_m'] > 0 ? (float) $room['height_m'] : null,
+            'open_edges' => array_values(array_filter(
+                is_array($room['open_edges'] ?? null) ? $room['open_edges'] : [],
+                static fn ($edge): bool => is_int($edge) && $edge >= 0 && $edge < count($room['outline_m'])
+            )),
             'overlap' => isset($overlapRoomIds[(string) $room['room_id']]),
             'photos' => $photosByRoom[(string) $room['room_id']] ?? [],
             'stands' => $standsResult['stands_by_room'][(string) $room['room_id']] ?? [],

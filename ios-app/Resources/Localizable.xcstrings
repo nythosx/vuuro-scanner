@@ -8816,6 +8816,534 @@
                     }
                 }
             }
+        },
+        "Start stand": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Start stand"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Start standpunt"
+                    }
+                }
+            }
+        },
+        "Walk-through capture (beta)": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Walk-through capture (beta)"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Rondleiding vastleggen (bèta)"
+                    }
+                }
+            }
+        },
+        "Shot %lld of %lld": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Shot %lld of %lld"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Foto %lld van %lld"
+                    }
+                }
+            }
+        },
+        "How to take a 360 spot": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "How to take a 360 spot"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Zo maak je een 360-punt"
+                    }
+                }
+            }
+        },
+        "Move the phone slowly so it can find its place": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Move the phone slowly so it can find its place"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Beweeg de telefoon langzaam zodat hij zijn plek vindt"
+                    }
+                }
+            }
+        },
+        "Slow down a little": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Slow down a little"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Iets langzamer"
+                    }
+                }
+            }
+        },
+        "Hold the phone level, at eye height": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Hold the phone level, at eye height"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Houd de telefoon recht, op ooghoogte"
+                    }
+                }
+            }
+        },
+        "Turn slowly in place": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Turn slowly in place"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Draai langzaam op je plek"
+                    }
+                }
+            }
+        },
+        "Now tilt the phone up": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Now tilt the phone up"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kantel de telefoon nu omhoog"
+                    }
+                }
+            }
+        },
+        "Tilt down a little": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tilt down a little"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Iets omlaag kantelen"
+                    }
+                }
+            }
+        },
+        "Keep it tilted up and turn slowly": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Keep it tilted up and turn slowly"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Houd hem omhoog gekanteld en draai langzaam"
+                    }
+                }
+            }
+        },
+        "Now tilt the phone down": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Now tilt the phone down"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kantel de telefoon nu omlaag"
+                    }
+                }
+            }
+        },
+        "Tilt up a little": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tilt up a little"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Iets omhoog kantelen"
+                    }
+                }
+            }
+        },
+        "Keep it tilted down and turn slowly": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Keep it tilted down and turn slowly"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Houd hem omlaag gekanteld en draai langzaam"
+                    }
+                }
+            }
+        },
+        "Point the phone straight up at the ceiling": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Point the phone straight up at the ceiling"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Richt de telefoon recht omhoog naar het plafond"
+                    }
+                }
+            }
+        },
+        "Point the phone straight down at the floor": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Point the phone straight down at the floor"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Richt de telefoon recht omlaag naar de vloer"
+                    }
+                }
+            }
+        },
+        "This spot is done": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This spot is done"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Dit punt is klaar"
+                    }
+                }
+            }
+        },
+        "Take a 360 spot": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Take a 360 spot"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Maak een 360-punt"
+                    }
+                }
+            }
+        },
+        "Tenants can stand here in the walk-through and look all around, including the floor and ceiling. The phone takes the photos for you.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Tenants can stand here in the walk-through and look all around, including the floor and ceiling. The phone takes the photos for you."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Huurders kunnen hier in de rondloop staan en overal rondkijken, ook naar de vloer en het plafond. De telefoon maakt de foto's voor je."
+                    }
+                }
+            }
+        },
+        "Pick a spot, like the middle of the room or a doorway, and keep your feet still.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Pick a spot, like the middle of the room or a doorway, and keep your feet still."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kies een plek, zoals het midden van de kamer of een deuropening, en houd je voeten stil."
+                    }
+                }
+            }
+        },
+        "Hold the phone upright at eye height, close to your body.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Hold the phone upright at eye height, close to your body."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Houd de telefoon rechtop op ooghoogte, dicht bij je lichaam."
+                    }
+                }
+            }
+        },
+        "Turn slowly in place. A photo is taken each time a new part of the ring can fill.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Turn slowly in place. A photo is taken each time a new part of the ring can fill."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Draai langzaam op je plek. Er wordt een foto gemaakt zodra een nieuw deel van de ring kan vollopen."
+                    }
+                }
+            }
+        },
+        "After the first round, tilt the phone up and turn again, then tilt it down and turn again.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "After the first round, tilt the phone up and turn again, then tilt it down and turn again."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kantel na de eerste ronde de telefoon omhoog en draai opnieuw, kantel hem daarna omlaag en draai nog een keer."
+                    }
+                }
+            }
+        },
+        "Last, point the phone straight up at the ceiling and straight down at the floor.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Last, point the phone straight up at the ceiling and straight down at the floor."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Richt de telefoon als laatste recht omhoog naar het plafond en recht omlaag naar de vloer."
+                    }
+                }
+            }
+        },
+        "Follow the line at the top of the screen. It tells you what to do next.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Follow the line at the top of the screen. It tells you what to do next."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Volg de regel bovenaan het scherm. Die vertelt wat je daarna moet doen."
+                    }
+                }
+            }
+        },
+        "Start this spot": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Start this spot"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Start dit punt"
+                    }
+                }
+            }
+        },
+        "Not now": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Not now"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Niet nu"
+                    }
+                }
+            }
+        },
+        "The phone is too hot. Stop and let it cool down, or tracking will fail.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The phone is too hot. Stop and let it cool down, or tracking will fail."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De telefoon is te warm. Stop en laat hem afkoelen, anders mislukt de tracking."
+                    }
+                }
+            }
+        },
+        "The phone is getting hot. Take a short break if the picture starts to stutter.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The phone is getting hot. Take a short break if the picture starts to stutter."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De telefoon wordt warm. Neem even pauze als het beeld begint te haperen."
+                    }
+                }
+            }
+        },
+        "It is too dark. Turn on the lights for sharper photos.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "It is too dark. Turn on the lights for sharper photos."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Het is te donker. Doe het licht aan voor scherpere foto's."
+                    }
+                }
+            }
+        },
+        "Too close to a wall for a 360 spot. Step back a little.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Too close to a wall for a 360 spot. Step back a little."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Te dicht bij een muur voor een 360-punt. Doe een stapje terug."
+                    }
+                }
+            }
+        },
+        "Good spot. Start the 360 spot here.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Good spot. Start the 360 spot here."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Goede plek. Start hier het 360-punt."
+                    }
+                }
+            }
+        },
+        "Next 360 spot: %.1f m": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Next 360 spot: %.1f m"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Volgend 360-punt: %.1f m"
+                    }
+                }
+            }
         }
     },
     "version": "1.0"

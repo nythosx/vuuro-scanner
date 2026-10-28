@@ -615,6 +615,13 @@ struct ScanServiceClient {
         headingDeg: Double,
         zoom: Double = 1.0,
         pitchDeg: Double = 0.0,
+        standId: String? = nil,
+        cameraTransform: [Double]? = nil,
+        intrinsics: [Double]? = nil,
+        depthData: Data? = nil,
+        depthWidth: Int? = nil,
+        depthHeight: Int? = nil,
+        depthIntrinsics: [Double]? = nil,
         idempotencyKey: String
     ) async throws -> Photo360UploadResponse {
         let boundary = "Boundary-\(UUID().uuidString)"
@@ -665,6 +672,74 @@ struct ScanServiceClient {
         append("Content-Disposition: form-data; name=\"pitch_deg\"\(crlf)\(crlf)")
         append(String(format: "%.2f", min(90, max(-90, pitchDeg.isFinite ? pitchDeg : 0))))
         append(crlf)
+
+        if let standId, !standId.isEmpty {
+            append("--\(boundary)\(crlf)")
+            append("Content-Disposition: form-data; name=\"stand_id\"\(crlf)\(crlf)")
+            append(standId)
+            append(crlf)
+        }
+
+        if let cameraTransform, cameraTransform.count == 16 {
+            do {
+                let jsonData = try JSONEncoder().encode(cameraTransform)
+                if let jsonString = String(data: jsonData, encoding: .utf8) {
+                    append("--\(boundary)\(crlf)")
+                    append("Content-Disposition: form-data; name=\"camera_transform\"\(crlf)\(crlf)")
+                    append(jsonString)
+                    append(crlf)
+                }
+            } catch {
+                DiagnosticsLog.shared.record("Could not encode camera_transform: \(error.localizedDescription)", category: .error)
+            }
+        }
+
+        if let intrinsics, intrinsics.count == 4 {
+            do {
+                let jsonData = try JSONEncoder().encode(intrinsics)
+                if let jsonString = String(data: jsonData, encoding: .utf8) {
+                    append("--\(boundary)\(crlf)")
+                    append("Content-Disposition: form-data; name=\"intrinsics\"\(crlf)\(crlf)")
+                    append(jsonString)
+                    append(crlf)
+                }
+            } catch {
+                DiagnosticsLog.shared.record("Could not encode intrinsics: \(error.localizedDescription)", category: .error)
+            }
+        }
+
+        if let depthData, !depthData.isEmpty {
+            append("--\(boundary)\(crlf)")
+            append("Content-Disposition: form-data; name=\"depth\"; filename=\"depth.bin\"\(crlf)")
+            append("Content-Type: application/octet-stream\(crlf)\(crlf)")
+            body.append(depthData)
+            append(crlf)
+
+            if let depthWidth, let depthHeight, depthWidth > 0, depthHeight > 0, depthWidth * depthHeight * 2 == depthData.count {
+                append("--\(boundary)\(crlf)")
+                append("Content-Disposition: form-data; name=\"depth_width\"\(crlf)\(crlf)")
+                append(String(depthWidth))
+                append(crlf)
+                append("--\(boundary)\(crlf)")
+                append("Content-Disposition: form-data; name=\"depth_height\"\(crlf)\(crlf)")
+                append(String(depthHeight))
+                append(crlf)
+            }
+
+            if let depthIntrinsics, depthIntrinsics.count == 4 {
+                do {
+                    let jsonData = try JSONEncoder().encode(depthIntrinsics)
+                    if let jsonString = String(data: jsonData, encoding: .utf8) {
+                        append("--\(boundary)\(crlf)")
+                        append("Content-Disposition: form-data; name=\"depth_intrinsics\"\(crlf)\(crlf)")
+                        append(jsonString)
+                        append(crlf)
+                    }
+                } catch {
+                    DiagnosticsLog.shared.record("Could not encode depth_intrinsics: \(error.localizedDescription)", category: .error)
+                }
+            }
+        }
 
         append("--\(boundary)--\(crlf)")
 

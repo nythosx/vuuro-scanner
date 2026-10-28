@@ -25,7 +25,7 @@ function capture_room(string $baseUrl, string $sessionId, string $token, array $
     return net_http_json('POST', "$baseUrl/scan-sessions/$sessionId/capture", ['raw_capture' => $rawCapture], $token);
 }
 
-function upload_photo(string $baseUrl, string $sessionId, string $token, string $roomId, float $x, float $z, float $heading, string $key): int
+function upload_photo(string $baseUrl, string $sessionId, string $token, string $roomId, float $x, float $z, float $heading, string $key, string $standId = ''): int
 {
     $tmp = tempnam(sys_get_temp_dir(), 'tour_stand_') . '.jpg';
     $img = imagecreatetruecolor(32, 32);
@@ -34,17 +34,21 @@ function upload_photo(string $baseUrl, string $sessionId, string $token, string 
     imagedestroy($img);
 
     $ch = curl_init("$baseUrl/scan-sessions/$sessionId/photos-360");
+    $fields = [
+        'photo' => new \CURLFile($tmp, 'image/jpeg', 'photo.jpg'),
+        'room_id' => $roomId,
+        'position_x' => (string) $x,
+        'position_z' => (string) $z,
+        'heading_deg' => (string) $heading,
+    ];
+    if ($standId !== '') {
+        $fields['stand_id'] = $standId;
+    }
     curl_setopt_array($ch, [
         CURLOPT_POST => true,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HTTPHEADER => ["X-Scan-Access-Token: $token", "Idempotency-Key: $key"],
-        CURLOPT_POSTFIELDS => [
-            'photo' => new \CURLFile($tmp, 'image/jpeg', 'photo.jpg'),
-            'room_id' => $roomId,
-            'position_x' => (string) $x,
-            'position_z' => (string) $z,
-            'heading_deg' => (string) $heading,
-        ],
+        CURLOPT_POSTFIELDS => $fields,
         CURLOPT_CONNECTTIMEOUT_MS => 3000,
         CURLOPT_TIMEOUT => 30,
     ]);
@@ -120,10 +124,10 @@ check('room B captured', $capBStatus === 200, "HTTP $capBStatus");
 $roomBId = $capBBody['rooms'][1]['room_id'] ?? null;
 check('room B id present', is_string($roomBId));
 
-$upA1 = upload_photo($baseUrl, $sessionId, $accessToken, $roomAId, 2.0, 3.5, 0.0, 'key-a1');
-$upA2 = upload_photo($baseUrl, $sessionId, $accessToken, $roomAId, 0.5, 0.5, 90.0, 'key-a2');
-$upA3 = upload_photo($baseUrl, $sessionId, $accessToken, $roomAId, 2.1, 3.6, 180.0, 'key-a3');
-$upB1 = upload_photo($baseUrl, $sessionId, $accessToken, $roomBId, 2.0, 1.5, 270.0, 'key-b1');
+$upA1 = upload_photo($baseUrl, $sessionId, $accessToken, $roomAId, 2.0, 3.5, 0.0, 'key-a1', 'stand-a-door');
+$upA2 = upload_photo($baseUrl, $sessionId, $accessToken, $roomAId, 0.5, 0.5, 90.0, 'key-a2', 'stand-a-far');
+$upA3 = upload_photo($baseUrl, $sessionId, $accessToken, $roomAId, 2.1, 3.6, 180.0, 'key-a3', 'stand-a-door');
+$upB1 = upload_photo($baseUrl, $sessionId, $accessToken, $roomBId, 2.0, 1.5, 270.0, 'key-b1', 'stand-b');
 check('room A photos uploaded', $upA1 === 201 && $upA2 === 201 && $upA3 === 201, "HTTP $upA1 $upA2 $upA3");
 check('room B photo uploaded', $upB1 === 201, "HTTP $upB1");
 
@@ -191,6 +195,16 @@ upload_photo($baseUrl, $session2Id, $accessToken2, $singleRoomId, 2.0, 2.0, 0.0,
 [$tour2Status, $tour2Body] = net_http_json('GET', "$baseUrl/scan-sessions/$session2Id/tour.json", null, $accessToken2);
 check('single-photo session tour.json 200', $tour2Status === 200);
 check('single-photo session walkthrough false', ($tour2Body['features']['walkthrough'] ?? null) === false);
+
+echo "
+== Photo tour without stands ==
+";
+upload_photo($baseUrl, $session2Id, $accessToken2, $singleRoomId, 0.5, 0.5, 90.0, 'key-spread-1');
+upload_photo($baseUrl, $session2Id, $accessToken2, $singleRoomId, 3.5, 3.5, 180.0, 'key-spread-2');
+[$tour3Status, $tour3Body] = net_http_json('GET', "$baseUrl/scan-sessions/$session2Id/tour.json", null, $accessToken2);
+check('photo tour without stand_id tour.json 200', $tour3Status === 200);
+check('photo tour without stand_id has several stands', count($tour3Body['rooms'][0]['stands'] ?? []) >= 2);
+check('photo tour without stand_id keeps walkthrough false', ($tour3Body['features']['walkthrough'] ?? null) === false);
 
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {

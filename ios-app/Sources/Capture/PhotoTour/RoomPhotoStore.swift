@@ -13,6 +13,7 @@ struct RoomPhotoMetadata: Codable, Equatable {
     var depthFile: String? = nil
     var depthWidth: Int? = nil
     var depthHeight: Int? = nil
+    var depthIntrinsics: [Double]? = nil
 
     init(
         localId: String,
@@ -26,7 +27,8 @@ struct RoomPhotoMetadata: Codable, Equatable {
         intrinsics: [Double]? = nil,
         depthFile: String? = nil,
         depthWidth: Int? = nil,
-        depthHeight: Int? = nil
+        depthHeight: Int? = nil,
+        depthIntrinsics: [Double]? = nil
     ) {
         self.localId = localId
         self.capturedAt = capturedAt
@@ -40,6 +42,7 @@ struct RoomPhotoMetadata: Codable, Equatable {
         self.depthFile = depthFile
         self.depthWidth = depthWidth
         self.depthHeight = depthHeight
+        self.depthIntrinsics = depthIntrinsics
     }
 
     init(from decoder: Decoder) throws {
@@ -56,6 +59,7 @@ struct RoomPhotoMetadata: Codable, Equatable {
         depthFile = try c.decodeIfPresent(String.self, forKey: .depthFile)
         depthWidth = try c.decodeIfPresent(Int.self, forKey: .depthWidth)
         depthHeight = try c.decodeIfPresent(Int.self, forKey: .depthHeight)
+        depthIntrinsics = try c.decodeIfPresent([Double].self, forKey: .depthIntrinsics)
     }
 }
 
@@ -156,6 +160,7 @@ final class RoomPhotoStore {
         let dir = batchDirectory(captureGroupId: captureGroupId, roomKey: roomKey)
         let photoURL = dir.appendingPathComponent("\(localId).jpg")
         try? fileManager.removeItem(at: photoURL)
+        try? fileManager.removeItem(at: dir.appendingPathComponent("\(localId).depth"))
 
         var manifest = try loadManifest(captureGroupId: captureGroupId, roomKey: roomKey)
         manifest.photos.removeAll { $0.localId == localId }

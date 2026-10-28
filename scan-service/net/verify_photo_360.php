@@ -224,6 +224,9 @@ $fullIntrinsics = '[800.5,800.5,320.0,240.0]';
         'stand_id' => 'stand-net-abc',
         'camera_transform' => $fullTransform,
         'intrinsics' => $fullIntrinsics,
+        'depth_width' => '256',
+        'depth_height' => '192',
+        'depth_intrinsics' => '[200.0,201.3,133.3,93.3]',
     ]),
     $accessToken, 'key-360-full', $tmpDepth
 );
@@ -233,6 +236,8 @@ check('full payload has_depth true', ($fullBody['has_depth'] ?? null) === true);
 check('full payload camera_transform is 16-array', is_array($fullBody['camera_transform'] ?? null) && count($fullBody['camera_transform']) === 16);
 check('full payload intrinsics is 4-array', is_array($fullBody['intrinsics'] ?? null) && count($fullBody['intrinsics']) === 4);
 check('full payload omits depth_url', isset($fullBody['depth_url']) === false);
+check('full payload depth size preserved', ($fullBody['depth_width'] ?? null) === 256 && ($fullBody['depth_height'] ?? null) === 192, json_encode($fullBody));
+check('full payload depth intrinsics is 4-array', is_array($fullBody['depth_intrinsics'] ?? null) && count($fullBody['depth_intrinsics']) === 4);
 
 [$oldStatus, $oldBody] = photo_360_upload(
     "$baseUrl/scan-sessions/$sessionId/photos-360",
@@ -243,6 +248,38 @@ check('old payload has_depth false', ($oldBody['has_depth'] ?? null) === false);
 check('old payload stand_id empty', ($oldBody['stand_id'] ?? null) === '');
 check('old payload camera_transform null', ($oldBody['camera_transform'] ?? null) === null);
 check('old payload intrinsics null', ($oldBody['intrinsics'] ?? null) === null);
+check('old payload depth size null', array_key_exists('depth_width', $oldBody) && $oldBody['depth_width'] === null && $oldBody['depth_height'] === null);
+check('old payload depth intrinsics null', array_key_exists('depth_intrinsics', $oldBody) && $oldBody['depth_intrinsics'] === null);
+
+[$wrongSizeStatus, $wrongSizeBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', array_merge($fields, ['depth_width' => '320', 'depth_height' => '240']), $accessToken, 'key-360-wrong-depth-size', $tmpDepth
+);
+check('depth size that does not match the file returns 422', $wrongSizeStatus === 422 && ($wrongSizeBody['error'] ?? null) === 'invalid_depth_size', "HTTP $wrongSizeStatus: " . json_encode($wrongSizeBody));
+
+[$sizeNoFileStatus, $sizeNoFileBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', array_merge($fields, ['depth_width' => '256', 'depth_height' => '192']), $accessToken, 'key-360-depth-size-no-file'
+);
+check('depth size without a depth file returns 422', $sizeNoFileStatus === 422 && ($sizeNoFileBody['error'] ?? null) === 'invalid_depth_size', "HTTP $sizeNoFileStatus: " . json_encode($sizeNoFileBody));
+
+[$halfSizeStatus, $halfSizeBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', array_merge($fields, ['depth_width' => '256']), $accessToken, 'key-360-depth-half-size', $tmpDepth
+);
+check('only one depth dimension returns 422', $halfSizeStatus === 422 && ($halfSizeBody['error'] ?? null) === 'invalid_depth_size', "HTTP $halfSizeStatus: " . json_encode($halfSizeBody));
+
+[$badDepthIntrinsicsStatus, $badDepthIntrinsicsBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', array_merge($fields, ['depth_intrinsics' => '[1,2]']), $accessToken, 'key-360-bad-depth-intrinsics', $tmpDepth
+);
+check('bad depth_intrinsics returns 422', $badDepthIntrinsicsStatus === 422 && ($badDepthIntrinsicsBody['error'] ?? null) === 'invalid_depth_intrinsics', "HTTP $badDepthIntrinsicsStatus: " . json_encode($badDepthIntrinsicsBody));
+
+[$depthNoSizeStatus, $depthNoSizeBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', $fields, $accessToken, 'key-360-depth-no-size', $tmpDepth
+);
+check('depth file without its size returns 422', $depthNoSizeStatus === 422 && ($depthNoSizeBody['error'] ?? null) === 'invalid_depth_size', "HTTP $depthNoSizeStatus: " . json_encode($depthNoSizeBody));
 
 [$badStandStatus, $badStandBody] = photo_360_upload(
     "$baseUrl/scan-sessions/$sessionId/photos-360",

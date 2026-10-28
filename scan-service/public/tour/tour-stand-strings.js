@@ -3,32 +3,40 @@
 
   var STRINGS = {
     en: {
-      toggle_group_aria: 'Photo view mode',
       toggle_photos: 'Photos',
       toggle_walkthrough: 'Walk-through',
       arrow_label: 'Go to the next stand',
-      minimap_stand_aria: 'Current stand highlighted',
       stand_heading_label: 'Look around',
       stand_gap_label: 'No photo for this direction',
       stand_single_fallback: 'Only one photo at this stand',
       transition_prefers_reduced: 'Reduced motion: instant change',
       embed_tab_tour: 'Tour',
       embed_tab_dollhouse: 'Dollhouse',
-      embed_tab_plan: 'Plan'
+      embed_tab_plan: 'Plan',
+      hint_stand: 'Drag to look around. Tap a circle on the floor to walk there.',
+      turn_left_label: 'Turn left towards the next spot',
+      turn_right_label: 'Turn right towards the next spot',
+      strip_aria: 'Spots in this home',
+      loading_spot: 'Loading this spot\u2026',
+      fullscreen_label: 'Full screen'
     },
     nl: {
-      toggle_group_aria: 'Weergave foto\u2019s',
       toggle_photos: 'Foto\u2019s',
       toggle_walkthrough: 'Rondleiding',
       arrow_label: 'Ga naar het volgende punt',
-      minimap_stand_aria: 'Huidige positie gemarkeerd',
       stand_heading_label: 'Kijk rond',
       stand_gap_label: 'Geen foto in deze richting',
       stand_single_fallback: 'Slechts \u00e9\u00e9n foto op dit punt',
       transition_prefers_reduced: 'Minder beweging: directe wissel',
       embed_tab_tour: 'Rondleiding',
       embed_tab_dollhouse: 'Poppenhuis',
-      embed_tab_plan: 'Plattegrond'
+      embed_tab_plan: 'Plattegrond',
+      hint_stand: 'Sleep om rond te kijken. Tik op een cirkel op de vloer om erheen te lopen.',
+      turn_left_label: 'Draai naar links, naar het volgende punt',
+      turn_right_label: 'Draai naar rechts, naar het volgende punt',
+      strip_aria: 'Punten in deze woning',
+      loading_spot: 'Dit punt wordt geladen\u2026',
+      fullscreen_label: 'Volledig scherm'
     }
   };
 

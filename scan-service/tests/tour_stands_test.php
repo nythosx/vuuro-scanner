@@ -130,12 +130,84 @@ $single = TourStands::compute([room('room-a', 'Ground', [0.0, 0.0], [], [photo('
 expect('single: one stand', count($single['stands_by_room']['room-a']), 1);
 expect('single: walkthrough false', $single['walkthrough'], false);
 
-echo "\n== Walkthrough flag with two stands ==\n";
-$twoStands = TourStands::compute([room('room-a', 'Ground', [0.0, 0.0], [], [
+echo "\n== Walkthrough flag ==\n";
+$twoSingleShotStands = TourStands::compute([room('room-a', 'Ground', [0.0, 0.0], [], [
+    photo('p1', 0.0, 0.0, 0.0, '2026-10-27T10:00:00+00:00', 'stand-one'),
+    photo('p2', 5.0, 5.0, 90.0, '2026-10-27T10:01:00+00:00', 'stand-two'),
+])]);
+expect('walkthrough: captured stands with one photo each stay false', $twoSingleShotStands['walkthrough'], false);
+
+$lookAroundPhotos = [];
+for ($i = 0; $i < 12; $i++) {
+    $lookAroundPhotos[] = photo('p' . $i, 2.0, 2.0, $i * 30.0, sprintf('2026-10-27T10:00:%02d+00:00', $i), 'stand-full');
+}
+$oneFullStand = TourStands::compute([room('room-a', 'Ground', [0.0, 0.0], [], $lookAroundPhotos)]);
+expect('walkthrough: one room with one full look-around stand true', $oneFullStand['walkthrough'], true);
+
+$oneStandPerRoom = TourStands::compute([
+    room('room-a', 'Ground', [0.0, 0.0], [], [
+        photo('p1', 1.0, 1.0, 0.0, '2026-10-27T10:00:00+00:00', 'stand-a'),
+        photo('p2', 1.0, 1.0, 90.0, '2026-10-27T10:00:05+00:00', 'stand-a'),
+    ]),
+    room('room-b', 'Ground', [5.0, 0.0], [], [photo('p3', 1.0, 1.0, 0.0, '2026-10-27T10:01:00+00:00', 'stand-b')]),
+]);
+expect('walkthrough: a captured look-around stand in one of two rooms true', $oneStandPerRoom['walkthrough'], true);
+
+echo "\n== Neighbour cap ==\n";
+$crowdPhotos = [];
+for ($i = 0; $i < 7; $i++) {
+    $crowdPhotos[] = photo('c' . $i, 0.5 + $i * 0.6, 0.5 + ($i % 2) * 0.6, 0.0, sprintf('2026-10-27T11:00:%02d+00:00', $i), 'crowd-' . $i);
+}
+$crowd = TourStands::compute([
+    room('room-a', 'Ground', [0.0, 0.0], [door(4.4, 0.0)], $crowdPhotos),
+    room('room-b', 'Ground', [0.0, -5.0], [], [photo('b1', 4.4, 4.5, 0.0, '2026-10-27T11:01:00+00:00', 'room-b-stand')]),
+])['stands_by_room'];
+$maxDegree = 0;
+$symmetric = true;
+$lookup = [];
+foreach ($crowd as $roomId => $stands) {
+    foreach ($stands as $stand) {
+        $lookup[$stand['stand_id']] = $stand;
+    }
+}
+foreach ($lookup as $standId => $stand) {
+    $maxDegree = max($maxDegree, count($stand['neighbours']));
+    foreach ($stand['neighbours'] as $neighbour) {
+        $back = array_column($lookup[$neighbour['stand_id']]['neighbours'] ?? [], 'stand_id');
+        if (!in_array($standId, $back, true)) {
+            $symmetric = false;
+        }
+    }
+}
+expect('cap: no stand has more than 4 neighbours', $maxDegree <= TourStands::MAX_NEIGHBOURS, true);
+expect('cap: links stay symmetric', $symmetric, true);
+expect('cap: the door link survives a crowded room', count($crowd['room-b'][0]['neighbours']), 1);
+
+echo "\n== Captured stands do not link to wall-photo stands ==\n";
+$mixed = TourStands::compute([room('room-a', 'Ground', [0.0, 0.0], [], [
+    photo('w1', 1.0, 1.0, 0.0, '2026-10-27T12:00:00+00:00'),
+    photo('w2', 4.0, 1.0, 90.0, '2026-10-27T12:00:10+00:00'),
+    photo('s1', 2.0, 2.0, 0.0, '2026-10-27T12:01:00+00:00', 'stand-x'),
+    photo('s2', 2.0, 2.0, 30.0, '2026-10-27T12:01:01+00:00', 'stand-x'),
+    photo('s3', 2.0, 4.0, 0.0, '2026-10-27T12:02:00+00:00', 'stand-y'),
+    photo('s4', 2.0, 4.0, 30.0, '2026-10-27T12:02:01+00:00', 'stand-y'),
+])])['stands_by_room']['room-a'];
+$mixedById = [];
+foreach ($mixed as $stand) {
+    $mixedById[$stand['stand_id']] = $stand;
+}
+expect('mixed: stand-x links only to stand-y', array_column($mixedById['stand-x']['neighbours'], 'stand_id'), ['stand-y']);
+expect('mixed: stand-y links only to stand-x', array_column($mixedById['stand-y']['neighbours'], 'stand_id'), ['stand-x']);
+expect('mixed: wall-photo stands still link to each other', count($mixed[0]['neighbours']), 1);
+expect('mixed: no internal keys leak into the output', array_key_exists('captured', $mixed[0]), false);
+
+$photoTourOnly = TourStands::compute([room('room-a', 'Ground', [0.0, 0.0], [], [
     photo('p1', 0.0, 0.0, 0.0, '2026-10-27T10:00:00+00:00'),
     photo('p2', 5.0, 5.0, 90.0, '2026-10-27T10:01:00+00:00'),
+    photo('p3', 2.5, 0.0, 180.0, '2026-10-27T10:02:00+00:00'),
 ])]);
-expect('walkthrough: two stands true', $twoStands['walkthrough'], true);
+expect('walkthrough: spread-out photos without stand_id stay false', $photoTourOnly['walkthrough'], false);
+expect('walkthrough: spread-out photos still listed as stands', count($photoTourOnly['stands_by_room']['room-a']), 3);
 
 if ($failures > 0) {
     fwrite(STDERR, "\n$failures failure(s)\n");
