@@ -441,6 +441,8 @@ body {
 
 .tour-dollhouse-hotspot {
   position: absolute;
+  left: 0;
+  top: 0;
   appearance: none;
   -webkit-appearance: none;
   border: 2px solid #ffffff;
@@ -450,7 +452,12 @@ body {
   cursor: pointer;
   pointer-events: auto;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-  transition: transform 0.12s ease, background 0.12s ease;
+  transition: scale 0.12s ease, background 0.12s ease, opacity 0.12s ease;
+}
+
+.tour-dollhouse-hotspot.is-behind {
+  opacity: 0.4;
+  box-shadow: none;
 }
 
 .tour-dollhouse-hotspot:hover,
@@ -458,7 +465,8 @@ body {
   background: #ffffff;
   border-color: #ff8212;
   outline: none;
-  transform: scale(1.15);
+  scale: 1.15;
+  opacity: 1;
 }
 
 .tour-dollhouse-back {

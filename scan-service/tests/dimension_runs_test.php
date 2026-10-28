@@ -136,6 +136,33 @@ $svg = (new FloorPlanSvgRenderer())->render($plan);
 dr_check('the SVG shows the full wall length', str_contains($svg, '8.88 m'));
 dr_check('the SVG no longer shows the split pieces', !str_contains($svg, '2.30 m') && !str_contains($svg, '2.68 m') && !str_contains($svg, '3.90 m'));
 
+$fusedRoom = static fn (string $label, array $outline, array $origin): array => [
+    'room_id' => strtolower($label),
+    'label' => $label,
+    'floor_area_m2' => 12.0,
+    'perimeter_m' => 14.0,
+    'confidence' => 'high',
+    'bounding_dimensions_m' => ['width_m' => 4.0, 'length_m' => 3.0],
+    'outline_m' => $outline,
+    'structure_origin_m' => $origin,
+    'openings' => [],
+    'height_m' => null,
+    'room_type' => null,
+    'heading_deg' => null,
+    'capture_group_id' => 'walk-1',
+];
+$fusedPlan = $plan;
+$fusedPlan['rooms'] = [
+    $fusedRoom('Living', [[0, 0], [5, 0], [5, 4], [0, 4]], [0.0, 0.0]),
+    $fusedRoom('Kitchen', [[0, 0], [3, 0], [3, 3], [0, 3]], [5.12, 0.0]),
+    $fusedRoom('Hall', [[0, 0], [2, 0], [2, 2.5], [0, 2.5]], [0.0, 4.12]),
+];
+$fusedSvg = (new FloorPlanSvgRenderer())->render($fusedPlan, 'fused');
+dr_check('the fused plan dimensions the top side', str_contains($fusedSvg, '>8.00 m<'));
+dr_check('the fused plan dimensions the left side', str_contains($fusedSvg, '>6.50 m<'));
+dr_check('the fused plan dimensions the bottom side per wall', str_contains($fusedSvg, '>2.00 m<'));
+dr_check('the fused plan dimensions the right side per wall', str_contains($fusedSvg, '>1.00 m<') && str_contains($fusedSvg, '>2.50 m<'));
+
 echo "\n$checks check(s), " . count($failures) . " failure(s).\n";
 if ($failures !== []) {
     echo "TEST VERDICT: RED\n";

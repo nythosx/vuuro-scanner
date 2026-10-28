@@ -147,6 +147,9 @@ struct ScanFlowView: View {
                         if let pending = PendingUploadStore.load() {
                             stage = .resumingUpload(pending)
                         }
+                    },
+                    onResumeWalkthrough: { state in
+                        stage = .multiRoomCapturing(identity: state.identity, session: state.session, attempt: UUID())
                     }
                 )
                 .toolbar(.hidden, for: .navigationBar)
@@ -225,7 +228,7 @@ struct ScanFlowView: View {
                 ) { updated in
                     stage = .summary(session: session, floorPlan: updated)
                 } onAddRoom: {
-                    if ContinueRoute.continuesAsUnit(rooms: floorPlan.rooms, floor: session.defaultFloor) {
+                    if ContinueRoute.addsAsUnit(rooms: floorPlan.rooms, floor: session.defaultFloor) {
                         stage = .multiRoomCapturing(identity: identity, session: session, attempt: UUID())
                     } else {
                         stage = .capturing(identity: identity, session: session, attempt: UUID())

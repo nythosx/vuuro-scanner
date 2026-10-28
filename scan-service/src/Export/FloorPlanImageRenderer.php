@@ -691,9 +691,9 @@ final class FloorPlanImageRenderer
             }
         }
         $labelPadding = (int) ceil($maxLabelWidth / 2) + 8;
-        $planBlockWidth = self::DIMENSION_GUTTER + $labelPadding + (int) round(($maxX - $minX) * self::PIXELS_PER_METER) + $labelPadding;
+        $planBlockWidth = self::DIMENSION_GUTTER + $labelPadding + (int) round(($maxX - $minX) * self::PIXELS_PER_METER) + $labelPadding + self::DIMENSION_GUTTER;
         $canvasWidth = max($headerTextWidth, self::MARGIN * 2 + $planBlockWidth);
-        $canvasHeight = self::MARGIN * 2 + $topGutter + (int) round(($maxZ - $minZ) * self::PIXELS_PER_METER)
+        $canvasHeight = self::MARGIN * 2 + $topGutter + (int) round(($maxZ - $minZ) * self::PIXELS_PER_METER) + self::DIMENSION_GUTTER + 16
             + count($notesLines) * self::NOTE_LINE_HEIGHT
             + count($summaryLines) * self::NOTE_LINE_HEIGHT
             + 30;
@@ -767,6 +767,14 @@ final class FloorPlanImageRenderer
         $zBreakpoints = DimensionRuns::forFusedSide($rooms, $poses, $fusion['edgeTiers'], 1, 'min');
         if (count($zBreakpoints) < 2) { $zBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 1); }
         $this->drawVerticalDimensionChain($image, $zBreakpoints, $planLeft + 14, $toPx, $unit, $dimColor);
+        $planBottomY = $originPxY + (int) round(($maxZ - $minZ) * self::PIXELS_PER_METER);
+        $planRightX = $originPxX + (int) round(($maxX - $minX) * self::PIXELS_PER_METER);
+        $xBreakpointsBottom = DimensionRuns::forFusedSide($rooms, $poses, $fusion['edgeTiers'], 0, 'max');
+        if (count($xBreakpointsBottom) < 2) { $xBreakpointsBottom = $xBreakpoints; }
+        $this->drawHorizontalDimensionChain($image, $xBreakpointsBottom, $planBottomY + self::DIMENSION_GUTTER, $toPx, $unit, $dimColor, true);
+        $zBreakpointsRight = DimensionRuns::forFusedSide($rooms, $poses, $fusion['edgeTiers'], 1, 'max');
+        if (count($zBreakpointsRight) < 2) { $zBreakpointsRight = $zBreakpoints; }
+        $this->drawVerticalDimensionChain($image, $zBreakpointsRight, $planRightX + $labelPadding + 14, $toPx, $unit, $dimColor, true);
 
         $edgeTiers = $fusion['edgeTiers'];
         $objectLabelDraws = [];
@@ -844,7 +852,7 @@ final class FloorPlanImageRenderer
             $draw();
         }
 
-        $drawingBottomY = $originPxY + (int) round(($maxZ - $minZ) * self::PIXELS_PER_METER);
+        $drawingBottomY = $originPxY + (int) round(($maxZ - $minZ) * self::PIXELS_PER_METER) + self::DIMENSION_GUTTER + 16;
         if ($this->planStyle->showNotes) {
             $this->drawNotes($image, $notesLines, $drawingBottomY + 10, $text);
         }
@@ -1311,7 +1319,7 @@ final class FloorPlanImageRenderer
         return $breakpoints;
     }
 
-    private function drawHorizontalDimensionChain($image, array $breakpoints, int $y, callable $toPx, string $unit, int $color): void
+    private function drawHorizontalDimensionChain($image, array $breakpoints, int $y, callable $toPx, string $unit, int $color, bool $labelBelow = false): void
     {
         for ($i = 0; $i < count($breakpoints) - 1; $i++) {
             $spanM = $breakpoints[$i + 1] - $breakpoints[$i];
@@ -1322,11 +1330,11 @@ final class FloorPlanImageRenderer
             [$x2] = $toPx($breakpoints[$i + 1], 0.0);
             $this->drawDimensionSegment($image, $x1, $y, $x2, $y, $color);
             $label = UnitFormatter::length($spanM, $unit);
-            $this->drawText($image, 1, (int) (($x1 + $x2) / 2) - 12, $y - 12, $label, $color);
+            $this->drawText($image, 1, (int) (($x1 + $x2) / 2) - 12, $labelBelow ? $y + 4 : $y - 12, $label, $color);
         }
     }
 
-    private function drawVerticalDimensionChain($image, array $breakpoints, int $x, callable $toPx, string $unit, int $color): void
+    private function drawVerticalDimensionChain($image, array $breakpoints, int $x, callable $toPx, string $unit, int $color, bool $labelRight = false): void
     {
         for ($i = 0; $i < count($breakpoints) - 1; $i++) {
             $spanM = $breakpoints[$i + 1] - $breakpoints[$i];
@@ -1337,7 +1345,7 @@ final class FloorPlanImageRenderer
             [, $y2] = $toPx(0.0, $breakpoints[$i + 1]);
             $this->drawDimensionSegment($image, $x, $y1, $x, $y2, $color);
             $label = UnitFormatter::length($spanM, $unit);
-            $this->drawTextUp($image, 1, $x - 14, (int) (($y1 + $y2) / 2) + 20, $label, $color);
+            $this->drawTextUp($image, 1, $labelRight ? $x + 3 : $x - 14, (int) (($y1 + $y2) / 2) + 20, $label, $color);
         }
     }
 

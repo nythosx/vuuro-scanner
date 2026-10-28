@@ -751,7 +751,7 @@ SVG;
         return $breakpoints;
     }
 
-    private function horizontalDimensionChainSvg(array $breakpoints, float $y, callable $toPx, string $unit): string
+    private function horizontalDimensionChainSvg(array $breakpoints, float $y, callable $toPx, string $unit, bool $labelBelow = false): string
     {
         $out = '<g stroke="' . self::TEXT . '" stroke-width="0.9" fill="none">';
         $text = '';
@@ -765,13 +765,13 @@ SVG;
             $out .= '<line x1="' . $this->num($x1) . '" y1="' . $this->num($y) . '" x2="' . $this->num($x2) . '" y2="' . $this->num($y) . '" marker-start="url(#ar-s)" marker-end="url(#ar-e)"/>'
                 . ($this->planStyle->isFunda ? '' : '<line x1="' . $this->num($x1) . '" y1="' . $this->num($y - 5) . '" x2="' . $this->num($x1) . '" y2="' . $this->num($y + 5) . '"/>'
                 . '<line x1="' . $this->num($x2) . '" y1="' . $this->num($y - 5) . '" x2="' . $this->num($x2) . '" y2="' . $this->num($y + 5) . '"/>');
-            $text .= '<text x="' . $this->num(($x1 + $x2) / 2) . '" y="' . $this->num($y - 6) . '" font-size="10" fill="' . self::TEXT . '" text-anchor="middle">' . $this->esc(UnitFormatter::length($spanM, $unit)) . '</text>';
+            $text .= '<text x="' . $this->num(($x1 + $x2) / 2) . '" y="' . $this->num($labelBelow ? $y + 14 : $y - 6) . '" font-size="10" fill="' . self::TEXT . '" text-anchor="middle">' . $this->esc(UnitFormatter::length($spanM, $unit)) . '</text>';
         }
         $out .= '</g>' . $text;
         return $out;
     }
 
-    private function verticalDimensionChainSvg(array $breakpoints, float $x, callable $toPx, string $unit): string
+    private function verticalDimensionChainSvg(array $breakpoints, float $x, callable $toPx, string $unit, bool $labelRight = false): string
     {
         $out = '<g stroke="' . self::TEXT . '" stroke-width="0.9" fill="none">';
         $text = '';
@@ -786,7 +786,8 @@ SVG;
                 . ($this->planStyle->isFunda ? '' : '<line x1="' . $this->num($x - 5) . '" y1="' . $this->num($y1) . '" x2="' . $this->num($x + 5) . '" y2="' . $this->num($y1) . '"/>'
                 . '<line x1="' . $this->num($x - 5) . '" y1="' . $this->num($y2) . '" x2="' . $this->num($x + 5) . '" y2="' . $this->num($y2) . '"/>');
             $midY = ($y1 + $y2) / 2;
-            $text .= '<text x="' . $this->num($x - 6) . '" y="' . $this->num($midY) . '" font-size="10" fill="' . self::TEXT . '" text-anchor="middle" transform="rotate(-90 ' . $this->num($x - 6) . ' ' . $this->num($midY) . ')">' . $this->esc(UnitFormatter::length($spanM, $unit)) . '</text>';
+            $labelX = $labelRight ? $x + 14 : $x - 6;
+            $text .= '<text x="' . $this->num($labelX) . '" y="' . $this->num($midY) . '" font-size="10" fill="' . self::TEXT . '" text-anchor="middle" transform="rotate(-90 ' . $this->num($labelX) . ' ' . $this->num($midY) . ')">' . $this->esc(UnitFormatter::length($spanM, $unit)) . '</text>';
         }
         $out .= '</g>' . $text;
         return $out;
@@ -1199,9 +1200,9 @@ SVG;
             $maxLabelWidth = max($maxLabelWidth, $estimatedPx);
         }
         $labelPadding = (int) ceil($maxLabelWidth / 2) + 8;
-        $planBlockWidth = $dimGutter + $labelPadding + $drawingWidth + $labelPadding;
+        $planBlockWidth = $dimGutter + $labelPadding + $drawingWidth + $labelPadding + $dimGutter;
         $canvasWidth = max(self::MARGIN * 2 + $planBlockWidth, 560);
-        $canvasHeight = $topGutter + $drawingHeight + 40
+        $canvasHeight = $topGutter + $drawingHeight + $dimGutter + 40
             + ($this->planStyle->showNotes ? count($notesLines) * self::NOTE_LINE_HEIGHT : 0)
             + ($this->planStyle->showMetrics ? count($summaryLines) * self::NOTE_LINE_HEIGHT : 0)
             + ($isFunda ? 70 : 30);
@@ -1238,6 +1239,13 @@ SVG;
         $zBreakpoints = DimensionRuns::forFusedSide($rooms, $poses, $fusion['edgeTiers'], 1, 'min');
         if (count($zBreakpoints) < 2) { $zBreakpoints = $this->dimensionChainBreakpoints($rooms, $poses, 1); }
         $body .= $this->verticalDimensionChainSvg($zBreakpoints, $dimX, $toPx, $unit);
+
+        $xBreakpointsBottom = DimensionRuns::forFusedSide($rooms, $poses, $fusion['edgeTiers'], 0, 'max');
+        if (count($xBreakpointsBottom) < 2) { $xBreakpointsBottom = $xBreakpoints; }
+        $body .= $this->horizontalDimensionChainSvg($xBreakpointsBottom, $originPxY + $drawingHeight + $dimGutter - 14, $toPx, $unit, true);
+        $zBreakpointsRight = DimensionRuns::forFusedSide($rooms, $poses, $fusion['edgeTiers'], 1, 'max');
+        if (count($zBreakpointsRight) < 2) { $zBreakpointsRight = $zBreakpoints; }
+        $body .= $this->verticalDimensionChainSvg($zBreakpointsRight, $originPxX + $drawingWidth + $labelPadding + $dimGutter - 14, $toPx, $unit, true);
 
         $edgeTiers = $fusion['edgeTiers'];
 
@@ -1305,7 +1313,7 @@ SVG;
             $body .= $this->compassArrowSvg($fusedHeadingDeg, $originPxX + $drawingWidth - 26, $originPxY + 26);
         }
 
-        $drawingBottomY = $originPxY + $drawingHeight;
+        $drawingBottomY = $originPxY + $drawingHeight + $dimGutter;
         $notesY = $drawingBottomY + 20;
         if ($this->planStyle->showNotes) {
             $body .= $this->notesSvg($notesLines, self::MARGIN, $notesY);

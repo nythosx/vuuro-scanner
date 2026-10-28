@@ -47,6 +47,8 @@ struct MultiRoomCaptureFlowView: View {
     @State private var floorBeforePrompt: String = ""
     @State private var resumeOffer: WalkthroughState?
     @State private var showResumePrompt = false
+    @State private var otherWalkthrough: WalkthroughState?
+    @State private var showOtherWalkthroughPrompt = false
     @State private var photoCaptureContext: PhotoCaptureContext?
     @Environment(\.scenePhase) private var scenePhase
 
@@ -271,7 +273,8 @@ struct MultiRoomCaptureFlowView: View {
                                     self.partialRoomFailureMessage = nil
                                     coordinator.discardPendingPartialRoom()
                                     continueAfterRoomResolved()
-                                }
+                                },
+                                onDiscardAndFinish: discardAndFinishAction
                             )
                         }
                     } else if didRequestStopRoom {
@@ -305,6 +308,9 @@ struct MultiRoomCaptureFlowView: View {
                !stored.rooms.isEmpty {
                 resumeOffer = stored
                 showResumePrompt = true
+            } else if let stored = WalkthroughStore.load(), !stored.rooms.isEmpty {
+                otherWalkthrough = stored
+                showOtherWalkthroughPrompt = true
             } else {
                 Task { await attemptContinueOrStart() }
             }
@@ -359,6 +365,21 @@ struct MultiRoomCaptureFlowView: View {
                 .accessibilityIdentifier("multiCapture.startFresh")
             } message: { offer in
                 Text("\(offer.rooms.count) room\(offer.rooms.count == 1 ? " was" : "s were") saved from a walkthrough that was interrupted. Upload them as they are, or discard them to start a new scan.")
+            }
+            .alert("Another walkthrough is saved", isPresented: $showOtherWalkthroughPrompt, presenting: otherWalkthrough) { other in
+                Button("Keep it and go back", role: .cancel) {
+                    otherWalkthrough = nil
+                    onGoBack()
+                }
+                .accessibilityIdentifier("multiCapture.keepOtherWalkthrough")
+                Button("Discard it and start this scan", role: .destructive) {
+                    WalkthroughStore.clear()
+                    otherWalkthrough = nil
+                    Task { await attemptContinueOrStart() }
+                }
+                .accessibilityIdentifier("multiCapture.discardOtherWalkthrough")
+            } message: { other in
+                Text("\(other.identity.propertyId) — \(other.identity.unitId) has \(other.rooms.count) room(s) saved from an interrupted walkthrough. Starting this scan replaces them. Go back and open it from the home screen to keep them.")
             }
             .sheet(isPresented: $showHowToScan) {
                 ScanInstructionsView(
@@ -960,6 +981,16 @@ struct MultiRoomCaptureFlowView: View {
         continueAfterRoomResolved()
     }
 
+    private var discardAndFinishAction: (() -> Void)? {
+        guard !pendingFinishUnit, !coordinator.capturedRooms.isEmpty else { return nil }
+        return {
+            partialRoomFailureMessage = nil
+            coordinator.discardPendingPartialRoom()
+            pendingFinishUnit = true
+            continueAfterRoomResolved()
+        }
+    }
+
     private func continueAfterRoomResolved() {
         if pendingFinishUnit {
             pendingFinishUnit = false
@@ -1309,6 +1340,7 @@ struct PartialRoomChoiceView: View {
     let message: String
     let onKeep: () -> Void
     let onDiscard: () -> Void
+    var onDiscardAndFinish: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 16) {
@@ -1326,6 +1358,10 @@ struct PartialRoomChoiceView: View {
                 .buttonStyle(.borderedProminent)
             Button("Discard and rescan", role: .destructive, action: onDiscard)
                 .accessibilityIdentifier("partialRoom.discard")
+            if let onDiscardAndFinish {
+                Button("Discard and finish the unit", action: onDiscardAndFinish)
+                    .accessibilityIdentifier("partialRoom.discardAndFinish")
+            }
         }
         .padding()
     }

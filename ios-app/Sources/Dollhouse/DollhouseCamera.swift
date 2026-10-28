@@ -21,8 +21,8 @@ final class DollhouseCamera: NSObject {
     private var inertiaLink: CADisplayLink?
     private var lastInertiaTimestamp: CFTimeInterval = 0
 
-    static let inertiaDecayPerSecond: Float = 0.02
-    static let inertiaStopSpeed: Float = 0.02
+    static let inertiaDecayPerSecond: Float = 0.08
+    static let inertiaStopSpeed: Float = 0.01
     static let rotationSensitivity: Float = 0.008
     static let minimumFlickPointsPerSecond: CGFloat = 180
     static let maximumSpinRadiansPerSecond: Float = 5

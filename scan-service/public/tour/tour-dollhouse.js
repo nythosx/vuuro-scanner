@@ -2,6 +2,8 @@
   'use strict';
 
   var HOTSPOT_PIXEL_SIZE = 24;
+  var MAX_OCCLUSION_TRIANGLES = 8000;
+  var OCCLUSION_CLEARANCE_M = 0.05;
 
   var activeViewer = null;
 
@@ -198,6 +200,7 @@
     this.lastPointer = null;
     this.activePointers = {};
     this.pinchDistance = null;
+    this.pinchMidpoint = null;
     this.hotspotElements = [];
     this.parts = [];
     this.imageTextures = {};
@@ -356,22 +359,25 @@
 
   Viewer.prototype.decodeImage = function (image) {
     var blob = new Blob([image.bytes], { type: image.mime });
+    var viaImage = function () {
+      return new Promise(function (resolve, reject) {
+        var url = URL.createObjectURL(blob);
+        var img = new Image();
+        img.onload = function () {
+          URL.revokeObjectURL(url);
+          resolve(img);
+        };
+        img.onerror = function (err) {
+          URL.revokeObjectURL(url);
+          reject(err);
+        };
+        img.src = url;
+      });
+    };
     if (typeof createImageBitmap === 'function') {
-      return createImageBitmap(blob, { imageOrientation: 'none' });
+      return createImageBitmap(blob).catch(viaImage);
     }
-    return new Promise(function (resolve, reject) {
-      var url = URL.createObjectURL(blob);
-      var img = new Image();
-      img.onload = function () {
-        URL.revokeObjectURL(url);
-        resolve(img);
-      };
-      img.onerror = function (err) {
-        URL.revokeObjectURL(url);
-        reject(err);
-      };
-      img.src = url;
-    });
+    return viaImage();
   };
 
   Viewer.prototype.frameToBounds = function () {
@@ -408,6 +414,7 @@
       var ids = Object.keys(self.activePointers);
       if (ids.length === 2) {
         self.pinchDistance = self.pointerDistance();
+        self.pinchMidpoint = self.pointerMidpoint();
         self.lastPointer = null;
       } else {
         self.dragging = true;
@@ -427,6 +434,11 @@
           self.distance = Math.max(1, Math.min(500, self.distance));
         }
         self.pinchDistance = d;
+        var mid = self.pointerMidpoint();
+        if (self.pinchMidpoint && mid) {
+          self.pan(mid.x - self.pinchMidpoint.x, mid.y - self.pinchMidpoint.y);
+        }
+        self.pinchMidpoint = mid;
         self.render();
         return;
       }
@@ -450,6 +462,7 @@
       delete self.activePointers[event.pointerId];
       if (Object.keys(self.activePointers).length < 2) {
         self.pinchDistance = null;
+        self.pinchMidpoint = null;
       }
       self.dragging = false;
       self.lastPointer = null;
@@ -458,6 +471,7 @@
     canvas.addEventListener('pointercancel', function (event) {
       delete self.activePointers[event.pointerId];
       self.pinchDistance = null;
+      self.pinchMidpoint = null;
       self.dragging = false;
       self.lastPointer = null;
     });
@@ -487,6 +501,16 @@
     return Math.sqrt(dx * dx + dy * dy);
   };
 
+  Viewer.prototype.pointerMidpoint = function () {
+    var pts = Object.keys(this.activePointers).map(function (k) {
+      return this.activePointers[k];
+    }, this);
+    if (pts.length < 2) {
+      return null;
+    }
+    return { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+  };
+
   Viewer.prototype.pan = function (dx, dy) {
     var scale = this.distance * 0.0015;
     var forward = [
@@ -509,6 +533,8 @@
         var el = document.createElement('button');
         el.type = 'button';
         el.className = 'tour-dollhouse-hotspot';
+        el.style.width = HOTSPOT_PIXEL_SIZE + 'px';
+        el.style.height = HOTSPOT_PIXEL_SIZE + 'px';
         el.setAttribute('aria-label', hotspot.label);
         el.addEventListener('click', function () {
           self.onHotspotTap(hotspot.roomIndex, hotspot.photoIndex);
@@ -517,6 +543,7 @@
         self.hotspotElements.push({ el: el, hotspot: hotspot });
       })(this.hotspots[i]);
     }
+    this.occlusionEyeKey = null;
   };
 
   Viewer.prototype.eyePosition = function () {
@@ -594,25 +621,95 @@
 
   Viewer.prototype.positionHotspots = function () {
     var eye = this.eyePosition();
-    var eyeY = eye[1];
+    var eyeKey = eye[0].toFixed(3) + ',' + eye[1].toFixed(3) + ',' + eye[2].toFixed(3);
+    if (eyeKey !== this.occlusionEyeKey) {
+      this.occlusionEyeKey = eyeKey;
+      this.occluded = this.hotspotElements.map(function (entry) {
+        return this.isOccluded(eye, entry.hotspot.world);
+      }, this);
+    }
     for (var i = 0; i < this.hotspotElements.length; i++) {
       var entry = this.hotspotElements[i];
-      var ceilingY = entry.hotspot.roomHeight || (entry.hotspot.world[1] * 2);
-      if (eyeY > ceilingY) {
-        entry.el.style.display = 'none';
-        continue;
-      }
+      entry.el.classList.toggle('is-behind', this.occluded[i]);
       var screen = this.projectToScreen(entry.hotspot.world);
       if (screen === null) {
         entry.el.style.display = 'none';
         continue;
       }
       entry.el.style.display = 'block';
-      entry.el.style.left = (screen[0] - HOTSPOT_PIXEL_SIZE / 2) + 'px';
-      entry.el.style.top = (screen[1] - HOTSPOT_PIXEL_SIZE / 2) + 'px';
-      entry.el.style.width = HOTSPOT_PIXEL_SIZE + 'px';
-      entry.el.style.height = HOTSPOT_PIXEL_SIZE + 'px';
+      entry.el.style.transform = 'translate3d(' + (screen[0] - HOTSPOT_PIXEL_SIZE / 2) + 'px, ' + (screen[1] - HOTSPOT_PIXEL_SIZE / 2) + 'px, 0)';
     }
+  };
+
+  Viewer.prototype.occluderTriangles = function () {
+    if (this.occluders !== undefined) {
+      return this.occluders;
+    }
+    var total = 0;
+    for (var pi = 0; pi < this.mesh.parts.length; pi++) {
+      total += this.mesh.parts[pi].indices.length / 3;
+    }
+    if (total > MAX_OCCLUSION_TRIANGLES) {
+      this.occluders = null;
+      return null;
+    }
+    var tris = new Float32Array(total * 9);
+    var o = 0;
+    for (var pj = 0; pj < this.mesh.parts.length; pj++) {
+      var pos = this.mesh.parts[pj].positions;
+      var idx = this.mesh.parts[pj].indices;
+      for (var k = 0; k < idx.length; k++) {
+        var v = idx[k] * 3;
+        tris[o++] = pos[v];
+        tris[o++] = pos[v + 1];
+        tris[o++] = pos[v + 2];
+      }
+    }
+    this.occluders = tris;
+    return tris;
+  };
+
+  Viewer.prototype.isOccluded = function (eye, point) {
+    var tris = this.occluderTriangles();
+    if (!tris) {
+      return false;
+    }
+    var dx = point[0] - eye[0];
+    var dy = point[1] - eye[1];
+    var dz = point[2] - eye[2];
+    var length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (length < 1e-6) {
+      return false;
+    }
+    dx /= length;
+    dy /= length;
+    dz /= length;
+    var limit = length - OCCLUSION_CLEARANCE_M;
+    for (var t = 0; t < tris.length; t += 9) {
+      var e1x = tris[t + 3] - tris[t], e1y = tris[t + 4] - tris[t + 1], e1z = tris[t + 5] - tris[t + 2];
+      var e2x = tris[t + 6] - tris[t], e2y = tris[t + 7] - tris[t + 1], e2z = tris[t + 8] - tris[t + 2];
+      var px = dy * e2z - dz * e2y, py = dz * e2x - dx * e2z, pz = dx * e2y - dy * e2x;
+      var det = e1x * px + e1y * py + e1z * pz;
+      if (det > -1e-9 && det < 1e-9) {
+        continue;
+      }
+      var inv = 1 / det;
+      var sx = eye[0] - tris[t], sy = eye[1] - tris[t + 1], sz = eye[2] - tris[t + 2];
+      var u = (sx * px + sy * py + sz * pz) * inv;
+      if (u < 0 || u > 1) {
+        continue;
+      }
+      var qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x;
+      var w = (dx * qx + dy * qy + dz * qz) * inv;
+      if (w < 0 || u + w > 1) {
+        continue;
+      }
+      var hit = (e2x * qx + e2y * qy + e2z * qz) * inv;
+      if (hit > 1e-4 && hit < limit) {
+        return true;
+      }
+    }
+    return false;
   };
 
   Viewer.prototype.projectToScreen = function (p) {

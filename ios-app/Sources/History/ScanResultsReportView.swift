@@ -1146,7 +1146,9 @@ struct ScanResultsReportView: View {
                     VuuroToast.shared.show(vuuroLocalized("This 3D model is too large to open in AR. Try sharing it as a file instead."))
                     return
                 }
-                ARQuickLookPresenter.shared.present(url: url)
+                if !ARQuickLookPresenter.shared.present(url: url) {
+                    VuuroToast.shared.show(vuuroLocalized("Couldn't open the 3D preview. Close any other open screen and try again, or share the file instead."))
+                }
             } else {
                 ShareSheetPresenter.present(items: [url])
             }
