@@ -50,6 +50,27 @@ final class ContinueRouteTests: XCTestCase {
         XCTAssertEqual(ContinueRoute.joinTarget(rooms: plan, floor: "Ground"), "walk-B")
     }
 
+    func testAnEmptyFloorOfAWholeUnitScanAddsAsUnit() throws {
+        let plan = try rooms([("Ground", "walk-A", nil, true)])
+        XCTAssertTrue(ContinueRoute.addsAsUnit(rooms: plan, floor: "Roof"))
+        XCTAssertNil(ContinueRoute.joinTarget(rooms: plan, floor: "Roof"))
+    }
+
+    func testAFloorWithSingleRoomScansStaysSingle() throws {
+        let plan = try rooms([("Ground", "walk-A", nil, true), ("Attic", nil, nil, false)])
+        XCTAssertFalse(ContinueRoute.addsAsUnit(rooms: plan, floor: "Attic"))
+    }
+
+    func testAnEmptyFloorOfASingleRoomScanStaysSingle() throws {
+        let plan = try rooms([("Ground", nil, nil, false)])
+        XCTAssertFalse(ContinueRoute.addsAsUnit(rooms: plan, floor: "Roof"))
+    }
+
+    func testAddsAsUnitKeepsTheSameFloorRule() throws {
+        let plan = try rooms([("Ground", "walk-A", nil, true)])
+        XCTAssertTrue(ContinueRoute.addsAsUnit(rooms: plan, floor: " ground "))
+    }
+
     func testRoomsWithoutAnOriginAreNotAUnit() throws {
         let plan = try rooms([("Ground", "walk-A", nil, false)])
         XCTAssertFalse(ContinueRoute.continuesAsUnit(rooms: plan, floor: "Ground"))

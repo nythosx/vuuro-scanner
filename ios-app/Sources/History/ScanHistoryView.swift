@@ -622,7 +622,7 @@ struct ScanHistoryView: View {
     private func hasFusedRoomsOnFloor(entry: ScanHistoryEntry, floor: String?) async -> Bool {
         do {
             let plan = try await client.fetchSession(sessionId: entry.sessionId, accessToken: entry.accessToken)
-            return ContinueRoute.continuesAsUnit(rooms: plan.rooms, floor: floor)
+            return ContinueRoute.addsAsUnit(rooms: plan.rooms, floor: floor)
         } catch {
             DiagnosticsLog.shared.record("hasFusedRoomsOnFloor check failed: \(error.localizedDescription)", category: .error)
             return false

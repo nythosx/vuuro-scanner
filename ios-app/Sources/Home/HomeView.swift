@@ -7,9 +7,11 @@ struct HomeView: View {
     let onOpenHistory: () -> Void
     let onOpenTerms: () -> Void
     let onResumePendingUpload: () -> Void
+    var onResumeWalkthrough: (WalkthroughState) -> Void = { _ in }
 
     @State private var recentScan: ScanHistoryEntry?
     @State private var hasPendingUpload = false
+    @State private var savedWalkthrough: WalkthroughState?
     @State private var activityThrottle = ActivityRefreshThrottle()
     private let client = ScanServiceClient()
 
@@ -95,6 +97,41 @@ struct HomeView: View {
                         .padding(.bottom, 12)
                     }
 
+                    if let savedWalkthrough, !hasPendingUpload {
+                        Button {
+                            onResumeWalkthrough(savedWalkthrough)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "square.grid.2x2")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(VuuroColor.accent)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Unfinished walkthrough")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(VuuroColor.textPrimary)
+                                    Text("\(walkthroughName(savedWalkthrough)) · \(savedWalkthrough.rooms.count) room(s) saved. Tap to continue")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(VuuroColor.textSecondary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(VuuroColor.textTertiary)
+                            }
+                            .padding(14)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(VuuroColor.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(VuuroColor.accent.opacity(0.30), lineWidth: 1)
+                            )
+                        }
+                        .accessibilityIdentifier("home.walkthroughBanner")
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 12)
+                    }
+
                     VuuroSectionLabel(text: "Recent activity")
 
                     if let recentScan {
@@ -138,11 +175,12 @@ struct HomeView: View {
     }
 
     private func reloadRecent() async {
-        let (all, pending) = await Task.detached(priority: .userInitiated) {
-            (ScanHistoryStore.shared.all(), PendingUploadStore.load())
+        let (all, pending, walkthrough) = await Task.detached(priority: .userInitiated) {
+            (ScanHistoryStore.shared.all(), PendingUploadStore.load(), WalkthroughStore.load())
         }.value
         recentScan = all.first
         hasPendingUpload = pending != nil && pending?.skippedAt != nil
+        savedWalkthrough = walkthrough.flatMap { $0.rooms.isEmpty ? nil : $0 }
         PerfTrace.end(.launchToHome, detail: "\(all.count) scans")
         guard activityThrottle.shouldRefresh(now: Date()) else { return }
         await client.noteActivity(all)
@@ -157,6 +195,10 @@ struct HomeView: View {
             return nickname
         }
         return "\(entry.propertyId) — \(entry.unitId)"
+    }
+
+    private func walkthroughName(_ state: WalkthroughState) -> String {
+        "\(state.identity.propertyId) — \(state.identity.unitId)"
     }
 
     private func metaLine(for entry: ScanHistoryEntry) -> String {

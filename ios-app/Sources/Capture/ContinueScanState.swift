@@ -102,6 +102,16 @@ enum ContinueRoute {
         !wholeUnitRooms(in: rooms, floor: floor).isEmpty
     }
 
+    static func addsAsUnit(rooms: [FloorPlan.Room], floor: String?) -> Bool {
+        if continuesAsUnit(rooms: rooms, floor: floor) {
+            return true
+        }
+        let wanted = floorKey(floor)
+        let floorIsEmpty = !rooms.contains { floorKey($0.floor) == wanted }
+        let unitElsewhere = rooms.contains { $0.captureGroupId != nil && $0.structureOriginM != nil }
+        return floorIsEmpty && unitElsewhere
+    }
+
     static func joinTarget(rooms: [FloorPlan.Room], floor: String?) -> String? {
         let candidates = wholeUnitRooms(in: rooms, floor: floor)
         if let root = candidates.compactMap(\.joinedToGroupId).first {

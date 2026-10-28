@@ -8688,6 +8688,134 @@
                     }
                 }
             }
+        },
+        "Unfinished walkthrough": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Unfinished walkthrough"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Onvoltooide rondgang"
+                    }
+                }
+            }
+        },
+        "%@ · %lld room(s) saved. Tap to continue": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%@ · %lld room(s) saved. Tap to continue"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%@ · %lld kamer(s) bewaard. Tik om verder te gaan"
+                    }
+                }
+            }
+        },
+        "Another walkthrough is saved": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Another walkthrough is saved"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Er is nog een rondgang bewaard"
+                    }
+                }
+            }
+        },
+        "Keep it and go back": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Keep it and go back"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Bewaren en teruggaan"
+                    }
+                }
+            }
+        },
+        "Discard it and start this scan": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Discard it and start this scan"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Verwijderen en deze scan starten"
+                    }
+                }
+            }
+        },
+        "%@ — %@ has %lld room(s) saved from an interrupted walkthrough. Starting this scan replaces them. Go back and open it from the home screen to keep them.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%@ — %@ has %lld room(s) saved from an interrupted walkthrough. Starting this scan replaces them. Go back and open it from the home screen to keep them."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "%@ — %@ heeft %lld kamer(s) bewaard van een onderbroken rondgang. Deze scan starten vervangt ze. Ga terug en open die rondgang vanaf het startscherm om ze te houden."
+                    }
+                }
+            }
+        },
+        "Discard and finish the unit": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Discard and finish the unit"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Verwijderen en de woning afronden"
+                    }
+                }
+            }
+        },
+        "Couldn't open the 3D preview. Close any other open screen and try again, or share the file instead.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Couldn't open the 3D preview. Close any other open screen and try again, or share the file instead."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Kon de 3D-weergave niet openen. Sluit andere open schermen en probeer het opnieuw, of deel het bestand."
+                    }
+                }
+            }
         }
     },
     "version": "1.0"
