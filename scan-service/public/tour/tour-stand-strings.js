@@ -20,7 +20,8 @@
       loading_spot: 'Loading this spot\u2026',
       fullscreen_label: 'Full screen',
       tour_play_label: 'Start guided tour',
-      tour_stop_label: 'Stop guided tour'
+      tour_stop_label: 'Stop guided tour',
+      measure_label: 'Measure: click two points'
     },
     nl: {
       toggle_photos: 'Foto\u2019s',
@@ -40,7 +41,8 @@
       loading_spot: 'Dit punt wordt geladen\u2026',
       fullscreen_label: 'Volledig scherm',
       tour_play_label: 'Start rondleiding',
-      tour_stop_label: 'Stop rondleiding'
+      tour_stop_label: 'Stop rondleiding',
+      measure_label: 'Meten: klik op twee punten'
     }
   };
 

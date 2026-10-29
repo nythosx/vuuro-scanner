@@ -33,7 +33,8 @@
     dollhouse: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></svg>',
     plan: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h9v6h5v10H5z"/><path d="M14 10H9v4"/></svg>',
     walk: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="13" cy="4.5" r="1.8"/><path d="M10 21l2-6-2.5-2.5 1-5 3 2.5h3M9.5 8L7 12M14.5 15l1.5 6"/></svg>',
-    fullscreen: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>'
+    fullscreen: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
+    measure: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 16l13-13 5 5-13 13z"/><path d="M7 12l2 2M10 9l2 2M13 6l2 2"/></svg>'
   };
 
   var state = {
@@ -64,6 +65,10 @@
     photos: [],
     photoEls: [],
     neighbours: [],
+    measureLayer: null,
+    measuring: false,
+    measurePoints: [],
+    measureButton: null,
     allStands: {},
     allRooms: {},
     viewRotation: 0,
@@ -274,6 +279,12 @@
     pano.appendChild(cursor);
     state.cursor = cursor;
 
+    var measureLayer = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    measureLayer.setAttribute('class', 'tour-stand-measure');
+    measureLayer.setAttribute('aria-hidden', 'true');
+    pano.appendChild(measureLayer);
+    state.measureLayer = measureLayer;
+
     var arrowLayer = document.createElement('div');
     arrowLayer.className = 'tour-stand-arrows';
     pano.appendChild(arrowLayer);
@@ -466,10 +477,16 @@
     var bar = document.createElement('div');
     bar.className = 'tour-stand-toolbar';
 
+    var right = document.createElement('div');
+    right.className = 'tour-stand-tools';
+    var measure = iconButton('measure', t.t('measure_label'), toggleMeasure, 'is-round tour-stand-measure-btn');
+    measure.setAttribute('aria-pressed', 'false');
+    state.measureButton = measure;
+    right.appendChild(measure);
+    bar.appendChild(right);
+
     var app = document.getElementById('tour-app');
     if (app && app.requestFullscreen && document.fullscreenEnabled) {
-      var right = document.createElement('div');
-      right.className = 'tour-stand-tools';
       right.appendChild(iconButton('fullscreen', t.t('fullscreen_label'), function () {
         try {
           if (document.fullscreenElement) {
@@ -479,7 +496,6 @@
           }
         } catch (err) {}
       }, 'is-round'));
-      bar.appendChild(right);
     }
     return bar;
   }
@@ -644,6 +660,7 @@
       layoutCssPhotos();
     }
     renderArrows();
+    drawMeasure();
   }
 
   function viewSize() {
@@ -822,8 +839,11 @@
     }
   }
 
+  var GAIN_SAMPLE_PX = 16;
+  var GAIN_MIN = 0.75;
+  var GAIN_MAX = 1.33;
   var PHOTO_VS = 'attribute vec3 a_dir;attribute vec2 a_uv;uniform vec3 u_right;uniform vec3 u_up;uniform vec3 u_fwd;uniform vec2 u_scale;varying vec2 v_uv;void main(){float z=dot(a_dir,u_fwd);gl_Position=vec4(dot(a_dir,u_right)*u_scale.x,dot(a_dir,u_up)*u_scale.y,z-0.02,z);v_uv=a_uv;}';
-  var PHOTO_FS = 'precision mediump float;uniform sampler2D u_tex;varying vec2 v_uv;void main(){vec4 c=texture2D(u_tex,v_uv);float e=0.06;float a=smoothstep(0.0,e,v_uv.x)*smoothstep(0.0,e,1.0-v_uv.x)*smoothstep(0.0,e,v_uv.y)*smoothstep(0.0,e,1.0-v_uv.y);gl_FragColor=vec4(c.rgb,a);}';
+  var PHOTO_FS = 'precision mediump float;uniform sampler2D u_tex;uniform vec3 u_gain;varying vec2 v_uv;void main(){vec4 c=texture2D(u_tex,v_uv);c.rgb=min(c.rgb*u_gain,vec3(1.0));float e=0.1;float a=smoothstep(0.0,e,v_uv.x)*smoothstep(0.0,e,1.0-v_uv.x)*smoothstep(0.0,e,v_uv.y)*smoothstep(0.0,e,1.0-v_uv.y);gl_FragColor=vec4(c.rgb,a);}';
   var BG_VS = 'attribute vec2 a_pos;varying vec2 v_pos;void main(){v_pos=a_pos;gl_Position=vec4(a_pos,0.0,1.0);}';
   var BG_FS = 'precision mediump float;uniform vec3 u_right;uniform vec3 u_up;uniform vec3 u_fwd;uniform vec2 u_inv;uniform vec3 u_top;uniform vec3 u_mid;uniform vec3 u_bottom;varying vec2 v_pos;void main(){vec3 d=normalize(u_fwd+u_right*v_pos.x*u_inv.x+u_up*v_pos.y*u_inv.y);vec3 c=d.y>0.0?mix(u_mid,u_top,smoothstep(0.0,0.8,d.y)):mix(u_mid,u_bottom,smoothstep(0.0,0.8,-d.y));gl_FragColor=vec4(c,1.0);}';
 
@@ -870,7 +890,8 @@
         up: gl.getUniformLocation(photo, 'u_up'),
         fwd: gl.getUniformLocation(photo, 'u_fwd'),
         scale: gl.getUniformLocation(photo, 'u_scale'),
-        tex: gl.getUniformLocation(photo, 'u_tex')
+        tex: gl.getUniformLocation(photo, 'u_tex'),
+        gain: gl.getUniformLocation(photo, 'u_gain')
       },
       bg: {
         prog: bg,
@@ -913,6 +934,47 @@
     });
   }
 
+  function photoMean(img) {
+    try {
+      var c = document.createElement('canvas');
+      c.width = GAIN_SAMPLE_PX;
+      c.height = GAIN_SAMPLE_PX;
+      var ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0, GAIN_SAMPLE_PX, GAIN_SAMPLE_PX);
+      var px = ctx.getImageData(0, 0, GAIN_SAMPLE_PX, GAIN_SAMPLE_PX).data;
+      var sum = [0, 0, 0];
+      for (var i = 0; i < px.length; i += 4) {
+        sum[0] += px[i];
+        sum[1] += px[i + 1];
+        sum[2] += px[i + 2];
+      }
+      var n = px.length / 4;
+      var mean = [sum[0] / n, sum[1] / n, sum[2] / n];
+      return mean[0] + mean[1] + mean[2] > 3 ? mean : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function median(values) {
+    var sorted = values.slice().sort(function (a, b) { return a - b; });
+    var mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+
+  function photoGains(list) {
+    var means = list.map(function (e) { return e.mean; }).filter(Boolean);
+    if (means.length < 2) return null;
+    var ref = [0, 1, 2].map(function (k) { return median(means.map(function (m) { return m[k]; })); });
+    return function (entry) {
+      if (!entry.mean) return [1, 1, 1];
+      return [0, 1, 2].map(function (k) {
+        var m = Math.max(1, entry.mean[k]);
+        return Math.max(GAIN_MIN, Math.min(GAIN_MAX, ref[k] / m));
+      });
+    };
+  }
+
   function uploadPhoto(entry) {
     var g = state.gl;
     var img = entry.el;
@@ -941,6 +1003,7 @@
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    entry.mean = photoMean(img);
     var f = photoFrame(entry);
     var p = entry.pose;
     function corner(u, v, s, t) {
@@ -1056,7 +1119,10 @@
     gl.enableVertexAttribArray(g.photo.uv);
     var list = state.photoEls.filter(function (e) { return e.tex; });
     list.sort(function (a, b) { return dot(a.pose.fwd, basis.fwd) - dot(b.pose.fwd, basis.fwd); });
+    var gainFor = photoGains(list);
     for (var i = 0; i < list.length; i++) {
+      var gain = gainFor ? gainFor(list[i]) : [1, 1, 1];
+      gl.uniform3f(g.photo.gain, gain[0], gain[1], gain[2]);
       gl.bindBuffer(gl.ARRAY_BUFFER, list[i].buf);
       gl.vertexAttribPointer(g.photo.dir, 3, gl.FLOAT, false, 20, 0);
       gl.vertexAttribPointer(g.photo.uv, 2, gl.FLOAT, false, 20, 12);
@@ -1365,13 +1431,20 @@
       kind: surface.kind,
       bearing: Math.atan2(d[0], -d[2]) * 180 / Math.PI,
       pitch: -Math.asin(Math.max(-1, Math.min(1, d[1]))) * 180 / Math.PI,
-      point: [origin[0] + point[0], origin[1] + point[2]]
+      point: [origin[0] + point[0], origin[1] + point[2]],
+      point3: [point[0], point[1], point[2]]
     };
   }
 
   function activateHit() {
     var hit = state.hit;
     if (!hit) return;
+    if (state.measuring) {
+      if (state.measurePoints.length >= 2) state.measurePoints = [];
+      state.measurePoints.push(hit.point3);
+      drawMeasure();
+      return;
+    }
     if (hit.kind === 'floor') {
       var target = neighbourNear(hit.point);
       if (target) {
@@ -1383,6 +1456,64 @@
       animateView(hit.bearing, FOV_DEG, hit.pitch);
     } else {
       animateView(hit.bearing, ZOOM_FOV_DEG, hit.pitch);
+    }
+  }
+
+  function toggleMeasure() {
+    state.measuring = !state.measuring;
+    state.measurePoints = [];
+    if (state.measureButton) {
+      state.measureButton.classList.toggle('is-active', state.measuring);
+      state.measureButton.setAttribute('aria-pressed', state.measuring ? 'true' : 'false');
+    }
+    if (state.pano) state.pano.classList.toggle('is-measuring', state.measuring);
+    drawMeasure();
+  }
+
+  function formatMeters(m) {
+    var text = m.toFixed(2);
+    return (window.TourStandStrings.lang === 'nl' ? text.replace('.', ',') : text) + ' m';
+  }
+
+  function drawMeasure() {
+    var layer = state.measureLayer;
+    if (!layer || !state.pano) return;
+    while (layer.firstChild) layer.removeChild(layer.firstChild);
+    var pts = state.measuring ? state.measurePoints : [];
+    if (pts.length === 0) return;
+    var size = viewSize();
+    var focal = focalFor(size[0], size[1]);
+    var basis = viewBasis();
+    var ns = 'http://www.w3.org/2000/svg';
+    var screen = pts.map(function (p) { return project(p, basis, size[0], size[1], focal); });
+    if (screen.length === 2 && screen[0] && screen[1]) {
+      var line = document.createElementNS(ns, 'line');
+      line.setAttribute('x1', screen[0][0]);
+      line.setAttribute('y1', screen[0][1]);
+      line.setAttribute('x2', screen[1][0]);
+      line.setAttribute('y2', screen[1][1]);
+      layer.appendChild(line);
+    }
+    screen.forEach(function (s) {
+      if (!s) return;
+      var dotEl = document.createElementNS(ns, 'circle');
+      dotEl.setAttribute('cx', s[0]);
+      dotEl.setAttribute('cy', s[1]);
+      dotEl.setAttribute('r', 5);
+      layer.appendChild(dotEl);
+    });
+    if (pts.length === 2) {
+      var dx = pts[1][0] - pts[0][0];
+      var dy = pts[1][1] - pts[0][1];
+      var dz = pts[1][2] - pts[0][2];
+      var mid = project([(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2, (pts[0][2] + pts[1][2]) / 2], basis, size[0], size[1], focal);
+      if (mid) {
+        var label = document.createElementNS(ns, 'text');
+        label.setAttribute('x', mid[0]);
+        label.setAttribute('y', mid[1] - 10);
+        label.textContent = formatMeters(Math.sqrt(dx * dx + dy * dy + dz * dz));
+        layer.appendChild(label);
+      }
     }
   }
 
@@ -1500,6 +1631,10 @@
     state.arrowLayer = null;
     state.cursor = null;
     state.hit = null;
+    state.measureLayer = null;
+    state.measuring = false;
+    state.measurePoints = [];
+    state.measureButton = null;
     state.photoEls = [];
     state.neighbours = [];
     state.photos = [];

@@ -2,6 +2,9 @@
   'use strict';
 
   var TEXELS_PER_M = 80;
+  var TEXEL_BUDGET_DESKTOP = 16000000;
+  var TEXEL_BUDGET_SMALL = 6000000;
+  var density = TEXELS_PER_M;
   var MAX_TEXTURE_EDGE = 1024;
   var SAMPLE_EDGE_PX = 640;
   var EYE_HEIGHT_M = 1.4;
@@ -315,7 +318,7 @@
   }
 
   function textureSize(meters) {
-    return Math.max(4, Math.min(MAX_TEXTURE_EDGE, Math.round(meters * TEXELS_PER_M)));
+    return Math.max(4, Math.min(MAX_TEXTURE_EDGE, Math.round(meters * density)));
   }
 
   function sliceTask(tw, th, paintRow, toPart) {
@@ -371,7 +374,7 @@
   function floorTask(outline, cams, bounds, toPart) {
     var w = bounds.maxX - bounds.minX;
     var d = bounds.maxZ - bounds.minZ;
-    var scale = Math.min(TEXELS_PER_M, MAX_TEXTURE_EDGE / Math.max(w, d));
+    var scale = Math.min(density, MAX_TEXTURE_EDGE / Math.max(w, d));
     var tw = Math.max(4, Math.round(w * scale));
     var th = Math.max(4, Math.round(d * scale));
     var n = [0, 1, 0];
@@ -480,8 +483,43 @@
     });
   }
 
+  function texelBudget() {
+    var memory = Number(navigator.deviceMemory);
+    var coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    return coarse || (isFinite(memory) && memory > 0 && memory <= 4) ? TEXEL_BUDGET_SMALL : TEXEL_BUDGET_DESKTOP;
+  }
+
+  function paintedArea(rooms) {
+    var area = 0;
+    rooms.forEach(function (room) {
+      var outline = outlineOf(room);
+      if (!outline) return;
+      var height = Number(room.height_m);
+      if (!isFinite(height) || height <= 0) height = DEFAULT_HEIGHT_M;
+      var minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity, perimeter = 0;
+      for (var i = 0; i < outline.length; i++) {
+        var a = outline[i];
+        var b = outline[(i + 1) % outline.length];
+        minX = Math.min(minX, a[0]);
+        maxX = Math.max(maxX, a[0]);
+        minZ = Math.min(minZ, a[1]);
+        maxZ = Math.max(maxZ, a[1]);
+        perimeter += Math.hypot(b[0] - a[0], b[1] - a[1]);
+      }
+      area += (maxX - minX) * (maxZ - minZ) + perimeter * height;
+    });
+    return area;
+  }
+
+  function densityFor(rooms) {
+    var area = paintedArea(rooms);
+    if (!(area > 0)) return TEXELS_PER_M;
+    return Math.max(8, Math.min(TEXELS_PER_M, Math.sqrt(texelBudget() / area)));
+  }
+
   function paint(rooms, roomPoses, buildUrl, onPart) {
     var cancelled = false;
+    density = densityFor(rooms);
     var edges = wallEdges(rooms, roomPoses);
     var pending = [];
     rooms.forEach(function (room, roomIndex) {
@@ -509,6 +547,7 @@
   window.TourDollhousePaint = {
     paint: paint,
     wallEdges: wallEdges,
-    nearestEdge: nearestEdge
+    nearestEdge: nearestEdge,
+    densityFor: densityFor
   };
 })();

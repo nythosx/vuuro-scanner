@@ -1026,3 +1026,10 @@ body {
     bottom: 136px;
   }
 }
+
+.tour-stand-measure { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; overflow: visible; }
+.tour-stand-measure line { stroke: #ffd24a; stroke-width: 2.5; stroke-dasharray: 6 4; }
+.tour-stand-measure circle { fill: #ffd24a; stroke: #1b1b1c; stroke-width: 1.5; }
+.tour-stand-measure text { fill: #fff; font: 600 14px system-ui, sans-serif; text-anchor: middle; paint-order: stroke; stroke: rgba(0, 0, 0, 0.75); stroke-width: 4px; }
+.tour-stand-pano.is-measuring { cursor: crosshair; }
+.tour-stand-measure-btn.is-active { background: #ffd24a; color: #1b1b1c; }
