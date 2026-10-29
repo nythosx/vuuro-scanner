@@ -206,6 +206,110 @@ check('photo tour without stand_id tour.json 200', $tour3Status === 200);
 check('photo tour without stand_id has several stands', count($tour3Body['rooms'][0]['stands'] ?? []) >= 2);
 check('photo tour without stand_id keeps walkthrough false', ($tour3Body['features']['walkthrough'] ?? null) === false);
 
+echo "\n== Tour start view picker ==\n";
+[$shellStatus, , $shellBody] = net_http_raw('GET', "$baseUrl/tour/$sessionId", null, null);
+$svPos = strpos((string) $shellBody, '/tour/tour-start-view.js');
+$tjPos = strpos((string) $shellBody, '/tour/tour.js');
+$orderOk = $shellStatus === 200 && $svPos !== false && $tjPos !== false && $svPos < $tjPos;
+check('tour shell loads tour-start-view.js before tour.js', $orderOk,
+    "status=$shellStatus svPos=" . var_export($svPos, true) . " tjPos=" . var_export($tjPos, true));
+
+[$svJsStatus, , $svJsBody] = net_http_raw('GET', "$baseUrl/tour/tour-start-view.js", null, null);
+check('tour-start-view.js is served', $svJsStatus === 200, "got HTTP $svJsStatus");
+check('tour-start-view.js contains TourStartView', strpos((string) $svJsBody, 'TourStartView') !== false);
+
+$nodeCheckCmd = PHP_OS_FAMILY === 'Windows' ? 'where node' : 'command -v node';
+exec($nodeCheckCmd . ' 2>&1', $nodeLines, $nodeCode);
+$nodePath = $nodeCode === 0 && !empty($nodeLines) ? trim((string) $nodeLines[0]) : '';
+if ($nodePath === '') {
+    echo "  [SKIP] node not found on PATH - skipping pickStartView node assertions\n";
+} else {
+    $nodeScriptSrc = <<<'NODEJS'
+const fs = require('fs');
+const vm = require('vm');
+const src = fs.readFileSync(process.argv[2], 'utf8');
+const sandbox = { window: {} };
+vm.createContext(sandbox);
+vm.runInContext(src, sandbox);
+if (!sandbox.window.TourStartView || typeof sandbox.window.TourStartView.pick !== 'function') {
+  console.error('TourStartView.pick is not a function');
+  process.exit(1);
+}
+const pick = sandbox.window.TourStartView.pick;
+const allTrue = { walkthrough: true, hasStand: true, hasDollhouse: true, hasPhotos: true };
+const allFalse = { walkthrough: false, hasStand: false, hasDollhouse: false, hasPhotos: false };
+const cases = [
+  ['all', true, allTrue, 'walkthrough'],
+  ['all', true, { walkthrough: false, hasStand: false, hasDollhouse: true, hasPhotos: true }, 'dollhouse'],
+  ['all', true, { walkthrough: true, hasStand: false, hasDollhouse: false, hasPhotos: true }, 'photos'],
+  ['all', true, allFalse, 'plan'],
+  ['all', false, allTrue, 'plan'],
+  ['dollhouse', false, allFalse, 'plan']
+];
+let bad = 0;
+for (const c of cases) {
+  const actual = pick(c[0], c[1], c[2]);
+  if (actual !== c[3]) {
+    console.error('FAIL ' + JSON.stringify(c) + ' -> ' + actual);
+    bad++;
+  }
+}
+process.exit(bad === 0 ? 0 : 1);
+NODEJS;
+    $nodeScriptPath = tempnam(sys_get_temp_dir(), 'tour_sv_node_') . '.js';
+    file_put_contents($nodeScriptPath, $nodeScriptSrc);
+    $svJsDisk = __DIR__ . '/../public/tour/tour-start-view.js';
+    $proc = proc_open(
+        [$nodePath, $nodeScriptPath, $svJsDisk],
+        [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+        $pipes
+    );
+    $nodeOut = '';
+    $nodeExit = 1;
+    if (is_resource($proc)) {
+        $nodeOut = (string) stream_get_contents($pipes[1]) . (string) stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $nodeExit = proc_close($proc);
+    }
+    @unlink($nodeScriptPath);
+    check('node: six pickStartView cases pass', $nodeExit === 0, trim($nodeOut));
+}
+
+echo "\n== Tour stand deep link ==\n";
+[$standsJsStatus, , $standsJsBody] = net_http_raw('GET', "$baseUrl/tour/tour-stands.js", null, null);
+check('tour-stands.js is served', $standsJsStatus === 200, "got HTTP $standsJsStatus");
+check('tour-stands.js supports initialPhotoIndex', strpos((string) $standsJsBody, 'initialPhotoIndex') !== false);
+check('tour-stands.js preloads neighbours', strpos((string) $standsJsBody, 'preloadNeighbours') !== false);
+
+[$tourJsStatus, , $tourJsBody] = net_http_raw('GET', "$baseUrl/tour/tour.js", null, null);
+check('tour.js is served', $tourJsStatus === 200, "got HTTP $tourJsStatus");
+check('tour.js passes standPhotoIndex to the stand renderer', strpos((string) $tourJsBody, 'standPhotoIndex') !== false);
+
+echo "\n== Tour stand floor filter ==\n";
+[$floorsJsStatus, , $floorsJsBody] = net_http_raw('GET', "$baseUrl/tour/tour-stands.js", null, null);
+check('tour-stands.js is served (floor filter)', $floorsJsStatus === 200, "got HTTP $floorsJsStatus");
+check('tour-stands.js declares tour-stand-floors', strpos((string) $floorsJsBody, 'tour-stand-floors') !== false);
+check('tour-stands.js toggles has-stand-floors', strpos((string) $floorsJsBody, 'has-stand-floors') !== false);
+
+[$floorsCssStatus, , $floorsCssBody] = net_http_raw('GET', "$baseUrl/tour/tour.css", null, null);
+check('tour.css is served (floor filter)', $floorsCssStatus === 200, "got HTTP $floorsCssStatus");
+check('tour.css styles tour-stand-floor-chip', strpos((string) $floorsCssBody, 'tour-stand-floor-chip') !== false);
+check('tour.css nudges .tour-toolbar for stand floors', strpos((string) $floorsCssBody, 'is-stand.has-stand-floors') !== false);
+
+echo "\n== Tour guided tour ==\n";
+[$gtStatus, , $gtBody] = net_http_raw('GET', "$baseUrl/tour/tour.js", null, null);
+check('tour.js is served (guided tour)', $gtStatus === 200, "got HTTP $gtStatus");
+check('tour.js declares guidedTourActive', strpos((string) $gtBody, 'guidedTourActive') !== false);
+check('tour.js declares guidedTourQueue', strpos((string) $gtBody, 'guidedTourQueue') !== false);
+check('tour.js declares scheduleNextGuidedStep', strpos((string) $gtBody, 'scheduleNextGuidedStep') !== false);
+check('tour.js declares GUIDED_TOUR_STEP_MS', strpos((string) $gtBody, 'GUIDED_TOUR_STEP_MS') !== false);
+
+[$gsStatus, , $gsBody] = net_http_raw('GET', "$baseUrl/tour/tour-stand-strings.js", null, null);
+check('tour-stand-strings.js is served (guided tour)', $gsStatus === 200, "got HTTP $gsStatus");
+check('tour-stand-strings.js has tour_play_label', strpos((string) $gsBody, 'tour_play_label') !== false);
+check('tour-stand-strings.js has tour_stop_label', strpos((string) $gsBody, 'tour_stop_label') !== false);
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nNET VERDICT: RED\n");

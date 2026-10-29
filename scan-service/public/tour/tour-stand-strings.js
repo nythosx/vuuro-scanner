@@ -18,7 +18,9 @@
       turn_right_label: 'Turn right towards the next spot',
       strip_aria: 'Spots in this home',
       loading_spot: 'Loading this spot\u2026',
-      fullscreen_label: 'Full screen'
+      fullscreen_label: 'Full screen',
+      tour_play_label: 'Start guided tour',
+      tour_stop_label: 'Stop guided tour'
     },
     nl: {
       toggle_photos: 'Foto\u2019s',
@@ -36,7 +38,9 @@
       turn_right_label: 'Draai naar rechts, naar het volgende punt',
       strip_aria: 'Punten in deze woning',
       loading_spot: 'Dit punt wordt geladen\u2026',
-      fullscreen_label: 'Volledig scherm'
+      fullscreen_label: 'Volledig scherm',
+      tour_play_label: 'Start rondleiding',
+      tour_stop_label: 'Stop rondleiding'
     }
   };
 

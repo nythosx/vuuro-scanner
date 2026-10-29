@@ -15,7 +15,12 @@
     isEmbed: false,
     features: null,
     walkthroughMode: 'photos',
-    standId: null
+    standId: null,
+    standPhotoIndex: 0,
+    guidedTourActive: false,
+    guidedTourTimer: null,
+    guidedTourQueue: [],
+    guidedTourIndex: 0
   };
 
   var els = {};
@@ -66,6 +71,7 @@
       if (!state.data) {
         return;
       }
+      stopGuidedTour();
       applyParsedUrl(parsed);
       render();
     });
@@ -94,12 +100,20 @@
 
   function applyStartView() {
     var view = readStartView();
-    if (view === 'dollhouse' && state.hasDollhouse) {
+    var needsStand = view === 'walkthrough' || (view === 'all' && state.isEmbed);
+    var target = needsStand ? firstStandFromCurrent() : null;
+    var flags = {
+      walkthrough: state.features && state.features.walkthrough === true,
+      hasStand: target !== null,
+      hasDollhouse: state.hasDollhouse,
+      hasPhotos: state.hasPhotos
+    };
+    var chosen = window.TourStartView.pick(view, state.isEmbed, flags);
+    if (chosen === 'dollhouse') {
       state.mode = 'dollhouse';
       return;
     }
-    if (view === 'walkthrough' && state.features && state.features.walkthrough === true) {
-      var target = firstStandFromCurrent();
+    if (chosen === 'walkthrough') {
       if (target) {
         state.mode = 'stand';
         state.walkthroughMode = 'stand';
@@ -108,7 +122,7 @@
       }
       return;
     }
-    if (view === 'photos' && state.hasPhotos) {
+    if (chosen === 'photos') {
       state.mode = 'photos';
       state.walkthroughMode = 'photos';
       state.roomIndex = state.roomsWithPhotos[0];
@@ -185,6 +199,7 @@
     state.roomIndex = 0;
     state.photoIndex = 0;
     state.roomSequenceIndex = 0;
+    state.standPhotoIndex = 0;
     var parsedStart = window.TourRoute.parse(window.location.hash);
     applyParsedUrl(parsedStart);
     var startHash = window.location.hash;
@@ -237,6 +252,7 @@
             state.roomIndex = i;
             state.standId = parsed.standId;
             state.walkthroughMode = 'stand';
+            state.standPhotoIndex = parsed.photoIndex || 0;
             return;
           }
         }
@@ -282,7 +298,7 @@
       return { mode: 'photos', roomIndex: state.roomIndex, photoIndex: state.photoIndex };
     }
     if (state.mode === 'stand') {
-      return { mode: 'stand', standId: state.standId, photoIndex: 0 };
+      return { mode: 'stand', standId: state.standId, photoIndex: state.standPhotoIndex || 0 };
     }
     if (state.mode === 'dollhouse') {
       return { mode: 'dollhouse' };
@@ -306,6 +322,128 @@
     renderMenu();
     renderViewport();
     renderChrome();
+  }
+
+  var GUIDED_TOUR_STEP_MS = 6000;
+
+  function guidedTourPlaySvg() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>';
+  }
+
+  function guidedTourStopSvg() {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor"/></svg>';
+  }
+
+  function svgToolbarButton(svgHtml, label, active, onClick) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tour-stand-tool' + (active ? ' is-active' : '');
+    btn.innerHTML = svgHtml;
+    btn.setAttribute('aria-label', label);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.setAttribute('data-tip', label);
+    btn.addEventListener('click', onClick);
+    return btn;
+  }
+
+  function guidedTourOrder() {
+    var out = [];
+    if (!state.data) {
+      return out;
+    }
+    for (var i = 0; i < state.data.rooms.length; i++) {
+      var stands = state.data.rooms[i].stands || [];
+      for (var j = 0; j < stands.length; j++) {
+        if ((stands[j].photo_ids || []).length < 2) {
+          continue;
+        }
+        out.push({ roomIndex: i, standId: stands[j].stand_id });
+      }
+    }
+    return out;
+  }
+
+  function guidedTourIndexOf(standId) {
+    for (var i = 0; i < state.guidedTourQueue.length; i++) {
+      if (state.guidedTourQueue[i].standId === standId) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  function scheduleNextGuidedStep() {
+    if (state.guidedTourTimer) {
+      clearTimeout(state.guidedTourTimer);
+      state.guidedTourTimer = null;
+    }
+    state.guidedTourTimer = setTimeout(function () {
+      state.guidedTourTimer = null;
+      if (!state.guidedTourActive) {
+        return;
+      }
+      state.guidedTourIndex += 1;
+      if (state.guidedTourIndex >= state.guidedTourQueue.length) {
+        stopGuidedTour();
+        render();
+        return;
+      }
+      var next = state.guidedTourQueue[state.guidedTourIndex];
+      state.roomIndex = next.roomIndex;
+      state.standId = next.standId;
+      state.standPhotoIndex = 0;
+      state.mode = 'stand';
+      state.walkthroughMode = 'stand';
+      syncUrl(false);
+      render();
+      scheduleNextGuidedStep();
+    }, GUIDED_TOUR_STEP_MS);
+  }
+
+  function startGuidedTour() {
+    var order = guidedTourOrder();
+    if (order.length < 2) {
+      return;
+    }
+    state.guidedTourActive = true;
+    state.guidedTourQueue = order;
+    var currentIndex = guidedTourIndexOf(state.standId);
+    if (currentIndex < 0) {
+      state.guidedTourIndex = 0;
+      var first = order[0];
+      state.roomIndex = first.roomIndex;
+      state.standId = first.standId;
+      state.standPhotoIndex = 0;
+      state.mode = 'stand';
+      state.walkthroughMode = 'stand';
+      syncUrl(false);
+      render();
+      scheduleNextGuidedStep();
+      return;
+    }
+    state.guidedTourIndex = currentIndex;
+    scheduleNextGuidedStep();
+    render();
+  }
+
+  function stopGuidedTour() {
+    if (!state.guidedTourActive && !state.guidedTourTimer) {
+      return;
+    }
+    state.guidedTourActive = false;
+    if (state.guidedTourTimer) {
+      clearTimeout(state.guidedTourTimer);
+      state.guidedTourTimer = null;
+    }
+  }
+
+  function toggleGuidedTour() {
+    if (state.guidedTourActive) {
+      stopGuidedTour();
+      render();
+      return;
+    }
+    startGuidedTour();
   }
 
   function renderMenu() {
@@ -333,6 +471,9 @@
     modes.appendChild(toolbarButton('plan', window.TourStrings.t('menu_plan'), state.mode === 'plan', function () { switchMode('plan'); }));
     if (walkthrough) {
       modes.appendChild(toolbarButton('walk', window.TourStandStrings.t('toggle_walkthrough'), state.mode === 'stand', function () { enterWalkthroughMode('stand'); }));
+      var tourLabel = state.guidedTourActive ? window.TourStandStrings.t('tour_stop_label') : window.TourStandStrings.t('tour_play_label');
+      var tourSvg = state.guidedTourActive ? guidedTourStopSvg() : guidedTourPlaySvg();
+      modes.appendChild(svgToolbarButton(tourSvg, tourLabel, state.guidedTourActive, toggleGuidedTour));
     }
     toolbar.appendChild(modes);
   }
@@ -351,6 +492,7 @@
   }
 
   function enterWalkthroughMode(mode) {
+    stopGuidedTour();
     state.walkthroughMode = mode;
     persistWalkthroughMode(mode);
     if (mode === 'stand') {
@@ -423,6 +565,7 @@
     if (mode === 'dollhouse' && !state.hasDollhouse) {
       return;
     }
+    stopGuidedTour();
     state.mode = mode;
     syncUrl(false);
     render();
@@ -479,10 +622,13 @@
     }
     window.TourStands.render(els.viewport, currentStand, allStands, allRooms, {
       roomId: room.room_id,
+      initialPhotoIndex: state.standPhotoIndex || 0,
       buildPhotoUrl: withToken,
       onDollhouse: state.hasDollhouse ? function () { switchMode('dollhouse'); } : null,
       onBackToPlan: backToPlan,
       onNavigate: function (nextStandId, nextRoomId) {
+        state.standPhotoIndex = 0;
+        stopGuidedTour();
         for (var m = 0; m < state.data.rooms.length; m++) {
           if (state.data.rooms[m].room_id === nextRoomId) {
             state.roomIndex = m;
@@ -562,6 +708,7 @@
       if (stands.length > 0) {
         state.roomIndex = index;
         state.standId = stands[0].stand_id;
+        state.standPhotoIndex = 0;
         state.mode = 'stand';
         syncUrl(false);
         render();
@@ -637,6 +784,7 @@
   }
 
   function backToPlan() {
+    stopGuidedTour();
     state.mode = 'plan';
     syncUrl(false);
     render();

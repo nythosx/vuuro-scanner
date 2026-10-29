@@ -209,6 +209,64 @@ $photoTourOnly = TourStands::compute([room('room-a', 'Ground', [0.0, 0.0], [], [
 expect('walkthrough: spread-out photos without stand_id stay false', $photoTourOnly['walkthrough'], false);
 expect('walkthrough: spread-out photos still listed as stands', count($photoTourOnly['stands_by_room']['room-a']), 3);
 
+echo "\n== Wall photos join the nearest 360 spot ==\n";
+expect('merge: NEAREST_STAND_RADIUS_M is larger than STAND_RADIUS_M', TourStands::NEAREST_STAND_RADIUS_M > TourStands::STAND_RADIUS_M, true);
+
+$merged = TourStands::compute([room('room-a', 'Ground', [0.0, 0.0], [], [
+    photo('p360a', 2.0, 2.0, 0.0, '2026-10-27T10:00:00+00:00', 'real-stand'),
+    photo('p360b', 2.0, 2.0, 90.0, '2026-10-27T10:00:01+00:00', 'real-stand'),
+    photo('wall-near', 3.5, 2.0, 90.0, '2026-10-27T10:00:05+00:00'),
+])])['stands_by_room']['room-a'];
+expect('merge: wall photo within radius joins the real stand', count($merged), 1);
+expect('merge: kept the real stand_id', $merged[0]['stand_id'], 'real-stand');
+expect('merge: all 3 photos in the merged stand', count($merged[0]['photo_ids']), 3);
+expect('merge: wall photo is in the merged photo_ids', in_array('wall-near', $merged[0]['photo_ids'], true), true);
+
+$far = TourStands::compute([room('room-a', 'Ground', [0.0, 0.0], [], [
+    photo('p360a', 2.0, 2.0, 0.0, '2026-10-27T10:00:00+00:00', 'real-stand'),
+    photo('wall-far', 8.0, 8.0, 90.0, '2026-10-27T10:00:05+00:00'),
+])])['stands_by_room']['room-a'];
+expect('merge: wall photo outside radius stays on its own', count($far), 2);
+
+$wallOnly = TourStands::compute([room('room-a', 'Ground', [0.0, 0.0], [], [
+    photo('wall-1', 1.0, 1.0, 0.0, '2026-10-27T10:00:00+00:00'),
+    photo('wall-2', 4.0, 4.0, 90.0, '2026-10-27T10:00:05+00:00'),
+])])['stands_by_room']['room-a'];
+expect('merge: no captured stand means no merging', count($wallOnly), 2);
+
+$multiple = TourStands::compute([room('room-a', 'Ground', [0.0, 0.0], [], [
+    photo('p360a', 2.0, 2.0, 0.0, '2026-10-27T10:00:00+00:00', 'stand-a'),
+    photo('p360b', 2.0, 2.0, 90.0, '2026-10-27T10:00:01+00:00', 'stand-a'),
+    photo('p360c', 6.0, 2.0, 0.0, '2026-10-27T10:00:02+00:00', 'stand-b'),
+    photo('p360d', 6.0, 2.0, 90.0, '2026-10-27T10:00:03+00:00', 'stand-b'),
+    photo('wall-a', 3.0, 2.0, 90.0, '2026-10-27T10:00:05+00:00'),
+    photo('wall-b', 5.0, 2.0, 90.0, '2026-10-27T10:00:06+00:00'),
+])])['stands_by_room']['room-a'];
+expect('merge: two captured stands stay separate', count($multiple), 2);
+$standA = null;
+$standB = null;
+foreach ($multiple as $s) {
+    if ($s['stand_id'] === 'stand-a') { $standA = $s; }
+    if ($s['stand_id'] === 'stand-b') { $standB = $s; }
+}
+expect('merge: stand-a exists', $standA !== null, true);
+expect('merge: stand-b exists', $standB !== null, true);
+expect('merge: wall-a joined stand-a', $standA !== null && in_array('wall-a', $standA['photo_ids'], true), true);
+expect('merge: wall-b joined stand-b', $standB !== null && in_array('wall-b', $standB['photo_ids'], true), true);
+
+$boundary = TourStands::compute([room('room-a', 'Ground', [0.0, 0.0], [], [
+    photo('p360', 2.0, 2.0, 0.0, '2026-10-27T10:00:00+00:00', 'real-stand'),
+    photo('wall-at-edge', 2.0 + TourStands::NEAREST_STAND_RADIUS_M, 2.0, 0.0, '2026-10-27T10:00:05+00:00'),
+])])['stands_by_room']['room-a'];
+expect('merge: exactly at NEAREST_STAND_RADIUS_M merges', count($boundary), 1);
+
+$beyond = TourStands::compute([room('room-a', 'Ground', [0.0, 0.0], [], [
+    photo('p360', 2.0, 2.0, 0.0, '2026-10-27T10:00:00+00:00', 'real-stand'),
+    photo('wall-past', 2.0 + TourStands::NEAREST_STAND_RADIUS_M + 0.1, 2.0, 0.0, '2026-10-27T10:00:05+00:00'),
+])])['stands_by_room']['room-a'];
+expect('merge: just past NEAREST_STAND_RADIUS_M stays separate', count($beyond), 2);
+
+
 if ($failures > 0) {
     fwrite(STDERR, "\n$failures failure(s)\n");
     exit(1);

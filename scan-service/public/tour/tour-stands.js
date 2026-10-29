@@ -60,6 +60,7 @@
     moved: false,
     stand: null,
     roomId: null,
+    selectedFloor: null,
     photos: [],
     photoEls: [],
     neighbours: [],
@@ -83,6 +84,10 @@
     state.allRooms = allRooms || {};
     state.options = opts || {};
     state.roomId = state.options.roomId || null;
+    var currentRoomForFloor = state.allRooms[state.roomId];
+    state.selectedFloor = currentRoomForFloor && typeof currentRoomForFloor.floor === 'string'
+      ? currentRoomForFloor.floor.trim()
+      : '';
 
     state.photos = (currentStand.photo_ids || []).map(findPhoto).filter(Boolean);
     state.photos.sort(function (a, b) { return photoBearing(a) - photoBearing(b); });
@@ -96,7 +101,14 @@
       return;
     }
 
-    state.viewRotation = startRotation !== null ? startRotation : photoBearing(state.photos[0]);
+    var initial = state.options.initialPhotoIndex;
+    if (startRotation !== null) {
+      state.viewRotation = startRotation;
+    } else if (typeof initial === 'number' && initial >= 0 && initial < state.photos.length) {
+      state.viewRotation = photoBearing(state.photos[initial]);
+    } else {
+      state.viewRotation = photoBearing(state.photos[0]);
+    }
     state.fov = FOV_DEG;
     state.viewPitch = 0;
     state.eyeHeight = standEyeHeight(state.photos);
@@ -107,6 +119,7 @@
     bindDrag();
     bindKeyboard();
     watchLoading();
+    preloadNeighbours();
   }
 
   function watchLoading() {
@@ -150,6 +163,13 @@
     for (var i = 0; i < Math.min(PRELOAD_COUNT, photos.length); i++) {
       var img = new Image();
       img.src = state.options.buildPhotoUrl ? state.options.buildPhotoUrl(photos[i].url) : photos[i].url;
+    }
+  }
+
+  function preloadNeighbours() {
+    for (var i = 0; i < state.neighbours.length && i < 2; i++) {
+      var n = state.neighbours[i];
+      preloadStand(n, bearingTo(n));
     }
   }
 
@@ -275,7 +295,17 @@
     var bottom = document.createElement('div');
     bottom.className = 'tour-stand-bottom';
     bottom.appendChild(buildToolbar());
-    bottom.appendChild(buildStrip());
+    var stripEl = buildStrip();
+    var floorsRow = buildFloorsRow(function (newFloor) {
+      state.selectedFloor = newFloor;
+      var newStrip = buildStrip();
+      stripEl.parentNode.replaceChild(newStrip, stripEl);
+      stripEl = newStrip;
+    });
+    if (floorsRow) {
+      bottom.appendChild(floorsRow);
+    }
+    bottom.appendChild(stripEl);
     shell.appendChild(bottom);
   }
 
@@ -501,6 +531,10 @@
     for (var roomId in state.allStands) {
       var stands = (state.allStands[roomId] || []).filter(function (s) { return (s.photo_ids || []).length > 1; });
       var room = state.allRooms[roomId] || {};
+      var roomFloor = typeof room.floor === 'string' ? room.floor.trim() : '';
+      if (state.selectedFloor && roomFloor && roomFloor !== state.selectedFloor) {
+        continue;
+      }
       for (var i = 0; i < stands.length; i++) {
         var stand = stands[i];
         var tile = document.createElement('button');
@@ -547,6 +581,54 @@
       }, 0);
     }
     return strip;
+  }
+
+  function buildFloorsRow(onChange) {
+    var floors = [];
+    for (var roomId in state.allRooms) {
+      var room = state.allRooms[roomId] || {};
+      var name = typeof room.floor === 'string' ? room.floor.trim() : '';
+      if (name && floors.indexOf(name) === -1) {
+        floors.push(name);
+      }
+    }
+    var appEl = document.getElementById('tour-app');
+    if (floors.length < 2) {
+      if (appEl) {
+        appEl.classList.remove('has-stand-floors');
+      }
+      return null;
+    }
+    var row = document.createElement('div');
+    row.className = 'tour-stand-floors';
+    row.setAttribute('role', 'tablist');
+    for (var i = 0; i < floors.length; i++) {
+      (function (floorName) {
+        var chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'tour-stand-floor-chip' + (floorName === state.selectedFloor ? ' is-active' : '');
+        chip.setAttribute('role', 'tab');
+        chip.setAttribute('aria-selected', floorName === state.selectedFloor ? 'true' : 'false');
+        chip.textContent = floorName;
+        chip.addEventListener('click', function () {
+          if (state.selectedFloor === floorName) {
+            return;
+          }
+          var chips = row.querySelectorAll('.tour-stand-floor-chip');
+          for (var k = 0; k < chips.length; k++) {
+            var active = chips[k].textContent === floorName;
+            chips[k].classList.toggle('is-active', active);
+            chips[k].setAttribute('aria-selected', active ? 'true' : 'false');
+          }
+          onChange(floorName);
+        });
+        row.appendChild(chip);
+      })(floors[i]);
+    }
+    if (appEl) {
+      appEl.classList.add('has-stand-floors');
+    }
+    return row;
   }
 
   function clearNode(node) {

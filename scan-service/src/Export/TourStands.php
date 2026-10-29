@@ -11,6 +11,7 @@ final class TourStands
     public const MAX_NEIGHBOUR_DISTANCE_M = 6.0;
     public const DOOR_LINK_RADIUS_M = 3.0;
     public const MIN_PHOTOS_FOR_LOOK_AROUND = 2;
+    public const NEAREST_STAND_RADIUS_M = 3.0;
 
     public static function compute(array $rooms): array
     {
@@ -122,6 +123,45 @@ final class TourStands
             ];
             $stands[$targetIndex]['photo_ids'][] = $photoId;
             $sampleCounts[$targetIndex] = $count + 1;
+        }
+
+        $capturedIndexes = [];
+        foreach ($stands as $index => $stand) {
+            if ($stand['stand_id'] !== null) {
+                $capturedIndexes[] = $index;
+            }
+        }
+        if ($capturedIndexes !== []) {
+            $mergedInto = [];
+            foreach ($stands as $index => $stand) {
+                if ($stand['stand_id'] !== null) {
+                    continue;
+                }
+                $nearest = null;
+                $nearestDistance = self::NEAREST_STAND_RADIUS_M;
+                foreach ($capturedIndexes as $capturedIndex) {
+                    $distance = self::distance($stands[$capturedIndex]['center_m'], $stand['center_m']);
+                    if ($distance <= $nearestDistance) {
+                        $nearestDistance = $distance;
+                        $nearest = $capturedIndex;
+                    }
+                }
+                if ($nearest !== null) {
+                    foreach ($stand['photo_ids'] as $pid) {
+                        $stands[$nearest]['photo_ids'][] = $pid;
+                    }
+                    $mergedInto[$index] = true;
+                }
+            }
+            if ($mergedInto !== []) {
+                $kept = [];
+                foreach ($stands as $index => $stand) {
+                    if (!isset($mergedInto[$index])) {
+                        $kept[] = $stand;
+                    }
+                }
+                $stands = $kept;
+            }
         }
 
         $roomId = (string) ($room['room_id'] ?? '');

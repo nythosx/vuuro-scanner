@@ -904,6 +904,48 @@ body {
 .tour-stand-tile:not(.is-current):hover,
 .tour-stand-tile:not(.is-current):focus-visible { border-color: rgba(255, 255, 255, 0.85); outline: none; }
 
+.tour-stand-floors {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 0 12px 8px;
+  pointer-events: auto;
+  scrollbar-width: none;
+}
+
+.tour-stand-floors::-webkit-scrollbar {
+  display: none;
+}
+
+.tour-stand-floor-chip {
+  flex: 0 0 auto;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+  background: rgba(30, 30, 30, 0.6);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.tour-stand-floor-chip:hover,
+.tour-stand-floor-chip:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+  outline: none;
+}
+
+.tour-stand-floor-chip.is-active {
+  background: #fff;
+  color: #1b1b1b;
+  border-color: #fff;
+  cursor: default;
+}
+
 .tour-minimap-dot.is-current {
   fill: #ff8212;
   stroke: #ffffff;
@@ -973,4 +1015,14 @@ body {
   .tour-toolbar { left: 10px; bottom: 10px; }
   .tour-app.is-stand .tour-toolbar { bottom: 96px; }
   .tour-app:not(.is-stand) .tour-minimap { bottom: 60px; }
+}
+
+.tour-app.is-stand.has-stand-floors .tour-toolbar {
+  bottom: 164px;
+}
+
+@media (max-width: 480px) {
+  .tour-app.is-stand.has-stand-floors .tour-toolbar {
+    bottom: 136px;
+  }
 }
