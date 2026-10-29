@@ -85,6 +85,9 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     private var pendingPartialRoomWalkPath: [[Double]] = []
     private(set) var mergedStructure: CapturedStructure?
     private(set) var roomWalkPaths: [[[Double]]] = []
+    private(set) var roomEntryDoorways: [[Double]?] = []
+    private var currentEntryDoorway: [Double]?
+    @Published private(set) var hitSceneSizeLimit = false
     private(set) var roomFloors: [String] = []
     var currentFloor: String = ""
     private var currentRoomWalkPath: [[Double]] = []
@@ -261,10 +264,21 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         relocalizationState = .idle
     }
 
-    func start(afterRelocalization: Bool = false) {
+    func currentCameraPosition() -> [Double]? {
+        guard let transform = arSession.currentFrame?.camera.transform else { return nil }
+        let position = transform.columns.3
+        return [Double(position.x), Double(position.y), Double(position.z)]
+    }
+
+    func start(afterRelocalization: Bool = false, entryDoorway: [Double]? = nil) {
         _ = captureView
         UIApplication.shared.isIdleTimerDisabled = true
         wasRelocalized = afterRelocalization
+        currentEntryDoorway = entryDoorway
+        hitSceneSizeLimit = false
+        if let entryDoorway {
+            DiagnosticsLog.shared.record("Next room started from the doorway at \(entryDoorway)", category: .info)
+        }
         state = .scanning
         liveRoomTypeGuess = nil
         roomTypeConfirmation = nil
@@ -305,6 +319,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         capturedRooms.append(pendingPartialRoom)
         roomTypeConfirmations.append(roomTypeConfirmationForExport)
         roomWalkPaths.append(pendingPartialRoomWalkPath)
+        roomEntryDoorways.append(currentEntryDoorway)
         self.pendingPartialRoom = nil
         pendingPartialRoomWalkPath = []
         return true
@@ -321,6 +336,9 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         roomTypeConfirmations.remove(at: index)
         if roomWalkPaths.indices.contains(index) {
             roomWalkPaths.remove(at: index)
+        }
+        if roomEntryDoorways.indices.contains(index) {
+            roomEntryDoorways.remove(at: index)
         }
         if roomFloors.indices.contains(index) {
             roomFloors.remove(at: index)
@@ -419,6 +437,20 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
             let floors = originalIndices.map { floor(forRoomAt: $0) }
             if let named = floors.first(where: { !$0.isEmpty }) ?? floors.first {
                 result[mergedId] = named
+            }
+        }
+        return result
+    }
+
+    func entryDoorwaysForStructure(_ structure: CapturedStructure) -> [UUID: [Double]] {
+        let mapping = mapMergedRoomsToOriginals(structure)
+        var result: [UUID: [Double]] = [:]
+        for (mergedId, originalIndices) in mapping {
+            for index in originalIndices.sorted() where roomEntryDoorways.indices.contains(index) {
+                if let doorway = roomEntryDoorways[index] {
+                    result[mergedId] = doorway
+                    break
+                }
             }
         }
         return result
@@ -557,6 +589,10 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
                         self.pendingPartialRoomWalkPath = []
                         return
                     }
+                    if case RoomCaptureSession.CaptureError.exceedSceneSizeLimit = error {
+                        DiagnosticsLog.shared.record("exceedSceneSizeLimit with \(self.capturedRooms.count) room(s) captured — offering to finish this part", category: .error)
+                        self.hitSceneSizeLimit = true
+                    }
                     let hasUsableGeometry = !room.walls.isEmpty || !room.floors.isEmpty
                     self.pendingPartialRoom = hasUsableGeometry ? room : nil
                     self.pendingPartialRoomWalkPath = hasUsableGeometry ? self.currentRoomWalkPath : []
@@ -568,6 +604,7 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
                         self.capturedRooms.append(room)
                         self.roomTypeConfirmations.append(self.roomTypeConfirmationForExport)
                         self.roomWalkPaths.append(self.currentRoomWalkPath)
+                        self.roomEntryDoorways.append(self.currentEntryDoorway)
                         self.state = .roomFinished(roomAvailable: true)
                     } else {
                         self.state = .roomFinished(roomAvailable: false)

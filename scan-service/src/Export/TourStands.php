@@ -277,11 +277,14 @@ final class TourStands
             }
             $floorKey = self::floorKey($room['floor'] ?? null);
 
+            $doorPoints = [];
             foreach ($room['openings'] ?? [] as $opening) {
-                if (!is_array($opening) || ($opening['category'] ?? '') !== 'door') {
-                    continue;
+                if (is_array($opening) && ($opening['category'] ?? '') === 'door') {
+                    $doorPoints[] = $opening['position_m'] ?? null;
                 }
-                $position = $opening['position_m'] ?? null;
+            }
+            $doorPoints[] = $room['entry_doorway_m'] ?? null;
+            foreach ($doorPoints as $position) {
                 if (!is_array($position) || count($position) < 2 || !is_numeric($position[0]) || !is_numeric($position[1])) {
                     continue;
                 }

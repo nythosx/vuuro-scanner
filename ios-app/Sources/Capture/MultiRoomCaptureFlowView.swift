@@ -26,6 +26,7 @@ struct MultiRoomCaptureFlowView: View {
     @State private var missingOpenings: CaptureLiveStats.MissingOpenings = .doorsAndWindows
     @State private var pendingFinishUnit = false
     @State private var partialRoomFailureMessage: String?
+    @State private var showDoorwayStep = false
     @State private var showCapturedRoomsList = false
     @State private var showDiscardConfirmation = false
     @State private var showMultiFloorPrompt = false
@@ -260,6 +261,15 @@ struct MultiRoomCaptureFlowView: View {
                         resolutionOverlay {
                             PartialRoomChoiceView(
                                 message: partialRoomFailureMessage,
+                                sizeLimitReached: coordinator.hitSceneSizeLimit,
+                                onKeepAndFinish: {
+                                    self.partialRoomFailureMessage = nil
+                                    if !coordinator.keepPendingPartialRoom() {
+                                        coordinator.discardPendingPartialRoom()
+                                    }
+                                    pendingFinishUnit = true
+                                    continueAfterRoomResolved()
+                                },
                                 onKeep: {
                                     self.partialRoomFailureMessage = nil
                                     let kept = coordinator.keepPendingPartialRoom()
@@ -276,6 +286,19 @@ struct MultiRoomCaptureFlowView: View {
                                     continueAfterRoomResolved()
                                 },
                                 onDiscardAndFinish: discardAndFinishAction
+                            )
+                        }
+                    } else if showDoorwayStep {
+                        resolutionOverlay {
+                            DoorwayStepView(
+                                onStart: {
+                                    showDoorwayStep = false
+                                    coordinator.start(entryDoorway: coordinator.currentCameraPosition())
+                                },
+                                onSkip: {
+                                    showDoorwayStep = false
+                                    coordinator.start()
+                                }
                             )
                         }
                     } else if didRequestStopRoom {
@@ -506,6 +529,7 @@ struct MultiRoomCaptureFlowView: View {
                 headingDeg: capturedHeadingDeg
             )
             export.structureOriginM = CapturedStructureExporter.structureOriginM(for: export)
+            export.entryDoorwayM = coordinator.roomEntryDoorways.indices.contains(index) ? coordinator.roomEntryDoorways[index] : nil
             if let joinId = continueState.joinTargetGroupId {
                 export.joinedToGroupId = joinId
             }
@@ -846,6 +870,10 @@ struct MultiRoomCaptureFlowView: View {
             if partialRoomAvailable {
                 partialRoomFailureMessage = message
             } else {
+                if coordinator.hitSceneSizeLimit {
+                    VuuroToast.shared.show(vuuroLocalized("This home is too big for one scan. Your rooms are kept and uploaded now. Use Continue scanning for the rest."))
+                    pendingFinishUnit = true
+                }
                 continueAfterRoomResolved()
             }
         case .merging:
@@ -1001,6 +1029,8 @@ struct MultiRoomCaptureFlowView: View {
             } else {
                 uploadTask = Task { await beginFinishUnit() }
             }
+        } else if walkthroughCaptureEnabled && !coordinator.capturedRooms.isEmpty {
+            showDoorwayStep = true
         } else {
             coordinator.start()
         }
@@ -1017,6 +1047,7 @@ struct MultiRoomCaptureFlowView: View {
                 headingDeg: capturedHeadingDeg
             )
             export.replacesRoomId = roomReplacements[index]
+            export.entryDoorwayM = coordinator.roomEntryDoorways.indices.contains(index) ? coordinator.roomEntryDoorways[index] : nil
             return export
         }
         let labels = roomLabels(for: exports)
@@ -1064,6 +1095,7 @@ struct MultiRoomCaptureFlowView: View {
         }
 
         let replacementsByRoom = coordinator.replacementsForStructure(structure, replacements: roomReplacements)
+        let doorwaysByRoom = coordinator.entryDoorwaysForStructure(structure)
         let exports = CapturedStructureExporter.export(
             structure,
             roomTypeConfirmationsByIdentifier: coordinator.roomTypeConfirmationsForStructure(structure),
@@ -1074,6 +1106,7 @@ struct MultiRoomCaptureFlowView: View {
             tagged.captureGroupId = captureGroupId
             if structure.rooms.indices.contains(index) {
                 tagged.replacesRoomId = replacementsByRoom[structure.rooms[index].identifier]
+                tagged.entryDoorwayM = doorwaysByRoom[structure.rooms[index].identifier]
             }
             if let joinId = continueState.joinTargetGroupId {
                 tagged.joinedToGroupId = joinId
@@ -1340,30 +1373,68 @@ struct PhotoCaptureContext: Identifiable {
 
 struct PartialRoomChoiceView: View {
     let message: String
+    var sizeLimitReached: Bool = false
+    var onKeepAndFinish: (() -> Void)? = nil
     let onKeep: () -> Void
     let onDiscard: () -> Void
     var onDiscardAndFinish: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 16) {
-            Text("Scan interrupted")
+            Text(sizeLimitReached ? "This scan is full" : "Scan interrupted")
                 .font(.headline)
             Text(message)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            Text("Some of this room was captured before the interruption. You can keep it and continue, or discard it and rescan this room.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Keep this room", action: onKeep)
-                .accessibilityIdentifier("partialRoom.keep")
-                .buttonStyle(.borderedProminent)
-            Button("Discard and rescan", role: .destructive, action: onDiscard)
-                .accessibilityIdentifier("partialRoom.discard")
+            if sizeLimitReached, let onKeepAndFinish {
+                Text("The phone can't hold more of this home in one scan. Keep this room and finish this part, then use Continue scanning for the remaining rooms. They are added to the same scan.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                Button("Keep this room and finish this part", action: onKeepAndFinish)
+                    .accessibilityIdentifier("partialRoom.keepAndFinishPart")
+                    .buttonStyle(.borderedProminent)
+            } else {
+                Text("Some of this room was captured before the interruption. You can keep it and continue, or discard it and rescan this room.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            if !sizeLimitReached || onKeepAndFinish == nil {
+                Button("Keep this room", action: onKeep)
+                    .accessibilityIdentifier("partialRoom.keep")
+                    .buttonStyle(.borderedProminent)
+                Button("Discard and rescan", role: .destructive, action: onDiscard)
+                    .accessibilityIdentifier("partialRoom.discard")
+            }
             if let onDiscardAndFinish {
                 Button("Discard and finish the unit", action: onDiscardAndFinish)
                     .accessibilityIdentifier("partialRoom.discardAndFinish")
             }
+        }
+        .padding()
+    }
+}
+
+struct DoorwayStepView: View {
+    let onStart: () -> Void
+    let onSkip: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "door.left.hand.open")
+                .font(.largeTitle)
+            Text("Stand in the doorway")
+                .font(.headline)
+            Text("Walk to the doorway of the next room and hold the phone toward it. The app notes where the two rooms meet, so the walk-through can link them.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("I'm in the doorway, scan next room", action: onStart)
+                .accessibilityIdentifier("doorwayStep.start")
+                .buttonStyle(.borderedProminent)
+            Button("Skip", action: onSkip)
+                .accessibilityIdentifier("doorwayStep.skip")
         }
         .padding()
     }

@@ -106,6 +106,13 @@ final class GroupPlacement
             $room['walk_path_m'] = $moved;
         }
 
+        $doorway = $room['entry_doorway_m'] ?? null;
+        if (is_array($doorway) && count($doorway) >= 2 && is_numeric($doorway[0]) && is_numeric($doorway[1])) {
+            [$wx, $wz] = $toWorld((float) $doorway[0], (float) $doorway[1]);
+            [$nx, $nz] = $applyRigid($wx, $wz);
+            $room['entry_doorway_m'] = [round($nx - $minX, 4), round($nz - $minZ, 4)];
+        }
+
         return $room;
     }
 

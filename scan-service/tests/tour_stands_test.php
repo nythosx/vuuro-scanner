@@ -183,6 +183,20 @@ expect('cap: no stand has more than 4 neighbours', $maxDegree <= TourStands::MAX
 expect('cap: links stay symmetric', $symmetric, true);
 expect('cap: the door link survives a crowded room', count($crowd['room-b'][0]['neighbours']), 1);
 
+echo "\n== The doorway noted between rooms links their spots ==\n";
+$noDoor = TourStands::compute([
+    room('room-a', 'Ground', [0.0, 0.0], [], [photo('a1', 4.4, 2.5, 0.0, '2026-10-27T11:00:00+00:00', 'stand-a')]),
+    room('room-b', 'Ground', [0.0, -5.0], [], [photo('b1', 4.4, 2.5, 0.0, '2026-10-27T11:01:00+00:00', 'stand-b')]),
+])['stands_by_room'];
+expect('doorway: without a door the rooms stay unlinked', count($noDoor['room-b'][0]['neighbours']), 0);
+$roomB = room('room-b', 'Ground', [0.0, -5.0], [], [photo('b1', 4.4, 2.5, 0.0, '2026-10-27T11:01:00+00:00', 'stand-b')]);
+$roomB['entry_doorway_m'] = [4.4, 4.9];
+$withDoor = TourStands::compute([
+    room('room-a', 'Ground', [0.0, 0.0], [], [photo('a1', 4.4, 2.5, 0.0, '2026-10-27T11:00:00+00:00', 'stand-a')]),
+    $roomB,
+])['stands_by_room'];
+expect('doorway: the noted doorway links the two spots', array_column($withDoor['room-b'][0]['neighbours'], 'stand_id'), ['stand-a']);
+
 echo "\n== Captured stands do not link to wall-photo stands ==\n";
 $mixed = TourStands::compute([room('room-a', 'Ground', [0.0, 0.0], [], [
     photo('w1', 1.0, 1.0, 0.0, '2026-10-27T12:00:00+00:00'),

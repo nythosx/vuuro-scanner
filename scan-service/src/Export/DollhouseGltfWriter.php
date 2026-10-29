@@ -6,7 +6,7 @@ namespace VuuroScan\Export;
 
 final class DollhouseGltfWriter
 {
-    public const VERSION = 'glb-3';
+    public const VERSION = 'glb-4';
     private const WALL_THICKNESS_M = 0.10;
     private const WALL_THICKNESS_SCALE = 0.5;
     private const SEAM_OVERLAP_M = 0.015;
@@ -27,16 +27,92 @@ final class DollhouseGltfWriter
     private const DOOR_COLOR = [1.0, 0.51, 0.07, 1.0];
     private const WINDOW_COLOR = [0.18, 0.76, 1.0, 1.0];
     private const OTHER_OPENING_COLOR = [0.55, 0.55, 0.56, 1.0];
+    private const LOD_TOLERANCES_M = ['full' => 0.0, 'simplified' => 0.15, 'coarse' => 0.4];
+
+    private int $maxTriangles;
+    private string $lastLod = 'full';
+
+    public function __construct(int $maxTriangles = self::MAX_TRIANGLES)
+    {
+        $this->maxTriangles = $maxTriangles;
+    }
 
     public function write(array $floorPlan, ?callable $photoLoader = null): string
     {
-        if ($photoLoader === null) {
-            return $this->writeFlat($floorPlan);
+        $last = null;
+        foreach (self::LOD_TOLERANCES_M as $tier => $tolerance) {
+            $plan = self::reduceForTier($floorPlan, $tolerance);
+            try {
+                $glb = $photoLoader === null
+                    ? $this->writeFlat($plan, $tier)
+                    : $this->writeTextured($plan, $photoLoader, $tier);
+                $this->lastLod = $tier;
+                return $glb;
+            } catch (TooManyTrianglesException $e) {
+                $last = $e;
+            }
         }
-        return $this->writeTextured($floorPlan, $photoLoader);
+        throw $last;
     }
 
-    private function writeFlat(array $floorPlan): string
+    public function lastLod(): string
+    {
+        return $this->lastLod;
+    }
+
+    private static function reduceForTier(array $floorPlan, float $tolerance): array
+    {
+        if ($tolerance <= 0.0 || !is_array($floorPlan['rooms'] ?? null)) {
+            return $floorPlan;
+        }
+        foreach ($floorPlan['rooms'] as $i => $room) {
+            if (is_array($room) && is_array($room['outline_m'] ?? null)) {
+                $floorPlan['rooms'][$i]['outline_m'] = self::simplifyOutline($room['outline_m'], $tolerance);
+            }
+        }
+        return $floorPlan;
+    }
+
+    private static function simplifyOutline(array $outline, float $tolerance): array
+    {
+        $points = array_values($outline);
+        $changed = true;
+        while ($changed && count($points) > 3) {
+            $changed = false;
+            $n = count($points);
+            for ($i = 0; $i < $n; $i++) {
+                $prev = $points[($i - 1 + $n) % $n];
+                $next = $points[($i + 1) % $n];
+                $cur = $points[$i];
+                $ax = (float) ($prev[0] ?? 0);
+                $az = (float) ($prev[1] ?? 0);
+                $bx = (float) ($next[0] ?? 0);
+                $bz = (float) ($next[1] ?? 0);
+                $cx = (float) ($cur[0] ?? 0);
+                $cz = (float) ($cur[1] ?? 0);
+                $len = hypot($bx - $ax, $bz - $az);
+                $distance = $len < 1e-9
+                    ? hypot($cx - $ax, $cz - $az)
+                    : abs(($bx - $ax) * ($az - $cz) - ($ax - $cx) * ($bz - $az)) / $len;
+                if ($distance < $tolerance) {
+                    array_splice($points, $i, 1);
+                    $changed = true;
+                    break;
+                }
+            }
+        }
+        return $points;
+    }
+
+    private function tooManyTriangles(): TooManyTrianglesException
+    {
+        return new TooManyTrianglesException(sprintf(
+            'This floor plan needs more than %d triangles to draw in 3D.',
+            $this->maxTriangles
+        ));
+    }
+
+    private function writeFlat(array $floorPlan, string $lod): string
     {
         $rooms = $floorPlan['rooms'] ?? null;
         if (!is_array($rooms) || $rooms === []) {
@@ -49,20 +125,17 @@ final class DollhouseGltfWriter
         $indices = [];
         foreach ($rooms as $i => $room) {
             self::appendRoom($room, $placements[$i], $positions, $normals, $colors, $indices);
-            if (intdiv(count($indices), 3) > self::MAX_TRIANGLES) {
-                throw new \InvalidArgumentException(sprintf(
-                    'This floor plan needs more than %d triangles to draw in 3D.',
-                    self::MAX_TRIANGLES
-                ));
+            if (intdiv(count($indices), 3) > $this->maxTriangles) {
+                throw $this->tooManyTriangles();
             }
         }
         if ($positions === []) {
             throw new \InvalidArgumentException('The captured rooms produced no usable 3D geometry.');
         }
-        return self::packGlb($positions, $normals, $colors, $indices);
+        return self::packGlb($positions, $normals, $colors, $indices, $lod);
     }
 
-    private function writeTextured(array $floorPlan, callable $photoLoader): string
+    private function writeTextured(array $floorPlan, callable $photoLoader, string $lod): string
     {
         $rooms = $floorPlan['rooms'] ?? null;
         if (!is_array($rooms) || $rooms === []) {
@@ -103,11 +176,8 @@ final class DollhouseGltfWriter
             foreach ($texturedWalls as $bucket) {
                 $tris += intdiv(count($bucket['indices']), 3);
             }
-            if ($tris > self::MAX_TRIANGLES) {
-                throw new \InvalidArgumentException(sprintf(
-                    'This floor plan needs more than %d triangles to draw in 3D.',
-                    self::MAX_TRIANGLES
-                ));
+            if ($tris > $this->maxTriangles) {
+                throw $this->tooManyTriangles();
             }
         }
 
@@ -127,7 +197,7 @@ final class DollhouseGltfWriter
             ];
         }
 
-        return self::packGlbMulti($flat, $texturedWalls, $roomPoses);
+        return self::packGlbMulti($flat, $texturedWalls, $roomPoses, $lod);
     }
 
     private static function capTextureSize(string $bytes, string $mime, int $width, int $height): array
@@ -677,7 +747,7 @@ final class DollhouseGltfWriter
         $bucket['indices'][] = $base + 3;
     }
 
-    private static function packGlbMulti(array $flat, array $texturedWalls, array $roomPoses = []): string
+    private static function packGlbMulti(array $flat, array $texturedWalls, array $roomPoses = [], string $lod = 'full'): string
     {
         $bin = '';
         $bufferViews = [];
@@ -786,7 +856,7 @@ final class DollhouseGltfWriter
         $bin .= str_repeat("\0", $binPad);
 
         $gltf = [
-            'asset' => ['version' => '2.0', 'generator' => 'Vuuro Scan'],
+            'asset' => ['version' => '2.0', 'generator' => 'Vuuro Scan', 'extras' => ['lod' => $lod]],
             'scene' => 0,
             'scenes' => [$roomPoses === [] ? ['nodes' => [0]] : ['nodes' => [0], 'extras' => ['room_poses' => $roomPoses]]],
             'nodes' => [['mesh' => 0]],
@@ -1248,7 +1318,7 @@ final class DollhouseGltfWriter
         return ($n + 3) & ~3;
     }
 
-    private static function packGlb(array $positions, array $normals, array $colors, array $indices): string
+    private static function packGlb(array $positions, array $normals, array $colors, array $indices, string $lod = 'full'): string
     {
         $vertexCount = intdiv(count($positions), 3);
         $positionsData = pack('f*', ...$positions);
@@ -1283,7 +1353,7 @@ final class DollhouseGltfWriter
         }
 
         $gltf = [
-            'asset' => ['version' => '2.0', 'generator' => 'Vuuro Scan'],
+            'asset' => ['version' => '2.0', 'generator' => 'Vuuro Scan', 'extras' => ['lod' => $lod]],
             'scene' => 0,
             'scenes' => [['nodes' => [0]]],
             'nodes' => [['mesh' => 0]],

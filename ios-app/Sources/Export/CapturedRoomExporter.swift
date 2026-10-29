@@ -19,6 +19,7 @@ struct RoomPlanCaptureExport: Codable {
     var replacesRoomId: String? = nil
     var joinedToGroupId: String? = nil
     var roomLabel: String? = nil
+    var entryDoorwayM: [Double]? = nil
 
     enum CodingKeys: String, CodingKey {
         case story, floors, walls, doors, windows, openings, objects
@@ -30,6 +31,7 @@ struct RoomPlanCaptureExport: Codable {
         case structureOriginM = "structure_origin_m"
         case walkPathM = "walk_path"
         case headingDeg = "heading_deg"
+        case entryDoorwayM = "entry_doorway"
     }
 
     struct SurfaceExport: Codable {

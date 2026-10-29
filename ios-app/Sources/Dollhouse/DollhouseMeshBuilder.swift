@@ -532,6 +532,7 @@ struct DollhouseMeshBuilder {
         let floorMaterial = DollhouseMaterial.floor(named: "floor-\(roomKey)", color: floorColor)
         let floorMesh = makeFloorMesh(outline: outline, base: base, material: floorMaterial, layer: .wallsAndFloors, path: roomPath.appending("Floor"))
         meshes.append(floorMesh)
+        meshes.append(makeCeilingMesh(outline: outline, base: base, height: wallHeight, path: roomPath.appending("Ceiling")))
 
         let openEdges = Set(room.openEdges)
         let signedArea = outlineSignedArea(outline)
@@ -1012,6 +1013,36 @@ struct DollhouseMeshBuilder {
             }
         }
         return DollhouseMesh(vertices: vertices, indices: indices, material: material, layer: layer, path: path)
+    }
+
+    private static func makeCeilingMesh(outline: [SIMD2<Float>], base: SIMD3<Float>, height: Float, path: DollhouseNodePath) -> DollhouseMesh {
+        let triangles = triangulate(outline)
+        var vertices: [DollhouseVertex] = []
+        for normal in [SIMD3<Float>(0, -1, 0), SIMD3<Float>(0, 1, 0)] {
+            for point in outline {
+                vertices.append(DollhouseVertex(position: SIMD3<Float>(point.x + base.x, base.y + height, point.y + base.z), normal: normal))
+            }
+        }
+        guard let first = triangles.first else {
+            return DollhouseMesh(vertices: vertices, indices: [], material: DollhouseMaterial.ceiling, layer: .ceiling, path: path)
+        }
+        let p0 = vertices[first.0].position
+        let p1 = vertices[first.1].position
+        let p2 = vertices[first.2].position
+        let facesUp = simd_cross(p1 - p0, p2 - p0).y > 0
+        let topOffset = UInt32(outline.count)
+        var indices: [UInt32] = []
+        for triangle in triangles {
+            let a = UInt32(triangle.0)
+            let b = UInt32(triangle.1)
+            let c = UInt32(triangle.2)
+            if facesUp {
+                indices.append(contentsOf: [a, c, b, a + topOffset, b + topOffset, c + topOffset])
+            } else {
+                indices.append(contentsOf: [a, b, c, a + topOffset, c + topOffset, b + topOffset])
+            }
+        }
+        return DollhouseMesh(vertices: vertices, indices: indices, material: DollhouseMaterial.ceiling, layer: .ceiling, path: path)
     }
 
     private static func makeBox(center: SIMD3<Float>, size: SIMD3<Float>, yaw: Float, base: SIMD3<Float>, material: DollhouseMaterial, layer: DollhouseLayer, path: DollhouseNodePath) -> DollhouseMesh {

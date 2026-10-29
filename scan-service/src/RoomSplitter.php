@@ -180,6 +180,10 @@ final class RoomSplitter
                     $out['walk_path_m'][] = $shift($point);
                 }
             }
+            $doorway = $room['entry_doorway_m'] ?? null;
+            $out['entry_doorway_m'] = is_array($doorway) && count($doorway) >= 2 && self::contains($part['points'], (float) $doorway[0], (float) $doorway[1])
+                ? $shift($doorway)
+                : null;
 
             $origin = $room['structure_origin_m'] ?? $assignedOrigin;
             if (is_array($origin)) {

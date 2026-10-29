@@ -2582,8 +2582,9 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/dollhouse\.
         $bytes = file_get_contents($filePath);
         return $bytes === false ? null : $bytes;
     };
+    $dollhouseWriter = new DollhouseGltfWriter();
     try {
-        $glb = (new DollhouseGltfWriter())->write($floorPlan, $photoLoader);
+        $glb = $dollhouseWriter->write($floorPlan, $photoLoader);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_dollhouse', "This floor plan couldn't be drawn in 3D: " . $e->getMessage());
         return;
@@ -2592,6 +2593,10 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/dollhouse\.
         respondError(500, 'internal_error', 'Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.');
         return;
     }
+    if ($dollhouseWriter->lastLod() !== 'full') {
+        error_log('VuuroScan dollhouse for session ' . $session['id'] . ' drawn at reduced detail: ' . $dollhouseWriter->lastLod());
+    }
+    header('X-Dollhouse-Lod: ' . $dollhouseWriter->lastLod());
     header('Content-Type: model/gltf-binary');
     header('ETag: ' . $glbEtag);
     header('Cache-Control: private, no-cache');
