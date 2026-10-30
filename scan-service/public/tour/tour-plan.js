@@ -109,7 +109,15 @@
     var availableW = Math.max(MIN_VIEWPORT, rect.width - VIEWPORT_PADDING);
     var availableH = Math.max(MIN_VIEWPORT, rect.height - VIEWPORT_PADDING - (floorRow ? FLOOR_ROW_PX * 2 : 0));
 
-    var bounds = boundsOf(placed);
+    var align = alignmentAngle(placed);
+    var alignCos = Math.cos(align);
+    var alignSin = Math.sin(align);
+    function aligned(point) {
+      return [point[0] * alignCos + point[1] * alignSin, -point[0] * alignSin + point[1] * alignCos];
+    }
+    var bounds = boundsOf(placed.map(function (item) {
+      return { points: item.points.map(aligned) };
+    }));
     var planW = Math.max(bounds.maxX - bounds.minX, 0.1);
     var planH = Math.max(bounds.maxZ - bounds.minZ, 0.1);
     var fit = fitPlan(planW, planH, availableW - PADDING * 2, availableH - PADDING * 2);
@@ -121,7 +129,8 @@
     svg.setAttribute('height', canvasH);
     svg.setAttribute('viewBox', '0 0 ' + canvasW + ' ' + canvasH);
 
-    function toPx(point) {
+    function toPx(raw) {
+      var point = aligned(raw);
       if (fit.rotated) {
         return [
           (bounds.maxZ - point[1]) * scale + PADDING,
@@ -188,6 +197,26 @@
     }
 
     return true;
+  }
+
+  function alignmentAngle(placed) {
+    var best = 0;
+    var angle = 0;
+    placed.forEach(function (item) {
+      var pts = item.points;
+      for (var i = 0; i < pts.length; i++) {
+        var a = pts[i];
+        var b = pts[(i + 1) % pts.length];
+        var length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (length > best) {
+          best = length;
+          angle = Math.atan2(b[1] - a[1], b[0] - a[0]);
+        }
+      }
+    });
+    var quarter = Math.PI / 2;
+    var offset = angle - Math.round(angle / quarter) * quarter;
+    return Math.abs(offset) < 0.5 * Math.PI / 180 ? 0 : offset;
   }
 
   function floorKey(room) {
@@ -522,6 +551,7 @@
     boundsOf: boundsOf,
     fitPlan: fitPlan,
     floorGroups: floorGroups,
+    alignmentAngle: alignmentAngle,
     wallRuns: wallRuns,
     clusterMarkers: clusterMarkers,
     renderMinimap: renderMinimap

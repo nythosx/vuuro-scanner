@@ -22,7 +22,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
 
     private let arSession: ARSession
     private let roomKey: String
-    private let captureGroupId: String
+    let captureGroupId: String
     private let structureOriginM: [Double]?
     private let outlineMinXZ: SIMD2<Double>
     private let outlineLocal: [CGPoint]
