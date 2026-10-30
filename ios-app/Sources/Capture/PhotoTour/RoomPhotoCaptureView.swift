@@ -28,7 +28,10 @@ struct RoomPhotoCaptureOverlay: View {
                 LiveCameraPreview(arSession: coordinator.session)
                     .scaleEffect(zoom)
             }
+            .aspectRatio(3.0 / 4.0, contentMode: .fit)
             .clipped()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
             .ignoresSafeArea()
             .gesture(
                 MagnificationGesture()
@@ -52,6 +55,7 @@ struct RoomPhotoCaptureOverlay: View {
                 floatingHint
                     .padding(.horizontal, 20)
                 Spacer(minLength: 0)
+                    .allowsHitTesting(false)
                 bottomPanel
             }
 

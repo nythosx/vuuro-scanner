@@ -37,6 +37,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     private let outlineMinXZ: SIMD2<Double>
     private let outlineLocal: [CGPoint]
     private let floorY: Double?
+    private let sendsPose: Bool
     private let initialCameraYawDeg: Double?
     private let initialCompassHeadingDeg: Double?
     private let store: RoomPhotoStore
@@ -120,6 +121,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         self.maximumPhotos = maximumPhotos
 
         self.floorY = room.floors.first.map { Double($0.transform.columns.3.y) }
+        self.sendsPose = room.floors.count == 1
         if let floor = room.floors.first {
             let transform = floor.transform
             let corners = floor.polygonCorners
@@ -508,8 +510,8 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
             pitchDeg: pitchDeg,
             zoom: effectiveZoom,
             standId: standSnapshot,
-            cameraTransform: standSnapshot != nil ? localTransform : nil,
-            intrinsics: standSnapshot != nil ? jpegIntrinsics : nil,
+            cameraTransform: sendsPose ? localTransform : nil,
+            intrinsics: sendsPose ? jpegIntrinsics : nil,
             depthFile: depthFile,
             depthWidth: depthWidth,
             depthHeight: depthHeight,

@@ -20,6 +20,7 @@ struct DollhouseFullScreenView: View {
     @State private var focusedRoomIndex = -1
 
     @State private var camera = DollhouseCamera()
+    @StateObject private var compass = DollhouseCompassModel()
     @State private var scene: DollhouseScene?
     @State private var scnScene: SCNScene?
     @State private var errorMessage: String?
@@ -71,6 +72,13 @@ struct DollhouseFullScreenView: View {
                         rebuild()
                     }
                 )
+                if compass.headingDeg != nil {
+                    HStack {
+                        DollhouseCompassView(model: compass, theme: theme)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 20)
+                }
                 Spacer(minLength: 0)
             }
 
@@ -110,6 +118,11 @@ struct DollhouseFullScreenView: View {
         }
         .task(id: buildToken) {
             rebuild()
+        }
+        .onAppear {
+            camera.onYawChange = { [weak compass] yaw in
+                compass?.update(yaw: yaw)
+            }
         }
         .sheet(isPresented: $showLayers) {
             DollhouseLayerPanel(visibility: $visibility)
@@ -218,6 +231,7 @@ struct DollhouseFullScreenView: View {
                 if buildsAllFloors {
                     allFloorSections = built.scene.floorSections
                 }
+                compass.setHeading(built.scene.headingDeg)
                 scene = built.scene
                 scnScene = built.scnScene
                 isLoading = false
