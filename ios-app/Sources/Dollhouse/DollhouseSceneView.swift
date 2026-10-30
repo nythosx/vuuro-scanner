@@ -6,10 +6,16 @@ struct DollhouseSceneView: UIViewRepresentable {
     let scnScene: SCNScene
     let theme: DollhouseTheme
     var camera: DollhouseCamera? = nil
+    var interactive: Bool = true
     var onHotspotTap: ((String) -> Void)? = nil
 
     func makeUIView(context: Context) -> SCNView {
-        let view = SCNView()
+        let view = DollhouseSCNView()
+        let camera = context.coordinator.camera
+        view.onBoundsChange = { [weak camera] size in
+            camera?.viewportChanged(size)
+        }
+        view.isUserInteractionEnabled = interactive
         view.backgroundColor = theme.backgroundColor
         view.allowsCameraControl = false
         view.autoenablesDefaultLighting = false
@@ -37,6 +43,7 @@ struct DollhouseSceneView: UIViewRepresentable {
 
     func updateUIView(_ view: SCNView, context: Context) {
         view.backgroundColor = theme.backgroundColor
+        view.isUserInteractionEnabled = interactive
         context.coordinator.onHotspotTap = onHotspotTap
         guard context.coordinator.lastSceneId != scene.id else { return }
         context.coordinator.lastSceneId = scene.id
@@ -49,6 +56,18 @@ struct DollhouseSceneView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator {
         Coordinator(camera: camera)
+    }
+
+    final class DollhouseSCNView: SCNView {
+        var onBoundsChange: ((CGSize) -> Void)?
+        private var lastReportedSize: CGSize = .zero
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard bounds.width > 0, bounds.height > 0, bounds.size != lastReportedSize else { return }
+            lastReportedSize = bounds.size
+            onBoundsChange?(bounds.size)
+        }
     }
 
     final class Coordinator: NSObject {

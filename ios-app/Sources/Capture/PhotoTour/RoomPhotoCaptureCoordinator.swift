@@ -28,6 +28,8 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     private let outlineLocal: [CGPoint]
     private let initialCameraYawDeg: Double?
     private let initialCompassHeadingDeg: Double?
+    private let floorY: Double?
+    private let sendsPose: Bool
     private let store: RoomPhotoStore
     private let ciContext = CIContext()
     private var walkSamplingTask: Task<Void, Never>?
@@ -62,6 +64,8 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         self.structureOriginM = structureOriginM
         self.initialCompassHeadingDeg = initialCompassHeadingDeg
         self.initialCameraYawDeg = initialCameraYawDeg
+        self.floorY = room.floors.first.map { Double($0.transform.columns.3.y) }
+        self.sendsPose = room.floors.count == 1
         self.store = store
         self.minimumPhotos = minimumPhotos
         self.maximumPhotos = maximumPhotos
@@ -231,14 +235,19 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
             lastError = "Could not read the camera frame."
             return
         }
-        let rawImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: Self.imageOrientation(frame.camera.transform))
+        let orientation = Self.imageOrientation(frame.camera.transform)
+        let rawImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: orientation)
         let effectiveZoom = max(1.0, min(2.0, Double(zoom)))
         let image = Self.crop(rawImage, toZoom: effectiveZoom)
 
-        guard let jpegData = Self.downsampleAndEncode(image) else {
+        let cropRawWidth = image.cgImage?.width ?? cgImage.width
+        let cropRawHeight = image.cgImage?.height ?? cgImage.height
+        guard let encoded = Self.downsampleAndEncode(image) else {
             lastError = "Could not encode the photo."
             return
         }
+        let jpegData = encoded.data
+        let jpegSize = encoded.size
 
         let t = frame.camera.transform.columns.3
         let worldX = Double(t.x)
@@ -255,13 +264,36 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
 
         let pitchDeg = Self.pitchDeg(frame.camera.transform)
 
+        let localTransform = Self.localCameraTransform(
+            frame.camera.transform,
+            offsetX: outlineMinXZ.x,
+            offsetY: floorY ?? 0,
+            offsetZ: outlineMinXZ.y
+        )
+        let rawIntrinsics = frame.camera.intrinsics
+        let jpegIntrinsics = Self.jpegIntrinsics(
+            fx: Double(rawIntrinsics[0][0]),
+            fy: Double(rawIntrinsics[1][1]),
+            cx: Double(rawIntrinsics[2][0]),
+            cy: Double(rawIntrinsics[2][1]),
+            rawWidth: Int(frame.camera.imageResolution.width),
+            rawHeight: Int(frame.camera.imageResolution.height),
+            cropWidth: cropRawWidth,
+            cropHeight: cropRawHeight,
+            jpegWidth: Int(jpegSize.width),
+            jpegHeight: Int(jpegSize.height),
+            orientation: orientation
+        )
+
         let metadata = RoomPhotoMetadata(
             localId: UUID().uuidString,
             capturedAt: Date(),
             positionM: [localX, localZ],
             headingDeg: headingDeg,
             pitchDeg: pitchDeg,
-            zoom: effectiveZoom
+            zoom: effectiveZoom,
+            cameraTransform: sendsPose ? localTransform : nil,
+            intrinsics: sendsPose ? jpegIntrinsics : nil
         )
 
         do {
@@ -439,7 +471,57 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     private static let maxEdge: CGFloat = 4096
     private static let jpegQuality: CGFloat = 0.85
 
-    private static func downsampleAndEncode(_ image: UIImage) -> Data? {
+    static func localCameraTransform(_ transform: simd_float4x4, offsetX: Double, offsetY: Double, offsetZ: Double) -> [Double] {
+        var result: [Double] = []
+        for col in 0..<4 {
+            for row in 0..<4 {
+                var value = Double(transform[col][row])
+                if col == 3 && row == 0 { value -= offsetX }
+                else if col == 3 && row == 1 { value -= offsetY }
+                else if col == 3 && row == 2 { value -= offsetZ }
+                result.append(value)
+            }
+        }
+        return result
+    }
+
+    static func jpegIntrinsics(
+        fx: Double,
+        fy: Double,
+        cx: Double,
+        cy: Double,
+        rawWidth: Int,
+        rawHeight: Int,
+        cropWidth: Int,
+        cropHeight: Int,
+        jpegWidth: Int,
+        jpegHeight: Int,
+        orientation: UIImage.Orientation
+    ) -> [Double]? {
+        guard rawWidth > 0, rawHeight > 0, cropWidth > 0, cropHeight > 0, jpegWidth > 0, jpegHeight > 0 else {
+            return nil
+        }
+        let cw = Double(cropWidth)
+        let ch = Double(cropHeight)
+        let cxC = cx - (Double(rawWidth) - cw) / 2.0
+        let cyC = cy - (Double(rawHeight) - ch) / 2.0
+        let jw = Double(jpegWidth)
+        let jh = Double(jpegHeight)
+        switch orientation {
+        case .up, .upMirrored:
+            return [fx * jw / cw, fy * jh / ch, cxC * jw / cw, cyC * jh / ch]
+        case .down, .downMirrored:
+            return [fx * jw / cw, fy * jh / ch, (cw - cxC) * jw / cw, (ch - cyC) * jh / ch]
+        case .right, .rightMirrored:
+            return [fy * jw / ch, fx * jh / cw, (ch - cyC) * jw / ch, cxC * jh / cw]
+        case .left, .leftMirrored:
+            return [fy * jw / ch, fx * jh / cw, cyC * jw / ch, (cw - cxC) * jh / cw]
+        @unknown default:
+            return nil
+        }
+    }
+
+    private static func downsampleAndEncode(_ image: UIImage) -> (data: Data, size: CGSize)? {
         let size = image.size
         let longest = max(size.width, size.height)
         let scale = longest > maxEdge ? maxEdge / longest : 1
@@ -451,6 +533,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         let rendered = UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
             image.draw(in: CGRect(origin: .zero, size: targetSize))
         }
-        return rendered.jpegData(compressionQuality: jpegQuality)
+        guard let data = rendered.jpegData(compressionQuality: jpegQuality) else { return nil }
+        return (data, targetSize)
     }
 }

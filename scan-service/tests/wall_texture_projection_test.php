@@ -113,6 +113,37 @@ wp_check('a 4 m wall whose midpoint is in frame passes even though its endpoints
 wp_check('a 40 m wall with the same midpoint in frame is still rejected as too wide', WallTextureProjection::pickWallPhoto([5.0, -20.0], [5.0, 20.0], [-1.0, 0.0], 0.0, 2.5, [$photoCenter]) === null);
 wp_check('a wall fully in frame returns a photo', WallTextureProjection::pickWallPhoto([5.0, -1.0], [5.0, 1.0], [-1.0, 0.0], 0.0, 2.5, [$photoCenter]) !== null);
 
+echo "\n== Photos with camera pose and lens use them ==\n";
+$posed = [
+    'photo_id' => 'posed',
+    'room_id' => 'r',
+    'position_m' => [2.0, 0.0],
+    'heading_deg' => 0.0,
+    'camera_transform' => [-1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 2.0, 1.2, 0.0, 1.0],
+    'intrinsics' => [1000.0, 1000.0, 960.0, 720.0],
+    'image_width' => 1920,
+    'image_height' => 1440,
+];
+$centre = WallTextureProjection::projectPoint($posed, 0.0, 2.0, 1.2, 5.0);
+wp_check('a point straight ahead at the real eye height lands in the centre', $centre !== null && abs($centre[0] - 0.5) < 1e-6 && abs($centre[1] - 0.5) < 1e-6, json_encode($centre));
+$toRight = WallTextureProjection::projectPoint($posed, 0.0, 1.0, 1.2, 5.0);
+wp_check('a point to the right of the camera lands right of centre, scaled by the lens', $toRight !== null && abs($toRight[0] - (1000.0 / 5.0 + 960.0) / 1920.0) < 1e-6, json_encode($toRight));
+$above = WallTextureProjection::projectPoint($posed, 0.0, 2.0, 2.2, 5.0);
+wp_check('a point above the eye lands in the top half', $above !== null && $above[1] < 0.5, json_encode($above));
+wp_check('a posed photo ignores the stored heading', WallTextureProjection::projectPoint([...$posed, 'heading_deg' => 123.0], 0.0, 2.0, 1.2, 5.0) == $centre);
+$scaledDown = WallTextureProjection::projectPoint([...$posed, 'image_width' => 960, 'image_height' => 720], 0.0, 2.0, 1.2, 5.0);
+wp_check('intrinsics for a larger image are scaled to the stored image', $scaledDown !== null && abs($scaledDown[0] - 0.5) < 1e-6 && abs($scaledDown[1] - 0.5) < 1e-6, json_encode($scaledDown));
+$badEye = WallTextureProjection::posedCamera([...$posed, 'camera_transform' => [-1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, -1.0, 0.0, 2.0, 9.0, 0.0, 1.0]]);
+wp_check('an impossible eye height falls back to the default', $badEye !== null && $badEye['y'] === WallTextureProjection::CAMERA_HEIGHT_M);
+wp_check('a photo without intrinsics is not treated as posed', WallTextureProjection::posedCamera([...$posed, 'intrinsics' => null]) === null);
+wp_check('a posed photo facing the wall is picked', WallTextureProjection::pickWallPhoto([0.0, 5.0], [4.0, 5.0], [0.0, -1.0], 0.0, 2.5, [$posed]) !== null);
+
+echo "\n== Older photos still use their tilt ==\n";
+$level = WallTextureProjection::projectPoint(wp_photo([0.0, 0.0], 0.0), 0.0, 0.0, WallTextureProjection::CAMERA_HEIGHT_M, 5.0);
+$tiltedUp = WallTextureProjection::projectPoint([...wp_photo([0.0, 0.0], 0.0), 'pitch_deg' => 15.0], 0.0, 0.0, WallTextureProjection::CAMERA_HEIGHT_M, 5.0);
+wp_check('a level photo puts a point at eye height in the centre', $level !== null && abs($level[1] - 0.5) < 1e-6, json_encode($level));
+wp_check('a photo tilted up puts the same point lower in the frame', $tiltedUp !== null && $tiltedUp[1] > 0.55, json_encode($tiltedUp));
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

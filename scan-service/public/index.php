@@ -1718,6 +1718,48 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
         return;
     }
 
+    $cameraTransformJson = '';
+    if (isset($_POST['camera_transform'])) {
+        $cameraTransformRaw = $_POST['camera_transform'];
+        if (!is_string($cameraTransformRaw)) {
+            respondError(422, 'invalid_camera_transform', "'camera_transform' must be a JSON array of 16 numbers.");
+            return;
+        }
+        $decodedTransform = json_decode($cameraTransformRaw, true);
+        if (!is_array($decodedTransform) || !array_is_list($decodedTransform) || count($decodedTransform) !== 16) {
+            respondError(422, 'invalid_camera_transform', "'camera_transform' must be a JSON array of 16 numbers.");
+            return;
+        }
+        foreach ($decodedTransform as $cameraComponent) {
+            if ((!is_int($cameraComponent) && !is_float($cameraComponent)) || !is_finite((float) $cameraComponent)) {
+                respondError(422, 'invalid_camera_transform', "'camera_transform' must contain only finite numbers.");
+                return;
+            }
+        }
+        $cameraTransformJson = json_encode($decodedTransform, JSON_THROW_ON_ERROR);
+    }
+
+    $intrinsicsJson = '';
+    if (isset($_POST['intrinsics'])) {
+        $intrinsicsRaw = $_POST['intrinsics'];
+        if (!is_string($intrinsicsRaw)) {
+            respondError(422, 'invalid_intrinsics', "'intrinsics' must be a JSON array of 4 numbers.");
+            return;
+        }
+        $decodedIntrinsics = json_decode($intrinsicsRaw, true);
+        if (!is_array($decodedIntrinsics) || !array_is_list($decodedIntrinsics) || count($decodedIntrinsics) !== 4) {
+            respondError(422, 'invalid_intrinsics', "'intrinsics' must be a JSON array of 4 numbers.");
+            return;
+        }
+        foreach ($decodedIntrinsics as $intrinsicComponent) {
+            if ((!is_int($intrinsicComponent) && !is_float($intrinsicComponent)) || !is_finite((float) $intrinsicComponent) || (float) $intrinsicComponent <= 0) {
+                respondError(422, 'invalid_intrinsics', "'intrinsics' must contain only finite positive numbers.");
+                return;
+            }
+        }
+        $intrinsicsJson = json_encode($decodedIntrinsics, JSON_THROW_ON_ERROR);
+    }
+
     $photoUploadId = ScanSessionRepository::uuid();
     $filename = $photoUploadId . '.' . PHOTO_UPLOAD_MIME_EXTENSIONS[$mime];
     $storageDir = __DIR__ . '/../data/photos/' . $sessionId;
@@ -1744,7 +1786,9 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
             gmdate('c'),
             $idempotencyKey,
             $zoomValue,
-            $pitchValue
+            $pitchValue,
+            $cameraTransformJson,
+            $intrinsicsJson
         );
     } catch (\PDOException $e) {
         @unlink($storageDir . '/' . $filename);

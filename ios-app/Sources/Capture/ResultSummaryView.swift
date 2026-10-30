@@ -136,7 +136,8 @@ struct ResultSummaryView: View {
                                         resultUses3D = false
                                         hotspotPhotoTarget = HotspotPhotoTarget(photo: photo)
                                     }
-                                }
+                                },
+                                onOpenFullScreen: { showFullScreen3D = true }
                             )
                             .padding(.bottom, 12)
                         } else {

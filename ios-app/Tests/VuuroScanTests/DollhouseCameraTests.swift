@@ -30,7 +30,7 @@ final class DollhouseCameraTests: XCTestCase {
         DollhouseCamera.placeDefault(cameraNode: cameraNode, framing: scene)
 
         let size = scene.boundsSize
-        let expectedRadius = max(max(size.x, size.y), size.z) * 0.9 + 2
+        let expectedRadius = DollhouseCamera.fitDistance(boundsSize: size, verticalFovDeg: 60, aspect: 1)
         let yaw: Float = .pi / 4
         let pitch: Float = .pi / 4
         let offset = SIMD3<Float>(cos(yaw) * cos(pitch), sin(pitch), sin(yaw) * cos(pitch)) * expectedRadius
@@ -78,7 +78,7 @@ final class DollhouseCameraTests: XCTestCase {
         DollhouseCamera.placeDefault(cameraNode: cameraNode, framing: scene, camera: camera)
 
         let size = scene.boundsSize
-        let expectedRadius = max(max(size.x, size.y), size.z) * 0.9 + 2
+        let expectedRadius = DollhouseCamera.fitDistance(boundsSize: size, verticalFovDeg: 60, aspect: 1)
         let distanceFromCenter = distance(from: cameraNode, to: scene.boundsCenter)
         XCTAssertEqual(distanceFromCenter, expectedRadius, accuracy: 0.01, "a camera instance must land at the default framing distance")
     }
@@ -97,7 +97,7 @@ final class DollhouseCameraTests: XCTestCase {
         camera.attach(to: view, cameraNode: cameraNode, framing: secondScene)
 
         let size = secondScene.boundsSize
-        let expectedRadius = max(max(size.x, size.y), size.z) * 0.9 + 2
+        let expectedRadius = DollhouseCamera.fitDistance(boundsSize: size, verticalFovDeg: 60, aspect: 1)
         let distanceToSecond = distance(from: cameraNode, to: secondScene.boundsCenter)
         let distanceToFirst = distance(from: cameraNode, to: firstScene.boundsCenter)
 
@@ -149,7 +149,7 @@ final class DollhouseCameraTests: XCTestCase {
         camera.attach(to: secondView, cameraNode: secondCameraNode, framing: secondScene)
 
         let size = secondScene.boundsSize
-        let expectedRadius = max(max(size.x, size.y), size.z) * 0.9 + 2
+        let expectedRadius = DollhouseCamera.fitDistance(boundsSize: size, verticalFovDeg: 60, aspect: 1)
         let distanceToSecond = distance(from: secondCameraNode, to: secondScene.boundsCenter)
         XCTAssertEqual(distanceToSecond, expectedRadius, accuracy: 0.01)
     }
@@ -274,10 +274,47 @@ final class DollhouseCameraTests: XCTestCase {
         XCTAssertEqual(dragRight.y, 0)
     }
 
-    func testPitchStaysBetweenTopDownAndLevel() {
-        XCTAssertEqual(DollhouseCamera.clampedPitch(-1), 0.05)
-        XCTAssertEqual(DollhouseCamera.clampedPitch(3), Float.pi / 2 - 0.05)
-        XCTAssertEqual(DollhouseCamera.clampedPitch(0.5), 0.5)
+    func testTiltStaysBetweenTwentyAndEightyDegrees() {
+        XCTAssertEqual(DollhouseCamera.clampedPitch(-1), DollhouseCamera.minimumPitch)
+        XCTAssertEqual(DollhouseCamera.clampedPitch(3), DollhouseCamera.maximumPitch)
+        XCTAssertEqual(DollhouseCamera.clampedPitch(0.8), 0.8)
+        XCTAssertEqual(DollhouseCamera.minimumPitch, 20 * .pi / 180, accuracy: 1e-5)
+        XCTAssertEqual(DollhouseCamera.maximumPitch, 80 * .pi / 180, accuracy: 1e-5)
+    }
+
+    func testPortraitScreensFrameTheWholeModelFromFurtherAway() {
+        let size = SIMD3<Float>(10.8, 3.6, 5.8)
+        let portrait = DollhouseCamera.fitDistance(boundsSize: size, verticalFovDeg: 40, aspect: 0.46)
+        let landscape = DollhouseCamera.fitDistance(boundsSize: size, verticalFovDeg: 40, aspect: 2.1)
+        XCTAssertGreaterThan(portrait, landscape)
+        let halfWidthVisible = portrait * tan(atan(tan(20 * Float.pi / 180) * 0.46))
+        XCTAssertGreaterThanOrEqual(halfWidthVisible, simd_length(size) / 2, "the bounding sphere must fit the narrow side of a portrait screen")
+    }
+
+    func testViewportChangeReframesUntilTheUserMovesTheCamera() {
+        let scene = makeScene(boundsMin: SIMD3(0, 0, 0), boundsMax: SIMD3(10, 3, 6))
+        let camera = DollhouseCamera()
+        let view = SCNView()
+        let node = SCNNode()
+        node.camera = SCNCamera()
+        node.camera?.fieldOfView = 40
+        camera.attach(to: view, cameraNode: node, framing: scene)
+        let square = distance(from: node, to: scene.boundsCenter)
+        camera.viewportChanged(CGSize(width: 390, height: 844))
+        let portrait = distance(from: node, to: scene.boundsCenter)
+        XCTAssertGreaterThan(portrait, square, "a tall phone screen must pull the camera back so the model is not cut off")
+        let pinch = UIPinchGestureRecognizer()
+        pinch.scale = 2
+        camera.handlePinch(pinch)
+        let zoomed = distance(from: node, to: scene.boundsCenter)
+        camera.viewportChanged(CGSize(width: 844, height: 390))
+        XCTAssertEqual(distance(from: node, to: scene.boundsCenter), zoomed, accuracy: 0.01, "a layout change must not undo the user's zoom")
+    }
+
+    func testCompassPointsUpWhenTheCameraLooksNorth() {
+        XCTAssertEqual(DollhouseCamera.compassScreenDegrees(yaw: -.pi / 2, headingDeg: 0), 0, accuracy: 0.01)
+        XCTAssertEqual(DollhouseCamera.compassScreenDegrees(yaw: .pi, headingDeg: 0), 90, accuracy: 0.01)
+        XCTAssertEqual(abs(DollhouseCamera.compassScreenDegrees(yaw: .pi / 2, headingDeg: 0)), 180, accuracy: 0.01)
     }
 
     func testContinuousGestureRecognizersAllowSimultaneousRecognition() {
@@ -290,6 +327,10 @@ final class DollhouseCameraTests: XCTestCase {
 
         let continuous = (view.gestureRecognizers ?? []).filter { $0.name == "dollhouseCamera" && !($0 is UITapGestureRecognizer) }
         XCTAssertEqual(continuous.count, 4, "expected pan, pinch, two-finger pan and twist")
+        let foreign = UIPanGestureRecognizer()
+        for recognizer in continuous {
+            XCTAssertFalse(camera.gestureRecognizer(recognizer, shouldRecognizeSimultaneouslyWith: foreign), "a drag on the 3D view must not also scroll the page")
+        }
         for recognizer in continuous {
             XCTAssertNotNil(recognizer.delegate, "pan/pinch/two-finger-pan/twist must have a delegate so they can recognize simultaneously — otherwise a one-finger drag that grows into a pinch drops one of them")
         }

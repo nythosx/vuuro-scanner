@@ -21,11 +21,13 @@ final class Photo360Repository
         string $capturedAt,
         string $idempotencyKey,
         float $zoom = 1.0,
-        float $pitchDeg = 0.0
+        float $pitchDeg = 0.0,
+        string $cameraTransformJson = '',
+        string $intrinsicsJson = ''
     ): array {
         $stmt = $this->pdo->prepare(
-            'INSERT INTO photo_360 (session_id, room_id, url, position_x, position_z, heading_deg, zoom, pitch_deg, captured_at, idempotency_key)
-             VALUES (:session_id, :room_id, :url, :position_x, :position_z, :heading_deg, :zoom, :pitch_deg, :captured_at, :idempotency_key)'
+            'INSERT INTO photo_360 (session_id, room_id, url, position_x, position_z, heading_deg, zoom, pitch_deg, camera_transform, intrinsics, captured_at, idempotency_key)
+             VALUES (:session_id, :room_id, :url, :position_x, :position_z, :heading_deg, :zoom, :pitch_deg, :camera_transform, :intrinsics, :captured_at, :idempotency_key)'
         );
         $stmt->execute([
             ':session_id' => $sessionId,
@@ -36,6 +38,8 @@ final class Photo360Repository
             ':heading_deg' => $headingDeg,
             ':zoom' => $zoom,
             ':pitch_deg' => $pitchDeg,
+            ':camera_transform' => $cameraTransformJson,
+            ':intrinsics' => $intrinsicsJson,
             ':captured_at' => $capturedAt,
             ':idempotency_key' => $idempotencyKey,
         ]);
@@ -102,6 +106,8 @@ final class Photo360Repository
             'heading_deg' => (float) $row['heading_deg'],
             'zoom' => (float) ($row['zoom'] ?? 1.0),
             'pitch_deg' => (float) ($row['pitch_deg'] ?? 0.0),
+            'camera_transform' => self::decodedJsonList($row['camera_transform'] ?? '', 16),
+            'intrinsics' => self::decodedJsonList($row['intrinsics'] ?? '', 4),
             'captured_at' => (string) $row['captured_at'],
         ];
     }
@@ -114,5 +120,17 @@ final class Photo360Repository
     public function serializedForSession(string $sessionId): array
     {
         return $this->serializeList($this->listBySession($sessionId));
+    }
+
+    private static function decodedJsonList(string $json, int $expectedLength): ?array
+    {
+        if ($json === '') {
+            return null;
+        }
+        $decoded = json_decode($json, true);
+        if (!is_array($decoded) || !array_is_list($decoded) || count($decoded) !== $expectedLength) {
+            return null;
+        }
+        return $decoded;
     }
 }

@@ -615,6 +615,8 @@ struct ScanServiceClient {
         headingDeg: Double,
         zoom: Double = 1.0,
         pitchDeg: Double = 0.0,
+        cameraTransform: [Double]? = nil,
+        intrinsics: [Double]? = nil,
         idempotencyKey: String
     ) async throws -> Photo360UploadResponse {
         let boundary = "Boundary-\(UUID().uuidString)"
@@ -665,6 +667,34 @@ struct ScanServiceClient {
         append("Content-Disposition: form-data; name=\"pitch_deg\"\(crlf)\(crlf)")
         append(String(format: "%.2f", min(90, max(-90, pitchDeg.isFinite ? pitchDeg : 0))))
         append(crlf)
+
+        if let cameraTransform, cameraTransform.count == 16 {
+            do {
+                let jsonData = try JSONEncoder().encode(cameraTransform)
+                if let jsonString = String(data: jsonData, encoding: .utf8) {
+                    append("--\(boundary)\(crlf)")
+                    append("Content-Disposition: form-data; name=\"camera_transform\"\(crlf)\(crlf)")
+                    append(jsonString)
+                    append(crlf)
+                }
+            } catch {
+                DiagnosticsLog.shared.record("Could not encode camera_transform: \(error.localizedDescription)", category: .error)
+            }
+        }
+
+        if let intrinsics, intrinsics.count == 4 {
+            do {
+                let jsonData = try JSONEncoder().encode(intrinsics)
+                if let jsonString = String(data: jsonData, encoding: .utf8) {
+                    append("--\(boundary)\(crlf)")
+                    append("Content-Disposition: form-data; name=\"intrinsics\"\(crlf)\(crlf)")
+                    append(jsonString)
+                    append(crlf)
+                }
+            } catch {
+                DiagnosticsLog.shared.record("Could not encode intrinsics: \(error.localizedDescription)", category: .error)
+            }
+        }
 
         append("--\(boundary)--\(crlf)")
 

@@ -8,10 +8,14 @@ struct ImagePreviewView: View {
         ZStack(alignment: .topLeading) {
             Color(uiColor: .systemBackground).ignoresSafeArea()
 
-            ZoomableImage(image: image, onSingleTap: onClose)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 64)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            GeometryReader { proxy in
+                ZoomableImage(image: image, onSingleTap: onClose)
+                    .frame(
+                        width: max(proxy.size.width - 40, 1),
+                        height: max(proxy.size.height - 128, 1)
+                    )
+                    .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
+            }
 
             Button(action: onClose) {
                 Image(systemName: "xmark")

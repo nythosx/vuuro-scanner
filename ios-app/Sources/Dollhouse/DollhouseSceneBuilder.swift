@@ -43,10 +43,6 @@ enum DollhouseSceneBuilder {
             addHotspots(to: root, dollhouse: dollhouse)
         }
 
-        if includeAnnotations {
-            addCompass(to: root, dollhouse: dollhouse, theme: theme)
-        }
-
         let cameraNode = SCNNode()
         cameraNode.camera = SCNCamera()
         cameraNode.camera?.zNear = 0.1
@@ -215,76 +211,5 @@ enum DollhouseSceneBuilder {
             node.position = SCNVector3(hotspot.position.x, hotspot.position.y, hotspot.position.z)
             root.addChildNode(node)
         }
-    }
-
-    private static func addCompass(to root: SCNNode, dollhouse: DollhouseScene, theme: DollhouseTheme) {
-        guard let rawHeadingDeg = dollhouse.headingDeg, rawHeadingDeg.isFinite, dollhouse.boundsMin.x.isFinite else { return }
-        let headingDeg = ((rawHeadingDeg.truncatingRemainder(dividingBy: 360)) + 360).truncatingRemainder(dividingBy: 360)
-        let bounds = dollhouse.boundsSize
-        let span = max(bounds.x, bounds.z)
-        let margin = max(span * 0.08, 0.8)
-        let arrowLength = max(span * 0.15, 1.2)
-        let shaftRadius = arrowLength * 0.035
-        let headRadius = arrowLength * 0.10
-        let headHeight = arrowLength * 0.22
-        let labelSize = arrowLength * 0.35
-
-        let red = UIColor(red: 0.84, green: 0.27, blue: 0.24, alpha: 1.0)
-        let dark = theme == .light
-            ? UIColor(white: 0.15, alpha: 1.0)
-            : UIColor(white: 0.85, alpha: 1.0)
-
-        let compassGroup = SCNNode()
-        compassGroup.name = "compass"
-        let baseX = dollhouse.boundsMin.x - margin
-        let baseZ = dollhouse.boundsMin.z - margin
-        let baseY = dollhouse.boundsMin.y + 0.02
-        compassGroup.position = SCNVector3(baseX, baseY, baseZ)
-
-        let shaftGeom = SCNCylinder(radius: CGFloat(shaftRadius), height: CGFloat(arrowLength))
-        shaftGeom.firstMaterial?.diffuse.contents = dark
-        shaftGeom.firstMaterial?.lightingModel = .constant
-        let shaftNode = SCNNode(geometry: shaftGeom)
-        shaftNode.name = "compassShaft"
-        shaftNode.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
-        shaftNode.position = SCNVector3(0, 0, arrowLength * 0.5)
-        compassGroup.addChildNode(shaftNode)
-
-        let headGeom = SCNCone(topRadius: 0, bottomRadius: CGFloat(headRadius), height: CGFloat(headHeight))
-        headGeom.firstMaterial?.diffuse.contents = red
-        headGeom.firstMaterial?.lightingModel = .constant
-        let headNode = SCNNode(geometry: headGeom)
-        headNode.name = "compassHead"
-        headNode.eulerAngles = SCNVector3(Float.pi / 2, 0, 0)
-        headNode.position = SCNVector3(0, 0, arrowLength + headHeight * 0.5)
-        compassGroup.addChildNode(headNode)
-
-        let textGeom = SCNText(string: "N", extrusionDepth: 0.02)
-        textGeom.font = UIFont.systemFont(ofSize: CGFloat(labelSize), weight: .bold)
-        textGeom.flatness = 0.05
-        let textMaterial = SCNMaterial()
-        textMaterial.diffuse.contents = red
-        textMaterial.lightingModel = .constant
-        textMaterial.isDoubleSided = true
-        textGeom.materials = [textMaterial]
-        let textNode = SCNNode(geometry: textGeom)
-        textNode.name = "compassLabel"
-        let (minBound, maxBound) = textGeom.boundingBox
-        textNode.pivot = SCNMatrix4MakeTranslation(
-            (minBound.x + maxBound.x) / 2,
-            (minBound.y + maxBound.y) / 2,
-            0
-        )
-        textNode.eulerAngles = SCNVector3(-Float.pi / 2, 0, 0)
-        let labelNode = SCNNode()
-        labelNode.position = SCNVector3(0, labelSize * 0.35, arrowLength + headHeight + labelSize * 0.5)
-        labelNode.eulerAngles = SCNVector3(0, Float.pi, 0)
-        labelNode.addChildNode(textNode)
-        compassGroup.addChildNode(labelNode)
-
-        let headingRad = Float(headingDeg) * .pi / 180.0
-        compassGroup.eulerAngles = SCNVector3(0, headingRad, 0)
-
-        root.addChildNode(compassGroup)
     }
 }

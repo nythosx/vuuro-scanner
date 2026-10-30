@@ -1,7 +1,10 @@
 (function () {
   'use strict';
 
-  var HOTSPOT_PIXEL_SIZE = 24;
+  var HOTSPOT_PIXEL_SIZE = 14;
+  var FOV_Y = Math.PI / 3.5;
+  var TAP_SLOP_PX = 6;
+  var TAP_MAX_MS = 450;
   var MAX_OCCLUSION_TRIANGLES = 8000;
   var OCCLUSION_CLEARANCE_M = 0.05;
 
@@ -167,6 +170,7 @@
         hotspots.push({
           roomIndex: i,
           photoIndex: p,
+          photoId: photos[p].photo_id !== undefined && photos[p].photo_id !== null ? String(photos[p].photo_id) : '',
           world: world,
           roomHeight: height,
           label: (room.label || '') + ' photo ' + (p + 1)
@@ -202,6 +206,13 @@
     this.pinchDistance = null;
     this.pinchMidpoint = null;
     this.hotspotElements = [];
+    this.tapStart = null;
+    this.photoTargets = {};
+    for (var h = 0; h < hotspots.length; h++) {
+      if (hotspots[h].photoId !== '' && !this.photoTargets[hotspots[h].photoId]) {
+        this.photoTargets[hotspots[h].photoId] = { roomIndex: hotspots[h].roomIndex, photoIndex: hotspots[h].photoIndex };
+      }
+    }
     this.parts = [];
     this.imageTextures = {};
     this.initGl();
@@ -412,6 +423,9 @@
     canvas.addEventListener('pointerdown', function (event) {
       self.activePointers[event.pointerId] = { x: event.clientX, y: event.clientY };
       var ids = Object.keys(self.activePointers);
+      self.tapStart = ids.length === 1 && event.button === 0
+        ? { id: event.pointerId, x: event.clientX, y: event.clientY, time: Date.now() }
+        : null;
       if (ids.length === 2) {
         self.pinchDistance = self.pointerDistance();
         self.pinchMidpoint = self.pointerMidpoint();
@@ -459,6 +473,17 @@
       self.render();
     });
     canvas.addEventListener('pointerup', function (event) {
+      var tap = self.tapStart;
+      self.tapStart = null;
+      if (tap && tap.id === event.pointerId
+        && Math.hypot(event.clientX - tap.x, event.clientY - tap.y) <= TAP_SLOP_PX
+        && Date.now() - tap.time <= TAP_MAX_MS) {
+        var rect = canvas.getBoundingClientRect();
+        var target = self.photoAt(event.clientX - rect.left, event.clientY - rect.top);
+        if (target) {
+          self.onHotspotTap(target.roomIndex, target.photoIndex);
+        }
+      }
       delete self.activePointers[event.pointerId];
       if (Object.keys(self.activePointers).length < 2) {
         self.pinchDistance = null;
@@ -469,6 +494,7 @@
       try { canvas.releasePointerCapture(event.pointerId); } catch (e) {}
     });
     canvas.addEventListener('pointercancel', function (event) {
+      self.tapStart = null;
       delete self.activePointers[event.pointerId];
       self.pinchDistance = null;
       self.pinchMidpoint = null;
@@ -571,7 +597,7 @@
     gl.useProgram(this.program);
 
     var aspect = this.canvas.width / Math.max(1, this.canvas.height);
-    var proj = window.TourDollhouseMath.perspective(Math.PI / 3.5, aspect, 0.05, 2000);
+    var proj = window.TourDollhouseMath.perspective(FOV_Y, aspect, 0.05, 2000);
     var eye = this.eyePosition();
     var view = window.TourDollhouseMath.lookAt(eye, this.target, [0, 1, 0]);
     var mvp = window.TourDollhouseMath.multiply(proj, view);
@@ -710,6 +736,72 @@
       }
     }
     return false;
+  };
+
+  Viewer.prototype.rayAt = function (sx, sy) {
+    var w = this.canvas.clientWidth || 1;
+    var h = this.canvas.clientHeight || 1;
+    var eye = this.eyePosition();
+    var f = [this.target[0] - eye[0], this.target[1] - eye[1], this.target[2] - eye[2]];
+    var fl = Math.hypot(f[0], f[1], f[2]) || 1;
+    f = [f[0] / fl, f[1] / fl, f[2] / fl];
+    var r = [-f[2], 0, f[0]];
+    var rl = Math.hypot(r[0], r[2]) || 1;
+    r = [r[0] / rl, 0, r[2] / rl];
+    var u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
+    var t = Math.tan(FOV_Y / 2);
+    var nx = (2 * sx / w - 1) * t * (w / h);
+    var ny = (1 - 2 * sy / h) * t;
+    var d = [f[0] + r[0] * nx + u[0] * ny, f[1] + r[1] * nx + u[1] * ny, f[2] + r[2] * nx + u[2] * ny];
+    var dl = Math.hypot(d[0], d[1], d[2]) || 1;
+    return { origin: eye, dir: [d[0] / dl, d[1] / dl, d[2] / dl] };
+  };
+
+  Viewer.prototype.photoAt = function (sx, sy) {
+    var ray = this.rayAt(sx, sy);
+    var o = ray.origin;
+    var d = ray.dir;
+    var best = Infinity;
+    var bestPart = null;
+    for (var pi = 0; pi < this.mesh.parts.length; pi++) {
+      var part = this.mesh.parts[pi];
+      var pos = part.positions;
+      var idx = part.indices;
+      for (var k = 0; k + 2 < idx.length; k += 3) {
+        var a = idx[k] * 3, b = idx[k + 1] * 3, c = idx[k + 2] * 3;
+        var e1x = pos[b] - pos[a], e1y = pos[b + 1] - pos[a + 1], e1z = pos[b + 2] - pos[a + 2];
+        var e2x = pos[c] - pos[a], e2y = pos[c + 1] - pos[a + 1], e2z = pos[c + 2] - pos[a + 2];
+        var nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+        if (part.photoId && nx * d[0] + ny * d[1] + nz * d[2] >= 0) {
+          continue;
+        }
+        var px = d[1] * e2z - d[2] * e2y, py = d[2] * e2x - d[0] * e2z, pz = d[0] * e2y - d[1] * e2x;
+        var det = e1x * px + e1y * py + e1z * pz;
+        if (det > -1e-9 && det < 1e-9) {
+          continue;
+        }
+        var inv = 1 / det;
+        var sxv = o[0] - pos[a], syv = o[1] - pos[a + 1], szv = o[2] - pos[a + 2];
+        var bu = (sxv * px + syv * py + szv * pz) * inv;
+        if (bu < 0 || bu > 1) {
+          continue;
+        }
+        var qx = syv * e1z - szv * e1y, qy = szv * e1x - sxv * e1z, qz = sxv * e1y - syv * e1x;
+        var bv = (d[0] * qx + d[1] * qy + d[2] * qz) * inv;
+        if (bv < 0 || bu + bv > 1) {
+          continue;
+        }
+        var dist = (e2x * qx + e2y * qy + e2z * qz) * inv;
+        if (dist > 1e-4 && dist < best) {
+          best = dist;
+          bestPart = part;
+        }
+      }
+    }
+    if (!bestPart || !bestPart.photoId) {
+      return null;
+    }
+    return this.photoTargets[bestPart.photoId] || null;
   };
 
   Viewer.prototype.projectToScreen = function (p) {

@@ -7,6 +7,7 @@ struct DollhouseContainerView: View {
     var session: ScanSessionResponse? = nil
     var onShowPlan: (() -> Void)? = nil
     var onHotspotTapped: ((String) -> Void)? = nil
+    var onOpenFullScreen: (() -> Void)? = nil
 
     @AppStorage("dollhouseMode") private var modeRaw: String = DollhouseMode.cutaway.rawValue
     @AppStorage("dollhouseShowFurniture") private var showFurniture: Bool = true
@@ -66,10 +67,33 @@ struct DollhouseContainerView: View {
             if isLoading {
                 DollhousePlaceholderView(kind: .loading)
             } else if let scene, let scnScene, !scene.isEmpty {
-                DollhouseSceneView(scene: scene, scnScene: scnScene, theme: .light, camera: camera, onHotspotTap: onHotspotTapped)
-                    .frame(minHeight: 320)
-                    .background(VuuroColor.bgInset)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                if let onOpenFullScreen {
+                    DollhouseSceneView(scene: scene, scnScene: scnScene, theme: .light, camera: camera, interactive: false)
+                        .frame(minHeight: 320)
+                        .background(VuuroColor.bgInset)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(alignment: .bottomTrailing) {
+                            Label("Open 3D", systemImage: "arrow.up.left.and.arrow.down.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Color.black)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .padding(12)
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture(perform: onOpenFullScreen)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(Text("3D floor plan"))
+                        .accessibilityHint(Text("Opens the 3D view full screen."))
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityIdentifier("dollhouse.openFullScreen")
+                } else {
+                    DollhouseSceneView(scene: scene, scnScene: scnScene, theme: .light, camera: camera, onHotspotTap: onHotspotTapped)
+                        .frame(minHeight: 320)
+                        .background(VuuroColor.bgInset)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
             } else if let errorMessage {
                 DollhousePlaceholderView(kind: .error(errorMessage), onShowPlan: onShowPlan)
             } else {
@@ -98,7 +122,7 @@ struct DollhouseContainerView: View {
             .font(.system(size: 13))
             .foregroundStyle(VuuroColor.textPrimary)
 
-            Text("Drag to rotate · Pinch to zoom · Two-finger drag to pan")
+            Text(onOpenFullScreen == nil ? "Drag to rotate · Pinch to zoom · Two-finger drag to pan" : "Tap the model to open it in 3D")
                 .font(.system(size: 11))
                 .foregroundStyle(VuuroColor.textSecondary)
         }
