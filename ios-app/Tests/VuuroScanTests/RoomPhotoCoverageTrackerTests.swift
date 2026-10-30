@@ -95,6 +95,22 @@ final class RoomPhotoCoverageTrackerTests: XCTestCase {
         XCTAssertEqual(tracker.coverage.coveredWalls.first, 2)
     }
 
+    func testShortWallCountsOnceItsNeighbourIsPhotographed() {
+        let notched = [
+            CGPoint(x: 0, y: 0),
+            CGPoint(x: 4, y: 0),
+            CGPoint(x: 4, y: 2.3),
+            CGPoint(x: 3.3, y: 2.3),
+            CGPoint(x: 3.3, y: 3),
+            CGPoint(x: 0, y: 3),
+        ]
+        var tracker = RoomPhotoCoverageTracker(outline: notched)
+        XCTAssertEqual(tracker.totalWallCount, 6)
+        tracker.record(positionM: CGPoint(x: 2, y: 1), cameraHeadingDeg: 270)
+        XCTAssertEqual(tracker.coverage.photographedWalls, [1])
+        XCTAssertEqual(tracker.coverage.coveredWalls, [1, 2])
+    }
+
     func testThirtySimilarShotsDoNotOverClaimWallCoverage() {
         var tracker = RoomPhotoCoverageTracker(outline: rectangle())
         for _ in 0..<30 {

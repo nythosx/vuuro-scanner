@@ -10,6 +10,7 @@ final class DollhouseCamera: NSObject {
     private var distance: Float = 10
     private var defaultDistance: Float = 10
     private var defaultTarget: SIMD3<Float> = .zero
+    private var defaultYaw: Float = .pi / 4
     private var targetRangeM: Float = 10
     private var yaw: Float = .pi / 4
     private var pitch: Float = .pi / 4
@@ -58,6 +59,7 @@ final class DollhouseCamera: NSObject {
 
         let previousTarget = defaultTarget
         defaultTarget = scene.boundsCenter
+        defaultYaw = scene.defaultYaw
         let size = scene.boundsSize
         framedBoundsSize = size
         verticalFovDeg = Float(cameraNode.camera?.fieldOfView ?? 40)
@@ -144,7 +146,7 @@ final class DollhouseCamera: NSObject {
         let size = scene.boundsSize
         let radius = fitDistance(boundsSize: size, verticalFovDeg: Float(cameraNode.camera?.fieldOfView ?? 40), aspect: aspect)
         let center = scene.boundsCenter
-        let yaw: Float = .pi / 4
+        let yaw = scene.defaultYaw
         let pitch: Float = .pi / 4
         camera?.apply(yaw: yaw, pitch: pitch, distance: radius, target: center, cameraNode: cameraNode)
         if camera == nil {
@@ -366,6 +368,7 @@ final class DollhouseCamera: NSObject {
     func fitAll() {
         stopInertia()
         userAdjusted = false
+        yaw = defaultYaw
         pitch = .pi / 4
         target = defaultTarget
         distance = defaultDistance
@@ -399,7 +402,7 @@ final class DollhouseCamera: NSObject {
     @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
         stopInertia()
         userAdjusted = false
-        yaw = .pi / 4
+        yaw = defaultYaw
         pitch = .pi / 4
         target = defaultTarget
         distance = defaultDistance

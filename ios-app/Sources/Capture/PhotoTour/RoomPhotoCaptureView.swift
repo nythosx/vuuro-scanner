@@ -6,7 +6,7 @@ struct RoomPhotoCaptureOverlay: View {
     let onSkip: () -> Void
     let onFinish: () -> Void
 
-    @AppStorage("photoTour.onboardingSeen.v2") private var onboardingSeen = false
+    @AppStorage("photoTour.onboardingSeenForScan.v3") private var onboardingSeenForScan = ""
     @AppStorage("photoTour.standIntroSeen.v1") private var standIntroSeen = false
     @State private var showStandIntro = false
     @AppStorage("walkthroughCaptureEnabled") private var walkthroughCaptureEnabled = false
@@ -98,7 +98,7 @@ struct RoomPhotoCaptureOverlay: View {
         .animation(.easeOut(duration: 0.3), value: toastMessage)
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
-            if !onboardingSeen {
+            if onboardingSeenForScan != coordinator.captureGroupId {
                 showOnboarding = true
             }
             zoom = 1.0
@@ -586,7 +586,7 @@ struct RoomPhotoCaptureOverlay: View {
                 }
                 .padding(.bottom, 24)
                 Button {
-                    onboardingSeen = true
+                    onboardingSeenForScan = coordinator.captureGroupId
                     showOnboarding = false
                 } label: {
                     Text("Got it")

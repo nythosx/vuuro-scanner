@@ -311,6 +311,17 @@ final class DollhouseCameraTests: XCTestCase {
         XCTAssertEqual(distance(from: node, to: scene.boundsCenter), zoomed, accuracy: 0.01, "a layout change must not undo the user's zoom")
     }
 
+    func testDefaultViewKeepsTheLongestWallLevel() {
+        for wallAngle: Float in [0, .pi / 2, .pi, -.pi / 2, 0.3, -2.8] {
+            let yaw = DollhouseMeshBuilder.frontYaw(wallAngle: wallAngle)
+            let right = SIMD2<Float>(sin(yaw), -cos(yaw))
+            let wall = SIMD2<Float>(cos(wallAngle), sin(wallAngle))
+            XCTAssertEqual(abs(simd_dot(right, wall)), 1, accuracy: 1e-4, "wall at \(wallAngle) rad must run left to right")
+            XCTAssertGreaterThan(yaw, 0)
+            XCTAssertLessThanOrEqual(yaw, .pi + 1e-4)
+        }
+    }
+
     func testCompassPointsUpWhenTheCameraLooksNorth() {
         XCTAssertEqual(DollhouseCamera.compassScreenDegrees(yaw: -.pi / 2, headingDeg: 0), 0, accuracy: 0.01)
         XCTAssertEqual(DollhouseCamera.compassScreenDegrees(yaw: .pi, headingDeg: 0), 90, accuracy: 0.01)

@@ -32,7 +32,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
 
     private let arSession: ARSession
     private let roomKey: String
-    private let captureGroupId: String
+    let captureGroupId: String
     private let structureOriginM: [Double]?
     private let outlineMinXZ: SIMD2<Double>
     private let outlineLocal: [CGPoint]
@@ -54,7 +54,6 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     private var currentStandId: String? = nil
     private var standYawAtStart: Double = 0
     private var standTask: Task<Void, Never>?
-    private var depthSwitchReference: (position: SIMD3<Float>, yawDeg: Double, at: Date)?
     enum StandRow: CaseIterable {
         case horizon, up, down, zenith, nadir
     }
@@ -87,9 +86,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     static let standPoleDeg = 72.0
     static let standMaxStepDeg = 5.0
     static let maximumStandPhotos = standSectorTotal * 4
-    static let depthSwitchJumpM: Float = 0.3
-    static let depthSwitchJumpDeg = 10.0
-    static let depthSwitchWindowSeconds = 3.0
+    static let outsideRoomToleranceM = 0.3
 
     var session: ARSession { arSession }
     var coverage: RoomPhotoCoverage { coverageTracker.coverage }
@@ -153,7 +150,7 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         loadExistingPhotos()
         loadExistingWalk()
         if walkthroughEnabled {
-            enableDepthIfAvailable()
+            logDepthAvailability()
         }
         refreshStandSuggestion()
         startWalkSampling()
@@ -328,9 +325,6 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         let sideways = Self.isHeldSideways(Self.imageOrientation(camera.transform))
         if isHeldSideways != sideways {
             isHeldSideways = sideways
-        }
-        if !limited {
-            checkDepthSwitchJump(camera.transform)
         }
         guard !limited, let position = livePositionLocal() else { return }
         let before = coverageTracker.coveredCellCount
@@ -541,45 +535,18 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         }
     }
 
-    func enableDepthIfAvailable() {
-        guard walkthroughEnabled else { return }
-        guard ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) else {
-            DiagnosticsLog.shared.record("sceneDepth not supported on this device; stand depth disabled", category: .info)
-            return
-        }
-        if let transform = arSession.currentFrame?.camera.transform {
-            depthSwitchReference = (
-                position: SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z),
-                yawDeg: Self.yawDeg(transform),
-                at: Date()
-            )
-        }
-        let configuration = ARWorldTrackingConfiguration()
-        configuration.frameSemantics.insert(.sceneDepth)
-        arSession.run(configuration, options: [])
-        DiagnosticsLog.shared.record("Photo360: depth switched on for \(roomKey)", category: .info)
+    private func logDepthAvailability() {
+        let hasDepth = arSession.currentFrame?.sceneDepth != nil
+        DiagnosticsLog.shared.record(
+            "Photo360: \(roomKey) keeps the scan session; stand depth \(hasDepth ? "available" : "not in these frames")",
+            category: .info
+        )
     }
 
-    private func checkDepthSwitchJump(_ transform: simd_float4x4) {
-        guard let reference = depthSwitchReference else { return }
-        let elapsed = Date().timeIntervalSince(reference.at)
-        let position = SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
-        let moved = simd_distance(position, reference.position)
-        var turned = abs(Self.yawDeg(transform) - reference.yawDeg).truncatingRemainder(dividingBy: 360)
-        if turned > 180 { turned = 360 - turned }
-        if moved > Self.depthSwitchJumpM || turned > Self.depthSwitchJumpDeg {
-            DiagnosticsLog.shared.record(
-                String(format: "Photo360: position jumped after the depth switch for %@: %.2f m, %.0f deg in %.1f s", roomKey, moved, turned, elapsed),
-                category: .error
-            )
-            depthSwitchReference = nil
-        } else if elapsed > Self.depthSwitchWindowSeconds {
-            DiagnosticsLog.shared.record(
-                String(format: "Photo360: no jump after the depth switch for %@ (%.2f m, %.0f deg)", roomKey, moved, turned),
-                category: .info
-            )
-            depthSwitchReference = nil
-        }
+    var isOutsideRoom: Bool {
+        guard outlineLocal.count >= 3, let position = livePositionLocal() else { return false }
+        return !Self.isInside(position, outline: outlineLocal)
+            && Self.distanceToOutline(position, outline: outlineLocal) > Self.outsideRoomToleranceM
     }
 
     func startStand() {
@@ -587,6 +554,10 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
         guard !isCapturingStand else { return }
         guard !isStandBudgetReached else {
             lastError = "You have taken the maximum number of stand photos for this room."
+            return
+        }
+        guard !isOutsideRoom else {
+            lastError = "Your position is outside this room. Walk into the room and try again. If you are already inside, go back and reopen the photo step."
             return
         }
         currentStandId = UUID().uuidString
