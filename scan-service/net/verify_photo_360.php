@@ -144,6 +144,36 @@ check('tilt beyond 90 degrees is rejected with 422 invalid_pitch',
     $badTiltStatus === 422 && ($badTiltBody['error'] ?? null) === 'invalid_pitch',
     "got HTTP $badTiltStatus: " . json_encode($badTiltBody));
 
+check('a photo sent without pose has no camera transform or lens', array_key_exists('camera_transform', $uploadBody) && $uploadBody['camera_transform'] === null && $uploadBody['intrinsics'] === null, json_encode($uploadBody));
+
+$poseFields = [
+    'camera_transform' => json_encode([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1.5, 1.4, 2.0, 1]),
+    'intrinsics' => json_encode([1000.5, 1000.5, 960, 720]),
+];
+[$poseStatus, $poseBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', array_merge($fields, $poseFields), $accessToken, 'key-360-pose'
+);
+check('a photo with pose and lens keeps both',
+    $poseStatus === 201 && ($poseBody['camera_transform'][13] ?? null) == 1.4 && ($poseBody['intrinsics'][0] ?? null) == 1000.5,
+    "got HTTP $poseStatus: " . json_encode($poseBody));
+
+[$badPoseStatus, $badPoseBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', array_merge($fields, ['camera_transform' => '[1,2,3]']), $accessToken, 'key-360-bad-pose'
+);
+check('a camera transform without 16 numbers is rejected with 422 invalid_camera_transform',
+    $badPoseStatus === 422 && ($badPoseBody['error'] ?? null) === 'invalid_camera_transform',
+    "got HTTP $badPoseStatus: " . json_encode($badPoseBody));
+
+[$badLensStatus, $badLensBody] = photo_360_upload(
+    "$baseUrl/scan-sessions/$sessionId/photos-360",
+    $tmpImage, 'image/jpeg', array_merge($fields, ['intrinsics' => '[1000,1000,0,720]']), $accessToken, 'key-360-bad-lens'
+);
+check('lens values that are not positive are rejected with 422 invalid_intrinsics',
+    $badLensStatus === 422 && ($badLensBody['error'] ?? null) === 'invalid_intrinsics',
+    "got HTTP $badLensStatus: " . json_encode($badLensBody));
+
 echo "\n== Missing / malformed fields ==\n";
 [$noKeyStatus, $noKeyBody] = photo_360_upload(
     "$baseUrl/scan-sessions/$sessionId/photos-360",

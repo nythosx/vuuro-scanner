@@ -146,6 +146,10 @@ body {
   font-size: 13px;
   font-weight: 600;
   fill: #111;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 4px;
+  stroke-linejoin: round;
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
@@ -308,6 +312,98 @@ body {
   pointer-events: auto;
 }
 
+.tour-plan-dim {
+  font-size: 10px;
+  font-weight: 500;
+  fill: #3a3a3c;
+  paint-order: stroke;
+  stroke: rgba(255, 255, 255, 0.92);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.tour-plan-photo-cluster {
+  cursor: pointer;
+  outline: none;
+}
+
+.tour-plan-floors {
+  position: absolute;
+  top: 8px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  z-index: 2;
+}
+
+.tour-plan-floors::-webkit-scrollbar {
+  display: none;
+}
+
+.tour-plan-floor-chip {
+  flex: 0 0 auto;
+  appearance: none;
+  -webkit-appearance: none;
+  min-height: 36px;
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 999px;
+  background: rgba(30, 30, 30, 0.6);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.tour-plan-floor-chip:hover,
+.tour-plan-floor-chip:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+  outline: none;
+}
+
+.tour-plan-floor-chip.is-active {
+  background: #fff;
+  color: #1b1b1b;
+  border-color: #fff;
+  cursor: default;
+}
+
+.tour-plan-photo-hit {
+  fill: transparent;
+  stroke: none;
+  pointer-events: all;
+}
+
+.tour-plan-photo-cluster:hover .tour-plan-photo-marker,
+.tour-plan-photo-cluster:focus .tour-plan-photo-marker {
+  fill: #ffffff;
+  stroke: #ff8212;
+}
+
+.tour-plan-photo-cluster:hover .tour-plan-photo-count,
+.tour-plan-photo-cluster:focus .tour-plan-photo-count {
+  fill: #ff8212;
+}
+
+.tour-plan-photo-count {
+  font-size: 11px;
+  font-weight: 700;
+  fill: #ffffff;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .tour-plan-photo-marker {
   fill: #ff8212;
   stroke: #ffffff;
@@ -445,7 +541,7 @@ body {
   top: 0;
   appearance: none;
   -webkit-appearance: none;
-  border: 2px solid #ffffff;
+  border: 1.5px solid #ffffff;
   border-radius: 50%;
   background: #ff8212;
   padding: 0;
@@ -453,6 +549,13 @@ body {
   pointer-events: auto;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
   transition: scale 0.12s ease, background 0.12s ease, opacity 0.12s ease;
+}
+
+.tour-dollhouse-hotspot::after {
+  content: '';
+  position: absolute;
+  inset: -15px;
+  border-radius: 50%;
 }
 
 .tour-dollhouse-hotspot.is-behind {

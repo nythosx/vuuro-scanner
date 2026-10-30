@@ -246,9 +246,10 @@ final class FloorPlanImageRenderer
         }
 
         $tiles = array_map(fn (array $room) => $this->tileGeometry($room, $this->planStyle->orientation), $rooms);
+        $slotWidths = array_map(fn (array $room, array $tile) => $this->tileSlotWidth($room, $tile, $unit), $rooms, $tiles);
         $notesLines = $this->planStyle->showNotes ? $this->buildNotesLines($rooms, $notes) : [];
 
-        $tilesWidth = self::MARGIN * 2 + array_sum(array_column($tiles, 'width'))
+        $tilesWidth = self::MARGIN * 2 + array_sum($slotWidths)
             + self::TILE_GAP * (count($tiles) - 1) + 40;
         $totalAreaM2 = array_sum(array_column($rooms, 'floor_area_m2'));
         $headerTextWidth = self::MARGIN * 2 + $this->textWidth(5, ExportLanguage::t('Vuuro Scan - indicative per-room floor plan sheet'));
@@ -260,7 +261,7 @@ final class FloorPlanImageRenderer
         foreach ($notesLines as $line) {
             $headerTextWidth = max($headerTextWidth, self::MARGIN * 2 + $this->textWidth(1, $line));
         }
-        $canvasWidth = max($tilesWidth, $headerTextWidth);
+        $canvasWidth = max($tilesWidth, $headerTextWidth, $this->footerCanvasWidth());
         $canvasHeight = self::MARGIN * 2 + self::LABEL_HEIGHT + (int) max(array_column($tiles, 'height'))
             + count($notesLines) * self::NOTE_LINE_HEIGHT
             + 30;
@@ -304,14 +305,13 @@ final class FloorPlanImageRenderer
             $this->drawText($image, 2, self::MARGIN, 60, ExportLanguage::t('Total indicative area: %s across %d room(s)', UnitFormatter::area($totalAreaM2, $unit), count($rooms)), $subtext);
         }
 
-        $tilesContentWidth = array_sum(array_column($tiles, 'width')) + self::TILE_GAP * (count($tiles) - 1);
+        $tilesContentWidth = array_sum($slotWidths) + self::TILE_GAP * (count($tiles) - 1);
         $x = max(self::MARGIN, (int) round((imagesx($image) - $tilesContentWidth) / 2));
         $y = self::MARGIN + self::LABEL_HEIGHT;
         foreach ($rooms as $i => $room) {
-            $tile = $tiles[$i];
             $roomFill = $this->roomTypeFillColor($image, $room) ?? $defaultFill;
             $this->drawRoomTile($image, $room, $x, $y, $roomFill, $wallColor, $text, $subtext, $doorColor, $windowColor, $otherOpeningColor, $walkPathColor, $objectColor, $unit);
-            $x += $tile['width'] + self::TILE_GAP;
+            $x += $slotWidths[$i] + self::TILE_GAP;
         }
 
         $tilesBottomY = self::MARGIN + self::LABEL_HEIGHT + (int) max(array_column($tiles, 'height'));
@@ -692,7 +692,7 @@ final class FloorPlanImageRenderer
         }
         $labelPadding = (int) ceil($maxLabelWidth / 2) + 8;
         $planBlockWidth = self::DIMENSION_GUTTER + $labelPadding + (int) round(($maxX - $minX) * self::PIXELS_PER_METER) + $labelPadding + self::DIMENSION_GUTTER;
-        $canvasWidth = max($headerTextWidth, self::MARGIN * 2 + $planBlockWidth);
+        $canvasWidth = max($headerTextWidth, self::MARGIN * 2 + $planBlockWidth, $this->footerCanvasWidth());
         $canvasHeight = self::MARGIN * 2 + $topGutter + (int) round(($maxZ - $minZ) * self::PIXELS_PER_METER) + self::DIMENSION_GUTTER + 16
             + count($notesLines) * self::NOTE_LINE_HEIGHT
             + count($summaryLines) * self::NOTE_LINE_HEIGHT
@@ -1368,6 +1368,23 @@ final class FloorPlanImageRenderer
             [$px, $py] = $toPx($wx, $wz);
             $this->drawText($image, 1, $px - 10, $py - 5, UnitFormatter::length($lengthM, $unit), $color);
         }
+    }
+
+    private function footerCanvasWidth(): int
+    {
+        return self::MARGIN * 2 + $this->textWidth(self::FONT_SMALL, ExportLanguage::t(self::FOOTER_TEXT));
+    }
+
+    private function tileSlotWidth(array $room, array $tile, string $unit): int
+    {
+        if ($this->planStyle->isFunda) {
+            return $tile['width'];
+        }
+        $caption = $this->textWidth(4, $this->printable($this->displayLabel($room)));
+        if ($this->planStyle->showMetrics) {
+            $caption = max($caption, $this->textWidth(2, ExportLanguage::t('%s - %s perimeter - scan accuracy %s', UnitFormatter::area($room['floor_area_m2'], $unit), UnitFormatter::length($room['perimeter_m'], $unit), ExportLanguage::t((string) $room['confidence']))));
+        }
+        return max($tile['width'], self::TILE_PADDING + $caption + 8);
     }
 
     private function tileGeometry(array $room, string $orientation = 'as_captured'): array

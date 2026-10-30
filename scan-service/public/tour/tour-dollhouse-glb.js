@@ -80,6 +80,15 @@
       return texture ? texture.source : null;
     }
 
+    function photoIdForMaterial(materialIndex) {
+      var material = materialIndex !== undefined && gltf.materials ? gltf.materials[materialIndex] : null;
+      var name = material && typeof material.name === 'string' ? material.name : '';
+      if (name.indexOf('textured-') !== 0 || name === 'textured-wall') {
+        return null;
+      }
+      return name.slice('textured-'.length);
+    }
+
     var primitives = [];
     for (var m = 0; m < gltf.meshes.length; m++) {
       var mesh = gltf.meshes[m];
@@ -117,7 +126,8 @@
         uvs: uvs,
         colors: colors,
         indices: readAccessor(prim.indices),
-        imageIndex: imageIndexForMaterial(prim.material)
+        imageIndex: imageIndexForMaterial(prim.material),
+        photoId: photoIdForMaterial(prim.material)
       };
     });
 

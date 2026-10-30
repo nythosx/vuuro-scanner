@@ -7,6 +7,8 @@ struct RoomPhotoMetadata: Codable, Equatable {
     let headingDeg: Double
     let pitchDeg: Double
     let zoom: Double
+    var cameraTransform: [Double]? = nil
+    var intrinsics: [Double]? = nil
 
     init(
         localId: String,
@@ -14,7 +16,9 @@ struct RoomPhotoMetadata: Codable, Equatable {
         positionM: [Double],
         headingDeg: Double,
         pitchDeg: Double,
-        zoom: Double = 1.0
+        zoom: Double = 1.0,
+        cameraTransform: [Double]? = nil,
+        intrinsics: [Double]? = nil
     ) {
         self.localId = localId
         self.capturedAt = capturedAt
@@ -22,6 +26,8 @@ struct RoomPhotoMetadata: Codable, Equatable {
         self.headingDeg = headingDeg
         self.pitchDeg = pitchDeg
         self.zoom = zoom
+        self.cameraTransform = cameraTransform
+        self.intrinsics = intrinsics
     }
 
     init(from decoder: Decoder) throws {
@@ -32,6 +38,8 @@ struct RoomPhotoMetadata: Codable, Equatable {
         headingDeg = try c.decode(Double.self, forKey: .headingDeg)
         pitchDeg = try c.decode(Double.self, forKey: .pitchDeg)
         zoom = try c.decodeIfPresent(Double.self, forKey: .zoom) ?? 1.0
+        cameraTransform = try c.decodeIfPresent([Double].self, forKey: .cameraTransform)
+        intrinsics = try c.decodeIfPresent([Double].self, forKey: .intrinsics)
     }
 }
 

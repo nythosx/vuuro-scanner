@@ -406,6 +406,8 @@ enum RoomPhotoUploader {
                 headingDeg: photo.headingDeg,
                 zoom: photo.zoom,
                 pitchDeg: photo.pitchDeg,
+                cameraTransform: photo.cameraTransform,
+                intrinsics: photo.intrinsics,
                 idempotencyKey: photo.localId
             )
             return nil

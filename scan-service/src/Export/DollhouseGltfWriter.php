@@ -6,7 +6,7 @@ namespace VuuroScan\Export;
 
 final class DollhouseGltfWriter
 {
-    public const VERSION = 'glb-3';
+    public const VERSION = 'glb-4';
     private const WALL_THICKNESS_M = 0.10;
     private const WALL_THICKNESS_SCALE = 0.5;
     private const SEAM_OVERLAP_M = 0.015;
@@ -309,12 +309,20 @@ final class DollhouseGltfWriter
                 if (!in_array($mime, ['image/jpeg', 'image/png'], true)) {
                     continue;
                 }
-                [$bytes, $mime] = self::capTextureSize($bytes, $mime, (int) $imageInfo[0], (int) $imageInfo[1]);
+                $imageWidth = (int) $imageInfo[0];
+                $imageHeight = (int) $imageInfo[1];
+                [$bytes, $mime] = self::capTextureSize($bytes, $mime, $imageWidth, $imageHeight);
                 $photosWithBytes[] = [
                     'photo_id' => (string) ($photo['photo_id'] ?? ''),
                     'room_id' => (string) ($photo['room_id'] ?? ''),
                     'position_m' => is_array($photo['position_m'] ?? null) ? $photo['position_m'] : [0.0, 0.0],
                     'heading_deg' => is_numeric($photo['heading_deg'] ?? null) ? (float) $photo['heading_deg'] : null,
+                    'zoom' => is_numeric($photo['zoom'] ?? null) ? (float) $photo['zoom'] : 1.0,
+                    'pitch_deg' => is_numeric($photo['pitch_deg'] ?? null) ? (float) $photo['pitch_deg'] : 0.0,
+                    'camera_transform' => is_array($photo['camera_transform'] ?? null) ? $photo['camera_transform'] : null,
+                    'intrinsics' => is_array($photo['intrinsics'] ?? null) ? $photo['intrinsics'] : null,
+                    'image_width' => $imageWidth,
+                    'image_height' => $imageHeight,
                     'imageBytes' => $bytes,
                     'imageMime' => $mime,
                 ];
