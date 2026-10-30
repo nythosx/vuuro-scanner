@@ -114,6 +114,7 @@ struct DollhouseScene {
     let usedEstimatedHeight: Bool
     let id: UUID = UUID()
     var headingDeg: Double? = nil
+    var defaultYaw: Float = .pi / 4
     var degenerateRoomCount: Int = 0
     var hotspots: [DollhouseHotspot] = []
     var roomLabels: [DollhouseRoomLabel] = []

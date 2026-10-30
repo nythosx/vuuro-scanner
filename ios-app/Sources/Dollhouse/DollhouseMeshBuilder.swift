@@ -170,6 +170,7 @@ struct DollhouseMeshBuilder {
         var summariesByIndex: [Int: DollhouseFloorSection] = [:]
         var allHotspots: [DollhouseHotspot] = []
         var allRoomLabels: [DollhouseRoomLabel] = []
+        var longestWall: (length: Float, angle: Float) = (0, 0)
 
         let buildOrder = sections.indices.sorted { lhs, rhs in
             let left = floorLevels.firstIndex(of: sections[lhs].floorKey) ?? 0
@@ -181,6 +182,15 @@ struct DollhouseMeshBuilder {
         for sectionIndex in buildOrder {
             let section = sections[sectionIndex]
             let weldedOutlines = weldSectionOutlines(rooms: section.rooms)
+            for outline in weldedOutlines.values where outline.count >= 2 {
+                for i in outline.indices {
+                    let edge = outline[(i + 1) % outline.count] - outline[i]
+                    let length = simd_length(edge)
+                    if length > longestWall.length {
+                        longestWall = (length, atan2(edge.y, edge.x))
+                    }
+                }
+            }
             let sectionOffsetZ = sectionOffsetZByFloor[section.floorKey] ?? 0
             let sectionOrigin = SIMD3<Float>(
                 stacksFloors ? -localMinX(weldedOutlines: weldedOutlines) : 0.0,
@@ -243,10 +253,18 @@ struct DollhouseMeshBuilder {
             floorSections: sectionSummaries,
             usedEstimatedHeight: usedEstimatedHeight,
             headingDeg: agreedHeading(rooms),
+            defaultYaw: longestWall.length > 0 ? frontYaw(wallAngle: longestWall.angle) : .pi / 4,
             degenerateRoomCount: degenerateRoomCount,
             hotspots: allHotspots,
             roomLabels: allRoomLabels
         )
+    }
+
+    static func frontYaw(wallAngle: Float) -> Float {
+        var yaw = wallAngle + .pi / 2
+        while yaw - .pi / 2 > .pi / 2 { yaw -= .pi }
+        while yaw - .pi / 2 <= -.pi / 2 { yaw += .pi }
+        return yaw
     }
 
     static func buildForExport(

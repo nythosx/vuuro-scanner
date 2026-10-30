@@ -23,6 +23,7 @@ struct RoomPhotoCoverage: Equatable {
     static let collinearAngleDeg = 10.0
     static let collinearOffsetM = 0.3
     static let readyWallCoverage = 0.8
+    static let shortWallM = 1.0
     static let readyPositionCoverage = 0.5
     static let standableMarginM = 1.0
     static let walkReachRadiusM = 1.0
@@ -52,7 +53,7 @@ struct RoomPhotoCoverage: Equatable {
 
     private(set) var photoCells: Set<Cell>
     private(set) var walkedCells: Set<Cell>
-    private(set) var coveredWalls: Set<Int>
+    private(set) var photographedWalls: Set<Int>
     private(set) var recordedPositions: [SIMD2<Double>]
     let walkableCells: Set<Cell>
     private(set) var reachedCells: Set<Cell>
@@ -66,7 +67,7 @@ struct RoomPhotoCoverage: Equatable {
         self.roomHeadingDeg = roomHeadingDeg
         self.photoCells = []
         self.walkedCells = []
-        self.coveredWalls = []
+        self.photographedWalls = []
         self.recordedPositions = []
         self.reachedCells = []
         self.walkedPositions = []
@@ -181,7 +182,7 @@ struct RoomPhotoCoverage: Equatable {
         }
         let direction = directionVector(cameraHeadingDeg: cameraHeadingDeg)
         if let wallIndex = Self.rayHitWall(origin: pos, direction: direction, walls: walls) {
-            coveredWalls.insert(wallIndex)
+            photographedWalls.insert(wallIndex)
         }
         recordedPositions.append(pos)
     }
@@ -215,7 +216,7 @@ struct RoomPhotoCoverage: Equatable {
 
     mutating func reset() {
         photoCells.removeAll()
-        coveredWalls.removeAll()
+        photographedWalls.removeAll()
         recordedPositions.removeAll()
     }
 
@@ -290,6 +291,20 @@ struct RoomPhotoCoverage: Equatable {
     var positionCoverage: Double {
         guard !inRoomCells.isEmpty else { return 0 }
         return Double(coveredCells.count) / Double(inRoomCells.count)
+    }
+
+    var coveredWalls: Set<Int> {
+        var covered = photographedWalls
+        guard walls.count > 2 else { return covered }
+        for (k, wall) in walls.enumerated() where !covered.contains(wall.index) {
+            guard simd_length(wall.b - wall.a) < Self.shortWallM else { continue }
+            let previous = walls[(k - 1 + walls.count) % walls.count].index
+            let next = walls[(k + 1) % walls.count].index
+            if photographedWalls.contains(previous) || photographedWalls.contains(next) {
+                covered.insert(wall.index)
+            }
+        }
+        return covered
     }
 
     var wallCoverage: Double {
