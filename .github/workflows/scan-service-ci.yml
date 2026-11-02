@@ -52,6 +52,7 @@ jobs:
           php tests/floor_groups_join_test.php
           php tests/photo_360_repository_test.php
           php tests/tour_stands_test.php
+          php tests/tour_readiness_test.php
           php tests/tour_stand_strings_test.php
 
       - name: The independent net (every suite, fresh servers and DBs)

@@ -652,7 +652,7 @@ struct DollhouseMeshBuilder {
             }
         }
 
-        let hotspots = makeHotspots(photos360: photos360, roomId: roomKey, base: localBase)
+        let hotspots = makeHotspots(photos360: photos360, roomId: roomKey, base: localBase, outline: outline, originXZ: originXZ)
         let centroid = outlineCentroid(outline)
         let label = DollhouseRoomLabel(
             id: roomKey,
@@ -1201,14 +1201,38 @@ private extension DollhouseMeshBuilder {
         return sum / (3 * twiceArea)
     }
 
-    static func makeHotspots(photos360: [FloorPlan.Photo360], roomId: String, base: SIMD3<Float>) -> [DollhouseHotspot] {
+    static let hotspotOutsideToleranceM: Float = 1.0
+
+    static func makeHotspots(photos360: [FloorPlan.Photo360], roomId: String, base: SIMD3<Float>, outline: [SIMD2<Float>] = [], originXZ: SIMD2<Float> = .zero) -> [DollhouseHotspot] {
         guard !photos360.isEmpty else { return [] }
         return photos360.compactMap { photo in
             guard photo.positionM.count >= 2 else { return nil }
             let x = Float(photo.positionM[0])
             let z = Float(photo.positionM[1])
+            if outline.count >= 3, distanceOutside(SIMD2<Float>(x, z) + originXZ, outline: outline) > hotspotOutsideToleranceM {
+                return nil
+            }
             let position = SIMD3<Float>(x + base.x, base.y + 1.4, z + base.z)
             return DollhouseHotspot(id: photo.photoId, roomId: roomId, position: position)
         }
+    }
+
+    static func distanceOutside(_ p: SIMD2<Float>, outline: [SIMD2<Float>]) -> Float {
+        var inside = false
+        var best = Float.greatestFiniteMagnitude
+        var j = outline.count - 1
+        for i in outline.indices {
+            let a = outline[i]
+            let b = outline[j]
+            if (a.y > p.y) != (b.y > p.y), p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+                inside.toggle()
+            }
+            let edge = b - a
+            let lengthSquared = simd_length_squared(edge)
+            let t = lengthSquared > 0 ? max(0, min(1, simd_dot(p - a, edge) / lengthSquared)) : 0
+            best = min(best, simd_length(a + edge * t - p))
+            j = i
+        }
+        return inside ? 0 : best
     }
 }

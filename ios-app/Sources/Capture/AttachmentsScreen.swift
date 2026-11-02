@@ -761,53 +761,6 @@ private struct AttachmentRoomCard: View {
     }
 }
 
-struct CameraPickerView: UIViewControllerRepresentable {
-    let onImageCaptured: (UIImage) -> Void
-    let onDismiss: () -> Void
-
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        context.coordinator.previousMask = OrientationLock.mask
-        OrientationLock.set(.allButUpsideDown)
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.cameraCaptureMode = .photo
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-
-    static func dismantleUIViewController(_ uiViewController: UIImagePickerController, coordinator: Coordinator) {
-        OrientationLock.set(coordinator.previousMask)
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onImageCaptured: onImageCaptured, onDismiss: onDismiss)
-    }
-
-    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let onImageCaptured: (UIImage) -> Void
-        let onDismiss: () -> Void
-        var previousMask: UIInterfaceOrientationMask = .allButUpsideDown
-
-        init(onImageCaptured: @escaping (UIImage) -> Void, onDismiss: @escaping () -> Void) {
-            self.onImageCaptured = onImageCaptured
-            self.onDismiss = onDismiss
-        }
-
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let image = info[.originalImage] as? UIImage {
-                onImageCaptured(image)
-            }
-            onDismiss()
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            onDismiss()
-        }
-    }
-}
-
 struct RoomAttachmentsList: View {
     let session: ScanSessionResponse
     let photos: [FloorPlan.Photo]

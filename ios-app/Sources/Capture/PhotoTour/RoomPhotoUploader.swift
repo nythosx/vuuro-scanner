@@ -419,6 +419,7 @@ enum RoomPhotoUploader {
                 zoom: photo.zoom,
                 pitchDeg: photo.pitchDeg,
                 standId: photo.standId,
+                capturedAt: photo.capturedAt,
                 cameraTransform: photo.cameraTransform,
                 intrinsics: photo.intrinsics,
                 depthData: depthData,

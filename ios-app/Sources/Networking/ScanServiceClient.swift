@@ -616,6 +616,7 @@ struct ScanServiceClient {
         zoom: Double = 1.0,
         pitchDeg: Double = 0.0,
         standId: String? = nil,
+        capturedAt: Date? = nil,
         cameraTransform: [Double]? = nil,
         intrinsics: [Double]? = nil,
         depthData: Data? = nil,
@@ -662,6 +663,13 @@ struct ScanServiceClient {
         append("Content-Disposition: form-data; name=\"heading_deg\"\(crlf)\(crlf)")
         append(String(format: "%.2f", headingDeg))
         append(crlf)
+
+        if let capturedAt {
+            append("--\(boundary)\(crlf)")
+            append("Content-Disposition: form-data; name=\"captured_at\"\(crlf)\(crlf)")
+            append(ISO8601DateFormatter().string(from: capturedAt))
+            append(crlf)
+        }
 
         append("--\(boundary)\(crlf)")
         append("Content-Disposition: form-data; name=\"zoom\"\(crlf)\(crlf)")

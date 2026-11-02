@@ -21,7 +21,14 @@
       fullscreen_label: 'Full screen',
       tour_play_label: 'Start guided tour',
       tour_stop_label: 'Stop guided tour',
-      measure_label: 'Measure: click two points'
+      measure_label: 'Measure: click two points',
+      share_label: 'Share',
+      link_copied: 'Link copied',
+      link_copy_failed: 'Copy the link from the address bar',
+      hint_dollhouse_walk: 'Drag to rotate, scroll to zoom. Tap a circle on the floor to step inside.',
+      spot_label: '{room} 360 spot {number}',
+      hint_plan_walk: 'Tap a numbered spot to step inside, or a room to see its photos.',
+      no_spot_that_way: 'No 360 spot in that direction yet.'
     },
     nl: {
       toggle_photos: 'Foto\u2019s',
@@ -42,7 +49,14 @@
       fullscreen_label: 'Volledig scherm',
       tour_play_label: 'Start rondleiding',
       tour_stop_label: 'Stop rondleiding',
-      measure_label: 'Meten: klik op twee punten'
+      measure_label: 'Meten: klik op twee punten',
+      share_label: 'Delen',
+      link_copied: 'Link gekopieerd',
+      link_copy_failed: 'Kopieer de link uit de adresbalk',
+      hint_dollhouse_walk: 'Sleep om te draaien, scroll om te zoomen. Tik op een cirkel op de vloer om naar binnen te stappen.',
+      spot_label: '{room} 360\u00b0-plek {number}',
+      hint_plan_walk: 'Tik op een genummerd punt om naar binnen te stappen, of op een ruimte voor de foto\u2019s.',
+      no_spot_that_way: 'Er is nog geen 360\u00b0-plek in die richting.'
     }
   };
 

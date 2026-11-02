@@ -769,7 +769,22 @@ struct RoomPhotoCaptureOverlay: View {
     private var nextSpotPill: some View {
         if coordinator.suggestedStandPositionLocal != nil {
             TimelineView(.animation(minimumInterval: 0.2, paused: false)) { _ in
-                if let guide = coordinator.nextStandGuide() {
+                if coordinator.isOutsideRoom {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(VuuroColor.accent)
+                        Text(vuuroLocalized("Walk into the room first. Your position is outside it."))
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .background(Color.black.opacity(0.3), in: Capsule())
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier("photoTour.nextSpot.outside")
+                } else if let guide = coordinator.nextStandGuide() {
                     HStack(spacing: 8) {
                         if guide.distanceM <= RoomPhotoCaptureCoordinator.nextStandArrivedM {
                             Image(systemName: "checkmark.circle.fill")
