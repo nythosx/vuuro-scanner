@@ -7,11 +7,12 @@
   var MAX_MS = 1600;
   var BASE_MS = 650;
   var MS_PER_M = 260;
+  var FEATHER = 0.12;
 
   var VS = 'attribute vec3 a_pos;attribute float a_shade;uniform vec3 u_eye;uniform vec3 u_right;uniform vec3 u_up;uniform vec3 u_fwd;uniform vec2 u_scale;uniform vec2 u_depth;varying vec3 v_world;varying float v_shade;void main(){vec3 r=a_pos-u_eye;float z=dot(r,u_fwd);gl_Position=vec4(dot(r,u_right)*u_scale.x,dot(r,u_up)*u_scale.y,z*u_depth.x+u_depth.y,z);v_world=a_pos;v_shade=a_shade;}';
   var PRECISION = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n';
   var SOLID_FS = PRECISION + 'uniform vec3 u_color;varying vec3 v_world;varying float v_shade;void main(){gl_FragColor=vec4(min(u_color*v_shade,vec3(1.0)),1.0);}';
-  var PHOTO_FS = PRECISION + 'uniform sampler2D u_tex;uniform vec3 u_center;uniform vec3 u_pr;uniform vec3 u_pu;uniform vec3 u_pf;uniform vec4 u_frame;uniform vec3 u_gain;uniform float u_alpha;varying vec3 v_world;varying float v_shade;void main(){vec3 d=v_world-u_center;float z=dot(d,u_pf);if(z<0.05)discard;float x=dot(d,u_pr)/z;float y=dot(d,u_pu)/z;vec2 uv=vec2((x-u_frame.x)/(u_frame.y-u_frame.x),(u_frame.z-y)/(u_frame.z-u_frame.w));if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0)discard;float e=0.12;float a=smoothstep(0.0,e,uv.x)*smoothstep(0.0,e,1.0-uv.x)*smoothstep(0.0,e,uv.y)*smoothstep(0.0,e,1.0-uv.y);vec3 c=min(texture2D(u_tex,uv).rgb*u_gain,vec3(1.0));gl_FragColor=vec4(c,a*u_alpha);}';
+  var PHOTO_FS = PRECISION + 'uniform sampler2D u_tex;uniform vec3 u_center;uniform vec3 u_pr;uniform vec3 u_pu;uniform vec3 u_pf;uniform vec4 u_frame;uniform vec3 u_gain;uniform float u_alpha;uniform float u_feather;varying vec3 v_world;varying float v_shade;void main(){vec3 d=v_world-u_center;float z=dot(d,u_pf);if(z<0.05)discard;float x=dot(d,u_pr)/z;float y=dot(d,u_pu)/z;vec2 uv=vec2((x-u_frame.x)/(u_frame.y-u_frame.x),(u_frame.z-y)/(u_frame.z-u_frame.w));if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0)discard;float a=1.0;if(u_feather>0.0){float e=u_feather;a=smoothstep(0.0,e,uv.x)*smoothstep(0.0,e,1.0-uv.x)*smoothstep(0.0,e,uv.y)*smoothstep(0.0,e,1.0-uv.y);}vec3 c=min(texture2D(u_tex,uv).rgb*u_gain,vec3(1.0));gl_FragColor=vec4(c,a*u_alpha);}';
 
   function enabled() {
     try {
@@ -52,7 +53,7 @@
     var common = ['eye', 'right', 'up', 'fwd', 'scale', 'depth'];
     gl.__tourTransition = {
       solid: locations(gl, solid, common.concat(['color'])),
-      photo: locations(gl, photo, common.concat(['tex', 'center', 'pr', 'pu', 'pf', 'frame', 'gain', 'alpha']))
+      photo: locations(gl, photo, common.concat(['tex', 'center', 'pr', 'pu', 'pf', 'frame', 'gain', 'alpha', 'feather']))
     };
     return gl.__tourTransition;
   }
@@ -216,7 +217,7 @@
         if (tex) owned.push(tex);
       }
       if (!tex || !meshes[s.room]) return;
-      sources.push({ tex: tex, pose: s.pose, frame: s.frame, center: s.center, gain: s.gain || [1, 1, 1], set: s.set, room: s.room });
+      sources.push({ tex: tex, pose: s.pose, frame: s.frame, center: s.center, gain: s.gain || [1, 1, 1], feather: typeof s.feather === 'number' ? s.feather : FEATHER, set: s.set, room: s.room });
     });
     var from = opts.from;
     var to = opts.to;
@@ -326,6 +327,7 @@
           gl.uniform4f(pp.frame, s.frame.left, s.frame.right, s.frame.top, s.frame.bottom);
           gl.uniform3fv(pp.gain, s.gain);
           gl.uniform1f(pp.alpha, alpha);
+          gl.uniform1f(pp.feather, s.feather);
           gl.bindTexture(gl.TEXTURE_2D, s.tex);
           bindMesh(pp, meshes[s.room]);
           gl.drawArrays(gl.TRIANGLES, 0, meshes[s.room].count);

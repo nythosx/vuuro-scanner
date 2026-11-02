@@ -158,8 +158,27 @@ function idempotencyFingerprint(array $body): string
     }
 }
 
+const SKYBOX_BACKGROUND_SECONDS = 300;
+
+function skyboxStore(): \VuuroScan\Export\StandSkyboxStore
+{
+    return new \VuuroScan\Export\StandSkyboxStore(__DIR__ . '/../data/skybox');
+}
+
+function finishResponseEarly(): bool
+{
+    if (function_exists('frankenphp_finish_request')) {
+        return frankenphp_finish_request();
+    }
+    if (function_exists('fastcgi_finish_request')) {
+        return fastcgi_finish_request();
+    }
+    return false;
+}
+
 function deleteSessionPhotoDir(string $sessionId): void
 {
+    skyboxStore()->deleteSession($sessionId);
     $photoDir = __DIR__ . '/../data/photos/' . $sessionId;
     if (!is_dir($photoDir)) {
         return;
@@ -3074,6 +3093,18 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
     }
     $standsResult = \VuuroScan\Export\TourStands::compute($tourRooms);
 
+    $skyboxes = skyboxStore();
+    $skyboxPhotoPath = static fn (string $url): ?string => ownedPhotoFilePath($sessionId, $url);
+    $skyboxPlan = $skyboxes->plan($sessionId, $standsResult['stands_by_room'], $photosByRoom, $skyboxPhotoPath);
+    foreach ($skyboxPlan['ready'] as $skyRoomId => $readyStands) {
+        foreach ($readyStands as $standIndex => $sky) {
+            $standsResult['stands_by_room'][$skyRoomId][$standIndex]['skybox'] = [
+                'base_url' => $base . "/scan-sessions/{$sessionId}/skybox/{$sky['key']}/",
+                'size' => $sky['size'],
+            ];
+        }
+    }
+
     $rooms = [];
     foreach ($floorPlan['rooms'] as $room) {
         $rooms[] = [
@@ -3106,6 +3137,35 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
         'rooms' => $rooms,
         'features' => ['walkthrough' => $standsResult['walkthrough']],
     ]);
+    if ($skyboxPlan['pending'] !== [] && finishResponseEarly()) {
+        ignore_user_abort(true);
+        set_time_limit(0);
+        $skyboxDeadline = microtime(true) + SKYBOX_BACKGROUND_SECONDS;
+        foreach ($skyboxPlan['pending'] as $next) {
+            if (microtime(true) > $skyboxDeadline || !$skyboxes->build($sessionId, $next['room_id'], $next['stand_id'], $next['key'], $next['photos'], $skyboxPhotoPath)) {
+                break;
+            }
+        }
+    }
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/skybox/([a-f0-9]{24})/([a-z])\.jpg$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'read_photo_upload', true);
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':' . clientIp() . ':read_photo_upload', 600, 300)) {
+        return;
+    }
+    $facePath = skyboxStore()->facePath($session['id'], $m[2], $m[3]);
+    if ($facePath === null) {
+        respondError(404, 'skybox_not_found', 'This 360 view is not ready yet.');
+        return;
+    }
+    header('Content-Type: image/jpeg');
+    header('Cache-Control: private, max-age=86400, immutable');
+    readfile($facePath);
     return;
 }
 

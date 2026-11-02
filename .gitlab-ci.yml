@@ -31,6 +31,7 @@ scan-service-net:
     - php tests/photo_360_repository_test.php
     - php tests/tour_stands_test.php
     - php tests/tour_readiness_test.php
+    - php tests/stand_skybox_test.php
     - php tests/tour_stand_strings_test.php
     - php net/run_all.php
   after_script:
