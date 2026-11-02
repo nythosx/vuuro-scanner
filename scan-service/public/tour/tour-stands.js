@@ -2,11 +2,12 @@
   'use strict';
 
   var FOV_DEG = 90;
-  var ZOOM_FOV_DEG = 50;
   var MIN_FOV_DEG = 40;
   var PHOTO_FOV_DEG = 60;
   var CURSOR_SIZE_M = 0.45;
   var WALK_PICK_RADIUS_M = 1.5;
+  var WALK_CONE_DEG = 55;
+  var WALK_MIN_STEP_M = 0.6;
   var CLICK_SLOP_PX = 6;
   var DEFAULT_WALL_DISTANCE_M = 3;
   var DEFAULT_PHOTO_VFOV_DEG = 62;
@@ -18,11 +19,14 @@
   var EYE_HEIGHT_M = 1.4;
   var MIN_EYE_M = 0.6;
   var MAX_EYE_M = 2.4;
-  var MARKER_SIZE_M = 0.7;
+  var MARKER_SIZE_M = 0.5;
   var TURN_MS = 320;
   var pendingRotation = null;
   var DRAG_SENSITIVITY = 0.4;
   var TRANSITION_MS = 400;
+  var TRANSITION_LOAD_MS = 2500;
+  var HANDOVER_MAX_MS = 2500;
+  var HANDOVER_FADE_MS = 280;
   var THUMB_YAW_DEG = 35;
   var THUMB_ELEVATION_DEG = 52;
   var THUMB_WALL_M = 1.1;
@@ -34,7 +38,8 @@
     plan: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h9v6h5v10H5z"/><path d="M14 10H9v4"/></svg>',
     walk: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="13" cy="4.5" r="1.8"/><path d="M10 21l2-6-2.5-2.5 1-5 3 2.5h3M9.5 8L7 12M14.5 15l1.5 6"/></svg>',
     fullscreen: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
-    measure: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 16l13-13 5 5-13 13z"/><path d="M7 12l2 2M10 9l2 2M13 6l2 2"/></svg>'
+    measure: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 16l13-13 5 5-13 13z"/><path d="M7 12l2 2M10 9l2 2M13 6l2 2"/></svg>',
+    share: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="M8.2 10.8l7.6-4.4M8.2 13.2l7.6 4.4"/></svg>'
   };
 
   var state = {
@@ -76,6 +81,8 @@
     dragStartX: 0,
     dragStartRotation: 0,
     animating: false,
+    transition: null,
+    handover: null,
     options: {}
   };
 
@@ -187,8 +194,12 @@
   }
 
   function findPhoto(photoId) {
-    for (var roomId in state.allRooms) {
-      var room = state.allRooms[roomId];
+    return findPhotoIn(state.allRooms, photoId);
+  }
+
+  function findPhotoIn(rooms, photoId) {
+    for (var roomId in rooms) {
+      var room = rooms[roomId];
       for (var i = 0; i < (room.photos || []).length; i++) {
         if (room.photos[i].photo_id === photoId) return room.photos[i];
       }
@@ -306,10 +317,10 @@
     var bottom = document.createElement('div');
     bottom.className = 'tour-stand-bottom';
     bottom.appendChild(buildToolbar());
-    var stripEl = buildStrip();
+    var stripEl = buildStandReel();
     var floorsRow = buildFloorsRow(function (newFloor) {
       state.selectedFloor = newFloor;
-      var newStrip = buildStrip();
+      var newStrip = buildStandReel();
       stripEl.parentNode.replaceChild(newStrip, stripEl);
       stripEl = newStrip;
     });
@@ -320,10 +331,10 @@
     shell.appendChild(bottom);
   }
 
-  function roomPolygons() {
+  function roomPolygons(rooms) {
     var polygons = [];
-    for (var roomId in state.allRooms) {
-      var room = state.allRooms[roomId];
+    for (var roomId in rooms) {
+      var room = rooms[roomId];
       if (!room || !Array.isArray(room.outline_m) || room.outline_m.length < 3) continue;
       var o = Array.isArray(room.structure_origin_m) ? room.structure_origin_m : [0, 0];
       polygons.push(room.outline_m.map(function (p) { return [p[0] + (Number(o[0]) || 0), p[1] + (Number(o[1]) || 0)]; }));
@@ -343,9 +354,9 @@
     return { ctx: ctx, dpr: dpr };
   }
 
-  function drawPlanThumb(canvas) {
+  function drawPlanThumb(canvas, rooms) {
     var prepared = prepareThumbCanvas(canvas);
-    var polygons = roomPolygons();
+    var polygons = roomPolygons(rooms);
     if (!prepared || polygons.length === 0) return;
     var ctx = prepared.ctx;
     var dpr = prepared.dpr;
@@ -381,9 +392,9 @@
     });
   }
 
-  function drawDollhouseThumb(canvas) {
+  function drawDollhouseThumb(canvas, rooms) {
     var prepared = prepareThumbCanvas(canvas);
-    var polygons = roomPolygons();
+    var polygons = roomPolygons(rooms);
     if (!prepared || polygons.length === 0) return;
     var ctx = prepared.ctx;
     var dpr = prepared.dpr;
@@ -458,7 +469,41 @@
         uploadPhoto(entry);
       }
       updatePhotoPositions();
+      releaseHandoverWhenReady();
     };
+  }
+
+  function releaseHandoverWhenReady() {
+    if (!state.handover) return;
+    var fwd = viewBasis().fwd;
+    for (var i = 0; i < state.photoEls.length; i++) {
+      var entry = state.photoEls[i];
+      if (dot(entry.pose.fwd, fwd) > NEAR_VIEW_COS && !(state.gl ? entry.tex : entry.el.complete)) return;
+    }
+    fadeHandover();
+  }
+
+  function fadeHandover() {
+    var el = state.handover;
+    state.handover = null;
+    if (!el) return;
+    if (el.timer) clearTimeout(el.timer);
+    requestAnimationFrame(function () {
+      el.classList.add('is-fading');
+      setTimeout(function () {
+        if (el.parentNode) el.parentNode.removeChild(el);
+      }, HANDOVER_FADE_MS);
+    });
+  }
+
+  function showHandover(snapshot) {
+    if (!snapshot || !state.pano) return;
+    snapshot.className = 'tour-stand-handover';
+    snapshot.setAttribute('aria-hidden', 'true');
+    state.pano.appendChild(snapshot);
+    state.handover = snapshot;
+    snapshot.timer = setTimeout(fadeHandover, HANDOVER_MAX_MS);
+    releaseHandoverWhenReady();
   }
 
   function iconButton(icon, label, onClick, extraClass) {
@@ -483,11 +528,17 @@
     measure.setAttribute('aria-pressed', 'false');
     state.measureButton = measure;
     right.appendChild(measure);
+    appendShareTools(right);
     bar.appendChild(right);
+    return bar;
+  }
 
+  function appendShareTools(container) {
+    var t = window.TourStandStrings;
+    container.appendChild(iconButton('share', t.t('share_label'), shareTour, 'is-round'));
     var app = document.getElementById('tour-app');
     if (app && app.requestFullscreen && document.fullscreenEnabled) {
-      right.appendChild(iconButton('fullscreen', t.t('fullscreen_label'), function () {
+      container.appendChild(iconButton('fullscreen', t.t('fullscreen_label'), function () {
         try {
           if (document.fullscreenElement) {
             document.exitFullscreen();
@@ -497,58 +548,107 @@
         } catch (err) {}
       }, 'is-round'));
     }
-    return bar;
   }
 
-  function buildStrip() {
+  function shareTour() {
+    var url = window.location.href;
+    if (navigator.share) {
+      navigator.share({ title: document.title, url: url }).catch(function () {});
+      return;
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(function () {
+        showToast(window.TourStandStrings.t('link_copied'));
+      }, function () {
+        showToast(window.TourStandStrings.t('link_copy_failed'));
+      });
+      return;
+    }
+    showToast(window.TourStandStrings.t('link_copy_failed'));
+  }
+
+  function showToast(text) {
+    var app = document.getElementById('tour-app');
+    if (!app) return;
+    var old = app.querySelector('.tour-toast');
+    if (old) old.parentNode.removeChild(old);
+    var toast = document.createElement('div');
+    toast.className = 'tour-toast';
+    toast.setAttribute('role', 'status');
+    toast.textContent = text;
+    app.appendChild(toast);
+    setTimeout(function () {
+      if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, 2600);
+  }
+
+  function buildStandReel() {
+    return buildReel({
+      rooms: state.allRooms,
+      stands: state.allStands,
+      active: 'stand',
+      currentStandId: state.stand ? state.stand.stand_id : null,
+      floor: state.selectedFloor,
+      buildPhotoUrl: state.options.buildPhotoUrl,
+      onDollhouse: state.options.onDollhouse,
+      onPlan: state.options.onBackToPlan,
+      onNavigate: function (standId, roomId) {
+        if (!state.options.onNavigate) return;
+        showLoading();
+        state.options.onNavigate(standId, roomId);
+      }
+    });
+  }
+
+  function modeTile(label, draw, rooms, active, onClick) {
+    var tile = document.createElement('button');
+    tile.type = 'button';
+    tile.className = 'tour-stand-tile is-mode';
+    tile.setAttribute('role', 'listitem');
+    var canvas = document.createElement('canvas');
+    canvas.className = 'tour-stand-tile-preview';
+    canvas.setAttribute('aria-hidden', 'true');
+    tile.appendChild(canvas);
+    setTimeout(function () { draw(canvas, rooms); }, 0);
+    var text = document.createElement('span');
+    text.className = 'tour-stand-tile-label';
+    text.textContent = label;
+    tile.appendChild(text);
+    if (active) {
+      tile.className += ' is-current';
+      tile.setAttribute('aria-current', 'true');
+    } else if (onClick) {
+      tile.addEventListener('click', onClick);
+    }
+    return tile;
+  }
+
+  function buildReel(ctx) {
     var t = window.TourStandStrings;
+    var rooms = ctx.rooms || {};
+    var allStands = ctx.stands || {};
     var strip = document.createElement('div');
     strip.className = 'tour-stand-strip';
     strip.setAttribute('role', 'list');
     strip.setAttribute('aria-label', t.t('strip_aria'));
 
-    if (state.options.onDollhouse) {
-      var doll = document.createElement('button');
-      doll.type = 'button';
-      doll.className = 'tour-stand-tile is-mode';
-      doll.setAttribute('role', 'listitem');
-      var dollCanvas = document.createElement('canvas');
-      dollCanvas.className = 'tour-stand-tile-preview';
-      dollCanvas.setAttribute('aria-hidden', 'true');
-      doll.appendChild(dollCanvas);
-      setTimeout(function () { drawDollhouseThumb(dollCanvas); }, 0);
-      var dollLabel = document.createElement('span');
-      dollLabel.className = 'tour-stand-tile-label';
-      dollLabel.textContent = t.t('embed_tab_dollhouse');
-      doll.appendChild(dollLabel);
-      doll.addEventListener('click', state.options.onDollhouse);
+    var current = null;
+    if (ctx.onDollhouse || ctx.active === 'dollhouse') {
+      var doll = modeTile(t.t('embed_tab_dollhouse'), drawDollhouseThumb, rooms, ctx.active === 'dollhouse', ctx.onDollhouse);
+      if (ctx.active === 'dollhouse') current = doll;
       strip.appendChild(doll);
     }
-
-    if (state.options.onBackToPlan) {
-      var plan = document.createElement('button');
-      plan.type = 'button';
-      plan.className = 'tour-stand-tile is-mode';
-      plan.setAttribute('role', 'listitem');
-      var planCanvas = document.createElement('canvas');
-      planCanvas.className = 'tour-stand-tile-preview';
-      planCanvas.setAttribute('aria-hidden', 'true');
-      plan.appendChild(planCanvas);
-      setTimeout(function () { drawPlanThumb(planCanvas); }, 0);
-      var planLabel = document.createElement('span');
-      planLabel.className = 'tour-stand-tile-label';
-      planLabel.textContent = t.t('embed_tab_plan');
-      plan.appendChild(planLabel);
-      plan.addEventListener('click', state.options.onBackToPlan);
+    if (ctx.onPlan || ctx.active === 'plan') {
+      var plan = modeTile(t.t('embed_tab_plan'), drawPlanThumb, rooms, ctx.active === 'plan', ctx.onPlan);
+      if (ctx.active === 'plan') current = plan;
       strip.appendChild(plan);
     }
 
-    var current = null;
-    for (var roomId in state.allStands) {
-      var stands = (state.allStands[roomId] || []).filter(function (s) { return (s.photo_ids || []).length > 1; });
-      var room = state.allRooms[roomId] || {};
+    for (var roomId in allStands) {
+      var stands = (allStands[roomId] || []).filter(function (s) { return (s.photo_ids || []).length > 1; });
+      var room = rooms[roomId] || {};
       var roomFloor = typeof room.floor === 'string' ? room.floor.trim() : '';
-      if (state.selectedFloor && roomFloor && roomFloor !== state.selectedFloor) {
+      if (ctx.floor && roomFloor && roomFloor !== ctx.floor) {
         continue;
       }
       for (var i = 0; i < stands.length; i++) {
@@ -557,12 +657,12 @@
         tile.type = 'button';
         tile.className = 'tour-stand-tile';
         tile.setAttribute('role', 'listitem');
-        var cover = findPhoto((stand.photo_ids || [])[0]);
+        var cover = findPhotoIn(rooms, (stand.photo_ids || [])[0]);
         if (cover && cover.url) {
           var img = document.createElement('img');
           img.alt = '';
           img.loading = 'lazy';
-          img.src = state.options.buildPhotoUrl ? state.options.buildPhotoUrl(cover.url) : cover.url;
+          img.src = ctx.buildPhotoUrl ? ctx.buildPhotoUrl(cover.url) : cover.url;
           tile.appendChild(img);
         }
         var badge = document.createElement('span');
@@ -573,16 +673,14 @@
         label.className = 'tour-stand-tile-label';
         label.textContent = (room.label || '') + (stands.length > 1 ? ' \u00B7 ' + (i + 1) : '');
         tile.appendChild(label);
-        if (stand.stand_id === state.stand.stand_id) {
+        if (ctx.active === 'stand' && stand.stand_id === ctx.currentStandId) {
           tile.className += ' is-current';
           tile.setAttribute('aria-current', 'true');
           current = tile;
         } else {
           (function (target, targetRoomId) {
             tile.addEventListener('click', function () {
-              if (!state.options.onNavigate) return;
-              showLoading();
-              state.options.onNavigate(target.stand_id, targetRoomId);
+              if (ctx.onNavigate) ctx.onNavigate(target.stand_id, targetRoomId);
             });
           })(stand, roomId);
         }
@@ -1071,7 +1169,7 @@
   function drawGl() {
     state.drawFrame = null;
     var g = state.gl;
-    if (!g || !state.pano) return;
+    if (!g || !state.pano || state.transition) return;
     var gl = g.ctx;
     var size = viewSize();
     var width = size[0];
@@ -1169,15 +1267,20 @@
     var halfH = Math.atan((width / 2) / focal) * 180 / Math.PI;
     var left = null;
     var right = null;
-    for (var i = 0; i < state.neighbours.length; i++) {
-      var n = state.neighbours[i];
+    var candidates = walkCandidates();
+    for (var i = 0; i < candidates.length; i++) {
+      var n = candidates[i];
+      var isNeighbour = state.neighbours.indexOf(n) >= 0;
       var delta = planDelta(n);
+      var distance = Math.sqrt(delta[0] * delta[0] + delta[1] * delta[1]);
       var floorPoint = [delta[0], -state.eyeHeight, delta[1]];
       var e = surfaceEllipse(floorPoint, [0, 1, 0], basis, width, height, focal, MARKER_SIZE_M);
-      if (e && e.x > 20 && e.x < width - 20 && e.y > 20 && e.y < height - 20) {
-        addFloorMarker(n, e);
+      var visible = isNeighbour || !hiddenBehindWall(delta, distance);
+      if (visible && e && e.x > 20 && e.x < width - 20 && e.y > 20 && e.y < height - 20) {
+        addFloorMarker(n, e, distance);
         continue;
       }
+      if (!isNeighbour) continue;
       var relative = normalizeAngle(bearingTo(n) - state.viewRotation);
       if (Math.abs(relative) <= halfH) continue;
       if (relative < 0) {
@@ -1190,8 +1293,14 @@
     if (right) addTurnButton(right.n, 'right');
   }
 
-  function addFloorMarker(n, e) {
-    var size = Math.max(30, Math.min(160, e.size));
+  function hiddenBehindWall(delta, distance) {
+    if (distance < 1e-3) return false;
+    var wall = wallHit(state.stand.center_m, [delta[0] / distance, delta[1] / distance]);
+    return !!wall && wall.t < distance - 0.05;
+  }
+
+  function addFloorMarker(n, e, distance) {
+    var size = Math.max(22, Math.min(140, e.size));
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'tour-stand-floor-marker';
@@ -1200,6 +1309,7 @@
     btn.style.width = size + 'px';
     btn.style.height = size + 'px';
     btn.style.transform = ellipseTransform(e);
+    btn.style.opacity = String(Math.max(0.45, Math.min(1, 1.25 - distance * 0.13)));
     var otherRoom = n.roomId !== state.roomId ? state.allRooms[n.roomId] : null;
     var label = window.TourStandStrings.t('arrow_label');
     if (otherRoom && otherRoom.label) {
@@ -1445,18 +1555,15 @@
       drawMeasure();
       return;
     }
-    if (hit.kind === 'floor') {
-      var target = neighbourNear(hit.point);
-      if (target) {
-        navigateTo(target);
-        return;
-      }
+    var target = (hit.kind === 'floor' ? neighbourNear(hit.point) : null) || neighbourToward(hit.point, hit.bearing);
+    if (target) {
+      navigateTo(target, hit.bearing);
+      return;
     }
-    if (state.fov < FOV_DEG - 1) {
-      animateView(hit.bearing, FOV_DEG, hit.pitch);
-    } else {
-      animateView(hit.bearing, ZOOM_FOV_DEG, hit.pitch);
+    if (walkCandidates().length > 0) {
+      showToast(window.TourStandStrings.t('no_spot_that_way'));
     }
+    animateView(hit.bearing, state.fov, state.viewPitch);
   }
 
   function toggleMeasure() {
@@ -1517,18 +1624,59 @@
     }
   }
 
+  function walkCandidates() {
+    var out = state.neighbours.slice();
+    var seen = {};
+    out.forEach(function (n) { seen[n.roomId + '|' + n.stand.stand_id] = true; });
+    (state.allStands[state.roomId] || []).forEach(function (stand) {
+      if (!state.stand || stand.stand_id === state.stand.stand_id) return;
+      if ((stand.photo_ids || []).length < 2 || !Array.isArray(stand.center_m) || stand.center_m.length < 2) return;
+      var key = state.roomId + '|' + stand.stand_id;
+      if (seen[key]) return;
+      seen[key] = true;
+      out.push({ stand: stand, roomId: state.roomId });
+    });
+    return out;
+  }
+
   function neighbourNear(localPoint) {
     var originRoom = state.roomId ? state.allRooms[state.roomId] : null;
     var o = originRoom && Array.isArray(originRoom.structure_origin_m) ? originRoom.structure_origin_m : [0, 0];
     var hitWorld = [localPoint[0] + (Number(o[0]) || 0), localPoint[1] + (Number(o[1]) || 0)];
     var best = null;
     var bestDistance = WALK_PICK_RADIUS_M;
-    for (var i = 0; i < state.neighbours.length; i++) {
-      var c = worldCenter(state.neighbours[i].stand, state.neighbours[i].roomId);
+    var candidates = walkCandidates();
+    for (var i = 0; i < candidates.length; i++) {
+      var c = worldCenter(candidates[i].stand, candidates[i].roomId);
       var d = Math.sqrt((c[0] - hitWorld[0]) * (c[0] - hitWorld[0]) + (c[1] - hitWorld[1]) * (c[1] - hitWorld[1]));
       if (d <= bestDistance) {
         bestDistance = d;
-        best = state.neighbours[i];
+        best = candidates[i];
+      }
+    }
+    return best;
+  }
+
+  function neighbourToward(localPoint, bearing) {
+    var originRoom = state.roomId ? state.allRooms[state.roomId] : null;
+    var o = originRoom && Array.isArray(originRoom.structure_origin_m) ? originRoom.structure_origin_m : [0, 0];
+    var hitWorld = [localPoint[0] + (Number(o[0]) || 0), localPoint[1] + (Number(o[1]) || 0)];
+    var here = state.stand ? worldCenter(state.stand, state.roomId) : null;
+    var hitFromHere = here ? Math.sqrt((hitWorld[0] - here[0]) * (hitWorld[0] - here[0]) + (hitWorld[1] - here[1]) * (hitWorld[1] - here[1])) : Infinity;
+    if (hitFromHere < WALK_MIN_STEP_M) return null;
+    var best = null;
+    var bestScore = Infinity;
+    var candidates = walkCandidates();
+    for (var i = 0; i < candidates.length; i++) {
+      var n = candidates[i];
+      var off = Math.abs(normalizeAngle(bearingTo(n) - bearing));
+      if (off > WALK_CONE_DEG) continue;
+      var c = worldCenter(n.stand, n.roomId);
+      var d = Math.sqrt((c[0] - hitWorld[0]) * (c[0] - hitWorld[0]) + (c[1] - hitWorld[1]) * (c[1] - hitWorld[1]));
+      var score = d + off / WALK_CONE_DEG;
+      if (score < bestScore) {
+        bestScore = score;
+        best = n;
       }
     }
     return best;
@@ -1578,12 +1726,16 @@
     return bestAbs <= 45 ? best : null;
   }
 
-  function navigateTo(n) {
+  function navigateTo(n, facing) {
     if (state.animating || !state.options.onNavigate) return;
-    pendingRotation = bearingTo(n);
+    pendingRotation = typeof facing === 'number' && isFinite(facing) ? facing : bearingTo(n);
+    var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reduced && state.pano && state.gl && window.TourTransition && window.TourTransition.enabled()) {
+      projectiveNavigate(n, pendingRotation);
+      return;
+    }
     preloadStand(n, pendingRotation);
     showLoading();
-    var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (reduced) {
       state.options.onNavigate(n.stand.stand_id, n.roomId);
       return;
@@ -1609,6 +1761,130 @@
     }, TRANSITION_MS);
   }
 
+  function roomOrigin(roomId) {
+    var room = roomId ? state.allRooms[roomId] : null;
+    var o = room && Array.isArray(room.structure_origin_m) ? room.structure_origin_m : [0, 0];
+    return [Number(o[0]) || 0, Number(o[1]) || 0];
+  }
+
+  function roomCeiling(roomId, eye) {
+    var room = roomId ? state.allRooms[roomId] : null;
+    var h = room ? Number(room.height_m) : 0;
+    return h > eye + 0.3 ? h : DEFAULT_CEILING_M;
+  }
+
+  function photoCenter(photo, roomId, stand, eye) {
+    var p = photo.position_m;
+    var o = roomOrigin(roomId);
+    var ok = Array.isArray(p) && p.length >= 2 && isFinite(Number(p[0])) && isFinite(Number(p[1]));
+    var x = ok ? Number(p[0]) : stand.center_m[0];
+    var z = ok ? Number(p[1]) : stand.center_m[1];
+    return [x + o[0], eye, z + o[1]];
+  }
+
+  function transitionRoom(roomId) {
+    var room = roomId ? state.allRooms[roomId] : null;
+    if (!room || !Array.isArray(room.outline_m) || room.outline_m.length < 3) return null;
+    var o = roomOrigin(roomId);
+    return {
+      outline: room.outline_m.map(function (p) { return [Number(p[0]) + o[0], Number(p[1]) + o[1]]; }),
+      height: roomCeiling(roomId, state.eyeHeight)
+    };
+  }
+
+  function loadStandImages(photos, done) {
+    var items = photos.map(function (photo) {
+      var img = new Image();
+      return { photo: photo, img: img };
+    });
+    var remaining = items.length;
+    var settled = false;
+    var timer = null;
+    function finish() {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      done(items.filter(function (it) { return it.img.complete && it.img.naturalWidth > 0; }));
+    }
+    if (remaining === 0) {
+      finish();
+      return;
+    }
+    timer = setTimeout(finish, TRANSITION_LOAD_MS);
+    items.forEach(function (it) {
+      var tick = function () {
+        remaining -= 1;
+        if (remaining <= 0) finish();
+      };
+      it.img.addEventListener('load', tick, { once: true });
+      it.img.addEventListener('error', tick, { once: true });
+      it.img.src = state.options.buildPhotoUrl ? state.options.buildPhotoUrl(it.photo.url) : it.photo.url;
+    });
+  }
+
+  function projectiveNavigate(n, bearing) {
+    var g = state.gl;
+    var stand = state.stand;
+    var fromRoomId = state.roomId;
+    var targetPhotos = (n.stand.photo_ids || []).map(findPhoto).filter(Boolean);
+    state.animating = true;
+    showLoading();
+    loadStandImages(targetPhotos, function (loaded) {
+      if (state.gl !== g || state.stand !== stand || !state.pano) return;
+      hideLoading();
+      var fromRoom = transitionRoom(fromRoomId);
+      var toRoom = n.roomId === fromRoomId ? fromRoom : transitionRoom(n.roomId);
+      var rooms = [];
+      if (fromRoom) rooms.push(fromRoom);
+      if (toRoom && toRoom !== fromRoom) rooms.push(toRoom);
+      var fromIndex = fromRoom ? 0 : -1;
+      var toIndex = toRoom ? rooms.indexOf(toRoom) : -1;
+      var toEye = standEyeHeight(targetPhotos);
+      var from = worldCenter(stand, fromRoomId);
+      var to = worldCenter(n.stand, n.roomId);
+      var sources = [];
+      state.photoEls.forEach(function (e) {
+        if (!e.tex || fromIndex < 0) return;
+        sources.push({ tex: e.tex, mean: e.mean, pose: e.pose, frame: photoFrame(e), center: photoCenter(e.photo, fromRoomId, stand, state.eyeHeight), set: 0, room: fromIndex });
+      });
+      loaded.forEach(function (it) {
+        if (toIndex < 0) return;
+        var entry = { el: it.img, photo: it.photo };
+        sources.push({ img: it.img, mean: photoMean(it.img), pose: photoPose(it.photo), frame: photoFrame(entry), center: photoCenter(it.photo, n.roomId, n.stand, toEye), set: 1, room: toIndex });
+      });
+      var gainFor = photoGains(sources);
+      sources.forEach(function (s) { s.gain = gainFor ? gainFor(s) : [1, 1, 1]; });
+      var mid = averageColor('mid', [0.42, 0.41, 0.39], 1);
+      var handle = rooms.length && sources.length ? window.TourTransition.run({
+        ctx: g.ctx,
+        canvas: g.canvas,
+        maxTexture: g.maxTexture,
+        size: viewSize,
+        background: mid,
+        rooms: rooms,
+        sources: sources,
+        from: { eye: [from[0], state.eyeHeight, from[1]], yaw: state.viewRotation, pitch: state.viewPitch, fov: state.fov },
+        to: { eye: [to[0], toEye, to[1]], yaw: bearing, pitch: 0, fov: FOV_DEG },
+        onDone: function (shot) {
+          state.transition = null;
+          state.animating = false;
+          if (state.stand !== stand || !state.options.onNavigate) return;
+          state.options.onNavigate(n.stand.stand_id, n.roomId);
+          showHandover(shot);
+        }
+      }) : null;
+      if (!handle) {
+        state.animating = false;
+        state.options.onNavigate(n.stand.stand_id, n.roomId);
+        return;
+      }
+      state.transition = handle;
+      if (state.arrowLayer) state.arrowLayer.hidden = true;
+      if (state.cursor) state.cursor.hidden = true;
+      if (state.measureLayer) state.measureLayer.style.visibility = 'hidden';
+    });
+  }
+
   function normalizeAngle(deg) {
     deg = deg % 360;
     if (deg > 180) deg -= 360;
@@ -1617,6 +1893,10 @@
   }
 
   function destroy() {
+    if (state.transition) state.transition.cancel();
+    state.transition = null;
+    if (state.handover && state.handover.timer) clearTimeout(state.handover.timer);
+    state.handover = null;
     if (state.turnFrame) cancelAnimationFrame(state.turnFrame);
     state.turnFrame = null;
     releaseGl();
@@ -1646,5 +1926,21 @@
     updatePhotoPositions();
   }
 
-  window.TourStands = { render: render, destroy: destroy, relayout: relayout, icons: ICONS };
+  function standCount(allStands) {
+    var n = 0;
+    for (var roomId in allStands) {
+      n += (allStands[roomId] || []).filter(function (s) { return (s.photo_ids || []).length > 1; }).length;
+    }
+    return n;
+  }
+
+  window.TourStands = {
+    render: render,
+    destroy: destroy,
+    relayout: relayout,
+    icons: ICONS,
+    buildReel: buildReel,
+    appendShareTools: appendShareTools,
+    standCount: standCount
+  };
 })();

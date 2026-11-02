@@ -25,6 +25,25 @@ enum OrientationLock {
 }
 
 @MainActor
+private struct RotationUnlockedModifier: ViewModifier {
+    @State private var previousMask: UIInterfaceOrientationMask?
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear {
+                if previousMask == nil {
+                    previousMask = OrientationLock.mask
+                }
+                OrientationLock.set(.allButUpsideDown)
+            }
+            .onDisappear {
+                OrientationLock.set(previousMask ?? .portrait)
+                previousMask = nil
+            }
+    }
+}
+
+@MainActor
 private struct PortraitLockedModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
@@ -36,5 +55,9 @@ private struct PortraitLockedModifier: ViewModifier {
 extension View {
     func portraitLocked() -> some View {
         modifier(PortraitLockedModifier())
+    }
+
+    func rotationUnlocked() -> some View {
+        modifier(RotationUnlockedModifier())
     }
 }

@@ -152,6 +152,26 @@ final class DollhouseLayerTests: XCTestCase {
         XCTAssertNotEqual(lightWall, darkWall)
     }
 
+    func testHotspotsFarOutsideTheRoomAreHidden() {
+        let outline: [SIMD2<Float>] = [SIMD2(0, 0), SIMD2(4, 0), SIMD2(4, 4), SIMD2(0, 4)]
+        let photos = [
+            FloorPlan.Photo360(photoId: "inside", roomId: "room-1", url: "a.jpg", positionM: [2, 2], headingDeg: 0, capturedAt: "2026-11-02T10:00:00Z"),
+            FloorPlan.Photo360(photoId: "near-wall", roomId: "room-1", url: "b.jpg", positionM: [4.5, 2], headingDeg: 0, capturedAt: "2026-11-02T10:00:01Z"),
+            FloorPlan.Photo360(photoId: "far-out", roomId: "room-1", url: "c.jpg", positionM: [11, 2], headingDeg: 0, capturedAt: "2026-11-02T10:00:02Z")
+        ]
+        let hotspots = DollhouseMeshBuilder.makeHotspots(photos360: photos, roomId: "room-1", base: .zero, outline: outline)
+        XCTAssertEqual(hotspots.map(\.id), ["inside", "near-wall"])
+        XCTAssertEqual(DollhouseMeshBuilder.distanceOutside(SIMD2(11, 2), outline: outline), 7, accuracy: 0.001)
+        XCTAssertEqual(DollhouseMeshBuilder.distanceOutside(SIMD2(2, 2), outline: outline), 0)
+    }
+
+    func testHotspotsUseTheRoomOriginWhenCheckingTheOutline() {
+        let outline: [SIMD2<Float>] = [SIMD2(10, 0), SIMD2(14, 0), SIMD2(14, 4), SIMD2(10, 4)]
+        let photos = [FloorPlan.Photo360(photoId: "inside", roomId: "room-1", url: "a.jpg", positionM: [2, 2], headingDeg: 0, capturedAt: "2026-11-02T10:00:00Z")]
+        let hotspots = DollhouseMeshBuilder.makeHotspots(photos360: photos, roomId: "room-1", base: .zero, outline: outline, originXZ: SIMD2(10, 0))
+        XCTAssertEqual(hotspots.count, 1)
+    }
+
     private func findWallDiffuse(_ scene: SCNScene) -> UIColor? {
         var found: UIColor?
         scene.rootNode.enumerateChildNodes { node, stop in

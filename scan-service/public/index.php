@@ -544,7 +544,7 @@ function purgeExpiredSessions(ScanSessionRepository $repo, \VuuroScan\ServiceSet
     return $purged;
 }
 
-const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'view_client_events', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload', 'compare', 'read_tour'];
+const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'view_client_events', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload', 'compare', 'read_tour', 'view_tour_readiness'];
 const ADMIN_WRITE_ACTIONS = ['publish_to_platform'];
 
 function compareRequested(): bool
@@ -1730,6 +1730,19 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
         return;
     }
 
+    $capturedAtValue = gmdate('c');
+    if (isset($_POST['captured_at'])) {
+        $capturedAtRaw = $_POST['captured_at'];
+        $capturedAtTime = is_string($capturedAtRaw) && preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/', $capturedAtRaw) === 1
+            ? strtotime($capturedAtRaw)
+            : false;
+        if ($capturedAtTime === false || $capturedAtTime > time() + 600 || $capturedAtTime < time() - 90 * 86400) {
+            respondError(422, 'invalid_captured_at', "'captured_at' must be an ISO 8601 time from the last 90 days when given.");
+            return;
+        }
+        $capturedAtValue = gmdate('c', $capturedAtTime);
+    }
+
     $cameraTransformJson = '';
     if (isset($_POST['camera_transform'])) {
         $cameraTransformRaw = $_POST['camera_transform'];
@@ -1861,7 +1874,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
             $positionX,
             $positionZ,
             $headingDeg,
-            gmdate('c'),
+            $capturedAtValue,
             $idempotencyKey,
             $zoomValue,
             $pitchValue,
@@ -2968,6 +2981,39 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/objects/batch$#',
     }
 
     respond(200, $floorPlan);
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour-readiness$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'view_tour_readiness');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+
+    if (rateLimited($repo, $sessionId . ':view_tour_readiness', 120, 300)) {
+        return;
+    }
+
+    $floorPlan = $repo->findFloorPlan($sessionId);
+    if ($floorPlan === null) {
+        respondError(404, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    }
+
+    $photosByRoom = [];
+    foreach ((new Photo360Repository($db))->serializedForSession($sessionId) as $photo) {
+        $photosByRoom[(string) $photo['room_id']][] = $photo;
+    }
+    $readinessRooms = [];
+    foreach ($floorPlan['rooms'] as $roomEntry) {
+        $entryCopy = $roomEntry;
+        $entryCopy['photos'] = $photosByRoom[(string) $roomEntry['room_id']] ?? [];
+        $readinessRooms[] = $entryCopy;
+    }
+    $standsResult = \VuuroScan\Export\TourStands::compute($readinessRooms);
+
+    respond(200, ['scan_session_id' => $sessionId] + \VuuroScan\Export\TourReadiness::compute($readinessRooms, $standsResult['stands_by_room']));
     return;
 }
 

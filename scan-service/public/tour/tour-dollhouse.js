@@ -2,6 +2,12 @@
   'use strict';
 
   var HOTSPOT_PIXEL_SIZE = 14;
+  var SPOT_RADIUS_M = 0.32;
+  var SPOT_MIN_PX = 14;
+  var SPOT_MAX_PX = 64;
+  var SPOT_LIFT_M = 0.02;
+  var FRAME_MARGIN = 0.98;
+  var FLY_MS = 750;
   var FOV_Y = Math.PI / 3.5;
   var TAP_SLOP_PX = 6;
   var TAP_MAX_MS = 450;
@@ -20,7 +26,8 @@
     }
   }
 
-  function render(viewport, url, rooms, onBackToPlan, onHotspotTap, buildUrl) {
+  function render(viewport, url, rooms, onBackToPlan, onHotspotTap, buildUrl, options) {
+    var opts = options || {};
     stop();
     if (!url) {
       renderFallback(viewport, onBackToPlan, window.TourStrings.t('dollhouse_unavailable'));
@@ -37,9 +44,11 @@
       })
       .then(function (buffer) {
         var gltf = window.TourDollhouseGlb.parse(buffer);
-        var hotspots = buildHotspots(rooms || [], gltf.roomPoses);
+        var hotspots = buildHotspots(rooms || [], gltf.roomPoses, !!opts.onStandTap);
         var stage = buildStage(viewport, onBackToPlan);
         var viewer = new Viewer(stage.canvas, gltf, hotspots, stage.hotspotLayer, onHotspotTap, rooms || []);
+        viewer.onStandTap = opts.onStandTap || null;
+        viewer.spawnRoomLabels(buildRoomLabels(rooms || [], gltf.roomPoses));
         activeViewer = viewer;
         viewer.start();
         if (window.TourDollhousePaint && typeof buildUrl === 'function') {
@@ -84,6 +93,11 @@
     canvas.className = 'tour-dollhouse-canvas';
     stage.appendChild(canvas);
 
+    var vignette = document.createElement('div');
+    vignette.className = 'tour-dollhouse-vignette';
+    vignette.setAttribute('aria-hidden', 'true');
+    stage.appendChild(vignette);
+
     var hotspotLayer = document.createElement('div');
     hotspotLayer.className = 'tour-dollhouse-hotspots';
     stage.appendChild(hotspotLayer);
@@ -113,13 +127,13 @@
     return null;
   }
 
-  function buildHotspots(rooms, roomPoses) {
+  function roomPlacements(rooms, roomPoses) {
     var allHaveOrigin = rooms.length > 0 && rooms.every(function (room) {
       var origin = room.structure_origin_m;
       return Array.isArray(origin) && origin.length === 2
         && isFinite(Number(origin[0])) && isFinite(Number(origin[1]));
     });
-    var hotspots = [];
+    var out = [];
     var cursorX = 0;
     for (var i = 0; i < rooms.length; i++) {
       var room = rooms[i];
@@ -140,8 +154,109 @@
       if (!isFinite(height) || height <= 0) {
         height = 2.4;
       }
+      out.push(placement(room, outline, ox, oz, height, poseFor(roomPoses, room)));
+    }
+    return out;
+  }
+
+  function placement(room, outline, ox, oz, height, pose) {
+    return {
+      room: room,
+      outline: outline,
+      height: height,
+      toWorld: function (px, pz, y) {
+        if (pose) {
+          var rotation = Number(pose.rotation_rad) || 0;
+          var cos = Math.cos(rotation);
+          var sin = Math.sin(rotation);
+          return [
+            px * cos - pz * sin + Number(pose.origin_x),
+            (Number(pose.base_y) || 0) + y,
+            px * sin + pz * cos + Number(pose.origin_z)
+          ];
+        }
+        return [px + ox, y, pz + oz];
+      }
+    };
+  }
+
+  function polygonCentroid(outline) {
+    var area = 0;
+    var cx = 0;
+    var cz = 0;
+    for (var i = 0; i < outline.length; i++) {
+      var a = outline[i];
+      var b = outline[(i + 1) % outline.length];
+      var ax = Number(a[0]) || 0;
+      var az = Number(a[1]) || 0;
+      var bx = Number(b[0]) || 0;
+      var bz = Number(b[1]) || 0;
+      var cross = ax * bz - bx * az;
+      area += cross;
+      cx += (ax + bx) * cross;
+      cz += (az + bz) * cross;
+    }
+    if (Math.abs(area) < 1e-6) {
+      var sx = 0;
+      var sz = 0;
+      outline.forEach(function (p) { sx += Number(p[0]) || 0; sz += Number(p[1]) || 0; });
+      return [sx / outline.length, sz / outline.length];
+    }
+    return [cx / (3 * area), cz / (3 * area)];
+  }
+
+  function buildRoomLabels(rooms, roomPoses) {
+    var labels = [];
+    roomPlacements(rooms, roomPoses).forEach(function (item) {
+      var text = typeof item.room.label === 'string' ? item.room.label.trim() : '';
+      if (!text || item.outline.length < 3) {
+        return;
+      }
+      var c = polygonCentroid(item.outline);
+      if (window.TourDollhouseMath.distanceOutside(c, item.outline) > 0) {
+        return;
+      }
+      labels.push({ text: text, world: item.toWorld(c[0], c[1], SPOT_LIFT_M) });
+    });
+    return labels;
+  }
+
+  function walkableStands(room) {
+    if (!window.TourPlan || typeof window.TourPlan.capturedStands !== 'function') {
+      return [];
+    }
+    return window.TourPlan.capturedStands(room).filter(function (stand) {
+      return (stand.photo_ids || []).length > 1;
+    });
+  }
+
+  function buildHotspots(rooms, roomPoses, withSpots) {
+    var hotspots = [];
+    var placements = roomPlacements(rooms, roomPoses);
+    for (var i = 0; i < placements.length; i++) {
+      var item = placements[i];
+      var room = item.room;
+      var outline = item.outline;
+      var height = item.height;
+      var covered = {};
+      if (withSpots) {
+        walkableStands(room).forEach(function (stand, standIndex) {
+          (stand.photo_ids || []).forEach(function (id) { covered[String(id)] = true; });
+          hotspots.push({
+            kind: 'spot',
+            roomIndex: i,
+            standId: stand.stand_id,
+            world: item.toWorld(Number(stand.center_m[0]), Number(stand.center_m[1]), SPOT_LIFT_M),
+            roomHeight: height,
+            label: window.TourStandStrings.t('spot_label', { room: room.label || '', number: standIndex + 1 })
+          });
+        });
+      }
       var photos = Array.isArray(room.photos) ? room.photos : [];
       for (var p = 0; p < photos.length; p++) {
+        if (photos[p].photo_id !== undefined && photos[p].photo_id !== null && covered[String(photos[p].photo_id)]) {
+          continue;
+        }
         var pos = photos[p].position_m;
         if (!Array.isArray(pos) || pos.length < 2) {
           continue;
@@ -151,19 +266,12 @@
         if (!isFinite(px) || !isFinite(pz)) {
           continue;
         }
-        var world = [px + ox, height / 2, pz + oz];
-        var pose = poseFor(roomPoses, room);
-        if (pose) {
-          var rotation = Number(pose.rotation_rad) || 0;
-          var cos = Math.cos(rotation);
-          var sin = Math.sin(rotation);
-          world = [
-            px * cos - pz * sin + Number(pose.origin_x),
-            (Number(pose.base_y) || 0) + height / 2,
-            px * sin + pz * cos + Number(pose.origin_z)
-          ];
+        if (window.TourDollhouseMath.distanceOutside([px, pz], outline) > window.TourDollhouseMath.OUTSIDE_TOLERANCE_M) {
+          continue;
         }
+        var world = item.toWorld(px, pz, height / 2);
         hotspots.push({
+          kind: 'photo',
           roomIndex: i,
           photoIndex: p,
           photoId: photos[p].photo_id !== undefined && photos[p].photo_id !== null ? String(photos[p].photo_id) : '',
@@ -179,6 +287,9 @@
   function Viewer(canvas, mesh, hotspots, hotspotLayer, onHotspotTap, rooms) {
     this.canvas = canvas;
     var contextOptions = { antialias: true, alpha: false };
+    this.roomLabelElements = [];
+    this.onStandTap = null;
+    this.hideBase = false;
     this.gl = canvas.getContext('webgl2', contextOptions) || canvas.getContext('webgl', contextOptions);
     if (!this.gl) {
       throw new Error(window.TourStrings.t('webgl_unavailable'));
@@ -291,7 +402,7 @@
 
     gl.enable(gl.DEPTH_TEST);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    gl.clearColor(0.105, 0.105, 0.11, 1.0);
+    gl.clearColor(0.13, 0.13, 0.135, 1.0);
 
     this.parts = this.mesh.parts.map(this.buildPart, this);
   };
@@ -391,7 +502,18 @@
 
   Viewer.prototype.addPart = function (part) {
     if (this.destroyed) return;
-    this.parts.push(this.buildPart(part));
+    var built = this.buildPart(part);
+    if (built.painted) {
+      this.hideBase = true;
+    }
+    this.parts.push(built);
+  };
+
+  Viewer.prototype.visibleParts = function () {
+    if (!this.hideBase) {
+      return this.parts;
+    }
+    return this.parts.filter(function (part) { return part.painted; });
   };
 
   Viewer.prototype.textureForCanvas = function (canvas) {
@@ -480,8 +602,34 @@
       (min[1] + max[1]) / 2,
       (min[2] + max[2]) / 2
     ];
-    var size = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
-    this.distance = size * 1.4 + 4;
+    var aspect = (this.canvas.clientWidth || 640) / Math.max(1, this.canvas.clientHeight || 480);
+    var M = window.TourDollhouseMath;
+    var proj = M.perspective(FOV_Y, aspect, 0.05, 2000);
+    var corners = [];
+    for (var c = 0; c < 8; c++) {
+      corners.push([c & 1 ? max[0] : min[0], c & 2 ? max[1] : min[1], c & 4 ? max[2] : min[2]]);
+    }
+    var self = this;
+    var fits = function (distance) {
+      self.distance = distance;
+      var mvp = M.multiply(proj, M.lookAt(self.eyePosition(), self.target, [0, 1, 0]));
+      for (var i = 0; i < corners.length; i++) {
+        var p = corners[i];
+        var w = mvp[3] * p[0] + mvp[7] * p[1] + mvp[11] * p[2] + mvp[15];
+        if (w <= 0.05) return false;
+        var x = (mvp[0] * p[0] + mvp[4] * p[1] + mvp[8] * p[2] + mvp[12]) / w;
+        var y = (mvp[1] * p[0] + mvp[5] * p[1] + mvp[9] * p[2] + mvp[13]) / w;
+        if (Math.abs(x) > FRAME_MARGIN || Math.abs(y) > FRAME_MARGIN) return false;
+      }
+      return true;
+    };
+    var lo = 0.5;
+    var hi = 400;
+    for (var it = 0; it < 40; it++) {
+      var mid = (lo + hi) / 2;
+      if (fits(mid)) hi = mid; else lo = mid;
+    }
+    this.distance = hi;
   };
 
   Viewer.prototype.bindControls = function () {
@@ -489,6 +637,9 @@
     var canvas = this.canvas;
     canvas.style.touchAction = 'none';
     canvas.addEventListener('pointerdown', function (event) {
+      if (self.flying) {
+        return;
+      }
       self.activePointers[event.pointerId] = { x: event.clientX, y: event.clientY };
       var ids = Object.keys(self.activePointers);
       self.tapStart = ids.length === 1 && event.button === 0
@@ -626,11 +777,19 @@
       (function (hotspot) {
         var el = document.createElement('button');
         el.type = 'button';
-        el.className = 'tour-dollhouse-hotspot';
+        el.className = hotspot.kind === 'spot' ? 'tour-dollhouse-spot' : 'tour-dollhouse-hotspot';
         el.style.width = HOTSPOT_PIXEL_SIZE + 'px';
         el.style.height = HOTSPOT_PIXEL_SIZE + 'px';
         el.setAttribute('aria-label', hotspot.label);
+        el.setAttribute('title', hotspot.label);
         el.addEventListener('click', function () {
+          if (hotspot.kind === 'spot') {
+            if (!self.onStandTap) return;
+            self.flyTo(hotspot.world, function () {
+              self.onStandTap(hotspot.roomIndex, hotspot.standId);
+            });
+            return;
+          }
           self.onHotspotTap(hotspot.roomIndex, hotspot.photoIndex);
         });
         self.hotspotLayer.appendChild(el);
@@ -638,6 +797,82 @@
       })(this.hotspots[i]);
     }
     this.occlusionEyeKey = null;
+  };
+
+  Viewer.prototype.flyTo = function (world, done) {
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (this.flying) {
+      return;
+    }
+    if (reduce) {
+      done();
+      return;
+    }
+    this.flying = true;
+    var self = this;
+    var from = { target: this.target.slice(), distance: this.distance, pitch: this.pitch };
+    var to = { target: [world[0], world[1] + 1.2, world[2]], distance: 1.2, pitch: Math.min(this.pitch, Math.PI * 0.12) };
+    var start = performance.now();
+    var step = function (now) {
+      if (self.destroyed) return;
+      var t = Math.min(1, (now - start) / FLY_MS);
+      var e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      for (var k = 0; k < 3; k++) {
+        self.target[k] = from.target[k] + (to.target[k] - from.target[k]) * e;
+      }
+      self.distance = from.distance + (to.distance - from.distance) * e;
+      self.pitch = from.pitch + (to.pitch - from.pitch) * e;
+      self.hotspotLayer.style.opacity = String(1 - e);
+      if (t < 1) {
+        window.requestAnimationFrame(step);
+        return;
+      }
+      self.flying = false;
+      done();
+    };
+    window.requestAnimationFrame(step);
+  };
+
+  Viewer.prototype.spawnRoomLabels = function (labels) {
+    for (var i = 0; i < labels.length; i++) {
+      var el = document.createElement('span');
+      el.className = 'tour-dollhouse-label';
+      el.textContent = labels[i].text;
+      el.setAttribute('aria-hidden', 'true');
+      this.hotspotLayer.insertBefore(el, this.hotspotLayer.firstChild);
+      this.roomLabelElements.push({ el: el, world: labels[i].world });
+    }
+  };
+
+  Viewer.prototype.positionRoomLabels = function () {
+    for (var i = 0; i < this.roomLabelElements.length; i++) {
+      var entry = this.roomLabelElements[i];
+      var screen = this.projectToScreen(entry.world);
+      if (screen === null) {
+        entry.el.style.display = 'none';
+        continue;
+      }
+      entry.el.style.display = 'block';
+      entry.el.style.transform = 'translate(' + screen[0].toFixed(1) + 'px,' + screen[1].toFixed(1) + 'px) translate(-50%, -50%)';
+    }
+  };
+
+  Viewer.prototype.spotEllipse = function (world, center) {
+    var eye = this.eyePosition();
+    var fx = world[0] - eye[0];
+    var fz = world[2] - eye[2];
+    var flen = Math.sqrt(fx * fx + fz * fz) || 1;
+    fx /= flen;
+    fz /= flen;
+    var side = this.projectToScreen([world[0] + fz * SPOT_RADIUS_M, world[1], world[2] - fx * SPOT_RADIUS_M], true);
+    var depth = this.projectToScreen([world[0] + fx * SPOT_RADIUS_M, world[1], world[2] + fz * SPOT_RADIUS_M], true);
+    if (!side || !depth) {
+      return [SPOT_MIN_PX, SPOT_MIN_PX * 0.6];
+    }
+    var w = 2 * Math.hypot(side[0] - center[0], side[1] - center[1]);
+    var h = 2 * Math.hypot(depth[0] - center[0], depth[1] - center[1]);
+    var scale = w > SPOT_MAX_PX ? SPOT_MAX_PX / w : w < SPOT_MIN_PX ? SPOT_MIN_PX / Math.max(1, w) : 1;
+    return [w * scale, Math.max(4, h * scale)];
   };
 
   Viewer.prototype.eyePosition = function () {
@@ -673,15 +908,16 @@
     gl.uniformMatrix4fv(this.uMvp, false, mvp);
     gl.uniform3f(this.uEye, eye[0], eye[1], eye[2]);
 
+    var parts = this.visibleParts();
     gl.uniform1f(this.uPass, 0.0);
-    for (var i = 0; i < this.parts.length; i++) {
-      this.renderPart(this.parts[i]);
+    for (var i = 0; i < parts.length; i++) {
+      this.renderPart(parts[i]);
     }
     gl.uniform1f(this.uPass, 1.0);
     gl.enable(gl.BLEND);
     gl.depthMask(false);
-    for (var j = 0; j < this.parts.length; j++) {
-      this.renderPart(this.parts[j]);
+    for (var j = 0; j < parts.length; j++) {
+      this.renderPart(parts[j]);
     }
     gl.depthMask(true);
     gl.disable(gl.BLEND);
@@ -754,9 +990,18 @@
         continue;
       }
       entry.el.style.display = 'block';
+      if (entry.hotspot.kind === 'spot') {
+        var size = this.spotEllipse(entry.hotspot.world, screen);
+        entry.el.style.width = size[0].toFixed(1) + 'px';
+        entry.el.style.height = size[1].toFixed(1) + 'px';
+        entry.el.style.left = (screen[0] - size[0] / 2) + 'px';
+        entry.el.style.top = (screen[1] - size[1] / 2) + 'px';
+        continue;
+      }
       entry.el.style.left = (screen[0] - HOTSPOT_PIXEL_SIZE / 2) + 'px';
       entry.el.style.top = (screen[1] - HOTSPOT_PIXEL_SIZE / 2) + 'px';
     }
+    this.positionRoomLabels();
   };
 
   Viewer.prototype.occluderTriangles = function () {
@@ -928,7 +1173,7 @@
     return this.photoTargets[bestPart.photoId] || null;
   };
 
-  Viewer.prototype.projectToScreen = function (p) {
+  Viewer.prototype.projectToScreen = function (p, unclipped) {
     var m = this.mvp;
     if (!m) {
       return null;
@@ -941,7 +1186,7 @@
     }
     var ndcX = x / w;
     var ndcY = y / w;
-    if (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1) {
+    if (!unclipped && (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1)) {
       return null;
     }
     return [

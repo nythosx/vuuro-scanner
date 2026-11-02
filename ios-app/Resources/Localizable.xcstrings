@@ -9344,6 +9344,118 @@
                     }
                 }
             }
+        },
+        "Walk into the room first. Your position is outside it.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Walk into the room first. Your position is outside it."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Loop eerst de kamer in. Je positie ligt erbuiten."
+                    }
+                }
+            }
+        },
+        "Retake": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Retake"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Opnieuw"
+                    }
+                }
+            }
+        },
+        "Use photo": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Use photo"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Foto gebruiken"
+                    }
+                }
+            }
+        },
+        "Camera access is off. Turn it on in Settings to take a photo.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Camera access is off. Turn it on in Settings to take a photo."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Cameratoegang staat uit. Zet hem aan in Instellingen om een foto te maken."
+                    }
+                }
+            }
+        },
+        "The photo could not be taken. Try again.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The photo could not be taken. Try again."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De foto kon niet worden gemaakt. Probeer het opnieuw."
+                    }
+                }
+            }
+        },
+        "This device has no back camera.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "This device has no back camera."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Dit apparaat heeft geen camera aan de achterkant."
+                    }
+                }
+            }
+        },
+        "The camera didn't start. Close any other app using the camera, then try again.": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "The camera didn't start. Close any other app using the camera, then try again."
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "De camera is niet gestart. Sluit andere apps die de camera gebruiken en probeer het opnieuw."
+                    }
+                }
+            }
         }
     },
     "version": "1.0"

@@ -178,6 +178,36 @@ if ($nearDoorA !== null && $standB !== null) {
 
 check('tour.json does not leak depth_url', strpos(json_encode($tourBody), 'depth_url') === false);
 
+echo "\n== Tour readiness ==\n";
+[$readyStatus, $readyBody] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId/tour-readiness", null, $accessToken);
+check('tour-readiness returns 200', $readyStatus === 200, "HTTP $readyStatus");
+$readyChecks = [];
+foreach ($readyBody['checks'] ?? [] as $readyCheck) {
+    $readyChecks[$readyCheck['key'] ?? ''] = $readyCheck['status'] ?? '';
+}
+check('tour-readiness lists the four checks', array_keys($readyChecks) === ['positions_inside', 'photos_per_room', 'connected_spots', 'door_per_room'], json_encode(array_keys($readyChecks)));
+check('tour-readiness: positions inside pass', ($readyChecks['positions_inside'] ?? null) === 'pass', json_encode($readyBody['checks'] ?? null));
+check('tour-readiness: door per room pass', ($readyChecks['door_per_room'] ?? null) === 'pass', json_encode($readyBody['checks'] ?? null));
+check('tour-readiness: ready', ($readyBody['ready'] ?? null) === true, json_encode($readyBody['checks'] ?? null));
+$readyRooms = [];
+foreach ($readyBody['rooms'] ?? [] as $readyRoom) {
+    $readyRooms[$readyRoom['room_id'] ?? ''] = $readyRoom;
+}
+check('tour-readiness: room A has 3 of 3 inside', ($readyRooms[$roomAId]['inside'] ?? null) === 3 && ($readyRooms[$roomAId]['positioned'] ?? null) === 3, json_encode($readyRooms[$roomAId] ?? null));
+check('tour-readiness: room A has 2 spots', ($readyRooms[$roomAId]['spots'] ?? null) === 2, json_encode($readyRooms[$roomAId] ?? null));
+[$readyNoTokenStatus] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId/tour-readiness", null, null);
+check('tour-readiness without a token is 401', $readyNoTokenStatus === 401, "HTTP $readyNoTokenStatus");
+
+$upOut = upload_photo($baseUrl, $sessionId, $accessToken, $roomBId, 11.0, 2.0, 0.0, 'key-b-out', 'stand-b');
+check('photo far outside room B uploaded', $upOut === 201, "HTTP $upOut");
+[, $readyOutBody] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId/tour-readiness", null, $accessToken);
+$readyOutChecks = [];
+foreach ($readyOutBody['checks'] ?? [] as $readyCheck) {
+    $readyOutChecks[$readyCheck['key'] ?? ''] = $readyCheck['status'] ?? '';
+}
+check('tour-readiness: a position 7 m out fails the check', ($readyOutChecks['positions_inside'] ?? null) === 'fail', json_encode($readyOutBody['checks'] ?? null));
+check('tour-readiness: not ready once a position is outside', ($readyOutBody['ready'] ?? null) === false);
+
 echo "\n== Single-photo session ==\n";
 [$createStatus2, $session2] = net_http_json('POST', "$baseUrl/scan-sessions", [
     'property_id' => 'prop-net-stands-single',

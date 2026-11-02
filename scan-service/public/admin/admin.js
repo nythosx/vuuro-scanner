@@ -711,6 +711,9 @@ function renderDetail(data, sessionId) {
     '<h2>Photos (' + photos.length + ')</h2>' +
     (photos.length === 0 ? emptyHtml('No photos attached.') : '<div id="photosGrid" class="photos-grid"></div>') +
 
+    '<h2>Tour ready</h2>' +
+    '<div id="tourReadiness">' + loadingHtml('Checking the tour…') + '</div>' +
+
     '<h2>Tour photos (' + photos360.length + ')</h2>' +
     (photos360.length === 0 ? emptyHtml('No tour photos captured.') : '<div id="photos360Grid" class="photos-grid"></div>') +
 
@@ -736,6 +739,7 @@ function renderDetail(data, sessionId) {
   photos360.forEach((p) => loadTourPhotoThumb(p, roomLabels));
   loadAccessLog(sessionId);
   loadClientEvents(sessionId);
+  loadTourReadiness(sessionId);
 
   container.querySelectorAll('[data-export]').forEach((btn) => {
     btn.addEventListener('click', () => downloadExport(sessionId, btn.getAttribute('data-export'), data));
@@ -1109,6 +1113,61 @@ async function loadClientEvents(sessionId) {
       loadClientEvents(sessionId);
     });
   }
+}
+
+const READINESS_LABELS = {
+  positions_inside: 'Positions inside the outline',
+  photos_per_room: 'Photos per room',
+  connected_spots: 'Connected 360 spots',
+  door_per_room: 'Door per room'
+};
+
+const READINESS_STATUS = { pass: 'OK', fail: 'Fix', 'n/a': 'n/a' };
+
+async function loadTourReadiness(sessionId) {
+  const container = $('#tourReadiness');
+  if (!container) return;
+  try {
+    const data = await apiJson('/scan-sessions/' + encodeURIComponent(sessionId) + '/tour-readiness');
+    if (state.currentSessionId !== sessionId) return;
+    renderTourReadiness(container, data);
+  } catch (err) {
+    if (state.currentSessionId !== sessionId) return;
+    const message = err.message.startsWith('HTTP 404')
+      ? 'No rooms to check yet.'
+      : 'Could not check the tour: ' + err.message;
+    renderError(container, message, () => loadTourReadiness(sessionId));
+  }
+}
+
+function renderTourReadiness(container, data) {
+  const checks = Array.isArray(data.checks) ? data.checks : [];
+  const rooms = Array.isArray(data.rooms) ? data.rooms : [];
+  const verdict = data.ready
+    ? '<p class="readiness-verdict is-ready">Tour ready</p>'
+    : '<p class="readiness-verdict is-not-ready">Not tour ready</p>';
+  const checkItems = checks.map((c) => {
+    const status = READINESS_STATUS[c.status] || c.status;
+    return '<li class="readiness-check is-' + escapeHtml(String(c.status).replace('/', '')) + '">' +
+      '<span class="readiness-status">' + escapeHtml(status) + '</span>' +
+      '<span class="readiness-name">' + escapeHtml(READINESS_LABELS[c.key] || c.key) + '</span>' +
+      '<span class="readiness-summary">' + escapeHtml(c.summary) + '</span>' +
+      '</li>';
+  }).join('');
+  const roomRows = rooms.map((r) => '<tr>' +
+    '<td>' + escapeHtml(r.label) + '</td>' +
+    '<td>' + Number(r.photos) + '</td>' +
+    '<td>' + Number(r.inside) + ' / ' + Number(r.positioned) + '</td>' +
+    '<td>' + (Number(r.max_outside_m) > 0 ? Number(r.max_outside_m).toFixed(2) : '-') + '</td>' +
+    '<td>' + Number(r.spots) + (Number(r.unconnected_spots) > 0 ? ' (' + Number(r.unconnected_spots) + ' not connected)' : '') + '</td>' +
+    '<td>' + (r.door ? 'Yes' : 'No') + '</td>' +
+    '</tr>').join('');
+  container.innerHTML = verdict +
+    '<ul class="readiness-list">' + checkItems + '</ul>' +
+    wrapTable('<table class="data-table"><thead><tr>' +
+      '<th>Room</th><th>Photos</th><th>Inside outline</th><th>Furthest out (m)</th><th>360 spots</th><th>Door</th>' +
+    '</tr></thead><tbody>' + roomRows + '</tbody></table>') +
+    '<p class="muted">A position counts as inside when it is within ' + Number(data.tolerance_m || 0).toFixed(1) + ' m of the outline.</p>';
 }
 
 async function loadAccessLog(sessionId) {
