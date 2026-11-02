@@ -1200,7 +1200,9 @@ private extension DollhouseMeshBuilder {
         }
         return sum / (3 * twiceArea)
     }
+}
 
+extension DollhouseMeshBuilder {
     static let hotspotOutsideToleranceM: Float = 1.0
 
     static func makeHotspots(photos360: [FloorPlan.Photo360], roomId: String, base: SIMD3<Float>, outline: [SIMD2<Float>] = [], originXZ: SIMD2<Float> = .zero) -> [DollhouseHotspot] {
