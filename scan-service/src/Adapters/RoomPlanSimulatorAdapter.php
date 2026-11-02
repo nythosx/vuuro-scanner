@@ -93,6 +93,7 @@ final class RoomPlanSimulatorAdapter
                 'heading_deg' => self::headingDeg($rawCapture),
                 'room_type' => self::mapRoomType($rawCapture),
                 'walk_path_m' => self::mapWalkPath($rawCapture, $minX, $minZ),
+                'entry_doorway_m' => self::mapEntryDoorway($rawCapture, $minX, $minZ),
             ];
         }
 
@@ -246,6 +247,15 @@ final class RoomPlanSimulatorAdapter
             return null;
         }
         return round($width, 2);
+    }
+
+    private static function mapEntryDoorway(array $rawCapture, float $minX, float $minZ): ?array
+    {
+        $point = $rawCapture['entry_doorway'] ?? null;
+        if (!is_array($point) || !isset($point[0], $point[2]) || !is_numeric($point[0]) || !is_numeric($point[2])) {
+            return null;
+        }
+        return [round((float) $point[0] - $minX, 3), round((float) $point[2] - $minZ, 3)];
     }
 
     private static function mapWalkPath(array $rawCapture, float $minX, float $minZ): array
@@ -537,6 +547,14 @@ final class RoomPlanSimulatorAdapter
                 ));
             }
             self::validatePoints('walk_path', $walkPath);
+        }
+
+        $entryDoorway = $rawCapture['entry_doorway'] ?? null;
+        if ($entryDoorway !== null) {
+            if (!is_array($entryDoorway) || count($entryDoorway) !== 3) {
+                throw new \InvalidArgumentException('entry_doorway must be an [x, y, z] point when given.');
+            }
+            self::validatePoints('entry_doorway', [$entryDoorway]);
         }
 
         $objects = $rawCapture['objects'] ?? [];

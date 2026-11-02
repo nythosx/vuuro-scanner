@@ -181,6 +181,25 @@ final class DollhouseMeshBuilderTests: XCTestCase {
         scene.meshes.filter { ($0.path.components.last ?? "").hasPrefix(prefix) }
     }
 
+    func testEachRoomGetsAHiddenByDefaultCeilingFacingBothWaysAtWallHeight() throws {
+        for outline in ["[[0,0],[4,0],[4,3],[0,3]]", "[[0,0],[0,3],[4,3],[4,0]]"] {
+            let rooms = try makeRooms("[\(roomJSON(outline: outline, height: "2.6"))]")
+            let scene = try DollhouseMeshBuilder.build(rooms: rooms, configuration: DollhouseBuildConfiguration(mode: .dollhouse))
+            let ceilings = meshes(scene, named: "Ceiling")
+            XCTAssertEqual(ceilings.count, 1, outline)
+            guard let ceiling = ceilings.first else { continue }
+            XCTAssertEqual(ceiling.layer, .ceiling)
+            XCTAssertFalse(DollhouseLayerVisibility().isVisible(ceiling.layer))
+            XCTAssertFalse(ceiling.isEmpty)
+            for vertex in ceiling.vertices {
+                XCTAssertEqual(vertex.position.y, 2.6, accuracy: 0.001, outline)
+            }
+            let faceNormals = triangles(of: ceiling).map { simd_cross($0.1 - $0.0, $0.2 - $0.0).y }
+            XCTAssertTrue(faceNormals.contains { $0 < 0 }, "no face points down into the room for \(outline)")
+            XCTAssertTrue(faceNormals.contains { $0 > 0 }, "no face points up for \(outline)")
+        }
+    }
+
     func testWallFacesPointOutOfTheWallAndFloorsFaceUpForBothWindings() throws {
         let outlines = [
             "[[0,0],[4,0],[4,3],[0,3]]",

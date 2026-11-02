@@ -7,6 +7,7 @@ struct SettingsView: View {
 
     @AppStorage("darkModeEnabled") private var darkMode: Bool = false
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
+    @AppStorage("walkthroughCaptureEnabled") private var walkthroughCaptureEnabled: Bool = false
     @State private var roomTypeGuess = RoomTypeGuessSettings.isEnabled
     @State private var cacheSizeLabel: String = "—"
     @State private var darkModeLocal: Bool = false
@@ -56,6 +57,21 @@ struct SettingsView: View {
                                 .onChange(of: roomTypeGuess) { _, newValue in
                                     RoomTypeGuessSettings.isEnabled = newValue
                                 }
+                        }
+                    }
+                    .padding(.horizontal, 20)
+
+                    VuuroSectionLabel(text: "Walk-through")
+                    VuuroInputGroup {
+                        VuuroInputRow(
+                            leadingIcon: "figure.walk",
+                            label: vuuroLocalized("Walk-through capture (beta)"),
+                            showsDivider: false
+                        ) {
+                            Toggle("", isOn: $walkthroughCaptureEnabled)
+                                .accessibilityIdentifier("settings.walkthroughCapture")
+                                .labelsHidden()
+                                .tint(VuuroColor.lime)
                         }
                     }
                     .padding(.horizontal, 20)

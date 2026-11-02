@@ -7,8 +7,13 @@ struct RoomPhotoMetadata: Codable, Equatable {
     let headingDeg: Double
     let pitchDeg: Double
     let zoom: Double
+    var standId: String? = nil
     var cameraTransform: [Double]? = nil
     var intrinsics: [Double]? = nil
+    var depthFile: String? = nil
+    var depthWidth: Int? = nil
+    var depthHeight: Int? = nil
+    var depthIntrinsics: [Double]? = nil
 
     init(
         localId: String,
@@ -17,8 +22,13 @@ struct RoomPhotoMetadata: Codable, Equatable {
         headingDeg: Double,
         pitchDeg: Double,
         zoom: Double = 1.0,
+        standId: String? = nil,
         cameraTransform: [Double]? = nil,
-        intrinsics: [Double]? = nil
+        intrinsics: [Double]? = nil,
+        depthFile: String? = nil,
+        depthWidth: Int? = nil,
+        depthHeight: Int? = nil,
+        depthIntrinsics: [Double]? = nil
     ) {
         self.localId = localId
         self.capturedAt = capturedAt
@@ -26,8 +36,13 @@ struct RoomPhotoMetadata: Codable, Equatable {
         self.headingDeg = headingDeg
         self.pitchDeg = pitchDeg
         self.zoom = zoom
+        self.standId = standId
         self.cameraTransform = cameraTransform
         self.intrinsics = intrinsics
+        self.depthFile = depthFile
+        self.depthWidth = depthWidth
+        self.depthHeight = depthHeight
+        self.depthIntrinsics = depthIntrinsics
     }
 
     init(from decoder: Decoder) throws {
@@ -38,8 +53,13 @@ struct RoomPhotoMetadata: Codable, Equatable {
         headingDeg = try c.decode(Double.self, forKey: .headingDeg)
         pitchDeg = try c.decode(Double.self, forKey: .pitchDeg)
         zoom = try c.decodeIfPresent(Double.self, forKey: .zoom) ?? 1.0
+        standId = try c.decodeIfPresent(String.self, forKey: .standId)
         cameraTransform = try c.decodeIfPresent([Double].self, forKey: .cameraTransform)
         intrinsics = try c.decodeIfPresent([Double].self, forKey: .intrinsics)
+        depthFile = try c.decodeIfPresent(String.self, forKey: .depthFile)
+        depthWidth = try c.decodeIfPresent(Int.self, forKey: .depthWidth)
+        depthHeight = try c.decodeIfPresent(Int.self, forKey: .depthHeight)
+        depthIntrinsics = try c.decodeIfPresent([Double].self, forKey: .depthIntrinsics)
     }
 }
 
@@ -140,6 +160,7 @@ final class RoomPhotoStore {
         let dir = batchDirectory(captureGroupId: captureGroupId, roomKey: roomKey)
         let photoURL = dir.appendingPathComponent("\(localId).jpg")
         try? fileManager.removeItem(at: photoURL)
+        try? fileManager.removeItem(at: dir.appendingPathComponent("\(localId).depth"))
 
         var manifest = try loadManifest(captureGroupId: captureGroupId, roomKey: roomKey)
         manifest.photos.removeAll { $0.localId == localId }
@@ -219,5 +240,23 @@ final class RoomPhotoStore {
         encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(manifest)
         try data.write(to: url, options: [.atomic, .completeFileProtection])
+    }
+
+    func saveDepth(_ data: Data, localId: String, captureGroupId: String, roomKey: String) throws {
+        let dir = batchDirectory(captureGroupId: captureGroupId, roomKey: roomKey)
+        try fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("\(localId).depth")
+        try data.write(to: url, options: [.atomic, .completeFileProtection])
+    }
+
+    func loadDepth(localId: String, captureGroupId: String, roomKey: String) throws -> Data {
+        let url = batchDirectory(captureGroupId: captureGroupId, roomKey: roomKey)
+            .appendingPathComponent("\(localId).depth")
+        return try Data(contentsOf: url)
+    }
+
+    func depthURL(localId: String, captureGroupId: String, roomKey: String) -> URL {
+        batchDirectory(captureGroupId: captureGroupId, roomKey: roomKey)
+            .appendingPathComponent("\(localId).depth")
     }
 }

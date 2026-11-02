@@ -483,6 +483,13 @@ t_check('walk_path_m carries the recorded points, translated into room-local fra
     [0.5, 0.5], [1.0, 0.6], [1.5, 0.4],
 ], 'got ' . json_encode($withWalkPath['rooms'][0]['walk_path_m']));
 
+t_check('entry_doorway_m is null when entry_doorway is absent', $noWalkPath['rooms'][0]['entry_doorway_m'] === null);
+$withDoorway = $adapter->adapt([
+    'floors' => [['polygonCorners' => [[1, 0, 1], [3, 0, 1], [3, 0, 3], [1, 0, 3]]]],
+    'entry_doorway' => [2.0, 1.4, 1.1],
+], $identity);
+t_check('entry_doorway_m is the doorway point in the room-local frame', $withDoorway['rooms'][0]['entry_doorway_m'] === [1.0, 0.1], 'got ' . json_encode($withDoorway['rooms'][0]['entry_doorway_m']));
+
 $mixedWalkPath = $adapter->adapt([
     'floors' => [['polygonCorners' => [[0, 0, 0], [2, 0, 0], [2, 0, 2], [0, 0, 2]]]],
     'walk_path' => [[0.5, 0.0, 0.5], 'not-a-point', ['x' => 1], [1.0, 0.0, 0.6]],
