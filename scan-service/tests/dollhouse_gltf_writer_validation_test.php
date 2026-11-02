@@ -204,6 +204,76 @@ foreach (str_split($texturedJsonPadding) as $b) {
 }
 dgv_check('textured GLB: JSON chunk padding uses only space bytes', $texturedJsonPaddingOk);
 
+echo "\n== reduced detail when the full model is over the triangle limit ==\n";
+function dgv_triangles(string $glb): int
+{
+    $parsed = dgv_parse($glb);
+    $json = json_decode(substr($glb, $parsed['chunks'][0]['start'], $parsed['chunks'][0]['len']), true);
+    $tris = 0;
+    foreach ($json['meshes'] as $mesh) {
+        foreach ($mesh['primitives'] as $primitive) {
+            $tris += intdiv((int) $json['accessors'][$primitive['indices']]['count'], 3);
+        }
+    }
+    return $tris;
+}
+function dgv_lod(string $glb): ?string
+{
+    $parsed = dgv_parse($glb);
+    $json = json_decode(substr($glb, $parsed['chunks'][0]['start'], $parsed['chunks'][0]['len']), true);
+    return $json['asset']['extras']['lod'] ?? null;
+}
+$jagged = [];
+foreach ([[[0, 0], [4, 0]], [[4, 0], [4, 3]], [[4, 3], [0, 3]], [[0, 3], [0, 0]]] as [$from, $to]) {
+    for ($k = 0; $k < 20; $k++) {
+        $t = $k / 20;
+        $jagged[] = [$from[0] + ($to[0] - $from[0]) * $t + ($k % 2) * 0.01, $from[1] + ($to[1] - $from[1]) * $t + ($k % 2) * 0.01];
+    }
+}
+$lodRoom = dgv_room('lod', $jagged);
+$lodRoom['openings'] = [
+    ['category' => 'door', 'position_m' => [2.0, 0.0], 'width_m' => 0.9],
+    ['category' => 'window', 'position_m' => [4.0, 1.5], 'width_m' => 1.2],
+    ['category' => 'window', 'position_m' => [2.0, 3.0], 'width_m' => 1.2],
+];
+$lodPlan = dgv_plan([$lodRoom]);
+$fullWriter = new DollhouseGltfWriter();
+$fullGlb = $fullWriter->write($lodPlan);
+$fullTris = dgv_triangles($fullGlb);
+dgv_check('default limit draws the full model', $fullWriter->lastLod() === 'full' && dgv_lod($fullGlb) === 'full', $fullWriter->lastLod());
+$w = new DollhouseGltfWriter($fullTris - 1);
+$glb = $w->write($lodPlan);
+$simplifiedTris = dgv_triangles($glb);
+dgv_check('one triangle under the full model falls back to a simplified outline', $w->lastLod() === 'simplified' && dgv_lod($glb) === 'simplified', $w->lastLod());
+dgv_check('the simplified model fits the limit and is much smaller', $simplifiedTris * 3 < $fullTris, "$simplifiedTris vs $fullTris");
+
+$w = new DollhouseGltfWriter($simplifiedTris - 1);
+$coarseGlb = null;
+$threw = null;
+try {
+    $coarseGlb = $w->write($lodPlan);
+} catch (\InvalidArgumentException $e) {
+    $threw = $e;
+}
+dgv_check('a 0.15 m outline with nothing left to drop at 0.4 m still errors or returns coarse', $threw instanceof \VuuroScan\Export\TooManyTrianglesException || $w->lastLod() === 'coarse', $w->lastLod());
+
+$w = new DollhouseGltfWriter(4);
+$threw = null;
+try {
+    $w->write($lodPlan);
+} catch (\InvalidArgumentException $e) {
+    $threw = $e;
+}
+dgv_check('below every tier still throws the triangle error', $threw instanceof \VuuroScan\Export\TooManyTrianglesException, $threw === null ? 'no exception' : get_class($threw));
+
+$lodTexturedPlan = $texturedPlan;
+$lodTexturedPlan['rooms'][0]['outline_m'] = $jagged;
+$lodTexturedPlan['rooms'][0]['openings'] = $lodRoom['openings'];
+$texturedFull = (new DollhouseGltfWriter())->write($lodTexturedPlan, fn (string $url): ?string => $textureJpeg);
+$w = new DollhouseGltfWriter(dgv_triangles($texturedFull) - 1);
+$glb = $w->write($lodTexturedPlan, fn (string $url): ?string => $textureJpeg);
+dgv_check('textured model also falls back below the full size', $w->lastLod() !== 'full' && dgv_lod($glb) === $w->lastLod(), $w->lastLod());
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nTEST VERDICT: RED\n");

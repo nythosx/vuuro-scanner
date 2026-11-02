@@ -21,6 +21,7 @@ struct DollhouseMaterial: Equatable {
     static let otherOpening = DollhouseMaterial(name: "otherOpening", color: SIMD4(0.55, 0.55, 0.56, 1.0), roughness: 0.8, metalness: 0.0)
     static let openEdge = DollhouseMaterial(name: "openEdge", color: SIMD4(0.54, 0.54, 0.54, 1.0), roughness: 1.0, metalness: 0.0)
     static let overlapWarning = DollhouseMaterial(name: "overlapWarning", color: SIMD4(0.84, 0.27, 0.24, 1.0), roughness: 0.9, metalness: 0.0)
+    static let ceiling = DollhouseMaterial(name: "ceiling", color: SIMD4(0.93, 0.92, 0.90, 1.0), roughness: 0.95, metalness: 0.0)
 
     static func floor(named name: String, color: SIMD4<Float>) -> DollhouseMaterial {
         DollhouseMaterial(name: name, color: color, roughness: 0.95, metalness: 0.0)

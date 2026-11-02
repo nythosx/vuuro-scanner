@@ -86,7 +86,7 @@ enum DollhouseUSDZExporter {
         objectsByPath["Scene"] = root
 
         for mesh in scene.meshes {
-            guard !mesh.isEmpty else { continue }
+            guard !mesh.isEmpty, mesh.layer != .ceiling else { continue }
             guard let mdlMesh = makeMDLMesh(from: mesh, textureDirectory: textureDirectory) else { continue }
             let parent = ensureObject(for: mesh.path, objectsByPath: &objectsByPath, root: root)
             let holder = MDLObject()

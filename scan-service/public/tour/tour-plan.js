@@ -10,6 +10,7 @@
   var CLUSTER_RADIUS_PX = 11;
   var CLUSTER_DISTANCE_PX = 26;
   var HIT_RADIUS_PX = 22;
+  var STAND_RADIUS_PX = 12;
   var FLOOR_ROW_PX = 48;
   var selectedFloor = null;
   var ROTATE_GAIN = 1.2;
@@ -73,7 +74,7 @@
     return { minX: minX, minZ: minZ, maxX: maxX, maxZ: maxZ };
   }
 
-  function renderPlan(viewport, rooms, onRoomTap, onPhotoTap) {
+  function renderPlan(viewport, rooms, onRoomTap, onPhotoTap, onStandTap) {
     var placed = placedRooms(rooms);
     if (placed.length === 0) {
       return false;
@@ -100,7 +101,7 @@
         selectedFloor = key;
         if (svg.parentNode) svg.parentNode.removeChild(svg);
         if (floorRow.parentNode) floorRow.parentNode.removeChild(floorRow);
-        renderPlan(viewport, rooms, onRoomTap, onPhotoTap);
+        renderPlan(viewport, rooms, onRoomTap, onPhotoTap, onStandTap);
       });
       viewport.appendChild(floorRow);
     }
@@ -192,8 +193,12 @@
       svg.appendChild(text);
     });
 
+    var standPhotoIds = {};
+    if (typeof onStandTap === 'function') {
+      standPhotoIds = renderStandMarkers(svg, placed, toPx, onStandTap);
+    }
     if (typeof onPhotoTap === 'function') {
-      renderPhotoMarkers(svg, placed, toPx, onPhotoTap);
+      renderPhotoMarkers(svg, placed, toPx, onPhotoTap, standPhotoIds);
     }
 
     return true;
@@ -469,20 +474,101 @@
     return true;
   }
 
-  function renderPhotoMarkers(svg, placed, toPx, onPhotoTap) {
+  function farOutside(point, room) {
+    var m = window.TourDollhouseMath;
+    return !!(m && m.distanceOutside && m.distanceOutside(point, room.outline_m) > m.OUTSIDE_TOLERANCE_M);
+  }
+
+  function capturedStands(room) {
+    var photos = Array.isArray(room.photos) ? room.photos : [];
+    var stands = Array.isArray(room.stands) ? room.stands : [];
+    var ids = {};
+    photos.forEach(function (photo) {
+      if (typeof photo.stand_id === 'string' && photo.stand_id !== '') ids[photo.stand_id] = true;
+    });
+    return stands.filter(function (stand) {
+      return stand && ids[stand.stand_id] === true && Array.isArray(stand.center_m) && stand.center_m.length >= 2
+        && isFinite(Number(stand.center_m[0])) && isFinite(Number(stand.center_m[1]))
+        && !farOutside(stand.center_m, room);
+    });
+  }
+
+  function renderStandMarkers(svg, placed, toPx, onStandTap) {
+    var covered = {};
+    var group = document.createElementNS(NS, 'g');
+    group.classList.add('tour-plan-photo-markers');
+    placed.forEach(function (item) {
+      capturedStands(item.room).forEach(function (stand, standIndex) {
+        (stand.photo_ids || []).forEach(function (id) { covered[id] = true; });
+        var px = toPx([Number(stand.center_m[0]) + item.ox, Number(stand.center_m[1]) + item.oz]);
+        var label = window.TourStrings.t('plan_stand_spot', { number: standIndex + 1 });
+        var node = document.createElementNS(NS, 'g');
+        node.classList.add('tour-plan-stand');
+        node.setAttribute('tabindex', '0');
+        node.setAttribute('role', 'button');
+        node.setAttribute('aria-label', (item.room.label ? item.room.label + ' ' : '') + label);
+        node.setAttribute('data-room-index', String(item.index));
+        node.setAttribute('data-stand-id', String(stand.stand_id));
+        var title = document.createElementNS(NS, 'title');
+        title.textContent = label;
+        node.appendChild(title);
+        var hit = document.createElementNS(NS, 'circle');
+        hit.setAttribute('cx', px[0].toFixed(1));
+        hit.setAttribute('cy', px[1].toFixed(1));
+        hit.setAttribute('r', String(HIT_RADIUS_PX));
+        hit.classList.add('tour-plan-photo-hit');
+        node.appendChild(hit);
+        var ring = document.createElementNS(NS, 'circle');
+        ring.setAttribute('cx', px[0].toFixed(1));
+        ring.setAttribute('cy', px[1].toFixed(1));
+        ring.setAttribute('r', String(STAND_RADIUS_PX));
+        ring.classList.add('tour-plan-stand-ring');
+        node.appendChild(ring);
+        var text = document.createElementNS(NS, 'text');
+        text.setAttribute('x', px[0].toFixed(1));
+        text.setAttribute('y', px[1].toFixed(1));
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('dominant-baseline', 'central');
+        text.classList.add('tour-plan-stand-number');
+        text.textContent = String(standIndex + 1);
+        node.appendChild(text);
+        (function (roomIndex, standId) {
+          node.addEventListener('click', function (event) {
+            event.stopPropagation();
+            onStandTap(roomIndex, standId);
+          });
+          node.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              event.stopPropagation();
+              onStandTap(roomIndex, standId);
+            }
+          });
+        })(item.index, stand.stand_id);
+        group.appendChild(node);
+      });
+    });
+    if (group.firstChild) svg.appendChild(group);
+    return covered;
+  }
+
+  function renderPhotoMarkers(svg, placed, toPx, onPhotoTap, skipIds) {
     var group = document.createElementNS(NS, 'g');
     group.classList.add('tour-plan-photo-markers');
     var markers = [];
     placed.forEach(function (item) {
       var photos = Array.isArray(item.room.photos) ? item.room.photos : [];
       photos.forEach(function (photo, photoIndex) {
+        if (skipIds && skipIds[photo.photo_id] === true) {
+          return;
+        }
         var pos = Array.isArray(photo.position_m) ? photo.position_m : null;
         if (!pos || pos.length < 2) {
           return;
         }
         var wx = Number(pos[0]) + item.ox;
         var wz = Number(pos[1]) + item.oz;
-        if (!isFinite(wx) || !isFinite(wz)) {
+        if (!isFinite(wx) || !isFinite(wz) || farOutside(pos, item.room)) {
           return;
         }
         var px = toPx([wx, wz]);
@@ -554,6 +640,7 @@
     alignmentAngle: alignmentAngle,
     wallRuns: wallRuns,
     clusterMarkers: clusterMarkers,
+    capturedStands: capturedStands,
     renderMinimap: renderMinimap
   };
 })();

@@ -410,3 +410,19 @@ form#searchForm button { grid-column: 1 / -1; justify-self: start; }
   max-width: 80vw;
   text-align: center;
 }
+
+.readiness-verdict { font-weight: 700; margin: 0 0 8px; }
+.readiness-verdict.is-ready { color: #1e7d3a; }
+.readiness-verdict.is-not-ready { color: var(--danger); }
+.readiness-list { list-style: none; padding: 0; margin: 0 0 12px; display: grid; gap: 6px; }
+.readiness-check { display: grid; grid-template-columns: 44px minmax(0, 220px) minmax(0, 1fr); gap: 10px; align-items: baseline; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; }
+.readiness-status { font-weight: 700; font-size: 12px; }
+.readiness-check.is-pass .readiness-status { color: #1e7d3a; }
+.readiness-check.is-fail .readiness-status { color: var(--danger); }
+.readiness-check.is-na .readiness-status { color: var(--muted); }
+.readiness-name { font-weight: 600; }
+.readiness-summary { color: var(--muted); }
+@media (max-width: 600px) {
+  .readiness-check { grid-template-columns: 44px minmax(0, 1fr); }
+  .readiness-summary { grid-column: 2; }
+}

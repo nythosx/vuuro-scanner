@@ -2,11 +2,20 @@
   'use strict';
 
   var HOTSPOT_PIXEL_SIZE = 14;
+  var SPOT_RADIUS_M = 0.32;
+  var SPOT_MIN_PX = 14;
+  var SPOT_MAX_PX = 64;
+  var SPOT_LIFT_M = 0.02;
+  var FRAME_MARGIN = 0.98;
+  var FLY_MS = 750;
   var FOV_Y = Math.PI / 3.5;
   var TAP_SLOP_PX = 6;
   var TAP_MAX_MS = 450;
+  var TAP_FADE_CUTOFF = 0.2;
   var MAX_OCCLUSION_TRIANGLES = 8000;
   var OCCLUSION_CLEARANCE_M = 0.05;
+  var FADE_EDGE_DISTANCE_M = 0.45;
+  var FADE_START = 0.05;
 
   var activeViewer = null;
 
@@ -17,7 +26,8 @@
     }
   }
 
-  function render(viewport, url, rooms, onBackToPlan, onHotspotTap, buildUrl) {
+  function render(viewport, url, rooms, onBackToPlan, onHotspotTap, buildUrl, options) {
+    var opts = options || {};
     stop();
     if (!url) {
       renderFallback(viewport, onBackToPlan, window.TourStrings.t('dollhouse_unavailable'));
@@ -34,11 +44,18 @@
       })
       .then(function (buffer) {
         var gltf = window.TourDollhouseGlb.parse(buffer);
-        var hotspots = buildHotspots(rooms || [], gltf.roomPoses);
+        var hotspots = buildHotspots(rooms || [], gltf.roomPoses, !!opts.onStandTap);
         var stage = buildStage(viewport, onBackToPlan);
-        var viewer = new Viewer(stage.canvas, gltf, hotspots, stage.hotspotLayer, onHotspotTap);
+        var viewer = new Viewer(stage.canvas, gltf, hotspots, stage.hotspotLayer, onHotspotTap, rooms || []);
+        viewer.onStandTap = opts.onStandTap || null;
+        viewer.spawnRoomLabels(buildRoomLabels(rooms || [], gltf.roomPoses));
         activeViewer = viewer;
         viewer.start();
+        if (window.TourDollhousePaint && typeof buildUrl === 'function') {
+          viewer.cancelPaint = window.TourDollhousePaint.paint(rooms || [], gltf.roomPoses, buildUrl, function (part) {
+            viewer.addPart(part);
+          });
+        }
       })
       .catch(function (err) {
         renderFallback(viewport, onBackToPlan, window.TourStrings.t('dollhouse_load_failed', { reason: err && err.message ? err.message : 'unknown error' }));
@@ -53,7 +70,6 @@
     p.className = 'tour-status';
     p.textContent = window.TourStrings.t('loading_3d');
     stage.appendChild(p);
-    stage.appendChild(backButton(onBackToPlan));
     viewport.appendChild(stage);
   }
 
@@ -65,7 +81,6 @@
     p.className = 'tour-status';
     p.textContent = message;
     stage.appendChild(p);
-    stage.appendChild(backButton(onBackToPlan));
     viewport.appendChild(stage);
   }
 
@@ -78,23 +93,18 @@
     canvas.className = 'tour-dollhouse-canvas';
     stage.appendChild(canvas);
 
+    var vignette = document.createElement('div');
+    vignette.className = 'tour-dollhouse-vignette';
+    vignette.setAttribute('aria-hidden', 'true');
+    stage.appendChild(vignette);
+
     var hotspotLayer = document.createElement('div');
     hotspotLayer.className = 'tour-dollhouse-hotspots';
     stage.appendChild(hotspotLayer);
 
-    stage.appendChild(backButton(onBackToPlan));
     viewport.appendChild(stage);
 
     return { stage: stage, canvas: canvas, hotspotLayer: hotspotLayer };
-  }
-
-  function backButton(onBackToPlan) {
-    var back = document.createElement('button');
-    back.type = 'button';
-    back.className = 'tour-btn tour-btn-back tour-dollhouse-back';
-    back.textContent = window.TourStrings.t('back_to_plan');
-    back.addEventListener('click', onBackToPlan);
-    return back;
   }
 
   function clearNode(node) {
@@ -117,13 +127,13 @@
     return null;
   }
 
-  function buildHotspots(rooms, roomPoses) {
+  function roomPlacements(rooms, roomPoses) {
     var allHaveOrigin = rooms.length > 0 && rooms.every(function (room) {
       var origin = room.structure_origin_m;
       return Array.isArray(origin) && origin.length === 2
         && isFinite(Number(origin[0])) && isFinite(Number(origin[1]));
     });
-    var hotspots = [];
+    var out = [];
     var cursorX = 0;
     for (var i = 0; i < rooms.length; i++) {
       var room = rooms[i];
@@ -144,8 +154,109 @@
       if (!isFinite(height) || height <= 0) {
         height = 2.4;
       }
+      out.push(placement(room, outline, ox, oz, height, poseFor(roomPoses, room)));
+    }
+    return out;
+  }
+
+  function placement(room, outline, ox, oz, height, pose) {
+    return {
+      room: room,
+      outline: outline,
+      height: height,
+      toWorld: function (px, pz, y) {
+        if (pose) {
+          var rotation = Number(pose.rotation_rad) || 0;
+          var cos = Math.cos(rotation);
+          var sin = Math.sin(rotation);
+          return [
+            px * cos - pz * sin + Number(pose.origin_x),
+            (Number(pose.base_y) || 0) + y,
+            px * sin + pz * cos + Number(pose.origin_z)
+          ];
+        }
+        return [px + ox, y, pz + oz];
+      }
+    };
+  }
+
+  function polygonCentroid(outline) {
+    var area = 0;
+    var cx = 0;
+    var cz = 0;
+    for (var i = 0; i < outline.length; i++) {
+      var a = outline[i];
+      var b = outline[(i + 1) % outline.length];
+      var ax = Number(a[0]) || 0;
+      var az = Number(a[1]) || 0;
+      var bx = Number(b[0]) || 0;
+      var bz = Number(b[1]) || 0;
+      var cross = ax * bz - bx * az;
+      area += cross;
+      cx += (ax + bx) * cross;
+      cz += (az + bz) * cross;
+    }
+    if (Math.abs(area) < 1e-6) {
+      var sx = 0;
+      var sz = 0;
+      outline.forEach(function (p) { sx += Number(p[0]) || 0; sz += Number(p[1]) || 0; });
+      return [sx / outline.length, sz / outline.length];
+    }
+    return [cx / (3 * area), cz / (3 * area)];
+  }
+
+  function buildRoomLabels(rooms, roomPoses) {
+    var labels = [];
+    roomPlacements(rooms, roomPoses).forEach(function (item) {
+      var text = typeof item.room.label === 'string' ? item.room.label.trim() : '';
+      if (!text || item.outline.length < 3) {
+        return;
+      }
+      var c = polygonCentroid(item.outline);
+      if (window.TourDollhouseMath.distanceOutside(c, item.outline) > 0) {
+        return;
+      }
+      labels.push({ text: text, world: item.toWorld(c[0], c[1], SPOT_LIFT_M) });
+    });
+    return labels;
+  }
+
+  function walkableStands(room) {
+    if (!window.TourPlan || typeof window.TourPlan.capturedStands !== 'function') {
+      return [];
+    }
+    return window.TourPlan.capturedStands(room).filter(function (stand) {
+      return (stand.photo_ids || []).length > 1;
+    });
+  }
+
+  function buildHotspots(rooms, roomPoses, withSpots) {
+    var hotspots = [];
+    var placements = roomPlacements(rooms, roomPoses);
+    for (var i = 0; i < placements.length; i++) {
+      var item = placements[i];
+      var room = item.room;
+      var outline = item.outline;
+      var height = item.height;
+      var covered = {};
+      if (withSpots) {
+        walkableStands(room).forEach(function (stand, standIndex) {
+          (stand.photo_ids || []).forEach(function (id) { covered[String(id)] = true; });
+          hotspots.push({
+            kind: 'spot',
+            roomIndex: i,
+            standId: stand.stand_id,
+            world: item.toWorld(Number(stand.center_m[0]), Number(stand.center_m[1]), SPOT_LIFT_M),
+            roomHeight: height,
+            label: window.TourStandStrings.t('spot_label', { room: room.label || '', number: standIndex + 1 })
+          });
+        });
+      }
       var photos = Array.isArray(room.photos) ? room.photos : [];
       for (var p = 0; p < photos.length; p++) {
+        if (photos[p].photo_id !== undefined && photos[p].photo_id !== null && covered[String(photos[p].photo_id)]) {
+          continue;
+        }
         var pos = photos[p].position_m;
         if (!Array.isArray(pos) || pos.length < 2) {
           continue;
@@ -155,19 +266,12 @@
         if (!isFinite(px) || !isFinite(pz)) {
           continue;
         }
-        var world = [px + ox, height / 2, pz + oz];
-        var pose = poseFor(roomPoses, room);
-        if (pose) {
-          var rotation = Number(pose.rotation_rad) || 0;
-          var cos = Math.cos(rotation);
-          var sin = Math.sin(rotation);
-          world = [
-            px * cos - pz * sin + Number(pose.origin_x),
-            (Number(pose.base_y) || 0) + height / 2,
-            px * sin + pz * cos + Number(pose.origin_z)
-          ];
+        if (window.TourDollhouseMath.distanceOutside([px, pz], outline) > window.TourDollhouseMath.OUTSIDE_TOLERANCE_M) {
+          continue;
         }
+        var world = item.toWorld(px, pz, height / 2);
         hotspots.push({
+          kind: 'photo',
           roomIndex: i,
           photoIndex: p,
           photoId: photos[p].photo_id !== undefined && photos[p].photo_id !== null ? String(photos[p].photo_id) : '',
@@ -180,9 +284,12 @@
     return hotspots;
   }
 
-  function Viewer(canvas, mesh, hotspots, hotspotLayer, onHotspotTap) {
+  function Viewer(canvas, mesh, hotspots, hotspotLayer, onHotspotTap, rooms) {
     this.canvas = canvas;
     var contextOptions = { antialias: true, alpha: false };
+    this.roomLabelElements = [];
+    this.onStandTap = null;
+    this.hideBase = false;
     this.gl = canvas.getContext('webgl2', contextOptions) || canvas.getContext('webgl', contextOptions);
     if (!this.gl) {
       throw new Error(window.TourStrings.t('webgl_unavailable'));
@@ -215,6 +322,9 @@
     }
     this.parts = [];
     this.imageTextures = {};
+    this.paintedTextures = [];
+    this.cancelPaint = null;
+    this.edges = window.TourDollhousePaint ? window.TourDollhousePaint.wallEdges(rooms || [], mesh.roomPoses) : [];
     this.initGl();
     this.frameToBounds();
     this.bindControls();
@@ -228,15 +338,20 @@
       'attribute vec3 aNrm;',
       'attribute vec4 aCol;',
       'attribute vec2 aUV;',
+      'attribute vec3 aFade;',
       'uniform mat4 uMvp;',
       'varying vec3 vNrm;',
       'varying vec4 vCol;',
       'varying vec2 vUV;',
+      'varying vec3 vFade;',
+      'varying vec3 vPos;',
       'void main() {',
       '  gl_Position = uMvp * vec4(aPos, 1.0);',
       '  vNrm = aNrm;',
       '  vCol = aCol;',
       '  vUV = aUV;',
+      '  vFade = aFade;',
+      '  vPos = aPos;',
       '}'
     ].join('\n');
     var frag = [
@@ -244,16 +359,31 @@
       'varying vec3 vNrm;',
       'varying vec4 vCol;',
       'varying vec2 vUV;',
+      'varying vec3 vFade;',
+      'varying vec3 vPos;',
       'uniform sampler2D uSampler;',
       'uniform float uUseTexture;',
+      'uniform float uPainted;',
+      'uniform float uPass;',
+      'uniform vec3 uEye;',
       'void main() {',
       '  vec3 n = normalize(vNrm);',
+      '  if (uPainted > 0.5 && dot(n, uEye - vPos) < 0.0) discard;',
       '  vec3 light = normalize(vec3(0.35, 0.85, 0.4));',
       '  float diff = max(dot(n, light), 0.0);',
-      '  float ambient = 0.55;',
-      '  float shade = ambient + diff * 0.55;',
+      '  float shade = uPainted > 0.5 ? 0.9 + diff * 0.12 : 0.55 + diff * 0.55;',
       '  vec4 base = uUseTexture > 0.5 ? texture2D(uSampler, vUV) : vCol;',
-      '  gl_FragColor = vec4(base.rgb * shade, base.a);',
+      '  if (base.a < 0.5) discard;',
+      '  float alpha = 1.0;',
+      '  if (vFade.z > 0.5) {',
+      '    vec2 toEye = uEye.xz - vPos.xz;',
+      '    float len = length(toEye);',
+      '    float side = len > 0.0001 ? dot(vFade.xy, toEye / len) : 0.0;',
+      '    alpha = mix(1.0, 0.1, smoothstep(' + FADE_START.toFixed(2) + ', 0.35, -side));',
+      '  }',
+      '  if (uPass < 0.5 && alpha < 0.999) discard;',
+      '  if (uPass > 0.5 && alpha >= 0.999) discard;',
+      '  gl_FragColor = vec4(base.rgb * shade, alpha);',
       '}'
     ].join('\n');
     var program = compile(gl, vert, frag);
@@ -262,12 +392,17 @@
     this.aNrm = gl.getAttribLocation(program, 'aNrm');
     this.aCol = gl.getAttribLocation(program, 'aCol');
     this.aUV = gl.getAttribLocation(program, 'aUV');
+    this.aFade = gl.getAttribLocation(program, 'aFade');
     this.uMvp = gl.getUniformLocation(program, 'uMvp');
     this.uSampler = gl.getUniformLocation(program, 'uSampler');
     this.uUseTexture = gl.getUniformLocation(program, 'uUseTexture');
+    this.uPainted = gl.getUniformLocation(program, 'uPainted');
+    this.uPass = gl.getUniformLocation(program, 'uPass');
+    this.uEye = gl.getUniformLocation(program, 'uEye');
 
     gl.enable(gl.DEPTH_TEST);
-    gl.clearColor(0.94, 0.93, 0.90, 1.0);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.clearColor(0.13, 0.13, 0.135, 1.0);
 
     this.parts = this.mesh.parts.map(this.buildPart, this);
   };
@@ -323,9 +458,18 @@
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
 
-    var texture = (part.imageIndex === null || part.imageIndex === undefined)
-      ? null
-      : this.textureForImage(part.imageIndex);
+    var fades = part.fades || this.fadesFor(part.positions, part.normals);
+    part.fades = fades;
+    var fadeBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, fadeBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, fades, gl.STATIC_DRAW);
+
+    var texture = null;
+    if (part.canvas) {
+      texture = this.textureForCanvas(part.canvas);
+    } else if (part.imageIndex !== null && part.imageIndex !== undefined) {
+      texture = this.textureForImage(part.imageIndex);
+    }
 
     return {
       posBuf: posBuf,
@@ -333,10 +477,56 @@
       uvBuf: uvBuf,
       colBuf: colBuf,
       idxBuf: idxBuf,
+      fadeBuf: fadeBuf,
       indexCount: indices.length,
       indexType: indexType,
-      texture: texture
+      texture: texture,
+      painted: !!part.painted
     };
+  };
+
+  Viewer.prototype.fadesFor = function (positions, normals) {
+    var count = positions.length / 3;
+    var fades = new Float32Array(count * 3);
+    if (!normals || this.edges.length === 0) return fades;
+    for (var i = 0; i < count; i++) {
+      if (Math.abs(normals[i * 3 + 1]) > 0.5) continue;
+      var edge = window.TourDollhousePaint.nearestEdge(this.edges, positions[i * 3], positions[i * 3 + 2], FADE_EDGE_DISTANCE_M);
+      if (!edge || !edge.exterior) continue;
+      fades[i * 3] = edge.wnx;
+      fades[i * 3 + 1] = edge.wnz;
+      fades[i * 3 + 2] = 1;
+    }
+    return fades;
+  };
+
+  Viewer.prototype.addPart = function (part) {
+    if (this.destroyed) return;
+    var built = this.buildPart(part);
+    if (built.painted) {
+      this.hideBase = true;
+    }
+    this.parts.push(built);
+  };
+
+  Viewer.prototype.visibleParts = function () {
+    if (!this.hideBase) {
+      return this.parts;
+    }
+    return this.parts.filter(function (part) { return part.painted; });
+  };
+
+  Viewer.prototype.textureForCanvas = function (canvas) {
+    var gl = this.gl;
+    var texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    this.paintedTextures.push(texture);
+    return texture;
   };
 
   Viewer.prototype.textureForImage = function (imageIndex) {
@@ -412,8 +602,34 @@
       (min[1] + max[1]) / 2,
       (min[2] + max[2]) / 2
     ];
-    var size = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
-    this.distance = size * 1.4 + 4;
+    var aspect = (this.canvas.clientWidth || 640) / Math.max(1, this.canvas.clientHeight || 480);
+    var M = window.TourDollhouseMath;
+    var proj = M.perspective(FOV_Y, aspect, 0.05, 2000);
+    var corners = [];
+    for (var c = 0; c < 8; c++) {
+      corners.push([c & 1 ? max[0] : min[0], c & 2 ? max[1] : min[1], c & 4 ? max[2] : min[2]]);
+    }
+    var self = this;
+    var fits = function (distance) {
+      self.distance = distance;
+      var mvp = M.multiply(proj, M.lookAt(self.eyePosition(), self.target, [0, 1, 0]));
+      for (var i = 0; i < corners.length; i++) {
+        var p = corners[i];
+        var w = mvp[3] * p[0] + mvp[7] * p[1] + mvp[11] * p[2] + mvp[15];
+        if (w <= 0.05) return false;
+        var x = (mvp[0] * p[0] + mvp[4] * p[1] + mvp[8] * p[2] + mvp[12]) / w;
+        var y = (mvp[1] * p[0] + mvp[5] * p[1] + mvp[9] * p[2] + mvp[13]) / w;
+        if (Math.abs(x) > FRAME_MARGIN || Math.abs(y) > FRAME_MARGIN) return false;
+      }
+      return true;
+    };
+    var lo = 0.5;
+    var hi = 400;
+    for (var it = 0; it < 40; it++) {
+      var mid = (lo + hi) / 2;
+      if (fits(mid)) hi = mid; else lo = mid;
+    }
+    this.distance = hi;
   };
 
   Viewer.prototype.bindControls = function () {
@@ -421,6 +637,9 @@
     var canvas = this.canvas;
     canvas.style.touchAction = 'none';
     canvas.addEventListener('pointerdown', function (event) {
+      if (self.flying) {
+        return;
+      }
       self.activePointers[event.pointerId] = { x: event.clientX, y: event.clientY };
       var ids = Object.keys(self.activePointers);
       self.tapStart = ids.length === 1 && event.button === 0
@@ -558,11 +777,19 @@
       (function (hotspot) {
         var el = document.createElement('button');
         el.type = 'button';
-        el.className = 'tour-dollhouse-hotspot';
+        el.className = hotspot.kind === 'spot' ? 'tour-dollhouse-spot' : 'tour-dollhouse-hotspot';
         el.style.width = HOTSPOT_PIXEL_SIZE + 'px';
         el.style.height = HOTSPOT_PIXEL_SIZE + 'px';
         el.setAttribute('aria-label', hotspot.label);
+        el.setAttribute('title', hotspot.label);
         el.addEventListener('click', function () {
+          if (hotspot.kind === 'spot') {
+            if (!self.onStandTap) return;
+            self.flyTo(hotspot.world, function () {
+              self.onStandTap(hotspot.roomIndex, hotspot.standId);
+            });
+            return;
+          }
           self.onHotspotTap(hotspot.roomIndex, hotspot.photoIndex);
         });
         self.hotspotLayer.appendChild(el);
@@ -570,6 +797,82 @@
       })(this.hotspots[i]);
     }
     this.occlusionEyeKey = null;
+  };
+
+  Viewer.prototype.flyTo = function (world, done) {
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (this.flying) {
+      return;
+    }
+    if (reduce) {
+      done();
+      return;
+    }
+    this.flying = true;
+    var self = this;
+    var from = { target: this.target.slice(), distance: this.distance, pitch: this.pitch };
+    var to = { target: [world[0], world[1] + 1.2, world[2]], distance: 1.2, pitch: Math.min(this.pitch, Math.PI * 0.12) };
+    var start = performance.now();
+    var step = function (now) {
+      if (self.destroyed) return;
+      var t = Math.min(1, (now - start) / FLY_MS);
+      var e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      for (var k = 0; k < 3; k++) {
+        self.target[k] = from.target[k] + (to.target[k] - from.target[k]) * e;
+      }
+      self.distance = from.distance + (to.distance - from.distance) * e;
+      self.pitch = from.pitch + (to.pitch - from.pitch) * e;
+      self.hotspotLayer.style.opacity = String(1 - e);
+      if (t < 1) {
+        window.requestAnimationFrame(step);
+        return;
+      }
+      self.flying = false;
+      done();
+    };
+    window.requestAnimationFrame(step);
+  };
+
+  Viewer.prototype.spawnRoomLabels = function (labels) {
+    for (var i = 0; i < labels.length; i++) {
+      var el = document.createElement('span');
+      el.className = 'tour-dollhouse-label';
+      el.textContent = labels[i].text;
+      el.setAttribute('aria-hidden', 'true');
+      this.hotspotLayer.insertBefore(el, this.hotspotLayer.firstChild);
+      this.roomLabelElements.push({ el: el, world: labels[i].world });
+    }
+  };
+
+  Viewer.prototype.positionRoomLabels = function () {
+    for (var i = 0; i < this.roomLabelElements.length; i++) {
+      var entry = this.roomLabelElements[i];
+      var screen = this.projectToScreen(entry.world);
+      if (screen === null) {
+        entry.el.style.display = 'none';
+        continue;
+      }
+      entry.el.style.display = 'block';
+      entry.el.style.transform = 'translate(' + screen[0].toFixed(1) + 'px,' + screen[1].toFixed(1) + 'px) translate(-50%, -50%)';
+    }
+  };
+
+  Viewer.prototype.spotEllipse = function (world, center) {
+    var eye = this.eyePosition();
+    var fx = world[0] - eye[0];
+    var fz = world[2] - eye[2];
+    var flen = Math.sqrt(fx * fx + fz * fz) || 1;
+    fx /= flen;
+    fz /= flen;
+    var side = this.projectToScreen([world[0] + fz * SPOT_RADIUS_M, world[1], world[2] - fx * SPOT_RADIUS_M], true);
+    var depth = this.projectToScreen([world[0] + fx * SPOT_RADIUS_M, world[1], world[2] + fz * SPOT_RADIUS_M], true);
+    if (!side || !depth) {
+      return [SPOT_MIN_PX, SPOT_MIN_PX * 0.6];
+    }
+    var w = 2 * Math.hypot(side[0] - center[0], side[1] - center[1]);
+    var h = 2 * Math.hypot(depth[0] - center[0], depth[1] - center[1]);
+    var scale = w > SPOT_MAX_PX ? SPOT_MAX_PX / w : w < SPOT_MIN_PX ? SPOT_MIN_PX / Math.max(1, w) : 1;
+    return [w * scale, Math.max(4, h * scale)];
   };
 
   Viewer.prototype.eyePosition = function () {
@@ -603,10 +906,21 @@
     var mvp = window.TourDollhouseMath.multiply(proj, view);
     this.mvp = mvp;
     gl.uniformMatrix4fv(this.uMvp, false, mvp);
+    gl.uniform3f(this.uEye, eye[0], eye[1], eye[2]);
 
-    for (var i = 0; i < this.parts.length; i++) {
-      this.renderPart(this.parts[i]);
+    var parts = this.visibleParts();
+    gl.uniform1f(this.uPass, 0.0);
+    for (var i = 0; i < parts.length; i++) {
+      this.renderPart(parts[i]);
     }
+    gl.uniform1f(this.uPass, 1.0);
+    gl.enable(gl.BLEND);
+    gl.depthMask(false);
+    for (var j = 0; j < parts.length; j++) {
+      this.renderPart(parts[j]);
+    }
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
 
     this.positionHotspots();
   };
@@ -621,6 +935,16 @@
     gl.bindBuffer(gl.ARRAY_BUFFER, part.nrmBuf);
     gl.enableVertexAttribArray(this.aNrm);
     gl.vertexAttribPointer(this.aNrm, 3, gl.FLOAT, false, 0, 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, part.fadeBuf);
+    gl.enableVertexAttribArray(this.aFade);
+    gl.vertexAttribPointer(this.aFade, 3, gl.FLOAT, false, 0, 0);
+
+    gl.uniform1f(this.uPainted, part.painted ? 1.0 : 0.0);
+    if (part.painted) {
+      gl.enable(gl.POLYGON_OFFSET_FILL);
+      gl.polygonOffset(-1.0, -2.0);
+    }
 
     if (part.texture) {
       gl.bindBuffer(gl.ARRAY_BUFFER, part.uvBuf);
@@ -643,6 +967,9 @@
 
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, part.idxBuf);
     gl.drawElements(gl.TRIANGLES, part.indexCount, part.indexType, 0);
+    if (part.painted) {
+      gl.disable(gl.POLYGON_OFFSET_FILL);
+    }
   };
 
   Viewer.prototype.positionHotspots = function () {
@@ -663,8 +990,18 @@
         continue;
       }
       entry.el.style.display = 'block';
-      entry.el.style.transform = 'translate3d(' + (screen[0] - HOTSPOT_PIXEL_SIZE / 2) + 'px, ' + (screen[1] - HOTSPOT_PIXEL_SIZE / 2) + 'px, 0)';
+      if (entry.hotspot.kind === 'spot') {
+        var size = this.spotEllipse(entry.hotspot.world, screen);
+        entry.el.style.width = size[0].toFixed(1) + 'px';
+        entry.el.style.height = size[1].toFixed(1) + 'px';
+        entry.el.style.left = (screen[0] - size[0] / 2) + 'px';
+        entry.el.style.top = (screen[1] - size[1] / 2) + 'px';
+        continue;
+      }
+      entry.el.style.left = (screen[0] - HOTSPOT_PIXEL_SIZE / 2) + 'px';
+      entry.el.style.top = (screen[1] - HOTSPOT_PIXEL_SIZE / 2) + 'px';
     }
+    this.positionRoomLabels();
   };
 
   Viewer.prototype.occluderTriangles = function () {
@@ -680,18 +1017,29 @@
       return null;
     }
     var tris = new Float32Array(total * 9);
+    var fades = new Float32Array(total * 5);
     var o = 0;
+    var f = 0;
     for (var pj = 0; pj < this.mesh.parts.length; pj++) {
       var pos = this.mesh.parts[pj].positions;
       var idx = this.mesh.parts[pj].indices;
+      var fd = this.mesh.parts[pj].fades;
       for (var k = 0; k < idx.length; k++) {
         var v = idx[k] * 3;
         tris[o++] = pos[v];
         tris[o++] = pos[v + 1];
         tris[o++] = pos[v + 2];
+        if (k % 3 === 0) {
+          fades[f++] = fd ? fd[v] : 0;
+          fades[f++] = fd ? fd[v + 1] : 0;
+          fades[f++] = fd ? fd[v + 2] : 0;
+          fades[f++] = pos[v];
+          fades[f++] = pos[v + 2];
+        }
       }
     }
     this.occluders = tris;
+    this.occluderFades = fades;
     return tris;
   };
 
@@ -711,7 +1059,17 @@
     dy /= length;
     dz /= length;
     var limit = length - OCCLUSION_CLEARANCE_M;
+    var fades = this.occluderFades;
     for (var t = 0; t < tris.length; t += 9) {
+      var fo = (t / 9) * 5;
+      if (fades[fo + 2] > 0.5) {
+        var ex = eye[0] - fades[fo + 3];
+        var ez = eye[2] - fades[fo + 4];
+        var el = Math.sqrt(ex * ex + ez * ez) || 1;
+        if ((fades[fo] * ex + fades[fo + 1] * ez) / el < -FADE_START) {
+          continue;
+        }
+      }
       var e1x = tris[t + 3] - tris[t], e1y = tris[t + 4] - tris[t + 1], e1z = tris[t + 5] - tris[t + 2];
       var e2x = tris[t + 6] - tris[t], e2y = tris[t + 7] - tris[t + 1], e2z = tris[t + 8] - tris[t + 2];
       var px = dy * e2z - dz * e2y, py = dz * e2x - dx * e2z, pz = dx * e2y - dy * e2x;
@@ -767,8 +1125,19 @@
       var part = this.mesh.parts[pi];
       var pos = part.positions;
       var idx = part.indices;
+      var fd = part.fades;
       for (var k = 0; k + 2 < idx.length; k += 3) {
         var a = idx[k] * 3, b = idx[k + 1] * 3, c = idx[k + 2] * 3;
+        if (fd && (fd[a + 2] > 0.5 || fd[b + 2] > 0.5 || fd[c + 2] > 0.5)) {
+          var ex = o[0] - (pos[a] + pos[b] + pos[c]) / 3;
+          var ez = o[2] - (pos[a + 2] + pos[b + 2] + pos[c + 2]) / 3;
+          var el = Math.sqrt(ex * ex + ez * ez) || 1;
+          var fx = (fd[a] + fd[b] + fd[c]) / 3;
+          var fz = (fd[a + 1] + fd[b + 1] + fd[c + 1]) / 3;
+          if ((fx * ex + fz * ez) / el < -TAP_FADE_CUTOFF) {
+            continue;
+          }
+        }
         var e1x = pos[b] - pos[a], e1y = pos[b + 1] - pos[a + 1], e1z = pos[b + 2] - pos[a + 2];
         var e2x = pos[c] - pos[a], e2y = pos[c + 1] - pos[a + 1], e2z = pos[c + 2] - pos[a + 2];
         var nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
@@ -804,7 +1173,7 @@
     return this.photoTargets[bestPart.photoId] || null;
   };
 
-  Viewer.prototype.projectToScreen = function (p) {
+  Viewer.prototype.projectToScreen = function (p, unclipped) {
     var m = this.mvp;
     if (!m) {
       return null;
@@ -817,7 +1186,7 @@
     }
     var ndcX = x / w;
     var ndcY = y / w;
-    if (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1) {
+    if (!unclipped && (ndcX < -1 || ndcX > 1 || ndcY < -1 || ndcY > 1)) {
       return null;
     }
     return [
@@ -845,6 +1214,10 @@
   Viewer.prototype.stop = function () {
     this.running = false;
     this.destroyed = true;
+    if (this.cancelPaint) {
+      this.cancelPaint();
+      this.cancelPaint = null;
+    }
     var gl = this.gl;
     if (!gl) {
       return;
@@ -856,7 +1229,12 @@
       if (part.uvBuf) gl.deleteBuffer(part.uvBuf);
       if (part.colBuf) gl.deleteBuffer(part.colBuf);
       if (part.idxBuf) gl.deleteBuffer(part.idxBuf);
+      if (part.fadeBuf) gl.deleteBuffer(part.fadeBuf);
     }
+    for (var t = 0; t < this.paintedTextures.length; t++) {
+      gl.deleteTexture(this.paintedTextures[t]);
+    }
+    this.paintedTextures = [];
     this.parts = [];
     for (var key in this.imageTextures) {
       if (Object.prototype.hasOwnProperty.call(this.imageTextures, key)) {

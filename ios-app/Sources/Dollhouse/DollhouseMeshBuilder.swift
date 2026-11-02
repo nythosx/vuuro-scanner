@@ -550,6 +550,7 @@ struct DollhouseMeshBuilder {
         let floorMaterial = DollhouseMaterial.floor(named: "floor-\(roomKey)", color: floorColor)
         let floorMesh = makeFloorMesh(outline: outline, base: base, material: floorMaterial, layer: .wallsAndFloors, path: roomPath.appending("Floor"))
         meshes.append(floorMesh)
+        meshes.append(makeCeilingMesh(outline: outline, base: base, height: wallHeight, path: roomPath.appending("Ceiling")))
 
         let openEdges = Set(room.openEdges)
         let signedArea = outlineSignedArea(outline)
@@ -651,7 +652,7 @@ struct DollhouseMeshBuilder {
             }
         }
 
-        let hotspots = makeHotspots(photos360: photos360, roomId: roomKey, base: localBase)
+        let hotspots = makeHotspots(photos360: photos360, roomId: roomKey, base: localBase, outline: outline, originXZ: originXZ)
         let centroid = outlineCentroid(outline)
         let label = DollhouseRoomLabel(
             id: roomKey,
@@ -1032,6 +1033,36 @@ struct DollhouseMeshBuilder {
         return DollhouseMesh(vertices: vertices, indices: indices, material: material, layer: layer, path: path)
     }
 
+    private static func makeCeilingMesh(outline: [SIMD2<Float>], base: SIMD3<Float>, height: Float, path: DollhouseNodePath) -> DollhouseMesh {
+        let triangles = triangulate(outline)
+        var vertices: [DollhouseVertex] = []
+        for normal in [SIMD3<Float>(0, -1, 0), SIMD3<Float>(0, 1, 0)] {
+            for point in outline {
+                vertices.append(DollhouseVertex(position: SIMD3<Float>(point.x + base.x, base.y + height, point.y + base.z), normal: normal))
+            }
+        }
+        guard let first = triangles.first else {
+            return DollhouseMesh(vertices: vertices, indices: [], material: DollhouseMaterial.ceiling, layer: .ceiling, path: path)
+        }
+        let p0 = vertices[first.0].position
+        let p1 = vertices[first.1].position
+        let p2 = vertices[first.2].position
+        let facesUp = simd_cross(p1 - p0, p2 - p0).y > 0
+        let topOffset = UInt32(outline.count)
+        var indices: [UInt32] = []
+        for triangle in triangles {
+            let a = UInt32(triangle.0)
+            let b = UInt32(triangle.1)
+            let c = UInt32(triangle.2)
+            if facesUp {
+                indices.append(contentsOf: [a, c, b, a + topOffset, b + topOffset, c + topOffset])
+            } else {
+                indices.append(contentsOf: [a, b, c, a + topOffset, c + topOffset, b + topOffset])
+            }
+        }
+        return DollhouseMesh(vertices: vertices, indices: indices, material: DollhouseMaterial.ceiling, layer: .ceiling, path: path)
+    }
+
     private static func makeBox(center: SIMD3<Float>, size: SIMD3<Float>, yaw: Float, base: SIMD3<Float>, material: DollhouseMaterial, layer: DollhouseLayer, path: DollhouseNodePath) -> DollhouseMesh {
         let half = size / 2
         let cosYaw = cos(yaw)
@@ -1169,15 +1200,41 @@ private extension DollhouseMeshBuilder {
         }
         return sum / (3 * twiceArea)
     }
+}
 
-    static func makeHotspots(photos360: [FloorPlan.Photo360], roomId: String, base: SIMD3<Float>) -> [DollhouseHotspot] {
+extension DollhouseMeshBuilder {
+    static let hotspotOutsideToleranceM: Float = 1.0
+
+    static func makeHotspots(photos360: [FloorPlan.Photo360], roomId: String, base: SIMD3<Float>, outline: [SIMD2<Float>] = [], originXZ: SIMD2<Float> = .zero) -> [DollhouseHotspot] {
         guard !photos360.isEmpty else { return [] }
         return photos360.compactMap { photo in
             guard photo.positionM.count >= 2 else { return nil }
             let x = Float(photo.positionM[0])
             let z = Float(photo.positionM[1])
+            if outline.count >= 3, distanceOutside(SIMD2<Float>(x, z) + originXZ, outline: outline) > hotspotOutsideToleranceM {
+                return nil
+            }
             let position = SIMD3<Float>(x + base.x, base.y + 1.4, z + base.z)
             return DollhouseHotspot(id: photo.photoId, roomId: roomId, position: position)
         }
+    }
+
+    static func distanceOutside(_ p: SIMD2<Float>, outline: [SIMD2<Float>]) -> Float {
+        var inside = false
+        var best = Float.greatestFiniteMagnitude
+        var j = outline.count - 1
+        for i in outline.indices {
+            let a = outline[i]
+            let b = outline[j]
+            if (a.y > p.y) != (b.y > p.y), p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+                inside.toggle()
+            }
+            let edge = b - a
+            let lengthSquared = simd_length_squared(edge)
+            let t = lengthSquared > 0 ? max(0, min(1, simd_dot(p - a, edge) / lengthSquared)) : 0
+            best = min(best, simd_length(a + edge * t - p))
+            j = i
+        }
+        return inside ? 0 : best
     }
 }

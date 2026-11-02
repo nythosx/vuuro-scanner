@@ -158,8 +158,27 @@ function idempotencyFingerprint(array $body): string
     }
 }
 
+const SKYBOX_BACKGROUND_SECONDS = 300;
+
+function skyboxStore(): \VuuroScan\Export\StandSkyboxStore
+{
+    return new \VuuroScan\Export\StandSkyboxStore(__DIR__ . '/../data/skybox');
+}
+
+function finishResponseEarly(): bool
+{
+    if (function_exists('frankenphp_finish_request')) {
+        return frankenphp_finish_request();
+    }
+    if (function_exists('fastcgi_finish_request')) {
+        return fastcgi_finish_request();
+    }
+    return false;
+}
+
 function deleteSessionPhotoDir(string $sessionId): void
 {
+    skyboxStore()->deleteSession($sessionId);
     $photoDir = __DIR__ . '/../data/photos/' . $sessionId;
     if (!is_dir($photoDir)) {
         return;
@@ -544,7 +563,7 @@ function purgeExpiredSessions(ScanSessionRepository $repo, \VuuroScan\ServiceSet
     return $purged;
 }
 
-const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'view_client_events', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload', 'compare', 'read_tour'];
+const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'view_client_events', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload', 'compare', 'read_tour', 'view_tour_readiness'];
 const ADMIN_WRITE_ACTIONS = ['publish_to_platform'];
 
 function compareRequested(): bool
@@ -1580,7 +1599,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads/([a-
         return;
     }
 
-    if (rateLimited($repo, $session['id'] . ':read_photo_upload', 120, 300)) {
+    if (rateLimited($repo, $session['id'] . ':' . clientIp() . ':read_photo_upload', 600, 300)) {
         return;
     }
 
@@ -1594,6 +1613,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/photo-uploads/([a-
     $extension = pathinfo($filename, PATHINFO_EXTENSION);
     $mimeByExtension = array_flip(PHOTO_UPLOAD_MIME_EXTENSIONS);
     header('Content-Type: ' . ($mimeByExtension[$extension] ?? 'application/octet-stream'));
+    header('Cache-Control: private, max-age=86400, immutable');
     readfile($filePath);
     return;
 }
@@ -1718,6 +1738,30 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
         return;
     }
 
+    $standIdRaw = $_POST['stand_id'] ?? '';
+    if (!is_string($standIdRaw)) {
+        respondError(422, 'invalid_stand_id', "'stand_id' must be a plain string when given.");
+        return;
+    }
+    $standIdValue = trim($standIdRaw);
+    if ($standIdValue !== '' && preg_match('/^[A-Za-z0-9-]{1,64}$/', $standIdValue) !== 1) {
+        respondError(422, 'invalid_stand_id', "'stand_id' must be 1-64 letters, digits or dashes when given.");
+        return;
+    }
+
+    $capturedAtValue = gmdate('c');
+    if (isset($_POST['captured_at'])) {
+        $capturedAtRaw = $_POST['captured_at'];
+        $capturedAtTime = is_string($capturedAtRaw) && preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/', $capturedAtRaw) === 1
+            ? strtotime($capturedAtRaw)
+            : false;
+        if ($capturedAtTime === false || $capturedAtTime > time() + 600 || $capturedAtTime < time() - 90 * 86400) {
+            respondError(422, 'invalid_captured_at', "'captured_at' must be an ISO 8601 time from the last 90 days when given.");
+            return;
+        }
+        $capturedAtValue = gmdate('c', $capturedAtTime);
+    }
+
     $cameraTransformJson = '';
     if (isset($_POST['camera_transform'])) {
         $cameraTransformRaw = $_POST['camera_transform'];
@@ -1768,10 +1812,76 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
         respondError(500, 'internal_error', 'Could not create photo storage for this session.');
         return;
     }
+    $depthUrl = '';
+    if (isset($_FILES['depth']) && is_array($_FILES['depth'])) {
+        $depthFile = $_FILES['depth'];
+        if ($depthFile['error'] !== UPLOAD_ERR_OK) {
+            $depthTooLarge = in_array($depthFile['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true);
+            respondError(422, $depthTooLarge ? 'depth_too_large' : 'depth_upload_failed', $depthTooLarge ? 'The depth file is limited to 1 MB.' : 'The depth file upload failed.');
+            return;
+        }
+        if ($depthFile['size'] > 1024 * 1024) {
+            respondError(422, 'depth_too_large', 'The depth file is limited to 1 MB.');
+            return;
+        }
+    }
+
+    $depthWidthValue = 0;
+    $depthHeightValue = 0;
+    if (isset($_POST['depth_width']) || isset($_POST['depth_height'])) {
+        $depthWidthRaw = $_POST['depth_width'] ?? null;
+        $depthHeightRaw = $_POST['depth_height'] ?? null;
+        if (!is_string($depthWidthRaw) || !is_string($depthHeightRaw)
+            || preg_match('/^[1-9][0-9]{0,3}$/', $depthWidthRaw) !== 1
+            || preg_match('/^[1-9][0-9]{0,3}$/', $depthHeightRaw) !== 1) {
+            respondError(422, 'invalid_depth_size', "'depth_width' and 'depth_height' must both be whole numbers from 1 to 9999.");
+            return;
+        }
+        $depthWidthValue = (int) $depthWidthRaw;
+        $depthHeightValue = (int) $depthHeightRaw;
+        $hasDepthFile = isset($_FILES['depth']) && is_array($_FILES['depth']) && $_FILES['depth']['error'] === UPLOAD_ERR_OK;
+        if (!$hasDepthFile || (int) $_FILES['depth']['size'] !== $depthWidthValue * $depthHeightValue * 2) {
+            respondError(422, 'invalid_depth_size', "'depth_width' x 'depth_height' x 2 bytes must match the uploaded depth file.");
+            return;
+        }
+    }
+
+    $depthIntrinsicsJson = '';
+    if (isset($_POST['depth_intrinsics'])) {
+        $depthIntrinsicsRaw = $_POST['depth_intrinsics'];
+        $decodedDepthIntrinsics = is_string($depthIntrinsicsRaw) ? json_decode($depthIntrinsicsRaw, true) : null;
+        if (!is_array($decodedDepthIntrinsics) || !array_is_list($decodedDepthIntrinsics) || count($decodedDepthIntrinsics) !== 4) {
+            respondError(422, 'invalid_depth_intrinsics', "'depth_intrinsics' must be a JSON array of 4 numbers.");
+            return;
+        }
+        foreach ($decodedDepthIntrinsics as $depthIntrinsicComponent) {
+            if ((!is_int($depthIntrinsicComponent) && !is_float($depthIntrinsicComponent)) || !is_finite((float) $depthIntrinsicComponent) || (float) $depthIntrinsicComponent <= 0) {
+                respondError(422, 'invalid_depth_intrinsics', "'depth_intrinsics' must contain only finite positive numbers.");
+                return;
+            }
+        }
+        $depthIntrinsicsJson = json_encode($decodedDepthIntrinsics, JSON_THROW_ON_ERROR);
+    }
+
+    if (isset($_FILES['depth']) && is_array($_FILES['depth']) && $_FILES['depth']['error'] === UPLOAD_ERR_OK && $depthWidthValue === 0) {
+        respondError(422, 'invalid_depth_size', "'depth_width' and 'depth_height' are required with a depth file.");
+        return;
+    }
+
     if (!move_uploaded_file($file['tmp_name'], $storageDir . '/' . $filename)) {
         $repo->logAccess($sessionId, 'upload_photo_360', 'failed_storage_error');
         respondError(500, 'internal_error', 'Could not save the uploaded photo.');
         return;
+    }
+
+    if (isset($_FILES['depth']) && is_array($_FILES['depth']) && $_FILES['depth']['error'] === UPLOAD_ERR_OK) {
+        $depthFilename = $photoUploadId . '.depth';
+        if (!move_uploaded_file($_FILES['depth']['tmp_name'], $storageDir . '/' . $depthFilename)) {
+            @unlink($storageDir . '/' . $filename);
+            respondError(500, 'internal_error', 'Could not save the uploaded depth file.');
+            return;
+        }
+        $depthUrl = publicBaseUrl() . "/scan-sessions/{$sessionId}/photo-uploads/{$depthFilename}";
     }
 
     $url = publicBaseUrl() . "/scan-sessions/{$sessionId}/photo-uploads/{$filename}";
@@ -1783,15 +1893,23 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/photos-360$#', $p
             $positionX,
             $positionZ,
             $headingDeg,
-            gmdate('c'),
+            $capturedAtValue,
             $idempotencyKey,
             $zoomValue,
             $pitchValue,
+            $standIdValue,
             $cameraTransformJson,
-            $intrinsicsJson
+            $intrinsicsJson,
+            $depthUrl,
+            $depthUrl !== '' ? $depthWidthValue : 0,
+            $depthUrl !== '' ? $depthHeightValue : 0,
+            $depthUrl !== '' ? $depthIntrinsicsJson : ''
         );
     } catch (\PDOException $e) {
         @unlink($storageDir . '/' . $filename);
+        if ($depthUrl !== '') {
+            @unlink($storageDir . '/' . $photoUploadId . '.depth');
+        }
         $existing = $photoRepo->findByIdempotencyKey($sessionId, $idempotencyKey);
         if ($existing !== null) {
             respond(200, $photoRepo->serialize($existing));
@@ -2496,8 +2614,9 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/dollhouse\.
         $bytes = file_get_contents($filePath);
         return $bytes === false ? null : $bytes;
     };
+    $dollhouseWriter = new DollhouseGltfWriter();
     try {
-        $glb = (new DollhouseGltfWriter())->write($floorPlan, $photoLoader);
+        $glb = $dollhouseWriter->write($floorPlan, $photoLoader);
     } catch (\InvalidArgumentException $e) {
         respondError(422, 'unrenderable_dollhouse', "This floor plan couldn't be drawn in 3D: " . $e->getMessage());
         return;
@@ -2506,6 +2625,10 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/dollhouse\.
         respondError(500, 'internal_error', 'Something went wrong on our end while handling that request. Please try again in a moment, and if it keeps happening, let us know what you were doing.');
         return;
     }
+    if ($dollhouseWriter->lastLod() !== 'full') {
+        error_log('VuuroScan dollhouse for session ' . $session['id'] . ' drawn at reduced detail: ' . $dollhouseWriter->lastLod());
+    }
+    header('X-Dollhouse-Lod: ' . $dollhouseWriter->lastLod());
     header('Content-Type: model/gltf-binary');
     header('ETag: ' . $glbEtag);
     header('Cache-Control: private, no-cache');
@@ -2880,6 +3003,39 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/objects/batch$#',
     return;
 }
 
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour-readiness$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'view_tour_readiness');
+    if ($session === null) {
+        return;
+    }
+    $sessionId = $session['id'];
+
+    if (rateLimited($repo, $sessionId . ':view_tour_readiness', 120, 300)) {
+        return;
+    }
+
+    $floorPlan = $repo->findFloorPlan($sessionId);
+    if ($floorPlan === null) {
+        respondError(404, 'no_floor_plan_yet', 'This session has no captured rooms yet.');
+        return;
+    }
+
+    $photosByRoom = [];
+    foreach ((new Photo360Repository($db))->serializedForSession($sessionId) as $photo) {
+        $photosByRoom[(string) $photo['room_id']][] = $photo;
+    }
+    $readinessRooms = [];
+    foreach ($floorPlan['rooms'] as $roomEntry) {
+        $entryCopy = $roomEntry;
+        $entryCopy['photos'] = $photosByRoom[(string) $roomEntry['room_id']] ?? [];
+        $readinessRooms[] = $entryCopy;
+    }
+    $standsResult = \VuuroScan\Export\TourStands::compute($readinessRooms);
+
+    respond(200, ['scan_session_id' => $sessionId] + \VuuroScan\Export\TourReadiness::compute($readinessRooms, $standsResult['stands_by_room']));
+    return;
+}
+
 if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'read_tour', true);
     if ($session === null) {
@@ -2929,6 +3085,26 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
     $planImageUrl = $base . "/scan-sessions/{$sessionId}/export/floorplan.png?style=auto&lang=" . urlencode($tourLang) . "&unit=metric";
     $viewerUrl = $base . '/tour/' . rawurlencode($sessionId) . '?token=' . rawurlencode((string) (presented_token_with_query_fallback() ?? '')) . '&lang=' . rawurlencode($tourLang);
 
+    $tourRooms = [];
+    foreach ($floorPlan['rooms'] as $roomEntry) {
+        $entryCopy = $roomEntry;
+        $entryCopy['photos'] = $photosByRoom[(string) $roomEntry['room_id']] ?? [];
+        $tourRooms[] = $entryCopy;
+    }
+    $standsResult = \VuuroScan\Export\TourStands::compute($tourRooms);
+
+    $skyboxes = skyboxStore();
+    $skyboxPhotoPath = static fn (string $url): ?string => ownedPhotoFilePath($sessionId, $url);
+    $skyboxPlan = $skyboxes->plan($sessionId, $standsResult['stands_by_room'], $photosByRoom, $skyboxPhotoPath);
+    foreach ($skyboxPlan['ready'] as $skyRoomId => $readyStands) {
+        foreach ($readyStands as $standIndex => $sky) {
+            $standsResult['stands_by_room'][$skyRoomId][$standIndex]['skybox'] = [
+                'base_url' => $base . "/scan-sessions/{$sessionId}/skybox/{$sky['key']}/",
+                'size' => $sky['size'],
+            ];
+        }
+    }
+
     $rooms = [];
     foreach ($floorPlan['rooms'] as $room) {
         $rooms[] = [
@@ -2939,8 +3115,14 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
             'outline_m' => $room['outline_m'],
             'structure_origin_m' => $room['structure_origin_m'] ?? null,
             'heading_deg' => $room['heading_deg'] ?? null,
+            'height_m' => isset($room['height_m']) && is_numeric($room['height_m']) && (float) $room['height_m'] > 0 ? (float) $room['height_m'] : null,
+            'open_edges' => array_values(array_filter(
+                is_array($room['open_edges'] ?? null) ? $room['open_edges'] : [],
+                static fn ($edge): bool => is_int($edge) && $edge >= 0 && $edge < count($room['outline_m'])
+            )),
             'overlap' => isset($overlapRoomIds[(string) $room['room_id']]),
             'photos' => $photosByRoom[(string) $room['room_id']] ?? [],
+            'stands' => $standsResult['stands_by_room'][(string) $room['room_id']] ?? [],
         ];
     }
 
@@ -2953,7 +3135,37 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
         'plan_image_url' => $planImageUrl,
         'dollhouse_glb_url' => $floorPlan['rooms'] !== [] ? ($base . "/scan-sessions/{$sessionId}/export/dollhouse.glb") : null,
         'rooms' => $rooms,
+        'features' => ['walkthrough' => $standsResult['walkthrough']],
     ]);
+    if ($skyboxPlan['pending'] !== [] && finishResponseEarly()) {
+        ignore_user_abort(true);
+        set_time_limit(0);
+        $skyboxDeadline = microtime(true) + SKYBOX_BACKGROUND_SECONDS;
+        foreach ($skyboxPlan['pending'] as $next) {
+            if (microtime(true) > $skyboxDeadline || !$skyboxes->build($sessionId, $next['room_id'], $next['stand_id'], $next['key'], $next['photos'], $skyboxPhotoPath)) {
+                break;
+            }
+        }
+    }
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/skybox/([a-f0-9]{24})/([a-z])\.jpg$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'read_photo_upload', true);
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':' . clientIp() . ':read_photo_upload', 600, 300)) {
+        return;
+    }
+    $facePath = skyboxStore()->facePath($session['id'], $m[2], $m[3]);
+    if ($facePath === null) {
+        respondError(404, 'skybox_not_found', 'This 360 view is not ready yet.');
+        return;
+    }
+    header('Content-Type: image/jpeg');
+    header('Cache-Control: private, max-age=86400, immutable');
+    readfile($facePath);
     return;
 }
 

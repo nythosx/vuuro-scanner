@@ -54,9 +54,32 @@
     return out;
   }
 
+  function distanceOutside(point, outline) {
+    if (!Array.isArray(outline) || outline.length < 3) return 0;
+    var px = Number(point[0]);
+    var pz = Number(point[1]);
+    var inside = false;
+    var best = Infinity;
+    for (var i = 0, j = outline.length - 1; i < outline.length; j = i++) {
+      var ax = Number(outline[i][0]);
+      var az = Number(outline[i][1]);
+      var bx = Number(outline[j][0]);
+      var bz = Number(outline[j][1]);
+      if ((az > pz) !== (bz > pz) && px < (bx - ax) * (pz - az) / (bz - az) + ax) inside = !inside;
+      var ex = bx - ax;
+      var ez = bz - az;
+      var len2 = ex * ex + ez * ez;
+      var t = len2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * ex + (pz - az) * ez) / len2)) : 0;
+      best = Math.min(best, Math.hypot(ax + ex * t - px, az + ez * t - pz));
+    }
+    return inside ? 0 : best;
+  }
+
   window.TourDollhouseMath = {
     perspective: mat4Perspective,
     lookAt: mat4LookAt,
-    multiply: mat4Multiply
+    multiply: mat4Multiply,
+    distanceOutside: distanceOutside,
+    OUTSIDE_TOLERANCE_M: 1.0
   };
 })();
