@@ -54,7 +54,7 @@ echo "Ready: {$readyCount}, to build: " . count($plan['pending']) . "\n";
 $failed = 0;
 foreach ($plan['pending'] as $item) {
     $started = microtime(true);
-    $ok = $store->build($sessionId, $item['room_id'], $item['stand_id'], $item['key'], $item['photos'], $photoPath);
+    $ok = $store->build($sessionId, $item['room_id'], $item['stand_id'], $item['key'], $item['photos'], $photoPath, $item['center_m']);
     printf("  %s %s/%s (%d photos, %.1fs)\n", $ok ? 'built' : 'FAILED', $item['room_id'], $item['stand_id'], count($item['photos']), microtime(true) - $started);
     $failed += $ok ? 0 : 1;
 }

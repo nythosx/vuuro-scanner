@@ -54,6 +54,7 @@ jobs:
           php tests/tour_stands_test.php
           php tests/tour_readiness_test.php
           php tests/stand_skybox_test.php
+          php tests/stand_depth_cube_test.php
           php tests/tour_stand_strings_test.php
 
       - name: The independent net (every suite, fresh servers and DBs)
