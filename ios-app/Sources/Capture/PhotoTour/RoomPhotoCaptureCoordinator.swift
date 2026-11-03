@@ -72,9 +72,9 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     static let brightIntensityAbove = 350.0
     static let standWallClearanceM = 0.5
     static let standMinWallDistanceM = 0.8
-    static let nextStandSpacingM = 2.5
+    static let nextStandSpacingM = 1.5
     static let standGridStepM = 0.5
-    static let nextStandArrivedM = 0.6
+    static let nextStandArrivedM = 0.5
     static let standHorizonCells = 12
     static let standTiltedCells = 6
     static let standSectorTotal = standHorizonCells + 2 * standTiltedCells + 2
@@ -85,7 +85,8 @@ final class RoomPhotoCaptureCoordinator: ObservableObject {
     static let standTiltMaxDeg = 60.0
     static let standPoleDeg = 72.0
     static let standMaxStepDeg = 5.0
-    static let maximumStandPhotos = standSectorTotal * 4
+    static let maximumStandsPerRoom = 8
+    static let maximumStandPhotos = standSectorTotal * maximumStandsPerRoom
     static let outsideRoomToleranceM = 0.3
 
     var session: ARSession { arSession }

@@ -3098,10 +3098,18 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
     $skyboxPlan = $skyboxes->plan($sessionId, $standsResult['stands_by_room'], $photosByRoom, $skyboxPhotoPath);
     foreach ($skyboxPlan['ready'] as $skyRoomId => $readyStands) {
         foreach ($readyStands as $standIndex => $sky) {
+            $skyBaseUrl = $base . "/scan-sessions/{$sessionId}/skybox/{$sky['key']}/";
             $standsResult['stands_by_room'][$skyRoomId][$standIndex]['skybox'] = [
-                'base_url' => $base . "/scan-sessions/{$sessionId}/skybox/{$sky['key']}/",
+                'base_url' => $skyBaseUrl,
                 'size' => $sky['size'],
             ];
+            if ($sky['depth'] !== null) {
+                $standsResult['stands_by_room'][$skyRoomId][$standIndex]['skybox']['depth'] = [
+                    'url' => $skyBaseUrl . 'depth.bin',
+                    'size' => $sky['depth']['size'],
+                    'center_m' => $sky['depth']['center_m'],
+                ];
+            }
         }
     }
 
@@ -3142,10 +3150,36 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
         set_time_limit(0);
         $skyboxDeadline = microtime(true) + SKYBOX_BACKGROUND_SECONDS;
         foreach ($skyboxPlan['pending'] as $next) {
-            if (microtime(true) > $skyboxDeadline || !$skyboxes->build($sessionId, $next['room_id'], $next['stand_id'], $next['key'], $next['photos'], $skyboxPhotoPath)) {
+            if (microtime(true) > $skyboxDeadline || !$skyboxes->build($sessionId, $next['room_id'], $next['stand_id'], $next['key'], $next['photos'], $skyboxPhotoPath, $next['center_m'])) {
                 break;
             }
         }
+    }
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/skybox/([a-f0-9]{24})/depth\.bin$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'read_photo_upload', true);
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':' . clientIp() . ':read_photo_upload', 600, 300)) {
+        return;
+    }
+    $depthPath = skyboxStore()->depthPath($session['id'], $m[2]);
+    if ($depthPath === null) {
+        respondError(404, 'skybox_depth_not_found', 'The depth for this 360 view is not ready yet.');
+        return;
+    }
+    header('Content-Type: application/octet-stream');
+    header('Cache-Control: private, max-age=86400, immutable');
+    header('Vary: Accept-Encoding');
+    if (str_contains(strtolower((string) ($_SERVER['HTTP_ACCEPT_ENCODING'] ?? '')), 'gzip')) {
+        header('Content-Encoding: gzip');
+        header('Content-Length: ' . filesize($depthPath));
+        readfile($depthPath);
+    } else {
+        readgzfile($depthPath);
     }
     return;
 }

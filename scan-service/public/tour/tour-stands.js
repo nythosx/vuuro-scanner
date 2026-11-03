@@ -25,6 +25,9 @@
   var DRAG_SENSITIVITY = 0.4;
   var TRANSITION_MS = 400;
   var TRANSITION_LOAD_MS = 2500;
+  var DEPTH_CACHE_MAX = 6;
+  var depthCache = {};
+  var depthOrder = [];
   var HANDOVER_MAX_MS = 2500;
   var HANDOVER_FADE_MS = 280;
   var THUMB_YAW_DEG = 35;
@@ -170,6 +173,7 @@
   function preloadStand(n, bearing) {
     var sky = skyboxPhotos(n.stand);
     if (sky) {
+      loadDepth(n.stand);
       sky.forEach(function (face) {
         var skyImg = new Image();
         skyImg.src = state.options.buildPhotoUrl ? state.options.buildPhotoUrl(face.url) : face.url;
@@ -187,6 +191,7 @@
   }
 
   function preloadNeighbours() {
+    if (state.gl && skyboxPhotos(state.stand)) loadDepth(state.stand);
     for (var i = 0; i < state.neighbours.length && i < 2; i++) {
       var n = state.neighbours[i];
       preloadStand(n, bearingTo(n));
@@ -335,16 +340,58 @@
     var size = sky ? Number(sky.size) : 0;
     if (!sky || typeof sky.base_url !== 'string' || !(size > 0) || !Array.isArray(stand.center_m)) return null;
     var half = size / 2;
-    return SKYBOX_FACES.map(function (face) {
+    var depth = standDepth(stand);
+    return SKYBOX_FACES.map(function (face, index) {
       return {
         photo_id: 'skybox-' + stand.stand_id + '-' + face.id,
         url: sky.base_url + face.id + '.jpg',
         intrinsics: [half, half, half, half],
         position_m: stand.center_m,
         skybox: true,
+        face: index,
+        depth_center: depth ? depth.center_m : null,
         pose: { fwd: face.fwd, right: face.right, up: face.up }
       };
     });
+  }
+
+  function standDepth(stand) {
+    var d = stand && stand.skybox && stand.skybox.depth;
+    if (!d || typeof d.url !== 'string' || !(Number(d.size) > 0) || !Array.isArray(d.center_m) || d.center_m.length !== 3) return null;
+    for (var i = 0; i < 3; i++) {
+      if (!isFinite(Number(d.center_m[i]))) return null;
+    }
+    return d;
+  }
+
+  function loadDepth(stand) {
+    var d = standDepth(stand);
+    if (!d || !window.fetch || !window.Promise || !window.TourTransition || !window.TourTransition.depthEnabled()) {
+      return window.Promise ? Promise.resolve(null) : null;
+    }
+    if (depthCache[d.url]) return depthCache[d.url];
+    var size = Number(d.size);
+    var url = state.options.buildPhotoUrl ? state.options.buildPhotoUrl(d.url) : d.url;
+    var promise = fetch(url, { credentials: 'same-origin' }).then(function (res) {
+      return res.ok ? res.arrayBuffer() : null;
+    }).then(function (buf) {
+      if (!buf || buf.byteLength !== 6 * size * size * 2) return null;
+      return { view: new DataView(buf), size: size, centerLocal: d.center_m.map(Number) };
+    }).catch(function () {
+      return null;
+    });
+    depthCache[d.url] = promise;
+    depthOrder.push(d.url);
+    while (depthOrder.length > DEPTH_CACHE_MAX) {
+      delete depthCache[depthOrder.shift()];
+    }
+    return promise;
+  }
+
+  function worldCube(cube, roomId) {
+    if (!cube) return null;
+    var o = roomOrigin(roomId);
+    return { view: cube.view, size: cube.size, center: [cube.centerLocal[0] + o[0], cube.centerLocal[1], cube.centerLocal[2] + o[1]] };
   }
 
   function addPhotoEntries(photos) {
@@ -1833,6 +1880,8 @@
   function photoCenter(photo, roomId, stand, eye) {
     var p = photo.position_m;
     var o = roomOrigin(roomId);
+    var dc = photo.skybox === true && Array.isArray(photo.depth_center) ? photo.depth_center : null;
+    if (dc) return [Number(dc[0]) + o[0], Number(dc[1]), Number(dc[2]) + o[1]];
     var ok = Array.isArray(p) && p.length >= 2 && isFinite(Number(p[0])) && isFinite(Number(p[1]));
     var x = ok ? Number(p[0]) : stand.center_m[0];
     var z = ok ? Number(p[1]) : stand.center_m[1];
@@ -1886,8 +1935,31 @@
     var targetPhotos = (n.stand.photo_ids || []).map(findPhoto).filter(Boolean);
     state.animating = true;
     showLoading();
-    loadStandImages(skyboxPhotos(n.stand) || targetPhotos, function (loaded) {
+    var startedAt = Date.now();
+    var fromSky = state.photoEls.some(function (e) { return e.sky; });
+    var toSkyPhotos = skyboxPhotos(n.stand);
+    var depthFrom = fromSky ? loadDepth(stand) : null;
+    var depthTo = toSkyPhotos ? loadDepth(n.stand) : null;
+    loadStandImages(toSkyPhotos || targetPhotos, function (loaded) {
       if (state.gl !== g || state.stand !== stand || !state.pano) return;
+      if (!window.Promise || (!depthFrom && !depthTo)) {
+        startTransition(loaded, null, null);
+        return;
+      }
+      var budget = Math.max(150, TRANSITION_LOAD_MS - (Date.now() - startedAt));
+      Promise.race([
+        Promise.all([depthFrom, depthTo]),
+        new Promise(function (resolve) { setTimeout(function () { resolve([null, null]); }, budget); })
+      ]).then(function (cubes) {
+        if (state.gl !== g || state.stand !== stand || !state.pano) return;
+        startTransition(loaded, cubes[0], cubes[1]);
+      }, function () {
+        if (state.gl !== g || state.stand !== stand || !state.pano) return;
+        startTransition(loaded, null, null);
+      });
+    });
+
+    function startTransition(loaded, cubeFrom, cubeTo) {
       hideLoading();
       var fromRoom = transitionRoom(fromRoomId);
       var toRoom = n.roomId === fromRoomId ? fromRoom : transitionRoom(n.roomId);
@@ -1902,14 +1974,20 @@
       var sources = [];
       state.photoEls.forEach(function (e) {
         if (!e.tex || fromIndex < 0) return;
-        sources.push({ tex: e.tex, mean: e.mean, pose: e.pose, frame: photoFrame(e), center: photoCenter(e.photo, fromRoomId, stand, state.eyeHeight), feather: e.sky ? 0 : undefined, set: 0, room: fromIndex });
+        sources.push({ tex: e.tex, mean: e.mean, pose: e.pose, frame: photoFrame(e), center: photoCenter(e.photo, fromRoomId, stand, state.eyeHeight), feather: e.sky ? 0 : undefined, face: e.sky ? e.photo.face : undefined, set: 0, room: fromIndex });
       });
+      var toAllSky = loaded.length === SKYBOX_FACES.length;
       loaded.forEach(function (it) {
         if (toIndex < 0) return;
         var entry = { el: it.img, photo: it.photo };
         var isSky = it.photo.skybox === true;
-        sources.push({ img: it.img, mean: isSky ? null : photoMean(it.img), pose: photoPose(it.photo), frame: photoFrame(entry), center: photoCenter(it.photo, n.roomId, n.stand, toEye), feather: isSky ? 0 : undefined, set: 1, room: toIndex });
+        if (!isSky) toAllSky = false;
+        sources.push({ img: it.img, mean: isSky ? null : photoMean(it.img), pose: photoPose(it.photo), frame: photoFrame(entry), center: photoCenter(it.photo, n.roomId, n.stand, toEye), feather: isSky ? 0 : undefined, face: isSky ? it.photo.face : undefined, set: 1, room: toIndex });
       });
+      var fromCube = fromIndex >= 0 ? worldCube(cubeFrom, fromRoomId) : null;
+      var toCube = toIndex >= 0 && toAllSky ? worldCube(cubeTo, n.roomId) : null;
+      var fromEye = fromCube ? fromCube.center : [from[0], state.eyeHeight, from[1]];
+      var toEyePoint = toCube ? toCube.center : [to[0], toEye, to[1]];
       var gainFor = photoGains(sources);
       sources.forEach(function (s) { s.gain = gainFor ? gainFor(s) : [1, 1, 1]; });
       var mid = averageColor('mid', [0.42, 0.41, 0.39], 1);
@@ -1921,8 +1999,9 @@
         background: mid,
         rooms: rooms,
         sources: sources,
-        from: { eye: [from[0], state.eyeHeight, from[1]], yaw: state.viewRotation, pitch: state.viewPitch, fov: state.fov },
-        to: { eye: [to[0], toEye, to[1]], yaw: bearing, pitch: 0, fov: FOV_DEG },
+        depth: [fromCube, toCube],
+        from: { eye: fromEye, yaw: state.viewRotation, pitch: state.viewPitch, fov: state.fov },
+        to: { eye: toEyePoint, yaw: bearing, pitch: 0, fov: FOV_DEG },
         onDone: function (shot) {
           state.transition = null;
           state.animating = false;
@@ -1940,7 +2019,7 @@
       if (state.arrowLayer) state.arrowLayer.hidden = true;
       if (state.cursor) state.cursor.hidden = true;
       if (state.measureLayer) state.measureLayer.style.visibility = 'hidden';
-    });
+    }
   }
 
   function normalizeAngle(deg) {

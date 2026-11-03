@@ -136,7 +136,17 @@ final class StandCaptureMathTests: XCTestCase {
             XCTAssertGreaterThan(second.x, 5)
             XCTAssertGreaterThanOrEqual(C.distanceToOutline(second, outline: room), C.standMinWallDistanceM)
         }
-        XCTAssertNil(C.suggestNextStand(outline: room, stands: [CGPoint(x: 2, y: 2), CGPoint(x: 6, y: 2)]))
+        let twoStands = [CGPoint(x: 2, y: 2), CGPoint(x: 6, y: 2)]
+        let between = C.suggestNextStand(outline: room, stands: twoStands)
+        XCTAssertNotNil(between)
+        if let between {
+            let nearest = twoStands.map { Double(hypot($0.x - between.x, $0.y - between.y)) }.min() ?? 0
+            XCTAssertGreaterThanOrEqual(nearest, C.nextStandSpacingM)
+            XCTAssertGreaterThan(between.x, 3)
+            XCTAssertLessThan(between.x, 5)
+        }
+        XCTAssertNil(C.suggestNextStand(outline: room, stands: [CGPoint(x: 2, y: 2), CGPoint(x: 4, y: 2), CGPoint(x: 6, y: 2)]))
+        XCTAssertEqual(C.maximumStandPhotos, C.standSectorTotal * C.maximumStandsPerRoom)
         XCTAssertEqual(C.distanceToOutline(CGPoint(x: 0.3, y: 2), outline: room), 0.3, accuracy: 1e-9)
         XCTAssertFalse(C.isInside(CGPoint(x: 9, y: 2), outline: room))
     }

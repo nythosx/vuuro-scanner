@@ -7,6 +7,7 @@ namespace VuuroScan\Export;
 final class StandSkyboxStore
 {
     private const META = 'meta.json';
+    public const DEPTH_FILE = 'depth.bin.gz';
 
     public function __construct(private readonly string $root)
     {
@@ -29,7 +30,8 @@ final class StandSkyboxStore
             if ($path === null || !is_file($path)) {
                 return null;
             }
-            return [filesize($path), filemtime($path)];
+            $depth = self::depthFileFor($path);
+            return [filesize($path), filemtime($path), $depth !== null ? filesize($depth) : null];
         });
     }
 
@@ -55,9 +57,10 @@ final class StandSkyboxStore
                 $key = $this->keyFor($photos, $photoPath);
                 $meta = $this->ready($sessionId, $key);
                 if ($meta !== null) {
-                    $ready[(string) $roomId][$index] = ['key' => $key, 'size' => (int) $meta['size']];
+                    $ready[(string) $roomId][$index] = ['key' => $key, 'size' => (int) $meta['size'], 'depth' => self::usableDepth($meta)];
                 } else {
-                    $pending[] = ['room_id' => (string) $roomId, 'stand_id' => (string) ($stand['stand_id'] ?? ''), 'key' => $key, 'photos' => $photos];
+                    $centerXZ = is_array($stand['center_m'] ?? null) && count($stand['center_m']) >= 2 ? [(float) $stand['center_m'][0], (float) $stand['center_m'][1]] : null;
+                    $pending[] = ['room_id' => (string) $roomId, 'stand_id' => (string) ($stand['stand_id'] ?? ''), 'key' => $key, 'photos' => $photos, 'center_m' => $centerXZ];
                 }
             }
         }
@@ -74,6 +77,31 @@ final class StandSkyboxStore
         return is_array($data) && isset($data['size']) ? $data : null;
     }
 
+    public static function usableDepth(array $meta): ?array
+    {
+        $depth = $meta['depth'] ?? null;
+        if (($meta['depth_version'] ?? null) !== StandDepthCube::VERSION || !is_array($depth)) {
+            return null;
+        }
+        if ((float) ($depth['coverage'] ?? 0) < StandDepthCube::MIN_COVERAGE || !is_array($depth['center_m'] ?? null) || count($depth['center_m']) !== 3) {
+            return null;
+        }
+        return ['size' => (int) $depth['size'], 'center_m' => array_map('floatval', $depth['center_m'])];
+    }
+
+    public function depthPath(string $sessionId, string $key): ?string
+    {
+        if (!self::isKey($key)) {
+            return null;
+        }
+        $meta = $this->ready($sessionId, $key);
+        if ($meta === null || self::usableDepth($meta) === null) {
+            return null;
+        }
+        $path = $this->dir($sessionId, $key) . '/' . self::DEPTH_FILE;
+        return is_file($path) ? $path : null;
+    }
+
     public function facePath(string $sessionId, string $key, string $face): ?string
     {
         if (!self::isKey($key) || !self::isFace($face) || $this->ready($sessionId, $key) === null) {
@@ -83,7 +111,7 @@ final class StandSkyboxStore
         return is_file($path) ? $path : null;
     }
 
-    public function build(string $sessionId, string $roomId, string $standId, string $key, array $photos, callable $photoPath): bool
+    public function build(string $sessionId, string $roomId, string $standId, string $key, array $photos, callable $photoPath, ?array $centerXZ = null): bool
     {
         if ($this->ready($sessionId, $key) !== null) {
             return true;
@@ -106,26 +134,57 @@ final class StandSkyboxStore
             $sources = [];
             foreach ($photos as $photo) {
                 $path = $photoPath((string) ($photo['url'] ?? ''));
-                if ($path !== null && is_file($path)) {
-                    $sources[] = ['photo' => $photo, 'bytes' => (string) file_get_contents($path)];
+                if ($path === null || !is_file($path)) {
+                    continue;
                 }
+                $source = ['photo' => $photo, 'bytes' => (string) file_get_contents($path), 'depth' => null];
+                $depthFile = ($photo['has_depth'] ?? false) === true ? self::depthFileFor($path) : null;
+                if ($depthFile !== null) {
+                    $depthBytes = (string) file_get_contents($depthFile);
+                    if (StandDepthCube::usable($photo, $depthBytes)) {
+                        $source['depth'] = $depthBytes;
+                    }
+                }
+                $sources[] = $source;
             }
-            $result = StandSkybox::render($sources);
             $dir = $this->dir($sessionId, $key);
             $tmp = $dir . '.tmp';
             $this->removeDir($tmp);
             if (!@mkdir($tmp, 0775, true)) {
                 return false;
             }
+            $meta = ['depth_version' => StandDepthCube::VERSION, 'depth' => null];
+            $depthForStitch = null;
+            $depthSources = array_values(array_filter($sources, static fn (array $s): bool => $s['depth'] !== null));
+            if ($centerXZ !== null && $depthSources !== []) {
+                $cube = StandDepthCube::render(
+                    array_map(static fn (array $s): array => ['photo' => $s['photo'], 'bytes' => $s['depth']], $depthSources),
+                    StandDepthCube::center($centerXZ, $photos)
+                );
+                $gz = gzencode($cube['bytes'], 6);
+                if ($gz !== false && file_put_contents($tmp . '/' . self::DEPTH_FILE, $gz) !== false) {
+                    $meta['depth'] = [
+                        'size' => $cube['size'],
+                        'center_m' => $cube['center_m'],
+                        'photos' => $cube['photos'],
+                        'measured' => $cube['measured'],
+                        'coverage' => $cube['coverage'],
+                    ];
+                }
+                $depthForStitch = ['size' => $cube['size'], 'values' => $cube['values'], 'center' => $cube['center_m']];
+                unset($cube);
+            }
+            $result = StandSkybox::render($sources, null, $depthForStitch);
             foreach ($result['faces'] as $face => $bytes) {
                 file_put_contents($tmp . '/' . $face . '.jpg', $bytes);
             }
-            file_put_contents($tmp . '/' . self::META, json_encode([
+            file_put_contents($tmp . '/' . self::META, json_encode(array_merge([
                 'size' => $result['size'],
                 'room_id' => $roomId,
                 'stand_id' => $standId,
                 'version' => StandSkybox::VERSION,
-            ]));
+                'gains' => $result['gains'],
+            ], $meta)));
             $this->removeDir($dir);
             if (!@rename($tmp, $dir)) {
                 $this->removeDir($tmp);
@@ -139,6 +198,15 @@ final class StandSkyboxStore
             flock($lock, LOCK_UN);
             fclose($lock);
         }
+    }
+
+    public static function depthFileFor(?string $photoFile): ?string
+    {
+        if ($photoFile === null) {
+            return null;
+        }
+        $path = preg_replace('#\.[A-Za-z0-9]+$#', '.depth', $photoFile);
+        return is_string($path) && $path !== $photoFile && is_file($path) ? $path : null;
     }
 
     public function deleteSession(string $sessionId): void
