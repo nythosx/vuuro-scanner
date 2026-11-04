@@ -18,8 +18,6 @@ struct LidarDepthMeshReport: Codable, Equatable {
     var roomBoxes: Int
     var roomBoxesMatched: Int
     var roomBoxesUnreadable: Bool
-    var roomPlanOriginOffsetM: Double?
-    var roomPlanOriginTurnDeg: Double?
     var openingFaces: Int
     var objectFaces: Int
     var failedFrameNames: [String]?
@@ -40,8 +38,6 @@ struct LidarDepthMeshReport: Codable, Equatable {
         case roomBoxes = "room_boxes"
         case roomBoxesMatched = "room_boxes_matched"
         case roomBoxesUnreadable = "room_boxes_unreadable"
-        case roomPlanOriginOffsetM = "roomplan_origin_offset_m"
-        case roomPlanOriginTurnDeg = "roomplan_origin_turn_deg"
         case failedFrameNames = "failed_frames"
         case openingFaces = "door_window_faces"
         case objectFaces = "object_faces"
@@ -161,7 +157,6 @@ enum DepthMeshFusion {
             return .failure(PlainError(message: "No depth frames could be read, so no mesh could be built.\(detail)"))
         }
         let loadedBoxes = loadBoxes(captureURL: captureURL)
-        let origin = originOffset(loadedBoxes.boxes)
         let mesh: Mesh
         let voxel: Float
         switch fuse(usable, lower: lower, upper: upper, boxes: loadedBoxes.boxes, progress: progress) {
@@ -187,8 +182,6 @@ enum DepthMeshFusion {
             roomBoxes: loadedBoxes.boxes.filter { $0.kind != "floor" }.count,
             roomBoxesMatched: mesh.boxesMatched,
             roomBoxesUnreadable: loadedBoxes.unreadable,
-            roomPlanOriginOffsetM: origin?.0,
-            roomPlanOriginTurnDeg: origin?.1,
             openingFaces: mesh.openingFaces,
             objectFaces: mesh.objectFaces,
             failedFrameNames: failedNames.isEmpty ? nil : failedNames
@@ -312,18 +305,6 @@ enum DepthMeshFusion {
             return .failure(PlainError(message: "The depth frames did not form any surface."))
         }
         return .success((mesh, voxel))
-    }
-
-    private static func originOffset(_ boxes: [LidarRoomBox]) -> (Double, Double)? {
-        var result: (Double, Double)?
-        for box in boxes {
-            guard let values = box.arOrigin, values.count == 16, values.allSatisfy({ $0.isFinite }) else { continue }
-            let offset = Double(simd_length(SIMD3<Float>(values[12], values[13], values[14])))
-            let trace = Double(values[0] + values[5] + values[10])
-            let turn = acos(max(-1, min(1, (trace - 1) / 2))) * 180 / .pi
-            result = (max(result?.0 ?? 0, offset), max(result?.1 ?? 0, turn))
-        }
-        return result
     }
 
     private static func dimensions(_ lower: SIMD3<Float>, _ upper: SIMD3<Float>, _ voxel: Float) -> (Int, Int, Int) {

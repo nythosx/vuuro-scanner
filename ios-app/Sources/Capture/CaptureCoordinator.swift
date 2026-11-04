@@ -379,7 +379,7 @@ extension CaptureCoordinator: RoomCaptureSessionDelegate {
             self.isRunning = false
             do {
                 let room = try await RoomBuilder(options: [.beautifyObjects]).capturedRoom(from: data)
-                self.lidarRecorder.recordRoom(room, arOrigin: data.arFrameReferenceOriginTransform)
+                self.lidarRecorder.recordRoom(room)
                 self.capturedRoom = room
                 let hasUsableGeometry = !room.walls.isEmpty || !room.floors.isEmpty
                 if let error {

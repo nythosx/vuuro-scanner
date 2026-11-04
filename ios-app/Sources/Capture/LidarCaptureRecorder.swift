@@ -13,7 +13,6 @@ struct LidarRoomBox: Codable, Equatable {
     var transform: [Float]
     var dimensions: [Float]
     var corners: [[Float]]? = nil
-    var arOrigin: [Float]? = nil
 }
 
 struct LidarCaptureStats: Codable, Equatable {
@@ -250,14 +249,9 @@ final class LidarCaptureRecorder {
         }
     }
 
-    func recordRoom(_ room: CapturedRoom, arOrigin: simd_float4x4? = nil) {
+    func recordRoom(_ room: CapturedRoom) {
         guard let directory else { return }
-        let origin = arOrigin.map(Self.flatten)
-        roomBoxes.append(contentsOf: Self.boxes(from: room).map { box in
-            var box = box
-            box.arOrigin = origin
-            return box
-        })
+        roomBoxes.append(contentsOf: Self.boxes(from: room))
         do {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

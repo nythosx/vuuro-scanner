@@ -200,23 +200,6 @@ final class DepthMeshFusionTests: XCTestCase {
         XCTAssertGreaterThan(report.floorFilledM2, 0)
     }
 
-    func testRoomPlanOriginOffsetIsReported() throws {
-        try writeWall()
-        let door = LidarRoomBox(
-            kind: "door",
-            category: "door",
-            transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.2, 1.5, -2, 1],
-            dimensions: [0.8, 1.0, 0],
-            arOrigin: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.3, 0, 0.4, 1]
-        )
-        try JSONEncoder().encode([door]).write(to: root.appendingPathComponent(DepthMeshFusion.roomBoxesName))
-
-        let report = try DepthMeshFusion.run(captureURL: root).get()
-        XCTAssertEqual(try XCTUnwrap(report.roomPlanOriginOffsetM), 0.5, accuracy: 1e-4)
-        XCTAssertEqual(try XCTUnwrap(report.roomPlanOriginTurnDeg), 0, accuracy: 0.1)
-        XCTAssertNil(report.failedFrameNames)
-    }
-
     func testUnreadableRoomPlanBoxesStillBuildTheMesh() throws {
         try writeWall()
         try Data("not json".utf8).write(to: root.appendingPathComponent(DepthMeshFusion.roomBoxesName))
