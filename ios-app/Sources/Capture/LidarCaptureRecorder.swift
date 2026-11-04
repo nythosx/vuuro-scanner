@@ -12,6 +12,7 @@ struct LidarRoomBox: Codable, Equatable {
     var category: String
     var transform: [Float]
     var dimensions: [Float]
+    var corners: [[Float]]? = nil
 }
 
 struct LidarCaptureStats: Codable, Equatable {
@@ -29,8 +30,10 @@ struct LidarCaptureStats: Codable, Equatable {
     var lowestFreeMemoryMB = 0
     var writeFailures = 0
     var skippedBusyFrames = 0
+    var depthOnlyFrames: Int?
+    var depthOnlyBytes: Int64?
 
-    var totalBytes: Int64 { frameBytes + meshBytes }
+    var totalBytes: Int64 { frameBytes + meshBytes + (depthOnlyBytes ?? 0) }
 
     enum CodingKeys: String, CodingKey {
         case frames
@@ -47,6 +50,8 @@ struct LidarCaptureStats: Codable, Equatable {
         case lowestFreeMemoryMB = "lowest_free_memory_mb"
         case writeFailures = "write_failures"
         case skippedBusyFrames = "skipped_busy_frames"
+        case depthOnlyFrames = "depth_only_frames"
+        case depthOnlyBytes = "depth_only_bytes"
     }
 }
 
@@ -77,7 +82,6 @@ struct LidarCaptureManifest: Codable, Equatable {
     var roomRuns = 0
     var durationS: Double = 0
     var stats = LidarCaptureStats()
-    var depthMesh: LidarDepthMeshReport?
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -94,7 +98,6 @@ struct LidarCaptureManifest: Codable, Equatable {
         case roomRuns = "room_runs"
         case durationS = "duration_s"
         case stats
-        case depthMesh = "depth_mesh"
     }
 }
 
@@ -115,6 +118,16 @@ struct LidarKeyframe {
     let intrinsics: [Float]
     let timestamp: TimeInterval
     let tracking: String
+}
+
+struct LidarDepthFrame {
+    let index: Int
+    let imageWidth: Int
+    let imageHeight: Int
+    let depth: LidarDepthCopy
+    let transform: [Float]
+    let intrinsics: [Float]
+    let timestamp: TimeInterval
 }
 
 struct LidarMeshAnchorCopy {
@@ -139,6 +152,11 @@ final class LidarCaptureRecorder {
     static let framesFolder = "frames"
     static let meshFolder = "mesh"
     static let roomBoxesName = "roomplan_boxes.json"
+    static let depthFramesFolder = "depth_frames"
+    static let depthOnlyMinDistanceM: Float = 0.1
+    static let depthOnlyMinTurnDeg: Float = 5
+    static let depthOnlyMinIntervalS: TimeInterval = 0.1
+    static let appleMeshExperimentKey = "lidarAppleMeshExperiment"
 
     private(set) var directory: URL?
     private(set) var manifest: LidarCaptureManifest?
@@ -155,6 +173,10 @@ final class LidarCaptureRecorder {
     private var latestMeshAnchors: [ARMeshAnchor] = []
     private var lateConfigChecked = false
     private var roomBoxes: [LidarRoomBox] = []
+    private var lastDepthPose: simd_float4x4?
+    private var lastDepthAt: TimeInterval = -.infinity
+    private var depthWriteInFlight = false
+    private var depthIndex = 0
     private let writer = LidarCaptureWriter()
 
     func prepareSession(_ session: ARSession) {
@@ -167,7 +189,21 @@ final class LidarCaptureRecorder {
             notes.append("RoomPlan session has no ARWorldTrackingConfiguration: \(String(describing: session.configuration.map { type(of: $0) }))")
         }
         guard let current, let updated = current.copy() as? ARWorldTrackingConfiguration else {
+            if UserDefaults.standard.bool(forKey: Self.appleMeshExperimentKey) {
+                let experiment = ARWorldTrackingConfiguration()
+                if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
+                    experiment.sceneReconstruction = .meshWithClassification
+                }
+                if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
+                    experiment.frameSemantics.insert(.sceneDepth)
+                }
+                session.run(experiment)
+                manifest?.configAugmented = true
+                manifest?.configAfter = Self.report(experiment)
+                notes.append("Experiment on: ran a world tracking configuration with mesh and depth on the RoomPlan session")
+            }
             manifest?.configNotes.append(contentsOf: notes)
+            DiagnosticsLog.shared.record("LiDAR recorder: \(notes.joined(separator: "; "))", category: .state)
             persistManifest()
             return
         }
@@ -233,6 +269,10 @@ final class LidarCaptureRecorder {
         }
         for window in room.windows {
             boxes.append(LidarRoomBox(kind: "window", category: "window", transform: flatten(window.transform), dimensions: [window.dimensions.x, window.dimensions.y, window.dimensions.z]))
+        }
+        for floor in room.floors {
+            let corners = CapturedRoomExporter.worldCorners(transform: floor.transform, dimensions: floor.dimensions, polygonCorners: floor.polygonCorners)
+            boxes.append(LidarRoomBox(kind: "floor", category: "floor", transform: flatten(floor.transform), dimensions: [floor.dimensions.x, floor.dimensions.y, floor.dimensions.z], corners: corners.map { $0.map(Float.init) }))
         }
         for object in room.objects {
             boxes.append(LidarRoomBox(kind: "object", category: String(describing: object.category), transform: flatten(object.transform), dimensions: [object.dimensions.x, object.dimensions.y, object.dimensions.z]))
@@ -305,6 +345,7 @@ final class LidarCaptureRecorder {
             snapshotMesh(meshAnchors, at: now)
         }
         guard case .normal = frame.camera.trackingState else { return }
+        sampleDepthOnly(frame, at: now, directory: directory)
         guard now - lastKeyframeAt >= Self.keyframeMinIntervalS else { return }
         let pose = frame.camera.transform
         if let lastPose, !Self.movedEnough(from: lastPose, to: pose) { return }
@@ -334,6 +375,45 @@ final class LidarCaptureRecorder {
         Task { [weak self] in
             let result = await writer.writeKeyframe(keyframe, to: directory.appendingPathComponent(Self.framesFolder, isDirectory: true))
             self?.frameWriteFinished(result, hadDepth: depth != nil)
+        }
+    }
+
+    private func sampleDepthOnly(_ frame: ARFrame, at now: TimeInterval, directory: URL) {
+        guard now - lastDepthAt >= Self.depthOnlyMinIntervalS, !depthWriteInFlight else { return }
+        let pose = frame.camera.transform
+        if let lastDepthPose, !Self.movedEnough(from: lastDepthPose, to: pose, distance: Self.depthOnlyMinDistanceM, turnDeg: Self.depthOnlyMinTurnDeg) { return }
+        guard let depth = (frame.sceneDepth ?? frame.smoothedSceneDepth).flatMap(Self.copyDepth) else { return }
+        lastDepthPose = pose
+        lastDepthAt = now
+        depthIndex += 1
+        let resolution = frame.camera.imageResolution
+        let intrinsics = frame.camera.intrinsics
+        let record = LidarDepthFrame(
+            index: depthIndex,
+            imageWidth: Int(resolution.width),
+            imageHeight: Int(resolution.height),
+            depth: depth,
+            transform: Self.flatten(pose),
+            intrinsics: [intrinsics[0][0], intrinsics[1][1], intrinsics[2][0], intrinsics[2][1]],
+            timestamp: now
+        )
+        depthWriteInFlight = true
+        let writer = self.writer
+        Task { [weak self] in
+            let result = await writer.writeDepthFrame(record, to: directory.appendingPathComponent(Self.depthFramesFolder, isDirectory: true))
+            self?.depthWriteFinished(result)
+        }
+    }
+
+    private func depthWriteFinished(_ result: Result<Int64, Error>) {
+        depthWriteInFlight = false
+        switch result {
+        case .success(let bytes):
+            manifest?.stats.depthOnlyFrames = (manifest?.stats.depthOnlyFrames ?? 0) + 1
+            manifest?.stats.depthOnlyBytes = (manifest?.stats.depthOnlyBytes ?? 0) + bytes
+        case .failure(let error):
+            manifest?.stats.writeFailures += 1
+            DiagnosticsLog.shared.record("LiDAR depth frame write failed: \(error.localizedDescription)", category: .error)
         }
     }
 
@@ -419,14 +499,14 @@ final class LidarCaptureRecorder {
         )
     }
 
-    static func movedEnough(from last: simd_float4x4, to current: simd_float4x4) -> Bool {
+    static func movedEnough(from last: simd_float4x4, to current: simd_float4x4, distance: Float = keyframeMinDistanceM, turnDeg: Float = keyframeMinTurnDeg) -> Bool {
         let a = SIMD3<Float>(last.columns.3.x, last.columns.3.y, last.columns.3.z)
         let b = SIMD3<Float>(current.columns.3.x, current.columns.3.y, current.columns.3.z)
-        if simd_distance(a, b) >= keyframeMinDistanceM { return true }
+        if simd_distance(a, b) >= distance { return true }
         let fa = simd_normalize(-SIMD3<Float>(last.columns.2.x, last.columns.2.y, last.columns.2.z))
         let fb = simd_normalize(-SIMD3<Float>(current.columns.2.x, current.columns.2.y, current.columns.2.z))
         let cosine = max(-1, min(1, simd_dot(fa, fb)))
-        return acos(cosine) * 180 / .pi >= keyframeMinTurnDeg
+        return acos(cosine) * 180 / .pi >= turnDeg
     }
 
     static func flatten(_ m: simd_float4x4) -> [Float] {
@@ -568,6 +648,40 @@ final class LidarCaptureRecorder {
 actor LidarCaptureWriter {
     private let ciContext = CIContext()
     private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+
+    func writeDepthFrame(_ record: LidarDepthFrame, to folder: URL) -> Result<Int64, Error> {
+        let stem = String(format: "%06d", record.index)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            var bytes = Int64(record.depth.millimeters.count)
+            try record.depth.millimeters.write(to: folder.appendingPathComponent("\(stem).depth"), options: .atomic)
+            var meta: [String: Any] = [
+                "index": record.index,
+                "timestamp": record.timestamp,
+                "image_width": record.imageWidth,
+                "image_height": record.imageHeight,
+                "image_orientation": "sensor_landscape",
+                "camera_transform": record.transform.map(Double.init),
+                "intrinsics_fx_fy_cx_cy": record.intrinsics.map(Double.init),
+                "tracking": "normal",
+                "depth": "\(stem).depth",
+                "depth_format": "uint16_le_millimeters",
+                "depth_width": record.depth.width,
+                "depth_height": record.depth.height
+            ]
+            if let confidence = record.depth.confidence {
+                try confidence.write(to: folder.appendingPathComponent("\(stem).conf"), options: .atomic)
+                bytes += Int64(confidence.count)
+                meta["confidence"] = "\(stem).conf"
+                meta["confidence_format"] = "uint8_arconfidence_0_low_1_medium_2_high"
+            }
+            let json = try JSONSerialization.data(withJSONObject: meta, options: [.sortedKeys])
+            try json.write(to: folder.appendingPathComponent("\(stem).json"), options: .atomic)
+            return .success(bytes + Int64(json.count))
+        } catch {
+            return .failure(error)
+        }
+    }
 
     func writeKeyframe(_ keyframe: LidarKeyframe, to framesDirectory: URL) -> Result<Int64, Error> {
         let stem = String(format: "%06d", keyframe.index)

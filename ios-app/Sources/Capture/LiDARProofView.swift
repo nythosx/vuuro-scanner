@@ -10,6 +10,9 @@ struct LiDARProofView: View {
     @State private var showMesh = false
     @State private var isFusing = false
     @State private var fusionError: String?
+    @State private var fusionProgress: Double = 0
+    @State private var fusionTask: Task<Void, Never>?
+    @State private var depthReport: LidarDepthMeshReport?
 
     var body: some View {
         ScrollView {
@@ -44,6 +47,10 @@ struct LiDARProofView: View {
             }
         }
         .onAppear(perform: load)
+        .onDisappear {
+            fusionTask?.cancel()
+            fusionTask = nil
+        }
         .fullScreenCover(isPresented: $showMesh) {
             if let captureURL {
                 NavigationStack {
@@ -63,6 +70,12 @@ struct LiDARProofView: View {
             row("Mesh received", manifest.stats.meshSeen ? "yes" : "no")
             row("Mesh classification", manifest.stats.classificationSeen ? "yes" : "no")
             row("Mesh built from depth", depthMeshText(manifest))
+            if let depthReport, depthReport.roomBoxes > 0 {
+                row("RoomPlan items that land on the mesh", "\(depthReport.roomBoxesMatched) of \(depthReport.roomBoxes)")
+            }
+            if let percent = depthReport?.floorSeenInsideRoomPlanPercent {
+                row("Seen floor inside the RoomPlan outline", String(format: "%.0f%%", percent))
+            }
             ForEach(manifest.configNotes, id: \.self) { note in
                 Text(note)
                     .font(.system(size: 13))
@@ -77,14 +90,15 @@ struct LiDARProofView: View {
             row("Rooms recorded", "\(manifest.roomRuns)")
             row("Duration", String(format: "%.0f s", manifest.durationS))
             row("Keyframes", "\(stats.frames) (\(stats.depthFrames) with depth)")
+            row("Extra depth-only frames", "\(stats.depthOnlyFrames ?? 0)")
             row("Mesh", "\(stats.meshAnchors) pieces, \(stats.meshVertices) points, \(stats.meshFaces) triangles")
-            if let depthMesh = manifest.depthMesh {
+            if let depthMesh = depthReport {
                 row("Depth mesh", "\(depthMesh.vertices) points, \(depthMesh.faces) triangles")
-                row("Depth mesh frames", "\(depthMesh.framesUsed) used, \(depthMesh.framesFailed) unreadable")
+                row("Depth mesh frames", "\(depthMesh.framesUsed) used (\(depthMesh.depthOnlyFramesUsed) depth-only), \(depthMesh.framesFailed) unreadable")
                 row("Depth mesh detail", String(format: "%.0f mm cells, built in %.1f s", depthMesh.voxelM * 1000, depthMesh.seconds))
                 row("Mesh footprint from above", String(format: "%.1f m2", depthMesh.footprintM2))
                 row("Floor seen by the camera", String(format: "%.1f m2", depthMesh.floorSeenM2))
-                row("Floor filled where unseen", String(format: "%.1f m2", depthMesh.floorFilledM2))
+                row("Floor filled where unseen", String(format: "%.1f m2", depthMesh.floorFilledM2) + (depthMesh.fillClippedToRoomPlan ? ", inside the RoomPlan outline" : ", no RoomPlan outline"))
                 row("RoomPlan doors, windows, objects", depthMesh.roomBoxesUnreadable ? "file unreadable" : "\(depthMesh.roomBoxes)")
                 row("Labelled from RoomPlan", "\(depthMesh.openingFaces) door/window, \(depthMesh.objectFaces) furniture triangles")
             }
@@ -104,7 +118,7 @@ struct LiDARProofView: View {
                 if isFusing {
                     HStack(spacing: 8) {
                         ProgressView()
-                        Text("Building the mesh from depth")
+                        Text("Building the mesh from depth \(Int(fusionProgress * 100))%")
                     }
                     .frame(maxWidth: .infinity)
                 } else {
@@ -115,10 +129,10 @@ struct LiDARProofView: View {
             .buttonStyle(.vuuroPrimary)
             .disabled(isFusing || !hasMesh)
 
-            if let fusionError {
-                Text(fusionError)
+            if let reason = meshUnavailableReason {
+                Text(reason)
                     .font(.system(size: 14))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(fusionError == nil ? VuuroColor.textSecondary : .red)
             }
 
             Button(action: export) {
@@ -158,11 +172,20 @@ struct LiDARProofView: View {
 
     private var hasMesh: Bool {
         guard let manifest else { return false }
-        return manifest.stats.meshSeen || manifest.depthMesh != nil
+        return manifest.stats.meshSeen || depthReport != nil
+    }
+
+    private var meshUnavailableReason: String? {
+        if let fusionError { return fusionError }
+        guard let manifest, !hasMesh, !isFusing else { return nil }
+        if manifest.stats.depthFrames == 0 && (manifest.stats.depthOnlyFrames ?? 0) == 0 {
+            return "No mesh: this capture has no depth frames, so a mesh cannot be built."
+        }
+        return "No mesh yet."
     }
 
     private func depthMeshText(_ manifest: LidarCaptureManifest) -> String {
-        if let depthMesh = manifest.depthMesh {
+        if let depthMesh = depthReport {
             return "yes, \(depthMesh.faces) triangles"
         }
         if isFusing { return "building" }
@@ -172,20 +195,33 @@ struct LiDARProofView: View {
 
     private func buildDepthMeshIfNeeded() {
         guard let captureURL, let manifest, !isFusing else { return }
-        guard !manifest.stats.meshSeen, manifest.depthMesh == nil, manifest.stats.depthFrames > 0 else { return }
+        let depthFrames = manifest.stats.depthFrames + (manifest.stats.depthOnlyFrames ?? 0)
+        guard !manifest.stats.meshSeen, depthReport == nil, depthFrames > 0 else { return }
         isFusing = true
         fusionError = nil
-        Task {
-            let result = await Task.detached(priority: .userInitiated) {
-                DepthMeshFusion.run(captureURL: captureURL)
-            }.value
+        fusionProgress = 0
+        fusionTask = Task {
+            let work = Task.detached(priority: .userInitiated) {
+                DepthMeshFusion.run(captureURL: captureURL) { value in
+                    Task { @MainActor in
+                        fusionProgress = value
+                    }
+                }
+            }
+            let result = await withTaskCancellationHandler {
+                await work.value
+            } onCancel: {
+                work.cancel()
+            }
             isFusing = false
+            fusionTask = nil
             switch result {
-            case .success(let updated):
+            case .success(let report):
                 if self.captureURL == captureURL {
-                    self.manifest = updated
+                    depthReport = report
                 }
             case .failure(let error):
+                if error is CancellationError { return }
                 fusionError = "Could not build the mesh from depth: \(error.localizedDescription)"
                 DiagnosticsLog.shared.record("Depth mesh failed: \(error.localizedDescription)", category: .error)
             }
@@ -217,6 +253,13 @@ struct LiDARProofView: View {
             }
             captureURL = latest
             manifest = try LidarCaptureLibrary.manifest(at: latest)
+            switch DepthMeshFusion.loadReport(captureURL: latest) {
+            case .success(let report):
+                depthReport = report
+            case .failure(let error):
+                depthReport = nil
+                fusionError = "The saved depth mesh report could not be read: \(error.localizedDescription)"
+            }
             buildDepthMeshIfNeeded()
         } catch {
             manifest = nil

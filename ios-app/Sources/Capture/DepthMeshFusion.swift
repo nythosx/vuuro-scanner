@@ -5,13 +5,17 @@ struct LidarDepthMeshReport: Codable, Equatable {
     var vertices: Int
     var faces: Int
     var framesUsed: Int
+    var depthOnlyFramesUsed: Int
     var framesFailed: Int
     var voxelM: Double
     var seconds: Double
     var floorSeenM2: Double
     var floorFilledM2: Double
     var footprintM2: Double
+    var fillClippedToRoomPlan: Bool
+    var floorSeenInsideRoomPlanPercent: Double?
     var roomBoxes: Int
+    var roomBoxesMatched: Int
     var roomBoxesUnreadable: Bool
     var openingFaces: Int
     var objectFaces: Int
@@ -20,13 +24,17 @@ struct LidarDepthMeshReport: Codable, Equatable {
         case vertices
         case faces
         case framesUsed = "frames_used"
+        case depthOnlyFramesUsed = "depth_only_frames_used"
         case framesFailed = "frames_failed"
         case voxelM = "voxel_m"
         case seconds
         case floorSeenM2 = "floor_seen_m2"
         case floorFilledM2 = "floor_filled_m2"
         case footprintM2 = "footprint_m2"
+        case fillClippedToRoomPlan = "fill_clipped_to_roomplan"
+        case floorSeenInsideRoomPlanPercent = "floor_seen_inside_roomplan_percent"
         case roomBoxes = "room_boxes"
+        case roomBoxesMatched = "room_boxes_matched"
         case roomBoxesUnreadable = "room_boxes_unreadable"
         case openingFaces = "door_window_faces"
         case objectFaces = "object_faces"
@@ -37,14 +45,18 @@ enum DepthMeshFusion {
     static let identifier = "depth_fusion"
     static let baseVoxel: Float = 0.04
     static let truncationVoxels = 3
-    static let maxVoxels = 6_000_000
+    static let maxVoxels = 10_000_000
     static let pixelStride = 2
+    static let boundsStride = 8
     static let minDepth: Float = 0.2
     static let maxDepth: Float = 5
     static let maxWeight: Float = 64
     static let surfaceBand: Float = 0.9
     static let padding: Float = 0.2
     static let meshFolder = "mesh"
+    static let framesFolder = "frames"
+    static let depthFramesFolder = "depth_frames"
+    static let reportName = "report.json"
     static let roomBoxesName = "roomplan_boxes.json"
     static let fillCell: Float = 0.05
     static let closingSteps = 3
@@ -57,6 +69,7 @@ enum DepthMeshFusion {
     static let windowClass: UInt8 = 6
     static let doorClass: UInt8 = 7
     static let objectClass: UInt8 = 8
+    static let filledFloorClass: UInt8 = 9
 
     private struct Cloud {
         let points: [SIMD3<Float>]
@@ -71,6 +84,9 @@ enum DepthMeshFusion {
         let floorSeenM2: Double
         let floorFilledM2: Double
         let footprintM2: Double
+        let fillClipped: Bool
+        let floorSeenInsidePercent: Double?
+        let boxesMatched: Int
         let openingFaces: Int
         let objectFaces: Int
     }
@@ -89,68 +105,86 @@ enum DepthMeshFusion {
         return edges
     }()
 
-    static func run(captureURL: URL) -> Result<LidarCaptureManifest, Error> {
-        let started = Date()
-        let frames: [MeshFrame]
-        switch MeshFrameIndex.load(captureURL: captureURL) {
-        case .success(let loaded):
-            frames = loaded.frames
-        case .failure(let error):
+    static func loadReport(captureURL: URL) -> Result<LidarDepthMeshReport?, Error> {
+        let url = captureURL.appendingPathComponent(meshFolder, isDirectory: true).appendingPathComponent(reportName)
+        guard FileManager.default.fileExists(atPath: url.path) else { return .success(nil) }
+        do {
+            return .success(try JSONDecoder().decode(LidarDepthMeshReport.self, from: Data(contentsOf: url)))
+        } catch {
             return .failure(error)
         }
-        var clouds: [Cloud] = []
+    }
+
+    static func run(captureURL: URL, progress: (@Sendable (Double) -> Void)? = nil) -> Result<LidarDepthMeshReport, Error> {
+        let started = Date()
+        var frames: [MeshFrame] = []
+        for folder in [framesFolder, depthFramesFolder] {
+            switch MeshFrameIndex.load(captureURL: captureURL, folder: folder) {
+            case .success(let loaded):
+                frames.append(contentsOf: loaded.frames.filter { $0.depthURL != nil })
+            case .failure(let error):
+                return .failure(error)
+            }
+        }
+        var lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        var usable: [MeshFrame] = []
         var failed = 0
         for frame in frames {
             if Task.isCancelled { return .failure(CancellationError()) }
             do {
-                if let cloud = try cloud(for: frame) {
-                    clouds.append(cloud)
+                guard let cloud = try cloud(for: frame, stride: boundsStride) else { continue }
+                for point in cloud.points {
+                    lower = simd_min(lower, point)
+                    upper = simd_max(upper, point)
                 }
+                usable.append(frame)
             } catch {
                 failed += 1
             }
         }
-        guard !clouds.isEmpty else {
+        guard !usable.isEmpty else {
             return .failure(PlainError(message: "No depth frames could be read, so no mesh could be built."))
         }
         let loadedBoxes = loadBoxes(captureURL: captureURL)
         let mesh: Mesh
         let voxel: Float
-        switch fuse(clouds, boxes: loadedBoxes.boxes) {
+        switch fuse(usable, lower: lower, upper: upper, boxes: loadedBoxes.boxes, progress: progress) {
         case .success(let result):
             mesh = result.0
             voxel = result.1
         case .failure(let error):
             return .failure(error)
         }
+        let report = LidarDepthMeshReport(
+            vertices: mesh.vertices.count / 3,
+            faces: mesh.faces.count / 3,
+            framesUsed: usable.count,
+            depthOnlyFramesUsed: usable.filter { $0.depthURL?.deletingLastPathComponent().lastPathComponent == depthFramesFolder }.count,
+            framesFailed: failed,
+            voxelM: Double(voxel),
+            seconds: Date().timeIntervalSince(started),
+            floorSeenM2: mesh.floorSeenM2,
+            floorFilledM2: mesh.floorFilledM2,
+            footprintM2: mesh.footprintM2,
+            fillClippedToRoomPlan: mesh.fillClipped,
+            floorSeenInsideRoomPlanPercent: mesh.floorSeenInsidePercent,
+            roomBoxes: loadedBoxes.boxes.filter { $0.kind != "floor" }.count,
+            roomBoxesMatched: mesh.boxesMatched,
+            roomBoxesUnreadable: loadedBoxes.unreadable,
+            openingFaces: mesh.openingFaces,
+            objectFaces: mesh.objectFaces
+        )
         do {
-            try write(mesh, to: captureURL)
-            var manifest = try LidarCaptureLibrary.manifest(at: captureURL)
-            manifest.depthMesh = LidarDepthMeshReport(
-                vertices: mesh.vertices.count / 3,
-                faces: mesh.faces.count / 3,
-                framesUsed: clouds.count,
-                framesFailed: failed,
-                voxelM: Double(voxel),
-                seconds: Date().timeIntervalSince(started),
-                floorSeenM2: mesh.floorSeenM2,
-                floorFilledM2: mesh.floorFilledM2,
-                footprintM2: mesh.footprintM2,
-                roomBoxes: loadedBoxes.boxes.count,
-                roomBoxesUnreadable: loadedBoxes.unreadable,
-                openingFaces: mesh.openingFaces,
-                objectFaces: mesh.objectFaces
-            )
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(manifest).write(to: captureURL.appendingPathComponent(LidarCaptureLibrary.manifestName), options: .atomic)
-            return .success(manifest)
+            try write(mesh, report: report, to: captureURL)
+            progress?(1)
+            return .success(report)
         } catch {
             return .failure(error)
         }
     }
 
-    private static func cloud(for frame: MeshFrame) throws -> Cloud? {
+    private static func cloud(for frame: MeshFrame, stride pixelStep: Int) throws -> Cloud? {
         guard let depthURL = frame.depthURL, frame.depthWidth > 0, frame.depthHeight > 0 else { return nil }
         let count = frame.depthWidth * frame.depthHeight
         let depthData = try Data(contentsOf: depthURL)
@@ -174,9 +208,9 @@ enum DepthMeshFusion {
         let cy = frame.cy * scaleY
         let transform = frame.cameraTransform
         var points: [SIMD3<Float>] = []
-        points.reserveCapacity(count / (pixelStride * pixelStride))
-        for v in stride(from: 0, to: frame.depthHeight, by: pixelStride) {
-            for u in stride(from: 0, to: frame.depthWidth, by: pixelStride) {
+        points.reserveCapacity(count / (pixelStep * pixelStep))
+        for v in Swift.stride(from: 0, to: frame.depthHeight, by: pixelStep) {
+            for u in Swift.stride(from: 0, to: frame.depthWidth, by: pixelStep) {
                 let index = v * frame.depthWidth + u
                 if let confidence, confidence[index] < 1 { continue }
                 let d = Float(depth[index]) / 1000
@@ -192,17 +226,9 @@ enum DepthMeshFusion {
         return Cloud(points: points, origin: origin)
     }
 
-    private static func fuse(_ clouds: [Cloud], boxes: [LidarRoomBox]) -> Result<(Mesh, Float), Error> {
-        var lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
-        var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
-        for cloud in clouds {
-            for index in stride(from: 0, to: cloud.points.count, by: 4) {
-                lower = simd_min(lower, cloud.points[index])
-                upper = simd_max(upper, cloud.points[index])
-            }
-        }
-        lower -= SIMD3<Float>(repeating: padding)
-        upper += SIMD3<Float>(repeating: padding)
+    private static func fuse(_ frames: [MeshFrame], lower rawLower: SIMD3<Float>, upper rawUpper: SIMD3<Float>, boxes: [LidarRoomBox], progress: (@Sendable (Double) -> Void)?) -> Result<(Mesh, Float), Error> {
+        let lower = rawLower - SIMD3<Float>(repeating: padding)
+        let upper = rawUpper + SIMD3<Float>(repeating: padding)
         var voxel = baseVoxel
         var dims = dimensions(lower, upper, voxel)
         while dims.0 * dims.1 * dims.2 > maxVoxels {
@@ -217,12 +243,21 @@ enum DepthMeshFusion {
         var tsdf = [Float](repeating: 1, count: count)
         var weight = [Float](repeating: 0, count: count)
         let truncation = Float(truncationVoxels) * voxel
+        var readError: Error?
         var cancelled = false
         tsdf.withUnsafeMutableBufferPointer { t in
             weight.withUnsafeMutableBufferPointer { w in
-                for cloud in clouds {
+                for (number, frame) in frames.enumerated() {
                     if Task.isCancelled {
                         cancelled = true
+                        return
+                    }
+                    let cloud: Cloud
+                    do {
+                        guard let loaded = try Self.cloud(for: frame, stride: pixelStride) else { continue }
+                        cloud = loaded
+                    } catch {
+                        readError = error
                         return
                     }
                     for point in cloud.points {
@@ -240,10 +275,12 @@ enum DepthMeshFusion {
                             w[index] = min(current + 1, maxWeight)
                         }
                     }
+                    progress?(0.8 * Double(number + 1) / Double(frames.count))
                 }
             }
         }
         if cancelled { return .failure(CancellationError()) }
+        if let readError { return .failure(readError) }
         let mesh = extract(tsdf: tsdf, weight: weight, nx: nx, ny: ny, nz: nz, lower: lower, voxel: voxel, boxes: boxes)
         guard !mesh.faces.isEmpty else {
             return .failure(PlainError(message: "The depth frames did not form any surface."))
@@ -380,7 +417,7 @@ enum DepthMeshFusion {
 
     private static func prepare(_ boxes: [LidarRoomBox]) -> [Box] {
         let prepared: [Box] = boxes.compactMap { box in
-            guard box.transform.count == 16, box.dimensions.count == 3,
+            guard box.kind != "floor", box.transform.count == 16, box.dimensions.count == 3,
                   box.transform.allSatisfy({ $0.isFinite }),
                   box.dimensions.allSatisfy({ $0.isFinite && $0 >= 0 }) else { return nil }
             let values = box.transform
@@ -431,6 +468,9 @@ enum DepthMeshFusion {
             let sum = normals[a] + normals[b] + normals[c]
             let length = simd_length(sum)
             let normal = length > 1e-9 ? sum / length : SIMD3<Float>(0, 1, 0)
+            if simd_dot(simd_cross(positions[b] - positions[a], positions[c] - positions[a]), normal) < 0 {
+                faces.swapAt(face * 3 + 1, face * 3 + 2)
+            }
             let centroid = (positions[a] + positions[b] + positions[c]) / 3
             faceNormals.append(normal)
             centroids.append(centroid)
@@ -465,23 +505,44 @@ enum DepthMeshFusion {
         let boxes = prepare(roomBoxes)
         var openingFaces = 0
         var objectFaces = 0
+        var matched = Set<Int>()
         if !boxes.isEmpty {
             for face in 0..<faceCount {
                 let current = classes[face]
                 let point = SIMD4<Float>(centroids[face], 1)
-                for box in boxes {
+                for (boxIndex, box) in boxes.enumerated() {
                     if box.isOpening, current == floorClass || current == ceilingClass { continue }
                     if !box.isOpening, current == floorClass { continue }
                     let local = box.inverse * point
                     if abs(local.x) <= box.half.x, abs(local.y) <= box.half.y, abs(local.z) <= box.half.z {
                         classes[face] = box.label
+                        matched.insert(boxIndex)
                         if box.isOpening { openingFaces += 1 } else { objectFaces += 1 }
                         break
                     }
                 }
             }
         }
-        let fill = floorFill(centroids: centroids, classes: classes, floorY: floorY)
+        let outlines: [[SIMD2<Float>]] = roomBoxes.compactMap { box in
+            guard box.kind == "floor", let corners = box.corners, corners.count >= 3 else { return nil }
+            let points = corners.compactMap { corner -> SIMD2<Float>? in
+                guard corner.count == 3, corner.allSatisfy({ $0.isFinite }) else { return nil }
+                return SIMD2<Float>(corner[0], corner[2])
+            }
+            return points.count >= 3 ? points : nil
+        }
+        var floorSeenInsidePercent: Double?
+        if !outlines.isEmpty {
+            var floorFaces = 0
+            var inside = 0
+            for face in 0..<faceCount where classes[face] == floorClass {
+                floorFaces += 1
+                let point = SIMD2<Float>(centroids[face].x, centroids[face].z)
+                if outlines.contains(where: { polygonContains($0, point) }) { inside += 1 }
+            }
+            if floorFaces > 0 { floorSeenInsidePercent = Double(inside) * 100 / Double(floorFaces) }
+        }
+        let fill = floorFill(centroids: centroids, classes: classes, floorY: floorY, outlines: outlines)
         for cell in fill.cells {
             let base = UInt32(positions.count)
             let x = cell.x
@@ -494,7 +555,7 @@ enum DepthMeshFusion {
             ])
             normals.append(contentsOf: Array(repeating: SIMD3<Float>(0, 1, 0), count: 4))
             faces.append(contentsOf: [base, base + 1, base + 2, base, base + 2, base + 3])
-            classes.append(contentsOf: [floorClass, floorClass])
+            classes.append(contentsOf: [filledFloorClass, filledFloorClass])
         }
         var vertexFloats: [Float] = []
         vertexFloats.reserveCapacity(positions.count * 3)
@@ -511,12 +572,28 @@ enum DepthMeshFusion {
             floorSeenM2: floorSeen,
             floorFilledM2: Double(fill.cells.count) * cellArea,
             footprintM2: Double(fill.footprintCells) * cellArea,
+            fillClipped: !outlines.isEmpty,
+            floorSeenInsidePercent: floorSeenInsidePercent,
+            boxesMatched: matched.count,
             openingFaces: openingFaces,
             objectFaces: objectFaces
         )
     }
 
-    private static func floorFill(centroids: [SIMD3<Float>], classes: [UInt8], floorY: Float) -> (cells: [SIMD2<Float>], footprintCells: Int) {
+    static func polygonContains(_ polygon: [SIMD2<Float>], _ point: SIMD2<Float>) -> Bool {
+        var inside = false
+        var previous = polygon[polygon.count - 1]
+        for current in polygon {
+            if (current.y > point.y) != (previous.y > point.y) {
+                let crossX = (previous.x - current.x) * (point.y - current.y) / (previous.y - current.y) + current.x
+                if point.x < crossX { inside.toggle() }
+            }
+            previous = current
+        }
+        return inside
+    }
+
+    private static func floorFill(centroids: [SIMD3<Float>], classes: [UInt8], floorY: Float, outlines: [[SIMD2<Float>]]) -> (cells: [SIMD2<Float>], footprintCells: Int) {
         let low = floorY - 0.3
         let high = floorY + 2.5
         var minimum = SIMD2<Float>(repeating: .greatestFiniteMagnitude)
@@ -549,7 +626,11 @@ enum DepthMeshFusion {
             for i in 0..<width where footprint[j * width + i] {
                 footprintCells += 1
                 if !floor[j * width + i] {
-                    cells.append(SIMD2<Float>(minimum.x + Float(i) * fillCell, minimum.y + Float(j) * fillCell))
+                    let corner = SIMD2<Float>(minimum.x + Float(i) * fillCell, minimum.y + Float(j) * fillCell)
+                    let center = corner + SIMD2<Float>(repeating: fillCell / 2)
+                    if outlines.isEmpty || outlines.contains(where: { polygonContains($0, center) }) {
+                        cells.append(corner)
+                    }
                 }
             }
         }
@@ -607,7 +688,7 @@ enum DepthMeshFusion {
         return outside.map { !$0 }
     }
 
-    private static func write(_ mesh: Mesh, to captureURL: URL) throws {
+    private static func write(_ mesh: Mesh, report: LidarDepthMeshReport, to captureURL: URL) throws {
         let fileManager = FileManager.default
         let target = captureURL.appendingPathComponent(meshFolder, isDirectory: true)
         let staging = captureURL.appendingPathComponent(meshFolder + ".tmp", isDirectory: true)
@@ -634,6 +715,9 @@ enum DepthMeshFusion {
         ]
         let json = try JSONSerialization.data(withJSONObject: ["anchors": [entry], "source": identifier], options: [.prettyPrinted, .sortedKeys])
         try json.write(to: staging.appendingPathComponent("anchors.json"))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(report).write(to: staging.appendingPathComponent(reportName))
         if fileManager.fileExists(atPath: target.path) {
             try fileManager.removeItem(at: target)
         }

@@ -53,7 +53,7 @@ enum MeshTexturer {
         for frameIndex in stride(from: 0, to: frames.count, by: step) {
             if Task.isCancelled { return .failure(CancellationError()) }
             let frame = frames[frameIndex]
-            guard let photo = loadPhoto(frame.imageURL) else {
+            guard let imageURL = frame.imageURL, let photo = loadPhoto(imageURL) else {
                 failed += 1
                 continue
             }

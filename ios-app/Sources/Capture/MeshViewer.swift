@@ -21,6 +21,8 @@ struct MeshViewer: View {
     @State private var texturing = false
     @State private var textured = false
     @State private var textureNote: String?
+    @State private var showFilledFloor = false
+    @State private var hasFilledFloor = false
 
     enum Mode: String, CaseIterable, Identifiable {
         case clay = "Clay"
@@ -66,6 +68,16 @@ struct MeshViewer: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .background(.ultraThinMaterial)
+            .overlay(alignment: .bottom) {
+                if hasFilledFloor {
+                    Toggle("Show floor filled where the camera did not see", isOn: $showFilledFloor)
+                        .font(.system(size: 13))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial)
+                        .offset(y: 40)
+                }
+            }
         }
         .safeAreaInset(edge: .bottom) {
             if built != nil {
@@ -80,6 +92,9 @@ struct MeshViewer: View {
             }
         }
         .onChange(of: mode) { _, _ in
+            applyMode()
+        }
+        .onChange(of: showFilledFloor) { _, _ in
             applyMode()
         }
         .onChange(of: frameIndex) { _, _ in
@@ -216,7 +231,7 @@ struct MeshViewer: View {
 
     private func applyMode() {
         guard let built else { return }
-        MeshSceneBuilder.apply(mode, showCeiling: frameIndex != nil, parts: built.parts)
+        MeshSceneBuilder.apply(mode, showCeiling: frameIndex != nil, showFilledFloor: showFilledFloor, parts: built.parts)
     }
 
     private func colorize() async {
@@ -270,7 +285,10 @@ struct MeshViewer: View {
         photo = nil
         photoError = nil
         guard showPhoto, let frameIndex, frames.indices.contains(frameIndex) else { return }
-        let url = frames[frameIndex].imageURL
+        guard let url = frames[frameIndex].imageURL else {
+            photoError = "This frame has no photo."
+            return
+        }
         let result = await Task.detached(priority: .userInitiated) { () -> Result<UIImage, Error> in
             do {
                 let data = try Data(contentsOf: url)
@@ -298,7 +316,10 @@ struct MeshViewer: View {
         }.value
         switch result {
         case .success(let loaded):
-            MeshSceneBuilder.apply(mode, showCeiling: false, parts: loaded.parts)
+            MeshSceneBuilder.apply(mode, showCeiling: false, showFilledFloor: showFilledFloor, parts: loaded.parts)
+            hasFilledFloor = loaded.parts.contains { part in
+                part.plain.materials.contains { $0.name == String(MeshSceneBuilder.filledFloorClass) }
+            }
             built = loaded
         case .failure(let error):
             loadError = "Could not load the mesh: \(error.localizedDescription)"
@@ -309,8 +330,8 @@ struct MeshViewer: View {
         isLoading = false
         switch frameResult {
         case .success(let loaded):
-            frames = loaded.frames
-            skippedFrames = loaded.skipped
+            frames = loaded.frames.filter { $0.imageURL != nil }
+            skippedFrames = loaded.skipped + loaded.frames.count - frames.count
         case .failure(let error):
             frameError = "Could not read the capture frames: \(error.localizedDescription)"
         }
@@ -321,7 +342,7 @@ struct MeshFrame {
     let index: Int
     let cameraTransform: simd_float4x4
     let verticalFieldOfView: CGFloat
-    let imageURL: URL
+    let imageURL: URL?
     let imageWidth: Int
     let imageHeight: Int
     let fx: Float
@@ -348,7 +369,7 @@ enum MeshFrameIndex {
 
     private struct Meta: Decodable {
         let index: Int
-        let image: String
+        let image: String?
         let imageWidth: Int
         let imageHeight: Int
         let cameraTransform: [Float]
@@ -372,8 +393,8 @@ enum MeshFrameIndex {
         }
     }
 
-    static func load(captureURL: URL) -> Result<Loaded, Error> {
-        let folder = captureURL.appendingPathComponent(framesFolder, isDirectory: true)
+    static func load(captureURL: URL, folder folderName: String = MeshFrameIndex.framesFolder) -> Result<Loaded, Error> {
+        let folder = captureURL.appendingPathComponent(folderName, isDirectory: true)
         guard FileManager.default.fileExists(atPath: folder.path) else {
             return .success(Loaded(frames: [], skipped: 0))
         }
@@ -410,8 +431,7 @@ enum MeshFrameIndex {
               meta.intrinsics[0] > 0,
               meta.intrinsics[1] > 0,
               meta.imageWidth > 0,
-              meta.imageHeight > 0,
-              !meta.image.isEmpty else { return nil }
+              meta.imageHeight > 0 else { return nil }
         let values = meta.cameraTransform
         let transform = simd_float4x4(
             SIMD4<Float>(values[0], values[1], values[2], values[3]),
@@ -425,7 +445,7 @@ enum MeshFrameIndex {
             index: meta.index,
             cameraTransform: transform,
             verticalFieldOfView: CGFloat(fov),
-            imageURL: folder.appendingPathComponent(meta.image),
+            imageURL: meta.image.flatMap { $0.isEmpty ? nil : folder.appendingPathComponent($0) },
             imageWidth: meta.imageWidth,
             imageHeight: meta.imageHeight,
             fx: meta.intrinsics[0],
@@ -481,10 +501,12 @@ enum MeshSceneBuilder {
         5: UIColor(red: 0.62, green: 0.45, blue: 0.85, alpha: 1),
         6: UIColor(red: 0.35, green: 0.85, blue: 0.95, alpha: 1),
         7: UIColor(red: 0.40, green: 0.80, blue: 0.45, alpha: 1),
-        8: UIColor(red: 0.85, green: 0.45, blue: 0.55, alpha: 1)
+        8: UIColor(red: 0.85, green: 0.45, blue: 0.55, alpha: 1),
+        9: UIColor(red: 1.0, green: 0.82, blue: 0.55, alpha: 1)
     ]
 
     static let ceilingClass: UInt8 = 3
+    static let filledFloorClass: UInt8 = 9
     static let orbitFieldOfView: CGFloat = 50
 
     final class MeshPart {
@@ -596,7 +618,7 @@ enum MeshSceneBuilder {
         }
     }
 
-    static func apply(_ mode: MeshViewer.Mode, showCeiling: Bool, parts: [MeshPart]) {
+    static func apply(_ mode: MeshViewer.Mode, showCeiling: Bool, showFilledFloor: Bool, parts: [MeshPart]) {
         for part in parts {
             let geometry = (mode == .texture ? part.textured : nil) ?? part.plain
             if part.node.geometry !== geometry {
@@ -605,7 +627,7 @@ enum MeshSceneBuilder {
             let colored = mode == .texture && part.textured != nil
             for material in part.plain.materials {
                 let classId = UInt8(material.name ?? "") ?? 0
-                let hidden = !showCeiling && classId == ceilingClass && mode != .wireframe
+                let hidden = (!showCeiling && classId == ceilingClass && mode != .wireframe) || (!showFilledFloor && classId == filledFloorClass)
                 material.colorBufferWriteMask = hidden ? [] : .all
                 material.writesToDepthBuffer = !hidden
                 material.lightingModel = colored ? .constant : .lambert
