@@ -593,7 +593,7 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
             self.wasRelocalized = false
             do {
                 let room = try await RoomBuilder(options: [.beautifyObjects]).capturedRoom(from: data)
-                self.lidarRecorder.recordRoom(room)
+                self.lidarRecorder.recordRoom(room, arOrigin: data.arFrameReferenceOriginTransform)
                 if let error {
                     if wasReloc, case RoomCaptureSession.CaptureError.exceedSceneSizeLimit = error {
                         DiagnosticsLog.shared.record("exceedSceneSizeLimit after relocalization — routing to manual placement", category: .error)

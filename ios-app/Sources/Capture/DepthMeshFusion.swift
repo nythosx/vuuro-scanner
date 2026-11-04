@@ -1,4 +1,5 @@
 import Foundation
+import os
 import simd
 
 struct LidarDepthMeshReport: Codable, Equatable {
@@ -17,8 +18,11 @@ struct LidarDepthMeshReport: Codable, Equatable {
     var roomBoxes: Int
     var roomBoxesMatched: Int
     var roomBoxesUnreadable: Bool
+    var roomPlanOriginOffsetM: Double?
+    var roomPlanOriginTurnDeg: Double?
     var openingFaces: Int
     var objectFaces: Int
+    var failedFrameNames: [String]?
 
     enum CodingKeys: String, CodingKey {
         case vertices
@@ -36,6 +40,9 @@ struct LidarDepthMeshReport: Codable, Equatable {
         case roomBoxes = "room_boxes"
         case roomBoxesMatched = "room_boxes_matched"
         case roomBoxesUnreadable = "room_boxes_unreadable"
+        case roomPlanOriginOffsetM = "roomplan_origin_offset_m"
+        case roomPlanOriginTurnDeg = "roomplan_origin_turn_deg"
+        case failedFrameNames = "failed_frames"
         case openingFaces = "door_window_faces"
         case objectFaces = "object_faces"
     }
@@ -46,6 +53,8 @@ enum DepthMeshFusion {
     static let baseVoxel: Float = 0.04
     static let truncationVoxels = 3
     static let maxVoxels = 10_000_000
+    static let bytesPerVoxel = 12
+    static let memoryHeadroom = 3
     static let pixelStride = 2
     static let boundsStride = 8
     static let minDepth: Float = 0.2
@@ -130,6 +139,7 @@ enum DepthMeshFusion {
         var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         var usable: [MeshFrame] = []
         var failed = 0
+        var failedNames: [String] = []
         for frame in frames {
             if Task.isCancelled { return .failure(CancellationError()) }
             do {
@@ -141,12 +151,17 @@ enum DepthMeshFusion {
                 usable.append(frame)
             } catch {
                 failed += 1
+                if failedNames.count < 20 {
+                    failedNames.append("\(frame.depthURL?.lastPathComponent ?? "frame \(frame.index)"): \(error.localizedDescription)")
+                }
             }
         }
         guard !usable.isEmpty else {
-            return .failure(PlainError(message: "No depth frames could be read, so no mesh could be built."))
+            let detail = failedNames.first.map { " First error: \($0)" } ?? ""
+            return .failure(PlainError(message: "No depth frames could be read, so no mesh could be built.\(detail)"))
         }
         let loadedBoxes = loadBoxes(captureURL: captureURL)
+        let origin = originOffset(loadedBoxes.boxes)
         let mesh: Mesh
         let voxel: Float
         switch fuse(usable, lower: lower, upper: upper, boxes: loadedBoxes.boxes, progress: progress) {
@@ -172,8 +187,11 @@ enum DepthMeshFusion {
             roomBoxes: loadedBoxes.boxes.filter { $0.kind != "floor" }.count,
             roomBoxesMatched: mesh.boxesMatched,
             roomBoxesUnreadable: loadedBoxes.unreadable,
+            roomPlanOriginOffsetM: origin?.0,
+            roomPlanOriginTurnDeg: origin?.1,
             openingFaces: mesh.openingFaces,
-            objectFaces: mesh.objectFaces
+            objectFaces: mesh.objectFaces,
+            failedFrameNames: failedNames.isEmpty ? nil : failedNames
         )
         do {
             try write(mesh, report: report, to: captureURL)
@@ -231,7 +249,15 @@ enum DepthMeshFusion {
         let upper = rawUpper + SIMD3<Float>(repeating: padding)
         var voxel = baseVoxel
         var dims = dimensions(lower, upper, voxel)
-        while dims.0 * dims.1 * dims.2 > maxVoxels {
+        var limit = maxVoxels
+        let available = os_proc_available_memory()
+        if available > 0 {
+            limit = min(limit, available / (bytesPerVoxel * memoryHeadroom))
+        }
+        guard limit >= 100_000 else {
+            return .failure(PlainError(message: "Not enough free memory on this phone to build the mesh. Close other apps and open this screen again."))
+        }
+        while dims.0 * dims.1 * dims.2 > limit {
             voxel *= 1.1
             dims = dimensions(lower, upper, voxel)
         }
@@ -286,6 +312,18 @@ enum DepthMeshFusion {
             return .failure(PlainError(message: "The depth frames did not form any surface."))
         }
         return .success((mesh, voxel))
+    }
+
+    private static func originOffset(_ boxes: [LidarRoomBox]) -> (Double, Double)? {
+        var result: (Double, Double)?
+        for box in boxes {
+            guard let values = box.arOrigin, values.count == 16, values.allSatisfy({ $0.isFinite }) else { continue }
+            let offset = Double(simd_length(SIMD3<Float>(values[12], values[13], values[14])))
+            let trace = Double(values[0] + values[5] + values[10])
+            let turn = acos(max(-1, min(1, (trace - 1) / 2))) * 180 / .pi
+            result = (max(result?.0 ?? 0, offset), max(result?.1 ?? 0, turn))
+        }
+        return result
     }
 
     private static func dimensions(_ lower: SIMD3<Float>, _ upper: SIMD3<Float>, _ voxel: Float) -> (Int, Int, Int) {
@@ -711,7 +749,9 @@ enum DepthMeshFusion {
             "vertices_format": "float32_le_xyz",
             "faces_format": "uint32_le_triangles",
             "normals_format": "float32_le_xyz",
-            "classes_format": "uint8_per_face_armeshclassification"
+            "classes_format": "uint8_per_face_armeshclassification",
+            "filled_floor_class": Int(filledFloorClass),
+            "filled_floor_note": "class 9 is floor filled where the camera did not see, not measured"
         ]
         let json = try JSONSerialization.data(withJSONObject: ["anchors": [entry], "source": identifier], options: [.prettyPrinted, .sortedKeys])
         try json.write(to: staging.appendingPathComponent("anchors.json"))

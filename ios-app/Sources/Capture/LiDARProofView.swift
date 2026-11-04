@@ -95,6 +95,14 @@ struct LiDARProofView: View {
             if let depthMesh = depthReport {
                 row("Depth mesh", "\(depthMesh.vertices) points, \(depthMesh.faces) triangles")
                 row("Depth mesh frames", "\(depthMesh.framesUsed) used (\(depthMesh.depthOnlyFramesUsed) depth-only), \(depthMesh.framesFailed) unreadable")
+                if depthMesh.framesFailed > 0 {
+                    Text("\(depthMesh.framesFailed) depth frames could not be read, so the mesh may have holes where only they saw. \(depthMesh.failedFrameNames?.first ?? "")")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.orange)
+                }
+                if let offset = depthMesh.roomPlanOriginOffsetM, let turn = depthMesh.roomPlanOriginTurnDeg {
+                    row("RoomPlan origin vs camera world", String(format: "%.2f m, %.1f deg", offset, turn))
+                }
                 row("Depth mesh detail", String(format: "%.0f mm cells, built in %.1f s", depthMesh.voxelM * 1000, depthMesh.seconds))
                 row("Mesh footprint from above", String(format: "%.1f m2", depthMesh.footprintM2))
                 row("Floor seen by the camera", String(format: "%.1f m2", depthMesh.floorSeenM2))
