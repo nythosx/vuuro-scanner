@@ -348,7 +348,7 @@ final class LidarCaptureRecorder {
         sampleDepthOnly(frame, at: now, directory: directory)
         guard now - lastKeyframeAt >= Self.keyframeMinIntervalS else { return }
         let pose = frame.camera.transform
-        if let lastPose, !Self.movedEnough(from: lastPose, to: pose) { return }
+        if let lastPose, !Self.movedEnough(from: lastPose, to: pose, distance: Self.keyframeMinDistanceM, turnDeg: Self.keyframeMinTurnDeg) { return }
         guard !frameWriteInFlight else {
             manifest?.stats.skippedBusyFrames += 1
             return
@@ -409,8 +409,11 @@ final class LidarCaptureRecorder {
         depthWriteInFlight = false
         switch result {
         case .success(let bytes):
-            manifest?.stats.depthOnlyFrames = (manifest?.stats.depthOnlyFrames ?? 0) + 1
-            manifest?.stats.depthOnlyBytes = (manifest?.stats.depthOnlyBytes ?? 0) + bytes
+            if var stats = manifest?.stats {
+                stats.depthOnlyFrames = (stats.depthOnlyFrames ?? 0) + 1
+                stats.depthOnlyBytes = (stats.depthOnlyBytes ?? 0) + bytes
+                manifest?.stats = stats
+            }
         case .failure(let error):
             manifest?.stats.writeFailures += 1
             DiagnosticsLog.shared.record("LiDAR depth frame write failed: \(error.localizedDescription)", category: .error)
@@ -499,7 +502,7 @@ final class LidarCaptureRecorder {
         )
     }
 
-    static func movedEnough(from last: simd_float4x4, to current: simd_float4x4, distance: Float = keyframeMinDistanceM, turnDeg: Float = keyframeMinTurnDeg) -> Bool {
+    static func movedEnough(from last: simd_float4x4, to current: simd_float4x4, distance: Float, turnDeg: Float) -> Bool {
         let a = SIMD3<Float>(last.columns.3.x, last.columns.3.y, last.columns.3.z)
         let b = SIMD3<Float>(current.columns.3.x, current.columns.3.y, current.columns.3.z)
         if simd_distance(a, b) >= distance { return true }
