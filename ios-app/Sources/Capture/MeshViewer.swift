@@ -18,11 +18,15 @@ struct MeshViewer: View {
     @State private var showPhoto = false
     @State private var photo: UIImage?
     @State private var photoError: String?
+    @State private var texturing = false
+    @State private var textured = false
+    @State private var textureNote: String?
 
     enum Mode: String, CaseIterable, Identifiable {
         case clay = "Clay"
         case wireframe = "Mesh"
         case classes = "Classes"
+        case texture = "Texture"
         var id: String { rawValue }
     }
 
@@ -45,6 +49,10 @@ struct MeshViewer: View {
             }
             if isLoading {
                 ProgressView("Loading mesh")
+            } else if texturing {
+                ProgressView("Coloring the mesh from the photos")
+                    .padding()
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
             } else if let loadError {
                 messageCard(loadError)
             }
@@ -54,6 +62,7 @@ struct MeshViewer: View {
                 ForEach(Mode.allCases) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
+            .disabled(isLoading || texturing)
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             .background(.ultraThinMaterial)
@@ -75,6 +84,9 @@ struct MeshViewer: View {
         }
         .onChange(of: frameIndex) { _, _ in
             moveCamera()
+        }
+        .task(id: mode) {
+            if mode == .texture { await colorize() }
         }
         .task(id: photoKey) {
             await loadPhoto()
@@ -113,6 +125,11 @@ struct MeshViewer: View {
     @ViewBuilder
     private var pathControls: some View {
         VStack(spacing: 10) {
+            if let textureNote, mode == .texture {
+                Text(textureNote)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
             if let frameError {
                 Text(frameError)
                     .font(.system(size: 13))
@@ -199,7 +216,44 @@ struct MeshViewer: View {
 
     private func applyMode() {
         guard let built else { return }
-        MeshSceneBuilder.apply(mode, showCeiling: frameIndex != nil, to: built.scene)
+        MeshSceneBuilder.apply(mode, showCeiling: frameIndex != nil, parts: built.parts)
+    }
+
+    private func colorize() async {
+        guard let built, !textured, !texturing else { return }
+        guard !frames.isEmpty else {
+            textureNote = "This capture has no frame photos to color the mesh with."
+            return
+        }
+        texturing = true
+        let inputs = built.parts.map { MeshTexturer.PartInput(vertices: $0.vertices, vertexCount: $0.vertexCount, transform: $0.transform) }
+        let frameList = frames
+        let work = Task.detached(priority: .userInitiated) {
+            MeshTexturer.colorize(parts: inputs, frames: frameList)
+        }
+        let result = await withTaskCancellationHandler {
+            await work.value
+        } onCancel: {
+            work.cancel()
+        }
+        texturing = false
+        switch result {
+        case .success(let output):
+            for (part, colors) in zip(built.parts, output.colors) where colors.count == part.vertexCount * 12 {
+                part.textured = MeshSceneBuilder.texturedGeometry(plain: part.plain, colors: colors, vertexCount: part.vertexCount)
+            }
+            textured = true
+            let percent = output.totalVertices > 0 ? output.coloredVertices * 100 / output.totalVertices : 0
+            var note = "Colored from \(output.framesUsed) photos, \(percent)% of the mesh seen in a photo"
+            if output.framesFailed > 0 {
+                note += ", \(output.framesFailed) photos could not be opened"
+            }
+            textureNote = note
+            applyMode()
+        case .failure(let error):
+            if error is CancellationError { return }
+            textureNote = "Could not color the mesh: \(error.localizedDescription)"
+        }
     }
 
     private func moveCamera() {
@@ -244,7 +298,7 @@ struct MeshViewer: View {
         }.value
         switch result {
         case .success(let loaded):
-            MeshSceneBuilder.apply(mode, showCeiling: false, to: loaded.scene)
+            MeshSceneBuilder.apply(mode, showCeiling: false, parts: loaded.parts)
             built = loaded
         case .failure(let error):
             loadError = "Could not load the mesh: \(error.localizedDescription)"
@@ -268,6 +322,15 @@ struct MeshFrame {
     let cameraTransform: simd_float4x4
     let verticalFieldOfView: CGFloat
     let imageURL: URL
+    let imageWidth: Int
+    let imageHeight: Int
+    let fx: Float
+    let fy: Float
+    let cx: Float
+    let cy: Float
+    let depthURL: URL?
+    let depthWidth: Int
+    let depthHeight: Int
 
     var portraitPose: simd_float4x4 {
         cameraTransform * simd_float4x4(simd_quatf(angle: .pi / 2, axis: SIMD3<Float>(0, 0, 1)))
@@ -289,6 +352,9 @@ enum MeshFrameIndex {
         let imageHeight: Int
         let cameraTransform: [Float]
         let intrinsics: [Float]
+        let depth: String?
+        let depthWidth: Int?
+        let depthHeight: Int?
 
         enum CodingKeys: String, CodingKey {
             case index
@@ -297,6 +363,9 @@ enum MeshFrameIndex {
             case imageHeight = "image_height"
             case cameraTransform = "camera_transform"
             case intrinsics = "intrinsics_fx_fy_cx_cy"
+            case depth
+            case depthWidth = "depth_width"
+            case depthHeight = "depth_height"
         }
     }
 
@@ -333,8 +402,10 @@ enum MeshFrameIndex {
     private static func frame(from meta: Meta, folder: URL) -> MeshFrame? {
         guard meta.cameraTransform.count == 16,
               meta.cameraTransform.allSatisfy({ $0.isFinite }),
-              meta.intrinsics.count >= 2,
+              meta.intrinsics.count == 4,
+              meta.intrinsics.allSatisfy({ $0.isFinite }),
               meta.intrinsics[0] > 0,
+              meta.intrinsics[1] > 0,
               meta.imageWidth > 0,
               meta.imageHeight > 0,
               !meta.image.isEmpty else { return nil }
@@ -351,7 +422,16 @@ enum MeshFrameIndex {
             index: meta.index,
             cameraTransform: transform,
             verticalFieldOfView: CGFloat(fov),
-            imageURL: folder.appendingPathComponent(meta.image)
+            imageURL: folder.appendingPathComponent(meta.image),
+            imageWidth: meta.imageWidth,
+            imageHeight: meta.imageHeight,
+            fx: meta.intrinsics[0],
+            fy: meta.intrinsics[1],
+            cx: meta.intrinsics[2],
+            cy: meta.intrinsics[3],
+            depthURL: meta.depth.map { folder.appendingPathComponent($0) },
+            depthWidth: meta.depthWidth ?? 0,
+            depthHeight: meta.depthHeight ?? 0
         )
     }
 }
@@ -402,11 +482,29 @@ enum MeshSceneBuilder {
     static let ceilingClass: UInt8 = 3
     static let orbitFieldOfView: CGFloat = 50
 
+    final class MeshPart {
+        let node: SCNNode
+        let plain: SCNGeometry
+        let vertices: Data
+        let vertexCount: Int
+        let transform: simd_float4x4
+        var textured: SCNGeometry?
+
+        init(node: SCNNode, plain: SCNGeometry, vertices: Data, vertexCount: Int, transform: simd_float4x4) {
+            self.node = node
+            self.plain = plain
+            self.vertices = vertices
+            self.vertexCount = vertexCount
+            self.transform = transform
+        }
+    }
+
     struct Built {
         let scene: SCNScene
         let triangles: Int
         let cameraNode: SCNNode
         let center: SCNVector3
+        let parts: [MeshPart]
     }
 
     struct AnchorEntry: Decodable {
@@ -437,6 +535,7 @@ enum MeshSceneBuilder {
             let index = try JSONDecoder().decode(AnchorIndex.self, from: Data(contentsOf: meshURL.appendingPathComponent("anchors.json")))
             let scene = SCNScene()
             var triangles = 0
+            var parts: [MeshPart] = []
             var lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
             var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
             for entry in index.anchors {
@@ -462,6 +561,7 @@ enum MeshSceneBuilder {
                 let node = SCNNode(geometry: geometry)
                 node.simdTransform = matrix(entry.transform)
                 scene.rootNode.addChildNode(node)
+                parts.append(MeshPart(node: node, plain: geometry, vertices: vertices, vertexCount: entry.vertexCount, transform: node.simdTransform))
                 triangles += entry.faceCount
                 let (boxMin, boxMax) = node.boundingBox
                 for corner in corners(SIMD3<Float>(boxMin), SIMD3<Float>(boxMax)) {
@@ -485,20 +585,25 @@ enum MeshSceneBuilder {
             cameraNode.simdPosition = center + SIMD3<Float>(0, size * 0.8, size * 0.7)
             cameraNode.simdLook(at: center, up: SIMD3<Float>(0, 1, 0), localFront: SIMD3<Float>(0, 0, -1))
             scene.rootNode.addChildNode(cameraNode)
-            return .success(Built(scene: scene, triangles: triangles, cameraNode: cameraNode, center: SCNVector3(center)))
+            return .success(Built(scene: scene, triangles: triangles, cameraNode: cameraNode, center: SCNVector3(center), parts: parts))
         } catch {
             return .failure(error)
         }
     }
 
-    static func apply(_ mode: MeshViewer.Mode, showCeiling: Bool, to scene: SCNScene) {
-        scene.rootNode.enumerateChildNodes { node, _ in
-            guard let geometry = node.geometry else { return }
-            for material in geometry.materials {
+    static func apply(_ mode: MeshViewer.Mode, showCeiling: Bool, parts: [MeshPart]) {
+        for part in parts {
+            let geometry = (mode == .texture ? part.textured : nil) ?? part.plain
+            if part.node.geometry !== geometry {
+                part.node.geometry = geometry
+            }
+            let colored = mode == .texture && part.textured != nil
+            for material in part.plain.materials {
                 let classId = UInt8(material.name ?? "") ?? 0
                 let hidden = !showCeiling && classId == ceilingClass && mode != .wireframe
                 material.colorBufferWriteMask = hidden ? [] : .all
                 material.writesToDepthBuffer = !hidden
+                material.lightingModel = colored ? .constant : .lambert
                 switch mode {
                 case .clay:
                     material.fillMode = .fill
@@ -509,9 +614,19 @@ enum MeshSceneBuilder {
                 case .classes:
                     material.fillMode = .fill
                     material.diffuse.contents = classColors[classId] ?? UIColor.gray
+                case .texture:
+                    material.fillMode = .fill
+                    material.diffuse.contents = colored ? UIColor.white : UIColor(white: 0.82, alpha: 1)
                 }
             }
         }
+    }
+
+    static func texturedGeometry(plain: SCNGeometry, colors: Data, vertexCount: Int) -> SCNGeometry {
+        let colorSource = SCNGeometrySource(data: colors, semantic: .color, vectorCount: vertexCount, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: 4, dataOffset: 0, dataStride: 12)
+        let geometry = SCNGeometry(sources: plain.sources + [colorSource], elements: plain.elements)
+        geometry.materials = plain.materials
+        return geometry
     }
 
     private static func elementsByClass(faces: Data, faceCount: Int, classes: Data?) -> ([SCNGeometryElement], [SCNMaterial]) {
