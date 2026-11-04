@@ -10,6 +10,14 @@ struct MeshViewer: View {
     @State private var mode: Mode = .clay
     @State private var isLoading = true
     @State private var loadError: String?
+    @State private var frames: [MeshFrame] = []
+    @State private var skippedFrames = 0
+    @State private var frameError: String?
+    @State private var frameIndex: Int?
+    @State private var orbitPose: simd_float4x4?
+    @State private var showPhoto = false
+    @State private var photo: UIImage?
+    @State private var photoError: String?
 
     enum Mode: String, CaseIterable, Identifiable {
         case clay = "Clay"
@@ -25,20 +33,20 @@ struct MeshViewer: View {
                     scene: built.scene,
                     cameraNode: built.cameraNode,
                     target: built.center,
-                    background: mode == .wireframe ? .black : UIColor(white: 0.93, alpha: 1)
+                    background: mode == .wireframe ? .black : UIColor(white: 0.93, alpha: 1),
+                    interactive: frameIndex == nil
                 )
                 .ignoresSafeArea(edges: .bottom)
             } else {
                 Color(white: 0.93).ignoresSafeArea(edges: .bottom)
             }
+            if frameIndex != nil, showPhoto {
+                photoLayer
+            }
             if isLoading {
                 ProgressView("Loading mesh")
             } else if let loadError {
-                Text(loadError)
-                    .font(.system(size: 15))
-                    .padding()
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                    .padding()
+                messageCard(loadError)
             }
         }
         .safeAreaInset(edge: .top) {
@@ -50,6 +58,11 @@ struct MeshViewer: View {
             .padding(.vertical, 8)
             .background(.ultraThinMaterial)
         }
+        .safeAreaInset(edge: .bottom) {
+            if built != nil {
+                pathControls
+            }
+        }
         .navigationTitle((built?.triangles ?? 0) > 0 ? "\(built?.triangles ?? 0) triangles" : "3D mesh")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -57,11 +70,170 @@ struct MeshViewer: View {
                 Button("Close") { dismiss() }
             }
         }
-        .onChange(of: mode) { _, newMode in
-            if let built { MeshSceneBuilder.apply(newMode, to: built.scene) }
+        .onChange(of: mode) { _, _ in
+            applyMode()
+        }
+        .onChange(of: frameIndex) { _, _ in
+            moveCamera()
+        }
+        .task(id: photoKey) {
+            await loadPhoto()
         }
         .task {
             await load()
+        }
+    }
+
+    private var photoKey: String {
+        guard showPhoto, let frameIndex else { return "" }
+        return "\(frameIndex)"
+    }
+
+    private var photoLayer: some View {
+        GeometryReader { proxy in
+            ZStack {
+                Color.black
+                if let photo {
+                    Image(uiImage: photo)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .clipped()
+                } else if let photoError {
+                    messageCard(photoError)
+                } else {
+                    ProgressView()
+                        .tint(.white)
+                }
+            }
+        }
+        .ignoresSafeArea(edges: .bottom)
+    }
+
+    @ViewBuilder
+    private var pathControls: some View {
+        VStack(spacing: 10) {
+            if let frameError {
+                Text(frameError)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            } else if skippedFrames > 0 {
+                Text("\(skippedFrames) frames could not be read")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+            if let frameIndex, !frames.isEmpty {
+                Text("Frame \(frameIndex + 1) of \(frames.count)")
+                    .font(.system(size: 17, weight: .semibold).monospacedDigit())
+                HStack(spacing: 12) {
+                    Button {
+                        leavePath()
+                    } label: {
+                        Label("Back", systemImage: "arrow.left")
+                    }
+                    Slider(
+                        value: Binding(
+                            get: { Double(frameIndex) },
+                            set: { self.frameIndex = min(max(Int($0.rounded()), 0), frames.count - 1) }
+                        ),
+                        in: 0...Double(max(frames.count - 1, 1)),
+                        step: 1
+                    )
+                    .disabled(frames.count < 2)
+                    Button {
+                        self.frameIndex = max(frameIndex - 1, 0)
+                    } label: {
+                        Image(systemName: "chevron.left")
+                    }
+                    .disabled(frameIndex == 0)
+                    Button {
+                        self.frameIndex = min(frameIndex + 1, frames.count - 1)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                    }
+                    .disabled(frameIndex >= frames.count - 1)
+                }
+                Toggle("Show the photo of this frame", isOn: $showPhoto)
+                    .font(.system(size: 15))
+            } else if !frames.isEmpty {
+                Button {
+                    enterPath()
+                } label: {
+                    Label("Walk the capture path (\(frames.count) frames)", systemImage: "figure.walk")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial)
+    }
+
+    private func messageCard(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 15))
+            .padding()
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .padding()
+    }
+
+    private func enterPath() {
+        guard let built, !frames.isEmpty else { return }
+        orbitPose = built.cameraNode.simdTransform
+        frameIndex = 0
+        applyMode()
+        moveCamera()
+    }
+
+    private func leavePath() {
+        guard let built else { return }
+        frameIndex = nil
+        showPhoto = false
+        if let orbitPose {
+            built.cameraNode.simdTransform = orbitPose
+        }
+        built.cameraNode.camera?.fieldOfView = MeshSceneBuilder.orbitFieldOfView
+        applyMode()
+    }
+
+    private func applyMode() {
+        guard let built else { return }
+        MeshSceneBuilder.apply(mode, showCeiling: frameIndex != nil, to: built.scene)
+    }
+
+    private func moveCamera() {
+        guard let built, let frameIndex, frames.indices.contains(frameIndex) else { return }
+        let frame = frames[frameIndex]
+        SCNTransaction.begin()
+        SCNTransaction.animationDuration = 0.2
+        built.cameraNode.simdTransform = frame.portraitPose
+        built.cameraNode.camera?.fieldOfView = frame.verticalFieldOfView
+        SCNTransaction.commit()
+    }
+
+    private func loadPhoto() async {
+        photo = nil
+        photoError = nil
+        guard showPhoto, let frameIndex, frames.indices.contains(frameIndex) else { return }
+        let url = frames[frameIndex].imageURL
+        let result = await Task.detached(priority: .userInitiated) { () -> Result<UIImage, Error> in
+            do {
+                let data = try Data(contentsOf: url)
+                guard let cgImage = UIImage(data: data)?.cgImage else {
+                    return .failure(PlainError(message: "The photo of this frame could not be decoded."))
+                }
+                return .success(UIImage(cgImage: cgImage, scale: 1, orientation: .right))
+            } catch {
+                return .failure(error)
+            }
+        }.value
+        guard !Task.isCancelled else { return }
+        switch result {
+        case .success(let image):
+            photo = image
+        case .failure(let error):
+            photoError = "Could not open the photo of this frame: \(error.localizedDescription)"
         }
     }
 
@@ -70,14 +242,117 @@ struct MeshViewer: View {
         let result = await Task.detached(priority: .userInitiated) {
             MeshSceneBuilder.build(captureURL: url)
         }.value
-        isLoading = false
         switch result {
         case .success(let loaded):
-            MeshSceneBuilder.apply(mode, to: loaded.scene)
+            MeshSceneBuilder.apply(mode, showCeiling: false, to: loaded.scene)
             built = loaded
         case .failure(let error):
             loadError = "Could not load the mesh: \(error.localizedDescription)"
         }
+        let frameResult = await Task.detached(priority: .userInitiated) {
+            MeshFrameIndex.load(captureURL: url)
+        }.value
+        isLoading = false
+        switch frameResult {
+        case .success(let loaded):
+            frames = loaded.frames
+            skippedFrames = loaded.skipped
+        case .failure(let error):
+            frameError = "Could not read the capture frames: \(error.localizedDescription)"
+        }
+    }
+}
+
+struct MeshFrame {
+    let index: Int
+    let cameraTransform: simd_float4x4
+    let verticalFieldOfView: CGFloat
+    let imageURL: URL
+
+    var portraitPose: simd_float4x4 {
+        cameraTransform * simd_float4x4(simd_quatf(angle: .pi / 2, axis: SIMD3<Float>(0, 0, 1)))
+    }
+}
+
+enum MeshFrameIndex {
+    static let framesFolder = "frames"
+
+    struct Loaded {
+        let frames: [MeshFrame]
+        let skipped: Int
+    }
+
+    private struct Meta: Decodable {
+        let index: Int
+        let image: String
+        let imageWidth: Int
+        let imageHeight: Int
+        let cameraTransform: [Float]
+        let intrinsics: [Float]
+
+        enum CodingKeys: String, CodingKey {
+            case index
+            case image
+            case imageWidth = "image_width"
+            case imageHeight = "image_height"
+            case cameraTransform = "camera_transform"
+            case intrinsics = "intrinsics_fx_fy_cx_cy"
+        }
+    }
+
+    static func load(captureURL: URL) -> Result<Loaded, Error> {
+        let folder = captureURL.appendingPathComponent(framesFolder, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: folder.path) else {
+            return .success(Loaded(frames: [], skipped: 0))
+        }
+        do {
+            let names = try FileManager.default.contentsOfDirectory(atPath: folder.path).filter { $0.hasSuffix(".json") }
+            var frames: [MeshFrame] = []
+            var skipped = 0
+            let decoder = JSONDecoder()
+            for name in names {
+                do {
+                    let data = try Data(contentsOf: folder.appendingPathComponent(name))
+                    let meta = try decoder.decode(Meta.self, from: data)
+                    guard let frame = frame(from: meta, folder: folder) else {
+                        skipped += 1
+                        continue
+                    }
+                    frames.append(frame)
+                } catch {
+                    skipped += 1
+                }
+            }
+            frames.sort { $0.index < $1.index }
+            return .success(Loaded(frames: frames, skipped: skipped))
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    private static func frame(from meta: Meta, folder: URL) -> MeshFrame? {
+        guard meta.cameraTransform.count == 16,
+              meta.cameraTransform.allSatisfy({ $0.isFinite }),
+              meta.intrinsics.count >= 2,
+              meta.intrinsics[0] > 0,
+              meta.imageWidth > 0,
+              meta.imageHeight > 0,
+              !meta.image.isEmpty else { return nil }
+        let values = meta.cameraTransform
+        let transform = simd_float4x4(
+            SIMD4<Float>(values[0], values[1], values[2], values[3]),
+            SIMD4<Float>(values[4], values[5], values[6], values[7]),
+            SIMD4<Float>(values[8], values[9], values[10], values[11]),
+            SIMD4<Float>(values[12], values[13], values[14], values[15])
+        )
+        let halfWidth = Float(meta.imageWidth) / 2
+        let fov = 2 * atan(halfWidth / meta.intrinsics[0]) * 180 / Float.pi
+        return MeshFrame(
+            index: meta.index,
+            cameraTransform: transform,
+            verticalFieldOfView: CGFloat(fov),
+            imageURL: folder.appendingPathComponent(meta.image)
+        )
     }
 }
 
@@ -86,12 +361,13 @@ struct MeshSceneView: UIViewRepresentable {
     let cameraNode: SCNNode
     let target: SCNVector3
     let background: UIColor
+    let interactive: Bool
 
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
         view.scene = scene
         view.pointOfView = cameraNode
-        view.allowsCameraControl = true
+        view.allowsCameraControl = interactive
         view.autoenablesDefaultLighting = true
         view.antialiasingMode = .multisampling4X
         view.backgroundColor = background
@@ -104,6 +380,10 @@ struct MeshSceneView: UIViewRepresentable {
 
     func updateUIView(_ view: SCNView, context: Context) {
         view.backgroundColor = background
+        view.allowsCameraControl = interactive
+        if view.pointOfView !== cameraNode {
+            view.pointOfView = cameraNode
+        }
     }
 }
 
@@ -120,6 +400,7 @@ enum MeshSceneBuilder {
     ]
 
     static let ceilingClass: UInt8 = 3
+    static let orbitFieldOfView: CGFloat = 50
 
     struct Built {
         let scene: SCNScene
@@ -196,7 +477,7 @@ enum MeshSceneBuilder {
             let center = (lower + upper) / 2
             let size = max(simd_length(upper - lower), 1)
             let camera = SCNCamera()
-            camera.fieldOfView = 50
+            camera.fieldOfView = orbitFieldOfView
             camera.zNear = 0.05
             camera.zFar = Double(size * 10)
             let cameraNode = SCNNode()
@@ -210,12 +491,12 @@ enum MeshSceneBuilder {
         }
     }
 
-    static func apply(_ mode: MeshViewer.Mode, to scene: SCNScene) {
+    static func apply(_ mode: MeshViewer.Mode, showCeiling: Bool, to scene: SCNScene) {
         scene.rootNode.enumerateChildNodes { node, _ in
             guard let geometry = node.geometry else { return }
             for material in geometry.materials {
                 let classId = UInt8(material.name ?? "") ?? 0
-                let hidden = classId == ceilingClass && mode != .wireframe
+                let hidden = !showCeiling && classId == ceilingClass && mode != .wireframe
                 material.colorBufferWriteMask = hidden ? [] : .all
                 material.writesToDepthBuffer = !hidden
                 switch mode {
