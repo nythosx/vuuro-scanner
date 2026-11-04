@@ -67,6 +67,10 @@ enum RoomTypeClassifier {
         return Guess(type: topLabel, source: "roomplan_section")
     }
 
+    static func sectionLabel(_ label: CapturedRoom.Section.Label) -> String {
+        mapSectionLabel(label) ?? "unidentified"
+    }
+
     private static func mapSectionLabel(_ label: CapturedRoom.Section.Label) -> String? {
         switch label {
         case .livingRoom: return "living_room"

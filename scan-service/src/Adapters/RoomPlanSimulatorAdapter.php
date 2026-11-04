@@ -94,6 +94,7 @@ final class RoomPlanSimulatorAdapter
                 'room_type' => self::mapRoomType($rawCapture),
                 'walk_path_m' => self::mapWalkPath($rawCapture, $minX, $minZ),
                 'entry_doorway_m' => self::mapEntryDoorway($rawCapture, $minX, $minZ),
+                'sections' => self::mapSections($rawCapture, $minX, $minZ),
             ];
         }
 
@@ -224,10 +225,68 @@ final class RoomPlanSimulatorAdapter
                 if ($widthM !== null) {
                     $opening['width_m'] = $widthM;
                 }
+                $transform = self::rawTransform($item['transform'] ?? null);
+                if ($transform !== null) {
+                    $opening['transform_raw'] = $transform;
+                }
+                if (isset($item['curve']) && is_string($item['curve']) && $item['curve'] !== '') {
+                    $opening['curve'] = mb_substr($item['curve'], 0, 200);
+                }
                 $openings[] = $opening;
             }
         }
         return $openings;
+    }
+
+    private static function mapSections(array $rawCapture, float $minX, float $minZ): array
+    {
+        $sections = $rawCapture['sections'] ?? [];
+        if (!is_array($sections)) {
+            return [];
+        }
+        $mapped = [];
+        foreach ($sections as $section) {
+            if (!is_array($section)) {
+                continue;
+            }
+            $center = $section['center'] ?? null;
+            if (!is_array($center) || count($center) < 3) {
+                continue;
+            }
+            [$x, $y, $z] = [$center[0] ?? null, $center[1] ?? null, $center[2] ?? null];
+            if (!self::isFiniteNumber($x) || !self::isFiniteNumber($y) || !self::isFiniteNumber($z)) {
+                continue;
+            }
+            $label = $section['label'] ?? null;
+            $story = $section['story'] ?? null;
+            $mapped[] = [
+                'label' => is_string($label) && $label !== '' ? mb_substr($label, 0, 40) : 'unidentified',
+                'center_m' => [round((float) $x - $minX, 3), round((float) $z - $minZ, 3)],
+                'center_height_m' => round((float) $y, 3),
+                'story' => is_int($story) ? $story : null,
+            ];
+        }
+        return $mapped;
+    }
+
+    private static function rawTransform(mixed $raw): ?array
+    {
+        if (!is_array($raw) || count($raw) !== 16 || !array_is_list($raw)) {
+            return null;
+        }
+        $values = [];
+        foreach ($raw as $value) {
+            if (!self::isFiniteNumber($value)) {
+                return null;
+            }
+            $values[] = round((float) $value, 6);
+        }
+        return $values;
+    }
+
+    private static function isFiniteNumber(mixed $value): bool
+    {
+        return (is_int($value) || is_float($value)) && is_finite((float) $value);
     }
 
     private static function openingWidthM(array $item, array $points2d): ?float
@@ -331,6 +390,21 @@ final class RoomPlanSimulatorAdapter
             $yaw = $item['yawDeg'] ?? null;
             if ((is_int($yaw) || is_float($yaw)) && is_finite((float) $yaw)) {
                 $object['yaw_deg'] = round(fmod(fmod((float) $yaw, 360.0) + 360.0, 360.0), 1);
+            }
+            $transform = self::rawTransform($item['transform'] ?? null);
+            if ($transform !== null) {
+                $object['transform_raw'] = $transform;
+            }
+            if (isset($item['attributes']) && is_array($item['attributes'])) {
+                $attributes = [];
+                foreach ($item['attributes'] as $attribute) {
+                    if (is_string($attribute) && $attribute !== '' && count($attributes) < 20) {
+                        $attributes[] = mb_substr($attribute, 0, 80);
+                    }
+                }
+                if ($attributes !== []) {
+                    $object['attributes'] = $attributes;
+                }
             }
             $objects[] = $object;
         }

@@ -28,6 +28,7 @@ struct ResultSummaryView: View {
     @State private var updatingRoomTypeIds: Set<String> = []
     @State private var splitTarget: SplitTarget?
     @State private var isUndoingSplit = false
+    @State private var showLidarProof = false
     @State private var floorTargetRoom: FloorPlan.Room?
     @State private var deleteTargetRoom: FloorPlan.Room?
     @State private var roomFloorDraft = ""
@@ -120,6 +121,23 @@ struct ResultSummaryView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     summaryHero
+                    Button {
+                        showLidarProof = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "cube.transparent")
+                                .font(.system(size: 18))
+                            Text("LiDAR capture: mesh, depth and frames")
+                                .font(.system(size: 16, weight: .bold))
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                        }
+                        .foregroundStyle(.white)
+                        .padding()
+                        .background(VuuroColor.accent, in: RoundedRectangle(cornerRadius: 14))
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 20)
                     if let warnings = currentFloorPlan.roomSplitWarnings, !warnings.isEmpty {
                         splitWarningBanner(warnings)
                     }
@@ -247,6 +265,11 @@ struct ResultSummaryView: View {
                         .frame(maxWidth: 200)
                     }
                 }
+            }
+        }
+        .sheet(isPresented: $showLidarProof) {
+            NavigationStack {
+                LiDARProofView()
             }
         }
         .sheet(item: $missingItemTarget) { target in

@@ -10,6 +10,7 @@ scan-service-net:
     - Get-Process | Where-Object { $_.ProcessName -eq 'php' } | ForEach-Object { Stop-Process -Id $_.Id -Force }
     - cd scan-service
     - php tests/adapter_test.php
+    - php tests/roomplan_adapter_test.php
     - php tests/repository_test.php
     - php tests/export_renderer_test.php
     - php tests/concurrency_test.php

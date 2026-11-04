@@ -88,6 +88,8 @@ final class CaptureCoordinator: NSObject, ObservableObject {
     private static let walkPathSampleIntervalNanoseconds: UInt64 = 500_000_000
     private static let walkPathMaxPoints = 400
 
+    let lidarRecorder = LidarCaptureRecorder()
+
     deinit {
         walkPathTask?.cancel()
     }
@@ -163,6 +165,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
         cameraWatchdog?.cancel()
         pendingRun = false
         stopWalkPathTracking()
+        lidarRecorder.stop()
         if isRunning {
             isRunning = false
             captureSession?.stop(pauseARSession: false)
@@ -207,6 +210,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
         completionEstimator = RoomCompletionEstimator()
         liveUpdateThrottle.resetRoomTypeAnswered()
         startWalkPathTracking()
+        lidarRecorder.start(session: arSession)
 
         pendingRun = true
         runIfReady()
@@ -217,6 +221,7 @@ final class CaptureCoordinator: NSObject, ObservableObject {
         pendingRun = false
         isRunning = false
         stopWalkPathTracking()
+        lidarRecorder.stop()
         captureSession?.stop(pauseARSession: false)
         UIApplication.shared.isIdleTimerDisabled = false
     }
@@ -363,6 +368,12 @@ final class CaptureCoordinator: NSObject, ObservableObject {
 }
 
 extension CaptureCoordinator: RoomCaptureSessionDelegate {
+    nonisolated func captureSession(_ session: RoomCaptureSession, didStartWith configuration: RoomCaptureSession.Configuration) {
+        Task { @MainActor in
+            self.lidarRecorder.prepareSession(self.arSession)
+        }
+    }
+
     nonisolated func captureSession(_ session: RoomCaptureSession, didEndWith data: CapturedRoomData, error: Error?) {
         Task { @MainActor in
             self.isRunning = false

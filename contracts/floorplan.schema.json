@@ -335,6 +335,20 @@
                     "medium",
                     "high"
                   ]
+                },
+                "transform_raw": {
+                  "type": "array",
+                  "minItems": 16,
+                  "maxItems": 16,
+                  "items": {
+                    "type": "number"
+                  },
+                  "description": "RoomPlan's own 4x4 transform for this element, column-major, in the capture's raw frame (not room-local). Present only when the client sent a valid one."
+                },
+                "curve": {
+                  "type": "string",
+                  "maxLength": 200,
+                  "description": "RoomPlan's description of a curved opening, as reported by the device. Omitted for straight ones."
                 }
               }
             }
@@ -413,6 +427,24 @@
                     "medium",
                     "high"
                   ]
+                },
+                "transform_raw": {
+                  "type": "array",
+                  "minItems": 16,
+                  "maxItems": 16,
+                  "items": {
+                    "type": "number"
+                  },
+                  "description": "RoomPlan's own 4x4 transform for this element, column-major, in the capture's raw frame (not room-local). Present only when the client sent a valid one."
+                },
+                "attributes": {
+                  "type": "array",
+                  "maxItems": 20,
+                  "items": {
+                    "type": "string",
+                    "maxLength": 80
+                  },
+                  "description": "RoomPlan object attributes (iOS 17+), as reported by the device. Omitted when none."
                 }
               }
             }
@@ -503,6 +535,43 @@
                   "null"
                 ],
                 "description": "Human-readable rescan prompt when usable is false; null when usable is true."
+              }
+            }
+          },
+          "sections": {
+            "type": "array",
+            "description": "RoomPlan's own room sections for this capture call. Empty when RoomPlan reported none.",
+            "items": {
+              "type": "object",
+              "required": [
+                "label",
+                "center_m",
+                "center_height_m",
+                "story"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                "center_m": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": {
+                    "type": "number"
+                  },
+                  "description": "Room-local [x, z], same frame as outline_m."
+                },
+                "center_height_m": {
+                  "type": "number"
+                },
+                "story": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
               }
             }
           }

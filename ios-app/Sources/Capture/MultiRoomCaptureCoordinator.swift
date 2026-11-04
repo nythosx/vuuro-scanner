@@ -95,6 +95,8 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
     private static let walkPathSampleIntervalNanoseconds: UInt64 = 500_000_000
     private static let walkPathMaxPoints = 400
 
+    let lidarRecorder = LidarCaptureRecorder()
+
     static let mergeTimeoutSeconds: Double = 45
     nonisolated(unsafe) private var mergeTask: Task<Void, Never>?
     nonisolated(unsafe) private var heartbeatTask: Task<Void, Never>?
@@ -131,6 +133,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         cameraWatchdog?.cancel()
         pendingRun = false
         stopWalkPathTracking()
+        lidarRecorder.stop()
         if isRunning {
             isRunning = false
             captureSession?.stop(pauseARSession: false)
@@ -291,6 +294,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         completionEstimator = RoomCompletionEstimator()
         liveUpdateThrottle.resetRoomTypeAnswered()
         startWalkPathTracking()
+        lidarRecorder.start(session: arSession)
         PerfTrace.begin(.scanStartToReady)
         pendingRun = true
         runIfReady()
@@ -301,6 +305,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         pendingRun = false
         isRunning = false
         stopWalkPathTracking()
+        lidarRecorder.stop()
         PerfTrace.cancel(.scanStartToReady)
         PerfTrace.begin(.roomProcessing)
         captureSession?.stop(pauseARSession: false)
@@ -497,6 +502,7 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
         pendingRun = false
         isRunning = false
         stopWalkPathTracking()
+        lidarRecorder.stop()
         captureSession?.stop(pauseARSession: false)
         arSession.pause()
         guard !capturedRooms.isEmpty else {
@@ -574,6 +580,12 @@ final class MultiRoomCaptureCoordinator: NSObject, ObservableObject {
 }
 
 extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
+    nonisolated func captureSession(_ session: RoomCaptureSession, didStartWith configuration: RoomCaptureSession.Configuration) {
+        Task { @MainActor in
+            self.lidarRecorder.prepareSession(self.arSession)
+        }
+    }
+
     nonisolated func captureSession(_ session: RoomCaptureSession, didEndWith data: CapturedRoomData, error: Error?) {
         Task { @MainActor in
             self.isRunning = false

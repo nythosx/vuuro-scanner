@@ -10,6 +10,7 @@ struct RoomPlanCaptureExport: Codable {
     let windows: [SurfaceExport]
     let openings: [SurfaceExport]
     let objects: [SurfaceExport]
+    var sections: [SectionExport]? = nil
 
     var roomType: RoomTypeExport? = nil
     var structureOriginM: [Double]? = nil
@@ -22,7 +23,7 @@ struct RoomPlanCaptureExport: Codable {
     var entryDoorwayM: [Double]? = nil
 
     enum CodingKeys: String, CodingKey {
-        case story, floors, walls, doors, windows, openings, objects
+        case story, floors, walls, doors, windows, openings, objects, sections
         case captureGroupId = "capture_group_id"
         case replacesRoomId = "replaces_room_id"
         case joinedToGroupId = "joined_to_group_id"
@@ -40,9 +41,17 @@ struct RoomPlanCaptureExport: Codable {
         let confidence: String
         var dimensions: [Double]? = nil
         var polygonCorners: [[Double]]? = nil
-
         var position: [Double]? = nil
         var yawDeg: Double? = nil
+        var transform: [Double]? = nil
+        var curve: String? = nil
+        var attributes: [String]? = nil
+    }
+
+    struct SectionExport: Codable {
+        let label: String
+        let center: [Double]
+        let story: Int
     }
 
     struct RoomTypeExport: Codable {
@@ -80,6 +89,7 @@ enum CapturedRoomExporter {
             openings: room.openings.map { mapSurface($0, category: "opening") },
             objects: room.objects.map(mapObject)
         )
+        export.sections = room.sections.isEmpty ? nil : room.sections.map(mapSection)
         export.walkPathM = (walkPath?.isEmpty ?? true) ? nil : walkPath
         export.headingDeg = headingDeg
         export.roomLabel = roomTypeConfirmation?.customName
@@ -129,6 +139,15 @@ enum CapturedRoomExporter {
         let translation = surface.transform.columns.3
         export.position = [Double(translation.x), Double(translation.y), Double(translation.z)]
         export.yawDeg = yawDegrees(surface.transform)
+        export.transform = [
+            Double(surface.transform.columns.0.x), Double(surface.transform.columns.0.y), Double(surface.transform.columns.0.z), Double(surface.transform.columns.0.w),
+            Double(surface.transform.columns.1.x), Double(surface.transform.columns.1.y), Double(surface.transform.columns.1.z), Double(surface.transform.columns.1.w),
+            Double(surface.transform.columns.2.x), Double(surface.transform.columns.2.y), Double(surface.transform.columns.2.z), Double(surface.transform.columns.2.w),
+            Double(surface.transform.columns.3.x), Double(surface.transform.columns.3.y), Double(surface.transform.columns.3.z), Double(surface.transform.columns.3.w)
+        ]
+        if let curve = surface.curve {
+            export.curve = String(describing: curve)
+        }
         return export
     }
 
@@ -142,7 +161,23 @@ enum CapturedRoomExporter {
         let translation = object.transform.columns.3
         export.position = [Double(translation.x), Double(translation.y), Double(translation.z)]
         export.yawDeg = yawDegrees(object.transform)
+        export.transform = [
+            Double(object.transform.columns.0.x), Double(object.transform.columns.0.y), Double(object.transform.columns.0.z), Double(object.transform.columns.0.w),
+            Double(object.transform.columns.1.x), Double(object.transform.columns.1.y), Double(object.transform.columns.1.z), Double(object.transform.columns.1.w),
+            Double(object.transform.columns.2.x), Double(object.transform.columns.2.y), Double(object.transform.columns.2.z), Double(object.transform.columns.2.w),
+            Double(object.transform.columns.3.x), Double(object.transform.columns.3.y), Double(object.transform.columns.3.z), Double(object.transform.columns.3.w)
+        ]
+        let attributes = object.attributes.map { String(describing: $0) }
+        export.attributes = attributes.isEmpty ? nil : attributes
         return export
+    }
+
+    private static func mapSection(_ section: CapturedRoom.Section) -> RoomPlanCaptureExport.SectionExport {
+        RoomPlanCaptureExport.SectionExport(
+            label: RoomTypeClassifier.sectionLabel(section.label),
+            center: [Double(section.center.x), Double(section.center.y), Double(section.center.z)],
+            story: section.story
+        )
     }
 
     private static func mapObjectCategory(_ category: CapturedRoom.Object.Category) -> String {

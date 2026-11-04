@@ -32,6 +32,7 @@ jobs:
         working-directory: scan-service
         run: |
           php tests/adapter_test.php
+          php tests/roomplan_adapter_test.php
           php tests/repository_test.php
           php tests/export_renderer_test.php
           php tests/concurrency_test.php
