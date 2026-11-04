@@ -6,15 +6,10 @@ struct MeshViewer: View {
     let captureURL: URL
 
     @Environment(\.dismiss) private var dismiss
-    @State private var scene: SCNScene = {
-        let scene = SCNScene()
-        scene.background.contents = UIColor.clear
-        return scene
-    }()
+    @State private var built: MeshSceneBuilder.Built?
     @State private var mode: Mode = .clay
     @State private var isLoading = true
     @State private var loadError: String?
-    @State private var triangleCount = 0
 
     enum Mode: String, CaseIterable, Identifiable {
         case clay = "Clay"
@@ -25,9 +20,17 @@ struct MeshViewer: View {
 
     var body: some View {
         ZStack {
-            SceneView(scene: scene, options: [.allowsCameraControl, .autoenablesDefaultLighting])
-                .background(mode == .wireframe ? Color.black : Color(white: 0.93))
+            if let built {
+                MeshSceneView(
+                    scene: built.scene,
+                    cameraNode: built.cameraNode,
+                    target: built.center,
+                    background: mode == .wireframe ? .black : UIColor(white: 0.93, alpha: 1)
+                )
                 .ignoresSafeArea(edges: .bottom)
+            } else {
+                Color(white: 0.93).ignoresSafeArea(edges: .bottom)
+            }
             if isLoading {
                 ProgressView("Loading mesh")
             } else if let loadError {
@@ -47,7 +50,7 @@ struct MeshViewer: View {
             .padding(.vertical, 8)
             .background(.ultraThinMaterial)
         }
-        .navigationTitle(triangleCount > 0 ? "\(triangleCount) triangles" : "3D mesh")
+        .navigationTitle((built?.triangles ?? 0) > 0 ? "\(built?.triangles ?? 0) triangles" : "3D mesh")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -55,7 +58,7 @@ struct MeshViewer: View {
             }
         }
         .onChange(of: mode) { _, newMode in
-            MeshSceneBuilder.apply(newMode, to: scene)
+            if let built { MeshSceneBuilder.apply(newMode, to: built.scene) }
         }
         .task {
             await load()
@@ -69,16 +72,38 @@ struct MeshViewer: View {
         }.value
         isLoading = false
         switch result {
-        case .success(let built):
-            for child in built.scene.rootNode.childNodes {
-                child.removeFromParentNode()
-                scene.rootNode.addChildNode(child)
-            }
-            triangleCount = built.triangles
-            MeshSceneBuilder.apply(mode, to: scene)
+        case .success(let loaded):
+            MeshSceneBuilder.apply(mode, to: loaded.scene)
+            built = loaded
         case .failure(let error):
             loadError = "Could not load the mesh: \(error.localizedDescription)"
         }
+    }
+}
+
+struct MeshSceneView: UIViewRepresentable {
+    let scene: SCNScene
+    let cameraNode: SCNNode
+    let target: SCNVector3
+    let background: UIColor
+
+    func makeUIView(context: Context) -> SCNView {
+        let view = SCNView()
+        view.scene = scene
+        view.pointOfView = cameraNode
+        view.allowsCameraControl = true
+        view.autoenablesDefaultLighting = true
+        view.antialiasingMode = .multisampling4X
+        view.backgroundColor = background
+        view.defaultCameraController.pointOfView = cameraNode
+        view.defaultCameraController.interactionMode = .orbitTurntable
+        view.defaultCameraController.target = target
+        view.defaultCameraController.inertiaEnabled = true
+        return view
+    }
+
+    func updateUIView(_ view: SCNView, context: Context) {
+        view.backgroundColor = background
     }
 }
 
@@ -94,9 +119,13 @@ enum MeshSceneBuilder {
         7: UIColor(red: 0.40, green: 0.80, blue: 0.45, alpha: 1)
     ]
 
+    static let ceilingClass: UInt8 = 3
+
     struct Built {
         let scene: SCNScene
         let triangles: Int
+        let cameraNode: SCNNode
+        let center: SCNVector3
     }
 
     struct AnchorEntry: Decodable {
@@ -127,6 +156,8 @@ enum MeshSceneBuilder {
             let index = try JSONDecoder().decode(AnchorIndex.self, from: Data(contentsOf: meshURL.appendingPathComponent("anchors.json")))
             let scene = SCNScene()
             var triangles = 0
+            var lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+            var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
             for entry in index.anchors {
                 guard entry.transform.count == 16, entry.vertexCount > 0, entry.faceCount > 0 else { continue }
                 let vertices = try Data(contentsOf: meshURL.appendingPathComponent("\(entry.fileStem).vertices"))
@@ -151,11 +182,29 @@ enum MeshSceneBuilder {
                 node.simdTransform = matrix(entry.transform)
                 scene.rootNode.addChildNode(node)
                 triangles += entry.faceCount
+                let (boxMin, boxMax) = node.boundingBox
+                for corner in corners(SIMD3<Float>(boxMin), SIMD3<Float>(boxMax)) {
+                    let world = node.simdTransform * SIMD4<Float>(corner, 1)
+                    let point = SIMD3<Float>(world.x, world.y, world.z)
+                    lower = simd_min(lower, point)
+                    upper = simd_max(upper, point)
+                }
             }
             guard triangles > 0 else {
                 return .failure(PlainError(message: "The capture has no mesh triangles."))
             }
-            return .success(Built(scene: scene, triangles: triangles))
+            let center = (lower + upper) / 2
+            let size = max(simd_length(upper - lower), 1)
+            let camera = SCNCamera()
+            camera.fieldOfView = 50
+            camera.zNear = 0.05
+            camera.zFar = Double(size * 10)
+            let cameraNode = SCNNode()
+            cameraNode.camera = camera
+            cameraNode.simdPosition = center + SIMD3<Float>(0, size * 0.8, size * 0.7)
+            cameraNode.simdLook(at: center, up: SIMD3<Float>(0, 1, 0), localFront: SIMD3<Float>(0, 0, -1))
+            scene.rootNode.addChildNode(cameraNode)
+            return .success(Built(scene: scene, triangles: triangles, cameraNode: cameraNode, center: SCNVector3(center)))
         } catch {
             return .failure(error)
         }
@@ -166,6 +215,9 @@ enum MeshSceneBuilder {
             guard let geometry = node.geometry else { return }
             for material in geometry.materials {
                 let classId = UInt8(material.name ?? "") ?? 0
+                let hidden = classId == ceilingClass && mode != .wireframe
+                material.colorBufferWriteMask = hidden ? [] : .all
+                material.writesToDepthBuffer = !hidden
                 switch mode {
                 case .clay:
                     material.fillMode = .fill
@@ -207,6 +259,15 @@ enum MeshSceneBuilder {
         material.isDoubleSided = true
         material.lightingModel = .lambert
         return material
+    }
+
+    private static func corners(_ low: SIMD3<Float>, _ high: SIMD3<Float>) -> [SIMD3<Float>] {
+        [
+            SIMD3(low.x, low.y, low.z), SIMD3(high.x, low.y, low.z),
+            SIMD3(low.x, high.y, low.z), SIMD3(high.x, high.y, low.z),
+            SIMD3(low.x, low.y, high.z), SIMD3(high.x, low.y, high.z),
+            SIMD3(low.x, high.y, high.z), SIMD3(high.x, high.y, high.z)
+        ]
     }
 
     private static func matrix(_ values: [Float]) -> simd_float4x4 {
