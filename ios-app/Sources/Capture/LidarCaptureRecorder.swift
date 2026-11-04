@@ -69,6 +69,7 @@ struct LidarCaptureManifest: Codable, Equatable {
     var roomRuns = 0
     var durationS: Double = 0
     var stats = LidarCaptureStats()
+    var depthMesh: LidarDepthMeshReport?
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -85,6 +86,7 @@ struct LidarCaptureManifest: Codable, Equatable {
         case roomRuns = "room_runs"
         case durationS = "duration_s"
         case stats
+        case depthMesh = "depth_mesh"
     }
 }
 
@@ -142,6 +144,7 @@ final class LidarCaptureRecorder {
     private var meshWriteInFlight = false
     private var frameIndex = 0
     private var latestMeshAnchors: [ARMeshAnchor] = []
+    private var lateConfigChecked = false
     private let writer = LidarCaptureWriter()
 
     func prepareSession(_ session: ARSession) {
@@ -243,6 +246,11 @@ final class LidarCaptureRecorder {
     private func sample() {
         guard let session, let frame = session.currentFrame, let directory, manifest != nil else { return }
         sampleHealth()
+        if !lateConfigChecked, manifest?.roomPlanConfig == nil, let configuration = session.configuration {
+            lateConfigChecked = true
+            manifest?.configNotes.append("RoomPlan configuration appeared during the scan: \(type(of: configuration))")
+            prepareSession(session)
+        }
         let meshAnchors = frame.anchors.compactMap { $0 as? ARMeshAnchor }
         if !meshAnchors.isEmpty {
             latestMeshAnchors = meshAnchors

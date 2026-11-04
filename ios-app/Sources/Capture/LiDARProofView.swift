@@ -8,6 +8,8 @@ struct LiDARProofView: View {
     @State private var isExporting = false
     @State private var exportError: String?
     @State private var showMesh = false
+    @State private var isFusing = false
+    @State private var fusionError: String?
 
     var body: some View {
         ScrollView {
@@ -60,6 +62,7 @@ struct LiDARProofView: View {
             row("Depth received", manifest.stats.sceneDepthSeen ? "yes" : "no")
             row("Mesh received", manifest.stats.meshSeen ? "yes" : "no")
             row("Mesh classification", manifest.stats.classificationSeen ? "yes" : "no")
+            row("Mesh built from depth", depthMeshText(manifest))
             ForEach(manifest.configNotes, id: \.self) { note in
                 Text(note)
                     .font(.system(size: 13))
@@ -75,6 +78,12 @@ struct LiDARProofView: View {
             row("Duration", String(format: "%.0f s", manifest.durationS))
             row("Keyframes", "\(stats.frames) (\(stats.depthFrames) with depth)")
             row("Mesh", "\(stats.meshAnchors) pieces, \(stats.meshVertices) points, \(stats.meshFaces) triangles")
+            if let depthMesh = manifest.depthMesh {
+                row("Depth mesh", "\(depthMesh.vertices) points, \(depthMesh.faces) triangles")
+                row("Depth mesh frames", "\(depthMesh.framesUsed) used, \(depthMesh.framesFailed) unreadable")
+                row("Depth mesh detail", String(format: "%.0f mm cells, built in %.1f s", depthMesh.voxelM * 1000, depthMesh.seconds))
+                row("Floor seen in the depth mesh", String(format: "%.1f m2", depthMesh.floorM2))
+            }
             row("Data on phone", ByteCountFormatter.string(fromByteCount: stats.totalBytes, countStyle: .file))
             row("Hottest", thermalText(stats.worstThermalState))
             row("Lowest free memory", "\(stats.lowestFreeMemoryMB) MB")
@@ -88,11 +97,25 @@ struct LiDARProofView: View {
             Button {
                 showMesh = true
             } label: {
-                Text("View 3D mesh")
+                if isFusing {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Building the mesh from depth")
+                    }
                     .frame(maxWidth: .infinity)
+                } else {
+                    Text("View 3D mesh")
+                        .frame(maxWidth: .infinity)
+                }
             }
             .buttonStyle(.vuuroPrimary)
-            .disabled(manifest?.stats.meshSeen != true)
+            .disabled(isFusing || !hasMesh)
+
+            if let fusionError {
+                Text(fusionError)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.red)
+            }
 
             Button(action: export) {
                 if isExporting {
@@ -129,6 +152,42 @@ struct LiDARProofView: View {
         }
     }
 
+    private var hasMesh: Bool {
+        guard let manifest else { return false }
+        return manifest.stats.meshSeen || manifest.depthMesh != nil
+    }
+
+    private func depthMeshText(_ manifest: LidarCaptureManifest) -> String {
+        if let depthMesh = manifest.depthMesh {
+            return "yes, \(depthMesh.faces) triangles"
+        }
+        if isFusing { return "building" }
+        if manifest.stats.meshSeen { return "not needed" }
+        return manifest.stats.depthFrames > 0 ? "no" : "no depth frames"
+    }
+
+    private func buildDepthMeshIfNeeded() {
+        guard let captureURL, let manifest, !isFusing else { return }
+        guard !manifest.stats.meshSeen, manifest.depthMesh == nil, manifest.stats.depthFrames > 0 else { return }
+        isFusing = true
+        fusionError = nil
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                DepthMeshFusion.run(captureURL: captureURL)
+            }.value
+            isFusing = false
+            switch result {
+            case .success(let updated):
+                if self.captureURL == captureURL {
+                    self.manifest = updated
+                }
+            case .failure(let error):
+                fusionError = "Could not build the mesh from depth: \(error.localizedDescription)"
+                DiagnosticsLog.shared.record("Depth mesh failed: \(error.localizedDescription)", category: .error)
+            }
+        }
+    }
+
     private func yesNo(_ value: Bool?) -> String {
         guard let value else { return "unknown" }
         return value ? "yes" : "no"
@@ -154,6 +213,7 @@ struct LiDARProofView: View {
             }
             captureURL = latest
             manifest = try LidarCaptureLibrary.manifest(at: latest)
+            buildDepthMeshIfNeeded()
         } catch {
             manifest = nil
             loadError = "Could not read the LiDAR capture: \(error.localizedDescription)"

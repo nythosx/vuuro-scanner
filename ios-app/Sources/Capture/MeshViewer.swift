@@ -329,6 +329,7 @@ struct MeshFrame {
     let cx: Float
     let cy: Float
     let depthURL: URL?
+    let confidenceURL: URL?
     let depthWidth: Int
     let depthHeight: Int
 
@@ -353,6 +354,7 @@ enum MeshFrameIndex {
         let cameraTransform: [Float]
         let intrinsics: [Float]
         let depth: String?
+        let confidence: String?
         let depthWidth: Int?
         let depthHeight: Int?
 
@@ -364,6 +366,7 @@ enum MeshFrameIndex {
             case cameraTransform = "camera_transform"
             case intrinsics = "intrinsics_fx_fy_cx_cy"
             case depth
+            case confidence
             case depthWidth = "depth_width"
             case depthHeight = "depth_height"
         }
@@ -430,6 +433,7 @@ enum MeshFrameIndex {
             cx: meta.intrinsics[2],
             cy: meta.intrinsics[3],
             depthURL: meta.depth.map { folder.appendingPathComponent($0) },
+            confidenceURL: meta.confidence.map { folder.appendingPathComponent($0) },
             depthWidth: meta.depthWidth ?? 0,
             depthHeight: meta.depthHeight ?? 0
         )
