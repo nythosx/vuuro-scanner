@@ -82,6 +82,47 @@ final class DepthMeshFusionTests: XCTestCase {
         XCTAssertEqual(saved.depthMesh, report)
     }
 
+    func testRoomPlanDoorLabelsTheWallTrianglesInsideIt() throws {
+        for index in 0..<3 {
+            try writeFrame(index: index + 1, cameraX: Double(index) * 0.2, depthMillimeters: 2000)
+        }
+        let door = LidarRoomBox(
+            kind: "door",
+            category: "door",
+            transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.2, 1.5, -2, 1],
+            dimensions: [0.8, 1.0, 0]
+        )
+        let sofa = LidarRoomBox(
+            kind: "object",
+            category: "sofa",
+            transform: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -0.9, 1.5, -2, 1],
+            dimensions: [0.4, 0.4, 0.4]
+        )
+        try JSONEncoder().encode([door, sofa]).write(to: root.appendingPathComponent(DepthMeshFusion.roomBoxesName))
+
+        let report = try XCTUnwrap(try DepthMeshFusion.run(captureURL: root).get().depthMesh)
+        XCTAssertEqual(report.roomBoxes, 2)
+        XCTAssertFalse(report.roomBoxesUnreadable)
+        XCTAssertGreaterThan(report.openingFaces, 200)
+        XCTAssertGreaterThan(report.objectFaces, 20)
+
+        let classes = [UInt8](try Data(contentsOf: root.appendingPathComponent("mesh/anchor_0000.classes")))
+        XCTAssertEqual(classes.filter { $0 == DepthMeshFusion.doorClass }.count, report.openingFaces)
+        XCTAssertEqual(classes.filter { $0 == DepthMeshFusion.seatClass }.count, report.objectFaces)
+    }
+
+    func testUnreadableRoomPlanBoxesStillBuildTheMesh() throws {
+        for index in 0..<3 {
+            try writeFrame(index: index + 1, cameraX: Double(index) * 0.2, depthMillimeters: 2000)
+        }
+        try Data("not json".utf8).write(to: root.appendingPathComponent(DepthMeshFusion.roomBoxesName))
+
+        let report = try XCTUnwrap(try DepthMeshFusion.run(captureURL: root).get().depthMesh)
+        XCTAssertTrue(report.roomBoxesUnreadable)
+        XCTAssertEqual(report.roomBoxes, 0)
+        XCTAssertGreaterThan(report.faces, 1000)
+    }
+
     func testCaptureWithoutDepthFailsWithAMessage() throws {
         let frames = root.appendingPathComponent("frames", isDirectory: true)
         let meta: [String: Any] = [

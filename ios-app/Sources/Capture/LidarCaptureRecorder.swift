@@ -5,6 +5,14 @@ import ImageIO
 import Metal
 import UIKit
 import os
+import RoomPlan
+
+struct LidarRoomBox: Codable, Equatable {
+    var kind: String
+    var category: String
+    var transform: [Float]
+    var dimensions: [Float]
+}
 
 struct LidarCaptureStats: Codable, Equatable {
     var frames = 0
@@ -130,6 +138,7 @@ final class LidarCaptureRecorder {
     static let pollIntervalNanoseconds: UInt64 = 100_000_000
     static let framesFolder = "frames"
     static let meshFolder = "mesh"
+    static let roomBoxesName = "roomplan_boxes.json"
 
     private(set) var directory: URL?
     private(set) var manifest: LidarCaptureManifest?
@@ -145,6 +154,7 @@ final class LidarCaptureRecorder {
     private var frameIndex = 0
     private var latestMeshAnchors: [ARMeshAnchor] = []
     private var lateConfigChecked = false
+    private var roomBoxes: [LidarRoomBox] = []
     private let writer = LidarCaptureWriter()
 
     func prepareSession(_ session: ARSession) {
@@ -201,6 +211,33 @@ final class LidarCaptureRecorder {
                 try? await Task.sleep(nanoseconds: Self.pollIntervalNanoseconds)
             }
         }
+    }
+
+    func recordRoom(_ room: CapturedRoom) {
+        guard let directory else { return }
+        roomBoxes.append(contentsOf: Self.boxes(from: room))
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try encoder.encode(roomBoxes).write(to: directory.appendingPathComponent(Self.roomBoxesName), options: .atomic)
+        } catch {
+            manifest?.stats.writeFailures += 1
+            DiagnosticsLog.shared.record("LiDAR recorder could not save the RoomPlan boxes: \(error.localizedDescription)", category: .error)
+        }
+    }
+
+    static func boxes(from room: CapturedRoom) -> [LidarRoomBox] {
+        var boxes: [LidarRoomBox] = []
+        for door in room.doors {
+            boxes.append(LidarRoomBox(kind: "door", category: "door", transform: flatten(door.transform), dimensions: [door.dimensions.x, door.dimensions.y, door.dimensions.z]))
+        }
+        for window in room.windows {
+            boxes.append(LidarRoomBox(kind: "window", category: "window", transform: flatten(window.transform), dimensions: [window.dimensions.x, window.dimensions.y, window.dimensions.z]))
+        }
+        for object in room.objects {
+            boxes.append(LidarRoomBox(kind: "object", category: String(describing: object.category), transform: flatten(object.transform), dimensions: [object.dimensions.x, object.dimensions.y, object.dimensions.z]))
+        }
+        return boxes
     }
 
     func stop() {

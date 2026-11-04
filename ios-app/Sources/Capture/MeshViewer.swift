@@ -480,7 +480,8 @@ enum MeshSceneBuilder {
         4: UIColor(red: 0.95, green: 0.62, blue: 0.25, alpha: 1),
         5: UIColor(red: 0.62, green: 0.45, blue: 0.85, alpha: 1),
         6: UIColor(red: 0.35, green: 0.85, blue: 0.95, alpha: 1),
-        7: UIColor(red: 0.40, green: 0.80, blue: 0.45, alpha: 1)
+        7: UIColor(red: 0.40, green: 0.80, blue: 0.45, alpha: 1),
+        8: UIColor(red: 0.85, green: 0.45, blue: 0.55, alpha: 1)
     ]
 
     static let ceilingClass: UInt8 = 3

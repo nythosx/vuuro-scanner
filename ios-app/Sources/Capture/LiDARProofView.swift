@@ -82,7 +82,11 @@ struct LiDARProofView: View {
                 row("Depth mesh", "\(depthMesh.vertices) points, \(depthMesh.faces) triangles")
                 row("Depth mesh frames", "\(depthMesh.framesUsed) used, \(depthMesh.framesFailed) unreadable")
                 row("Depth mesh detail", String(format: "%.0f mm cells, built in %.1f s", depthMesh.voxelM * 1000, depthMesh.seconds))
-                row("Floor seen in the depth mesh", String(format: "%.1f m2", depthMesh.floorM2))
+                row("Mesh footprint from above", String(format: "%.1f m2", depthMesh.footprintM2))
+                row("Floor seen by the camera", String(format: "%.1f m2", depthMesh.floorSeenM2))
+                row("Floor filled where unseen", String(format: "%.1f m2", depthMesh.floorFilledM2))
+                row("RoomPlan doors, windows, objects", depthMesh.roomBoxesUnreadable ? "file unreadable" : "\(depthMesh.roomBoxes)")
+                row("Labelled from RoomPlan", "\(depthMesh.openingFaces) door/window, \(depthMesh.objectFaces) furniture triangles")
             }
             row("Data on phone", ByteCountFormatter.string(fromByteCount: stats.totalBytes, countStyle: .file))
             row("Hottest", thermalText(stats.worstThermalState))
