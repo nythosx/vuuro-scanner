@@ -644,7 +644,9 @@ extension MultiRoomCaptureCoordinator: RoomCaptureSessionDelegate {
         let exceedsSizeLimit = RoomSizeGuard.exceedsPracticalLimit(room)
         let guess = RoomTypeGuessSettings.isEnabled ? RoomTypeClassifier.guess(for: room) : nil
         let stats = CaptureCoordinator.computeStats(room)
+        let walls = room.walls.compactMap { ScanCoverageWall(transform: $0.transform, widthM: $0.dimensions.x) }
         Task { @MainActor in
+            self.lidarRecorder.coverage.updateWalls(walls, roomAreaM2: stats.areaM2 > 0 ? stats.areaM2 : nil)
             if self.isApproachingSizeLimit != exceedsSizeLimit {
                 self.isApproachingSizeLimit = exceedsSizeLimit
             }

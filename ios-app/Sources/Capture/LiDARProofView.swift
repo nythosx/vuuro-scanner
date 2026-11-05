@@ -117,6 +117,18 @@ struct LiDARProofView: View {
             row("Duration", String(format: "%.0f s", manifest.durationS))
             row("Keyframes", "\(stats.frames) (\(stats.depthFrames) with depth)")
             row("Extra depth-only frames", "\(stats.depthOnlyFrames ?? 0)")
+            let coverageRooms = manifest.liveCoverageRooms ?? manifest.liveCoverage.map { [$0] } ?? []
+            ForEach(Array(coverageRooms.enumerated()), id: \.offset) { index, coverage in
+                let prefix = coverageRooms.count > 1 ? "Room \(index + 1): " : ""
+                row(prefix + "Floor seen during the scan", (coverage.floorPercent.map { String(format: "%.0f%%", $0) } ?? (coverage.floorSeenM2 > 0 ? "not measured" : "no floor yet")) + (coverage.ceilingSeen == false ? ", ceiling not scanned so no gap check" : ""))
+                row(prefix + "Floor seen / missing under the ceiling", String(format: "%.1f m2 / %.1f m2", coverage.floorSeenM2, coverage.floorMissingM2))
+                if let wallPercent = coverage.wallSeenPercent {
+                    row(prefix + "RoomPlan walls the mesh reached", String(format: "%.0f%%, %.1f m missing", wallPercent, coverage.wallMissingM ?? 0))
+                }
+                if let total = coverage.cornersTotal {
+                    row(prefix + "Room corners the mesh reached", "\(coverage.cornersSeen ?? 0) of \(total)")
+                }
+            }
             row("Mesh", "\(stats.meshAnchors) pieces, \(stats.meshVertices) points, \(stats.meshFaces) triangles")
             if let depthMesh = depthReport {
                 row("Depth mesh", "\(depthMesh.vertices) points, \(depthMesh.faces) triangles")

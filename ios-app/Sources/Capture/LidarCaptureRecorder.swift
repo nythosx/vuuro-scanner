@@ -83,10 +83,14 @@ struct LidarCaptureManifest: Codable, Equatable {
     var durationS: Double = 0
     var stats = LidarCaptureStats()
     var sessionId: String? = nil
+    var liveCoverage: LidarLiveCoverage? = nil
+    var liveCoverageRooms: [LidarLiveCoverage]? = nil
 
     enum CodingKeys: String, CodingKey {
         case version
         case sessionId = "session_id"
+        case liveCoverage = "live_coverage"
+        case liveCoverageRooms = "live_coverage_rooms"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case device
@@ -179,6 +183,7 @@ final class LidarCaptureRecorder {
     private var depthWriteInFlight = false
     private var depthIndex = 0
     private let writer = LidarCaptureWriter()
+    let coverage = ScanCoverageTracker()
 
     func prepareSession(_ session: ARSession) {
         ensureDirectory()
@@ -226,6 +231,7 @@ final class LidarCaptureRecorder {
         self.session = session
         ensureDirectory()
         lastPose = nil
+        coverage.startRoom()
         if startedAt == nil { startedAt = Date() }
         manifest?.roomRuns += 1
         pollTask = Task { [weak self] in
@@ -274,6 +280,10 @@ final class LidarCaptureRecorder {
         if !latestMeshAnchors.isEmpty {
             snapshotMesh(latestMeshAnchors, at: Date().timeIntervalSince1970)
         }
+        if let summary = coverage.finishRoom() {
+            manifest?.liveCoverage = summary
+            manifest?.liveCoverageRooms = (manifest?.liveCoverageRooms ?? []) + [summary]
+        }
         persistManifest()
     }
 
@@ -317,6 +327,7 @@ final class LidarCaptureRecorder {
             prepareSession(session)
         }
         let meshAnchors = frame.anchors.compactMap { $0 as? ARMeshAnchor }
+        coverage.ingest(frame: frame, meshAnchors: meshAnchors)
         if !meshAnchors.isEmpty {
             latestMeshAnchors = meshAnchors
             manifest?.stats.meshSeen = true

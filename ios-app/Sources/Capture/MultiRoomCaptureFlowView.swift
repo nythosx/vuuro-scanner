@@ -739,7 +739,15 @@ struct MultiRoomCaptureFlowView: View {
 
             Spacer().frame(height: 24)
 
-            VuuroScanRing(walls: coordinator.liveStats.walls)
+            HStack(alignment: .top, spacing: 0) {
+                Color.clear.frame(width: ScanCoverageMapView.panelWidth, height: 1)
+                Spacer(minLength: 8)
+                VuuroScanRing(walls: coordinator.liveStats.walls)
+                Spacer(minLength: 8)
+                ScanCoverageMapView(tracker: coordinator.lidarRecorder.coverage)
+                    .frame(width: ScanCoverageMapView.panelWidth, alignment: .topTrailing)
+            }
+            .padding(.horizontal, 12)
 
             Spacer().frame(height: 14)
 
