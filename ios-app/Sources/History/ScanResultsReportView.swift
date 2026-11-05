@@ -54,6 +54,10 @@ struct ScanResultsReportView: View {
     @State private var isExportingUSDZ = false
     @State private var usdzURL: URL?
     @State private var showFullScreen3D = false
+    @State private var lidarCaptures: [LidarCaptureMatch] = []
+    @State private var lidarLookupError: String?
+    @State private var lidarMeshURL: URL?
+    @State private var showLidarMesh = false
     @State private var hotspotPhotoTarget: HotspotPhotoTarget?
 
     private var exportUnit: MeasurementUnit {
@@ -83,6 +87,7 @@ struct ScanResultsReportView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     hero
+                    LidarCaptureEntryButton(captures: lidarCaptures, lookupError: lidarLookupError, identifierPrefix: "report")
 
                     if isLoading {
                         loadingState
@@ -163,6 +168,7 @@ struct ScanResultsReportView: View {
         .background(VuuroColor.bgApp)
         .toolbar(.hidden, for: .navigationBar)
         .task { await load() }
+        .onAppear(perform: refreshLidarCaptures)
         .confirmationDialog("Continue this scan", isPresented: $showContinueChoices, titleVisibility: .visible) {
             ForEach(continueFloorOptions, id: \.self) { floor in
                 Button(floor.isEmpty ? "Add rooms" : "Add rooms on \(floor)") {
@@ -280,6 +286,13 @@ struct ScanResultsReportView: View {
                 photo: target.photo,
                 onClose: { hotspotPhotoTarget = nil }
             )
+        }
+        .fullScreenCover(isPresented: $showLidarMesh) {
+            if let lidarMeshURL {
+                NavigationStack {
+                    MeshViewer(captureURL: lidarMeshURL)
+                }
+            }
         }
         .fullScreenCover(isPresented: $showFullScreen3D) {
             DollhouseFullScreenView(
@@ -1012,16 +1025,27 @@ struct ScanResultsReportView: View {
         }
     }
 
+    private func refreshLidarCaptures() {
+        let found = LidarCaptureLibrary.lookup(sessionId: entry.sessionId)
+        lidarCaptures = found.captures
+        lidarLookupError = found.error
+        lidarMeshURL = found.captures.first(where: \.hasMesh)?.url
+    }
+
     private var openFullScreen3DButton: some View {
         Button {
-            showFullScreen3D = true
+            if lidarMeshURL != nil {
+                showLidarMesh = true
+            } else {
+                showFullScreen3D = true
+            }
         } label: {
-            Label("Open full 3D view", systemImage: "cube.transparent")
+            Label(lidarMeshURL == nil ? "Open full 3D view" : "Open LiDAR mesh in 3D", systemImage: "cube.transparent")
                 .frame(maxWidth: .infinity)
         }
         .accessibilityIdentifier("report.openFullScreen3D")
         .buttonStyle(.vuuroOutline)
-        .disabled((floorPlan?.rooms.isEmpty ?? true))
+        .disabled((floorPlan?.rooms.isEmpty ?? true) && lidarMeshURL == nil)
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
     }

@@ -1,7 +1,10 @@
 import SwiftUI
 
 struct LiDARProofView: View {
+    let captures: [LidarCaptureMatch]
+
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedId: String?
     @State private var captureURL: URL?
     @State private var manifest: LidarCaptureManifest?
     @State private var loadError: String?
@@ -17,6 +20,20 @@ struct LiDARProofView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                if captures.count > 1 {
+                    Picker("Capture", selection: $selectedId) {
+                        ForEach(captures) { capture in
+                            Text(captureLabel(capture)).tag(Optional(capture.id))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .accessibilityIdentifier("lidarProof.capturePicker")
+                }
+                if let selected, selected.matchedByTime {
+                    Text("This capture was made before captures were linked to scans, so it is matched to this scan by time.")
+                        .font(.system(size: 14))
+                        .foregroundStyle(VuuroColor.textSecondary)
+                }
                 if let manifest {
                     answers(manifest)
                     numbers(manifest)
@@ -26,7 +43,7 @@ struct LiDARProofView: View {
                         .font(.system(size: 15))
                         .foregroundStyle(VuuroColor.textPrimary)
                 } else {
-                    Text("No LiDAR capture found yet. Run a scan first.")
+                    Text("No LiDAR capture for this scan on this phone. Captures stay on the phone that scanned, and the oldest are removed to save space.")
                         .font(.system(size: 15))
                         .foregroundStyle(VuuroColor.textPrimary)
                 }
@@ -46,7 +63,16 @@ struct LiDARProofView: View {
                 Button("Close") { dismiss() }
             }
         }
-        .onAppear(perform: load)
+        .onAppear {
+            if selectedId == nil { selectedId = captures.first?.id }
+            load()
+        }
+        .onChange(of: selectedId) { _, _ in
+            fusionTask?.cancel()
+            fusionTask = nil
+            isFusing = false
+            load()
+        }
         .onDisappear {
             fusionTask?.cancel()
             fusionTask = nil
@@ -218,13 +244,12 @@ struct LiDARProofView: View {
             } onCancel: {
                 work.cancel()
             }
+            guard self.captureURL == captureURL, !Task.isCancelled else { return }
             isFusing = false
             fusionTask = nil
             switch result {
             case .success(let report):
-                if self.captureURL == captureURL {
-                    depthReport = report
-                }
+                depthReport = report
             case .failure(let error):
                 if error is CancellationError { return }
                 fusionError = "Could not build the mesh from depth: \(error.localizedDescription)"
@@ -248,10 +273,21 @@ struct LiDARProofView: View {
         }
     }
 
+    private var selected: LidarCaptureMatch? {
+        captures.first { $0.id == selectedId } ?? captures.first
+    }
+
+    private func captureLabel(_ capture: LidarCaptureMatch) -> String {
+        guard let date = capture.createdAt else { return capture.id }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
     private func load() {
         loadError = nil
+        fusionError = nil
+        depthReport = nil
         do {
-            guard let latest = try LidarCaptureLibrary.latestCapture() else {
+            guard let latest = selected?.url else {
                 captureURL = nil
                 manifest = nil
                 return
@@ -302,10 +338,6 @@ enum LidarCaptureLibrary {
             .appendingPathComponent("LidarCaptures", isDirectory: true)
     }
 
-    static func latestCapture() throws -> URL? {
-        try captures().first
-    }
-
     static func manifest(at url: URL) throws -> LidarCaptureManifest {
         let data = try Data(contentsOf: url.appendingPathComponent(manifestName))
         return try JSONDecoder().decode(LidarCaptureManifest.self, from: data)
@@ -318,16 +350,6 @@ enum LidarCaptureLibrary {
         return items
             .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
-    }
-
-    static func pruneOld() {
-        do {
-            for url in try captures().dropFirst(keepCaptures) {
-                try FileManager.default.removeItem(at: url)
-            }
-        } catch {
-            DiagnosticsLog.shared.record("Old LiDAR captures could not be removed: \(error.localizedDescription)", category: .error)
-        }
     }
 
     static func zip(_ folder: URL) -> Result<URL, Error> {

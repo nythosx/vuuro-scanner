@@ -981,6 +981,7 @@ private struct RoomCaptureFlowStep: View {
                 floor: session.defaultFloor ?? identity.floor
             ))
         }
+        coordinator.lidarRecorder.link(sessionId: session.id)
 
         PendingUploadStore.save(PendingUploadState(session: session, identity: identity, captures: [.init(idempotencyKey: idempotencyKey, bodyJSON: bodyJSON)], captureGroupId: export.captureGroupId))
         do {

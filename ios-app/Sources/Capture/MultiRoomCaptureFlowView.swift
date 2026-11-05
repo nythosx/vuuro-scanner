@@ -1296,6 +1296,7 @@ struct MultiRoomCaptureFlowView: View {
                 floor: session.defaultFloor ?? identity.floor
             ))
         }
+        coordinator.lidarRecorder.link(sessionId: session.id)
 
         var floorPlan: FloorPlan?
         for (index, capture) in pending.captures.enumerated() {

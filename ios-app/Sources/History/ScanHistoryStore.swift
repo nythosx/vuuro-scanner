@@ -26,6 +26,18 @@ final class ScanHistoryStore {
             .sorted { $0.lastActivityAt > $1.lastActivityAt }
     }
 
+    func entriesWithoutTokens() -> [ScanHistoryEntry] {
+        lock.lock()
+        defer { lock.unlock() }
+        return readRedacted()
+    }
+
+    func entry(sessionId: String) -> ScanHistoryEntry? {
+        lock.lock()
+        defer { lock.unlock() }
+        return readRedacted().first { $0.sessionId == sessionId }
+    }
+
     func add(_ entry: ScanHistoryEntry) {
         lock.lock()
         defer { lock.unlock() }
@@ -46,6 +58,7 @@ final class ScanHistoryStore {
 
     func remove(sessionId: String) {
         Task { @MainActor in WorldMapStore.shared.deleteAll(sessionId: sessionId) }
+        LidarCaptureLibrary.deleteCaptures(sessionId: sessionId)
         lock.lock()
         defer { lock.unlock() }
         KeychainTokenStore.deleteToken(forSessionId: sessionId)

@@ -28,7 +28,10 @@ struct ResultSummaryView: View {
     @State private var updatingRoomTypeIds: Set<String> = []
     @State private var splitTarget: SplitTarget?
     @State private var isUndoingSplit = false
-    @State private var showLidarProof = false
+    @State private var lidarCaptures: [LidarCaptureMatch] = []
+    @State private var lidarLookupError: String?
+    @State private var lidarMeshURL: URL?
+    @State private var showLidarMesh = false
     @State private var floorTargetRoom: FloorPlan.Room?
     @State private var deleteTargetRoom: FloorPlan.Room?
     @State private var roomFloorDraft = ""
@@ -121,23 +124,7 @@ struct ResultSummaryView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     summaryHero
-                    Button {
-                        showLidarProof = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "cube.transparent")
-                                .font(.system(size: 18))
-                            Text("LiDAR capture: mesh, depth and frames")
-                                .font(.system(size: 16, weight: .bold))
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                        }
-                        .foregroundStyle(.white)
-                        .padding()
-                        .background(VuuroColor.accent, in: RoundedRectangle(cornerRadius: 14))
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
+                    LidarCaptureEntryButton(captures: lidarCaptures, lookupError: lidarLookupError, identifierPrefix: "result")
                     if let warnings = currentFloorPlan.roomSplitWarnings, !warnings.isEmpty {
                         splitWarningBanner(warnings)
                     }
@@ -219,6 +206,7 @@ struct ResultSummaryView: View {
         }
         .background(VuuroColor.bgApp)
         .task { await loadImage() }
+        .onAppear(perform: refreshLidarCaptures)
         .onChange(of: exportStyle) { oldStyle, newStyle in
             applyExportStyle(newStyle, previous: oldStyle)
         }
@@ -265,11 +253,6 @@ struct ResultSummaryView: View {
                         .frame(maxWidth: 200)
                     }
                 }
-            }
-        }
-        .sheet(isPresented: $showLidarProof) {
-            NavigationStack {
-                LiDARProofView()
             }
         }
         .sheet(item: $missingItemTarget) { target in
@@ -342,6 +325,13 @@ struct ResultSummaryView: View {
                 photo: target.photo,
                 onClose: { hotspotPhotoTarget = nil }
             )
+        }
+        .fullScreenCover(isPresented: $showLidarMesh) {
+            if let lidarMeshURL {
+                NavigationStack {
+                    MeshViewer(captureURL: lidarMeshURL)
+                }
+            }
         }
         .fullScreenCover(isPresented: $showFullScreen3D) {
             DollhouseFullScreenView(
@@ -817,16 +807,27 @@ struct ResultSummaryView: View {
         }
     }
 
+    private func refreshLidarCaptures() {
+        let found = LidarCaptureLibrary.lookup(sessionId: session.id)
+        lidarCaptures = found.captures
+        lidarLookupError = found.error
+        lidarMeshURL = found.captures.first(where: \.hasMesh)?.url
+    }
+
     private var openFullScreen3DButton: some View {
         Button {
-            showFullScreen3D = true
+            if lidarMeshURL != nil {
+                showLidarMesh = true
+            } else {
+                showFullScreen3D = true
+            }
         } label: {
-            Label("Open full 3D view", systemImage: "cube.transparent")
+            Label(lidarMeshURL == nil ? "Open full 3D view" : "Open LiDAR mesh in 3D", systemImage: "cube.transparent")
                 .frame(maxWidth: .infinity)
         }
         .accessibilityIdentifier("result.openFullScreen3D")
         .buttonStyle(.vuuroOutline)
-        .disabled(currentFloorPlan.rooms.isEmpty)
+        .disabled(currentFloorPlan.rooms.isEmpty && lidarMeshURL == nil)
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
     }

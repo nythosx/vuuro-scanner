@@ -8,7 +8,6 @@ struct SettingsView: View {
     @AppStorage("darkModeEnabled") private var darkMode: Bool = false
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
     @AppStorage("walkthroughCaptureEnabled") private var walkthroughCaptureEnabled: Bool = false
-    @AppStorage("lidarAppleMeshExperiment") private var appleMeshExperiment: Bool = false
     @State private var roomTypeGuess = RoomTypeGuessSettings.isEnabled
     @State private var cacheSizeLabel: String = "—"
     @State private var darkModeLocal: Bool = false
@@ -58,21 +57,6 @@ struct SettingsView: View {
                                 .onChange(of: roomTypeGuess) { _, newValue in
                                     RoomTypeGuessSettings.isEnabled = newValue
                                 }
-                        }
-                    }
-                    .padding(.horizontal, 20)
-
-                    VuuroSectionLabel(text: "LiDAR")
-                    VuuroInputGroup {
-                        VuuroInputRow(
-                            leadingIcon: "cube.transparent",
-                            label: "Apple mesh during scan (experiment)",
-                            showsDivider: false
-                        ) {
-                            Toggle("", isOn: $appleMeshExperiment)
-                                .accessibilityIdentifier("settings.appleMeshExperiment")
-                                .labelsHidden()
-                                .tint(VuuroColor.lime)
                         }
                     }
                     .padding(.horizontal, 20)

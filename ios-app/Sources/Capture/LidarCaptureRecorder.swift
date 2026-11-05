@@ -82,9 +82,11 @@ struct LidarCaptureManifest: Codable, Equatable {
     var roomRuns = 0
     var durationS: Double = 0
     var stats = LidarCaptureStats()
+    var sessionId: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case version
+        case sessionId = "session_id"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case device
@@ -156,7 +158,6 @@ final class LidarCaptureRecorder {
     static let depthOnlyMinDistanceM: Float = 0.1
     static let depthOnlyMinTurnDeg: Float = 5
     static let depthOnlyMinIntervalS: TimeInterval = 0.1
-    static let appleMeshExperimentKey = "lidarAppleMeshExperiment"
 
     private(set) var directory: URL?
     private(set) var manifest: LidarCaptureManifest?
@@ -189,19 +190,6 @@ final class LidarCaptureRecorder {
             notes.append("RoomPlan session has no ARWorldTrackingConfiguration: \(String(describing: session.configuration.map { type(of: $0) }))")
         }
         guard let current, let updated = current.copy() as? ARWorldTrackingConfiguration else {
-            if UserDefaults.standard.bool(forKey: Self.appleMeshExperimentKey) {
-                let experiment = ARWorldTrackingConfiguration()
-                if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
-                    experiment.sceneReconstruction = .meshWithClassification
-                }
-                if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
-                    experiment.frameSemantics.insert(.sceneDepth)
-                }
-                session.run(experiment)
-                manifest?.configAugmented = true
-                manifest?.configAfter = Self.report(experiment)
-                notes.append("Experiment on: ran a world tracking configuration with mesh and depth on the RoomPlan session")
-            }
             manifest?.configNotes.append(contentsOf: notes)
             DiagnosticsLog.shared.record("LiDAR recorder: \(notes.joined(separator: "; "))", category: .state)
             persistManifest()
@@ -296,7 +284,7 @@ final class LidarCaptureRecorder {
 
     private func ensureDirectory() {
         guard directory == nil else { return }
-        LidarCaptureLibrary.pruneOld()
+        LidarCaptureLibrary.pruneOld(keeping: ScanHistoryStore.shared.entriesWithoutTokens())
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
@@ -473,10 +461,19 @@ final class LidarCaptureRecorder {
         }
     }
 
-    private func persistManifest() {
+    func link(sessionId: String) {
+        guard manifest != nil, manifest?.sessionId != sessionId else { return }
+        manifest?.sessionId = sessionId
+        persistManifest(touch: false)
+        DiagnosticsLog.shared.record("LiDAR capture linked to scan \(sessionId)", category: .state)
+    }
+
+    private func persistManifest(touch: Bool = true) {
         guard let directory, var manifest else { return }
-        manifest.updatedAt = ISO8601DateFormatter().string(from: Date())
-        if let startedAt { manifest.durationS = Date().timeIntervalSince(startedAt) }
+        if touch {
+            manifest.updatedAt = ISO8601DateFormatter().string(from: Date())
+            if let startedAt { manifest.durationS = Date().timeIntervalSince(startedAt) }
+        }
         self.manifest = manifest
         let url = directory.appendingPathComponent(LidarCaptureLibrary.manifestName)
         do {
