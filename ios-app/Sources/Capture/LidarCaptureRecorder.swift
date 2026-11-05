@@ -282,7 +282,9 @@ final class LidarCaptureRecorder {
         }
         if let summary = coverage.finishRoom() {
             manifest?.liveCoverage = summary
-            manifest?.liveCoverageRooms = (manifest?.liveCoverageRooms ?? []) + [summary]
+            var rooms = manifest?.liveCoverageRooms ?? []
+            rooms.append(summary)
+            manifest?.liveCoverageRooms = rooms
         }
         persistManifest()
     }
