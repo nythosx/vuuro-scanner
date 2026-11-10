@@ -369,4 +369,72 @@ final class ScanCoverageTests: XCTestCase {
         let decoded = try? JSONDecoder().decode(LidarLiveCoverage.self, from: JSONEncoder().encode(summary))
         XCTAssertEqual(decoded, summary)
     }
+    func testFloorPercentUsesTheScannedCeilingOnceItCoversMostOfTheRoom() {
+        XCTAssertEqual(ScanCoverageGrid.floorPercent(seenCells: 830, missingCells: 24, ceilingSeen: true, roomAreaM2: 60.5) ?? -1, 830.0 / 854.0 * 100, accuracy: 0.001)
+        XCTAssertEqual(ScanCoverageGrid.floorPercent(seenCells: 100, missingCells: 0, ceilingSeen: true, roomAreaM2: 60.5) ?? -1, 100.0 / 968.0 * 100, accuracy: 0.001)
+    }
+
+    func testStairsAreNotMissingFloor() {
+        let faces = patch(ScanCoverageGrid.ceilingClass, y: 2.5, xRange: 0...9, zRange: 0...9)
+            + patch(ScanCoverageGrid.floorClass, y: 0, xRange: 0...4, zRange: 0...9)
+        let stair = ScanCoverageStair(center: [1.875, 1.25], axis: [1, 0], lengthM: 1.25, depthM: 2.5)
+        let snapshot = grid(faces).snapshot(cameraTransform: nil, path: [], stairs: [stair])
+        XCTAssertTrue(snapshot.missing.isEmpty)
+        XCTAssertFalse(snapshot.stairs.isEmpty)
+        XCTAssertEqual(snapshot.floorPercent ?? -1, 100, accuracy: 0.001)
+        XCTAssertEqual(grid(faces).snapshot(cameraTransform: nil, path: []).missing.count, 50)
+    }
+
+    func testStairFromRoomPlanTransformCoversItsFootprint() throws {
+        let stair = try XCTUnwrap(ScanCoverageStair(transform: matrix_identity_float4x4, dimensions: [1, 2, 3]))
+        XCTAssertTrue(stair.contains([0.4, 1.4]))
+        XCTAssertFalse(stair.contains([0.7, 0]))
+        XCTAssertEqual(stair.areaM2, 3, accuracy: 0.001)
+        XCTAssertNil(ScanCoverageStair(transform: matrix_identity_float4x4, dimensions: [0, 2, 3]))
+        XCTAssertNil(ScanCoverageStair(transform: matrix_identity_float4x4, dimensions: [.nan, 2, 3]))
+    }
+
+    func testFloorHintSkipsAGapMarkedAsStuck() {
+        func block(_ center: SIMD2<Float>, _ half: Int32) -> Set<CoverageCell> {
+            let cell = ScanCoverageGrid.cell(center)
+            return Set((-half...half).flatMap { dx in (-half...half).map { CoverageCell(x: cell.x + dx, z: cell.z + $0) } })
+        }
+        let missing = block([0, -3], 2).union(block([3, 0], 1))
+        let forward = SIMD2<Float>(0, -1)
+        XCTAssertEqual(ScanCoverageGrid.hint(missing: missing, camera: [0, 0], forward: forward)?.direction, .ahead)
+        XCTAssertEqual(ScanCoverageGrid.hint(missing: missing, camera: [0, 0], forward: forward)?.cells, 25)
+        XCTAssertEqual(ScanCoverageGrid.hint(missing: missing, camera: [0, 0], forward: forward, skipNear: [[0, -3]])?.direction, .right)
+        XCTAssertNil(ScanCoverageGrid.hint(missing: missing, camera: [0, 0], forward: forward, skipNear: [[0, -3], [3, 0]]))
+    }
+
+    func testFloorHintWatchMarksAGapThatDoesNotShrink() {
+        var watch = ScanCoverageFloorHintWatch()
+        let hint = ScanCoverageHint(direction: .ahead, distanceM: 2, center: [0, -3], cells: 10)
+        XCTAssertFalse(watch.update(hint, at: 0))
+        XCTAssertFalse(watch.update(hint, at: 5))
+        XCTAssertTrue(watch.update(hint, at: 10.5))
+        XCTAssertEqual(watch.skipped, [[0, -3]])
+    }
+
+    func testFloorHintWatchRestartsWhenTheGapShrinks() {
+        var watch = ScanCoverageFloorHintWatch()
+        XCTAssertFalse(watch.update(ScanCoverageHint(direction: .ahead, distanceM: 2, center: [0, -3], cells: 10), at: 0))
+        XCTAssertFalse(watch.update(ScanCoverageHint(direction: .ahead, distanceM: 2, center: [0.2, -3], cells: 7), at: 8))
+        XCTAssertFalse(watch.update(ScanCoverageHint(direction: .ahead, distanceM: 2, center: [0.2, -3], cells: 7), at: 15))
+        XCTAssertTrue(watch.update(ScanCoverageHint(direction: .ahead, distanceM: 2, center: [0.2, -3], cells: 7), at: 18.5))
+    }
+
+    func testFloorHintWatchIgnoresCornerAndWallHints() {
+        var watch = ScanCoverageFloorHintWatch()
+        let corner = ScanCoverageHint(target: .corner, direction: .ahead, distanceM: 2, center: [0, -3])
+        XCTAssertFalse(watch.update(corner, at: 0))
+        XCTAssertFalse(watch.update(corner, at: 30))
+        XCTAssertTrue(watch.skipped.isEmpty)
+    }
+
+    func testMovedHintKeepsItsGapSize() {
+        var snapshot = ScanCoverageSnapshot()
+        snapshot.hint = ScanCoverageHint(direction: .ahead, distanceM: 2, center: [0, -3], cells: 12)
+        XCTAssertEqual(ScanCoverageGrid.moved(snapshot, to: matrix_identity_float4x4).hint?.cells, 12)
+    }
 }

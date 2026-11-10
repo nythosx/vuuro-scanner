@@ -36,6 +36,81 @@ struct ScanCoverageWall: Equatable, Sendable {
     }
 }
 
+struct ScanCoverageStair: Equatable, Sendable {
+    let center: SIMD2<Float>
+    let axis: SIMD2<Float>
+    let halfLength: Float
+    let halfDepth: Float
+
+    init(center: SIMD2<Float>, axis: SIMD2<Float>, lengthM: Float, depthM: Float) {
+        self.center = center
+        self.axis = simd_length(axis) > 0 ? simd_normalize(axis) : SIMD2<Float>(1, 0)
+        halfLength = lengthM / 2
+        halfDepth = depthM / 2
+    }
+
+    init?(transform: simd_float4x4, dimensions: simd_float3) {
+        let center = SIMD2<Float>(transform.columns.3.x, transform.columns.3.z)
+        let axis = SIMD2<Float>(transform.columns.0.x, transform.columns.0.z)
+        guard dimensions.x.isFinite, dimensions.z.isFinite, dimensions.x > 0.05, dimensions.z > 0.05,
+              dimensions.x < ScanCoverageGrid.maxWallLengthM, dimensions.z < ScanCoverageGrid.maxWallLengthM,
+              simd_length(axis) > 0.01,
+              abs(center.x) < ScanCoverageGrid.maxCoordinateM, abs(center.y) < ScanCoverageGrid.maxCoordinateM else { return nil }
+        self.init(center: center, axis: axis, lengthM: dimensions.x, depthM: dimensions.z)
+    }
+
+    var areaM2: Double { Double(4 * halfLength * halfDepth) }
+
+    func contains(_ point: SIMD2<Float>) -> Bool {
+        let offset = point - center
+        let side = SIMD2<Float>(-axis.y, axis.x)
+        let pad = ScanCoverageGrid.cellM / 2
+        return abs(simd_dot(offset, axis)) <= halfLength + pad && abs(simd_dot(offset, side)) <= halfDepth + pad
+    }
+
+    func cells() -> Set<CoverageCell> {
+        let reach = (halfLength * halfLength + halfDepth * halfDepth).squareRoot() + ScanCoverageGrid.cellM
+        let low = ScanCoverageGrid.cell(center - SIMD2<Float>(reach, reach))
+        let high = ScanCoverageGrid.cell(center + SIMD2<Float>(reach, reach))
+        var result: Set<CoverageCell> = []
+        for x in low.x...high.x {
+            for z in low.z...high.z {
+                let cell = CoverageCell(x: x, z: z)
+                if contains(ScanCoverageGrid.center(cell)) { result.insert(cell) }
+            }
+        }
+        return result
+    }
+}
+
+struct ScanCoverageFloorHintWatch: Sendable {
+    static let stuckAfterS: TimeInterval = 10
+    static let sameTargetM: Float = 1.0
+    static let shrinkCells = 2
+
+    private(set) var skipped: [SIMD2<Float>] = []
+    private var target: SIMD2<Float>?
+    private var cells = 0
+    private var since: TimeInterval = 0
+
+    mutating func update(_ hint: ScanCoverageHint?, at time: TimeInterval) -> Bool {
+        guard let hint, hint.target == .floor else {
+            target = nil
+            return false
+        }
+        if let target, simd_distance(target, hint.center) <= Self.sameTargetM, hint.cells > cells - Self.shrinkCells {
+            guard time - since >= Self.stuckAfterS else { return false }
+            skipped.append(hint.center)
+            self.target = nil
+            return true
+        }
+        target = hint.center
+        cells = hint.cells
+        since = time
+        return false
+    }
+}
+
 struct ScanCoverageWallStrip: Equatable, Sendable {
     let start: SIMD2<Float>
     let end: SIMD2<Float>
@@ -60,6 +135,7 @@ struct ScanCoverageHint: Equatable, Sendable {
     let direction: Direction
     let distanceM: Float
     let center: SIMD2<Float>
+    var cells = 0
 }
 
 struct ScanCoverageSnapshot: Equatable, Sendable {
@@ -67,6 +143,7 @@ struct ScanCoverageSnapshot: Equatable, Sendable {
     var wall: Set<CoverageCell> = []
     var furniture: Set<CoverageCell> = []
     var missing: Set<CoverageCell> = []
+    var stairs: Set<CoverageCell> = []
     var wallStrips: [ScanCoverageWallStrip] = []
     var corners: [ScanCoverageCorner] = []
     var ceilingSeen = false
@@ -119,6 +196,8 @@ struct ScanCoverageGrid: Sendable {
     static let stripSeenFraction = 0.5
     static let cornerMinTurnCos: Float = 0.866
     static let sameFloorToleranceM: Float = 1.0
+    static let roomAreaTrustFraction = 0.8
+    static let floorHintSkipM: Float = 1.0
 
     static let wallClass: UInt8 = 1
     static let floorClass: UInt8 = 2
@@ -289,7 +368,7 @@ struct ScanCoverageGrid: Sendable {
         return Double(hits) >= Double(samples) * stripSeenFraction
     }
 
-    func snapshot(cameraTransform: simd_float4x4?, path: [SIMD2<Float>], walls: [ScanCoverageWall] = [], roomAreaM2: Double? = nil) -> ScanCoverageSnapshot {
+    func snapshot(cameraTransform: simd_float4x4?, path: [SIMD2<Float>], walls: [ScanCoverageWall] = [], roomAreaM2: Double? = nil, stairs: [ScanCoverageStair] = [], skipFloorNear: [SIMD2<Float>] = []) -> ScanCoverageSnapshot {
         var snapshot = ScanCoverageSnapshot()
         var ceiling: Set<CoverageCell> = []
         var heightSum = 0.0
@@ -319,12 +398,14 @@ struct ScanCoverageGrid: Sendable {
         }
         snapshot.ceilingSeen = !ceiling.isEmpty
         let earlierWall = contextWall(floorY: floorY)
-        snapshot.missing = ceiling.subtracting(snapshot.floor).subtracting(snapshot.wall).subtracting(snapshot.furniture).subtracting(earlierWall)
+        snapshot.stairs = stairs.reduce(into: Set<CoverageCell>()) { $0.formUnion($1.cells()) }
+        snapshot.missing = ceiling.subtracting(snapshot.floor).subtracting(snapshot.wall).subtracting(snapshot.furniture).subtracting(earlierWall).subtracting(snapshot.stairs)
+        let stairsM2 = stairs.reduce(0) { $0 + $1.areaM2 }
         snapshot.floorPercent = Self.floorPercent(
-            seenCells: snapshot.floor.union(snapshot.furniture).count,
+            seenCells: snapshot.floor.union(snapshot.furniture).subtracting(snapshot.stairs).count,
             missingCells: snapshot.missing.count,
             ceilingSeen: snapshot.ceilingSeen,
-            roomAreaM2: roomAreaM2
+            roomAreaM2: roomAreaM2.map { $0 - stairsM2 }
         )
         let matchWall = snapshot.wall.union(earlierWall)
         snapshot.wallStrips = Self.strips(for: walls, meshWall: matchWall)
@@ -334,11 +415,16 @@ struct ScanCoverageGrid: Sendable {
             let cameraPose = Self.pose(cameraTransform)
             snapshot.camera = cameraPose.position
             snapshot.cameraForward = cameraPose.forward
-            snapshot.hint = Self.hint(missing: snapshot.missing, camera: cameraPose.position, forward: cameraPose.forward)
-                ?? Self.cornerHint(snapshot.corners, camera: cameraPose.position, forward: cameraPose.forward)
-                ?? Self.wallHint(snapshot.wallStrips, camera: cameraPose.position, forward: cameraPose.forward)
+            snapshot.hint = Self.bestHint(snapshot, skipFloorNear: skipFloorNear)
         }
         return snapshot
+    }
+
+    static func bestHint(_ snapshot: ScanCoverageSnapshot, skipFloorNear: [SIMD2<Float>]) -> ScanCoverageHint? {
+        guard let camera = snapshot.camera else { return nil }
+        return hint(missing: snapshot.missing, camera: camera, forward: snapshot.cameraForward, skipNear: skipFloorNear)
+            ?? cornerHint(snapshot.corners, camera: camera, forward: snapshot.cameraForward)
+            ?? wallHint(snapshot.wallStrips, camera: camera, forward: snapshot.cameraForward)
     }
 
     static func pose(_ transform: simd_float4x4) -> (position: SIMD2<Float>, forward: SIMD2<Float>?) {
@@ -354,7 +440,7 @@ struct ScanCoverageGrid: Sendable {
         result.cameraForward = cameraPose.forward
         if let hint = snapshot.hint {
             if let forward = cameraPose.forward {
-                result.hint = ScanCoverageHint(target: hint.target, direction: direction(to: hint.center, camera: cameraPose.position, forward: forward), distanceM: simd_distance(hint.center, cameraPose.position), center: hint.center)
+                result.hint = ScanCoverageHint(target: hint.target, direction: direction(to: hint.center, camera: cameraPose.position, forward: forward), distanceM: simd_distance(hint.center, cameraPose.position), center: hint.center, cells: hint.cells)
             } else {
                 result.hint = nil
             }
@@ -366,7 +452,7 @@ struct ScanCoverageGrid: Sendable {
         let underCeiling = ceilingSeen ? Double(seenCells + missingCells) : 0
         let area = roomAreaM2 ?? 0
         let room = area.isFinite && area > 0 ? area / cellAreaM2 : 0
-        let total = max(underCeiling, room)
+        let total = underCeiling > 0 && underCeiling >= room * roomAreaTrustFraction ? underCeiling : max(underCeiling, room)
         guard total > 0 else { return nil }
         return min(100, Double(seenCells) / total * 100)
     }
@@ -378,8 +464,12 @@ struct ScanCoverageGrid: Sendable {
     }
 
     static func largestCluster(_ cells: Set<CoverageCell>) -> [CoverageCell] {
+        clusters(cells).first ?? []
+    }
+
+    static func clusters(_ cells: Set<CoverageCell>) -> [[CoverageCell]] {
         var remaining = cells
-        var best: [CoverageCell] = []
+        var found: [(cells: [CoverageCell], first: CoverageCell)] = []
         while let start = remaining.first {
             remaining.remove(start)
             var cluster = [start]
@@ -394,11 +484,16 @@ struct ScanCoverageGrid: Sendable {
                     }
                 }
             }
-            if cluster.count > best.count {
-                best = cluster
-            }
+            let first = cluster.min(by: lessCell) ?? start
+            found.append((cells: cluster, first: first))
         }
-        return best
+        return found
+            .sorted { $0.cells.count != $1.cells.count ? $0.cells.count > $1.cells.count : lessCell($0.first, $1.first) }
+            .map { $0.cells }
+    }
+
+    static func lessCell(_ a: CoverageCell, _ b: CoverageCell) -> Bool {
+        a.x != b.x ? a.x < b.x : a.z < b.z
     }
 
     static func direction(to target: SIMD2<Float>, camera: SIMD2<Float>, forward: SIMD2<Float>) -> ScanCoverageHint.Direction {
@@ -424,13 +519,15 @@ struct ScanCoverageGrid: Sendable {
         return ScanCoverageHint(target: .wall, direction: direction(to: target, camera: camera, forward: forward), distanceM: simd_distance(target, camera), center: target)
     }
 
-    static func hint(missing: Set<CoverageCell>, camera: SIMD2<Float>, forward: SIMD2<Float>?) -> ScanCoverageHint? {
+    static func hint(missing: Set<CoverageCell>, camera: SIMD2<Float>, forward: SIMD2<Float>?, skipNear: [SIMD2<Float>] = []) -> ScanCoverageHint? {
         guard let forward, missing.count >= hintMinCells else { return nil }
-        let cluster = largestCluster(missing)
-        guard cluster.count >= hintMinCells else { return nil }
-        let sum = cluster.reduce(SIMD2<Float>(0, 0)) { $0 + center($1) }
-        let target = sum / Float(cluster.count)
-        return ScanCoverageHint(direction: direction(to: target, camera: camera, forward: forward), distanceM: simd_distance(target, camera), center: target)
+        for cluster in clusters(missing) {
+            guard cluster.count >= hintMinCells else { return nil }
+            let target = cluster.reduce(SIMD2<Float>(0, 0)) { $0 + center($1) } / Float(cluster.count)
+            if skipNear.contains(where: { simd_distance($0, target) <= floorHintSkipM }) { continue }
+            return ScanCoverageHint(direction: direction(to: target, camera: camera, forward: forward), distanceM: simd_distance(target, camera), center: target, cells: cluster.count)
+        }
+        return nil
     }
 }
 
@@ -588,6 +685,8 @@ final class ScanCoverageTracker: ObservableObject {
     private var path: [SIMD2<Float>] = []
     private var walls: [ScanCoverageWall] = []
     private var roomAreaM2: Double?
+    private var stairs: [ScanCoverageStair] = []
+    private var floorWatch = ScanCoverageFloorHintWatch()
     private var lastUpdateAt: TimeInterval = -.infinity
     private var rotation = 0
     private var generation = 0
@@ -645,6 +744,8 @@ final class ScanCoverageTracker: ObservableObject {
         path = []
         walls = []
         roomAreaM2 = nil
+        stairs = []
+        floorWatch = ScanCoverageFloorHintWatch()
         lastUpdateAt = -.infinity
         rotation = 0
         isWorking = false
@@ -653,8 +754,9 @@ final class ScanCoverageTracker: ObservableObject {
         summary = nil
     }
 
-    func updateWalls(_ walls: [ScanCoverageWall], roomAreaM2: Double?) {
+    func updateWalls(_ walls: [ScanCoverageWall], stairs: [ScanCoverageStair] = [], roomAreaM2: Double?) {
         self.walls = walls
+        self.stairs = stairs
         self.roomAreaM2 = roomAreaM2
     }
 
@@ -664,7 +766,7 @@ final class ScanCoverageTracker: ObservableObject {
         generation += 1
         isWorking = false
         guard hasMesh else { return summary }
-        let finished = grid.snapshot(cameraTransform: latestCamera, path: path, walls: walls, roomAreaM2: roomAreaM2)
+        let finished = grid.snapshot(cameraTransform: latestCamera, path: path, walls: walls, roomAreaM2: roomAreaM2, stairs: stairs, skipFloorNear: floorWatch.skipped)
         snapshot = finished
         summary = LidarLiveCoverage(finished)
         return summary
@@ -722,6 +824,8 @@ final class ScanCoverageTracker: ObservableObject {
         let base = grid
         let walls = walls
         let roomAreaM2 = roomAreaM2
+        let stairs = stairs
+        let skipFloorNear = floorWatch.skipped
         let path = path
         let transform = frame.camera.transform
         let generation = generation
@@ -736,7 +840,7 @@ final class ScanCoverageTracker: ObservableObject {
                 done.append(Done(id: job.id, key: job.key, cells: cells))
             }
             if Task.isCancelled { return }
-            let snapshot = working.snapshot(cameraTransform: transform, path: path, walls: walls, roomAreaM2: roomAreaM2)
+            let snapshot = working.snapshot(cameraTransform: transform, path: path, walls: walls, roomAreaM2: roomAreaM2, stairs: stairs, skipFloorNear: skipFloorNear)
             await self?.apply(done, snapshot: snapshot, generation: generation)
         }
     }
@@ -750,7 +854,10 @@ final class ScanCoverageTracker: ObservableObject {
             anchorKeys[item.id] = item.key
         }
         rotation += done.count
-        let current = latestCamera.map { ScanCoverageGrid.moved(snapshot, to: $0) } ?? snapshot
+        var current = latestCamera.map { ScanCoverageGrid.moved(snapshot, to: $0) } ?? snapshot
+        if floorWatch.update(current.hint, at: ProcessInfo.processInfo.systemUptime) {
+            current.hint = ScanCoverageGrid.bestHint(current, skipFloorNear: floorWatch.skipped)
+        }
         self.snapshot = current
         hasMesh = !current.isEmpty
         summary = hasMesh ? LidarLiveCoverage(current) : summary

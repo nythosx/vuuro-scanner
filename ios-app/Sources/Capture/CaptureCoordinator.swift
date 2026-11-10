@@ -406,8 +406,9 @@ extension CaptureCoordinator: RoomCaptureSessionDelegate {
         let guess = RoomTypeGuessSettings.isEnabled ? RoomTypeClassifier.guess(for: room) : nil
         let stats = Self.computeStats(room)
         let walls = room.walls.compactMap { ScanCoverageWall(transform: $0.transform, widthM: $0.dimensions.x) }
+        let stairs = room.objects.filter { $0.category == .stairs }.compactMap { ScanCoverageStair(transform: $0.transform, dimensions: $0.dimensions) }
         Task { @MainActor in
-            self.lidarRecorder.coverage.updateWalls(walls, roomAreaM2: stats.areaM2 > 0 ? stats.areaM2 : nil)
+            self.lidarRecorder.coverage.updateWalls(walls, stairs: stairs, roomAreaM2: stats.areaM2 > 0 ? stats.areaM2 : nil)
             if self.isApproachingSizeLimit != exceedsSizeLimit {
                 self.isApproachingSizeLimit = exceedsSizeLimit
             }

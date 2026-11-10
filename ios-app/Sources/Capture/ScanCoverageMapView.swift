@@ -54,6 +54,9 @@ struct ScanCoverageMapView: View {
                 legend(VuuroColor.lime, vuuroLocalized("Seen"))
                 legend(VuuroColor.accent, vuuroLocalized("Missing"))
             }
+            if !snapshot.stairs.isEmpty {
+                legend(Color.white.opacity(0.35), vuuroLocalized("Stairs"))
+            }
             Text(Self.percentText(snapshot))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.white)
@@ -141,7 +144,7 @@ struct ScanCoverageMapView: View {
     }
 
     static func draw(_ snapshot: ScanCoverageSnapshot, in context: inout GraphicsContext, size: CGSize) {
-        let all = snapshot.floor.union(snapshot.wall).union(snapshot.furniture).union(snapshot.missing)
+        let all = snapshot.floor.union(snapshot.wall).union(snapshot.furniture).union(snapshot.missing).union(snapshot.stairs)
         guard !all.isEmpty || !snapshot.wallStrips.isEmpty else { return }
         let cell = ScanCoverageGrid.cellM
         var minX = Float.infinity, maxX = -Float.infinity, minZ = Float.infinity, maxZ = -Float.infinity
@@ -188,6 +191,7 @@ struct ScanCoverageMapView: View {
         fill(snapshot.floor, VuuroColor.lime.opacity(0.55))
         fill(snapshot.furniture, Color.gray.opacity(0.7))
         fill(snapshot.missing, VuuroColor.accent.opacity(0.85))
+        fill(snapshot.stairs, Color.white.opacity(0.35))
         fill(snapshot.wall, Color.white.opacity(snapshot.wallStrips.isEmpty ? 0.9 : 0.35))
         var seenWalls = Path()
         var missingWalls = Path()

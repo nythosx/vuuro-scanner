@@ -30,7 +30,8 @@ struct ResultSummaryView: View {
     @State private var isUndoingSplit = false
     @State private var lidarCaptures: [LidarCaptureMatch] = []
     @State private var lidarLookupError: String?
-    @State private var lidarMeshURL: URL?
+    @State private var lidarSelectedId: String?
+    @State private var lidarMeshIds: Set<String> = []
     @State private var showLidarMesh = false
     @State private var floorTargetRoom: FloorPlan.Room?
     @State private var deleteTargetRoom: FloorPlan.Room?
@@ -124,7 +125,7 @@ struct ResultSummaryView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     summaryHero
-                    LidarCaptureEntryButton(captures: lidarCaptures, lookupError: lidarLookupError, identifierPrefix: "result")
+                    LidarCaptureEntryButton(captures: lidarCaptures, lookupError: lidarLookupError, identifierPrefix: "result", selectedId: $lidarSelectedId, onClose: refreshLidarCaptures)
                     if let warnings = currentFloorPlan.roomSplitWarnings, !warnings.isEmpty {
                         splitWarningBanner(warnings)
                     }
@@ -811,7 +812,14 @@ struct ResultSummaryView: View {
         let found = LidarCaptureLibrary.lookup(sessionId: session.id)
         lidarCaptures = found.captures
         lidarLookupError = found.error
-        lidarMeshURL = found.captures.first(where: \.hasMesh)?.url
+        lidarMeshIds = Set(found.captures.filter(\.hasMesh).map(\.id))
+        if !found.captures.contains(where: { $0.id == lidarSelectedId }) {
+            lidarSelectedId = found.captures.first?.id
+        }
+    }
+
+    private var lidarMeshURL: URL? {
+        LidarCaptureLibrary.meshURL(lidarCaptures, selectedId: lidarSelectedId, meshIds: lidarMeshIds)
     }
 
     private var openFullScreen3DButton: some View {

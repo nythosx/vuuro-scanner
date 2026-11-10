@@ -2,9 +2,9 @@ import SwiftUI
 
 struct LiDARProofView: View {
     let captures: [LidarCaptureMatch]
+    @Binding var selectedId: String?
 
     @Environment(\.dismiss) private var dismiss
-    @State private var selectedId: String?
     @State private var captureURL: URL?
     @State private var manifest: LidarCaptureManifest?
     @State private var loadError: String?
@@ -64,7 +64,7 @@ struct LiDARProofView: View {
             }
         }
         .onAppear {
-            if selectedId == nil { selectedId = captures.first?.id }
+            if selectedId == nil || !captures.contains(where: { $0.id == selectedId }) { selectedId = captures.first?.id }
             load()
         }
         .onChange(of: selectedId) { _, _ in
@@ -114,6 +114,9 @@ struct LiDARProofView: View {
         let stats = manifest.stats
         return card {
             row("Rooms recorded", "\(manifest.roomRuns)")
+            ForEach(manifest.roomReports ?? [], id: \.room) { report in
+                row("Room \(report.room) LiDAR", Self.roomReportText(report))
+            }
             row("Duration", String(format: "%.0f s", manifest.durationS))
             row("Keyframes", "\(stats.frames) (\(stats.depthFrames) with depth)")
             row("Extra depth-only frames", "\(stats.depthOnlyFrames ?? 0)")
@@ -150,7 +153,38 @@ struct LiDARProofView: View {
             row("Lowest free memory", "\(stats.lowestFreeMemoryMB) MB")
             row("Skipped while saving", "\(stats.skippedBusyFrames)")
             row("Save failures", "\(stats.writeFailures)")
+            if let recordingGaps = manifest.recordingGaps {
+                row("Recording gaps over 2 s", recordingGaps.isEmpty ? "none" : String(format: "%ld, %.0f s in total", recordingGaps.count, recordingGaps.reduce(0) { $0 + $1.durationS }))
+                ForEach(Array(recordingGaps.sorted { $0.durationS > $1.durationS }.prefix(Self.gapRowsShown).enumerated()), id: \.offset) { _, gap in
+                    Text(Self.gapText(gap, showRoom: manifest.roomRuns > 1))
+                        .font(.system(size: 13))
+                        .foregroundStyle(gap.durationS >= Self.longGapS ? .orange : VuuroColor.textSecondary)
+                }
+            }
         }
+    }
+
+    static func roomReportText(_ report: LidarRoomRunReport) -> String {
+        let mesh = report.configAtEnd?.sceneReconstruction ?? report.configAfter?.sceneReconstruction ?? report.roomPlanConfig?.sceneReconstruction ?? "mesh setting unknown"
+        let growth = report.meshGrew ? "\(report.newMeshAnchors) new mesh pieces, \(report.meshFacesAtStart) to \(report.meshFacesMax) triangles" : "no new mesh"
+        return "\(mesh), \(growth), depth \(report.depthSeen ? "yes" : "no"), \(report.keyframes) keyframes + \(report.depthOnlyFrames) depth-only"
+    }
+
+    static let gapRowsShown = 5
+    static let longGapS = 5.0
+
+    static func gapText(_ gap: LidarRecordingGap, showRoom: Bool) -> String {
+        let start = Int(gap.startS.rounded())
+        var text = (showRoom ? "Room \(gap.room), " : "") + String(format: "at %ld:%02ld, %.0f s", start / 60, start % 60, gap.durationS)
+        if let moved = gap.movedM {
+            text += String(format: ", moved %.1f m", moved)
+            if let height = gap.heightChangeM, abs(height) >= 0.2 {
+                text += String(format: ", %@ %.1f m", height > 0 ? "up" : "down", abs(height))
+            }
+        }
+        if gap.atRoomEnd { text += ", until the room ended" }
+        let reasons = gap.reasonShares.prefix(3).map { String(format: "%@ %.0f%%", $0.reason.label, $0.percent) }
+        return text + ": " + (reasons.isEmpty ? "no reason recorded" : reasons.joined(separator: ", "))
     }
 
     private var actions: some View {
@@ -290,8 +324,11 @@ struct LiDARProofView: View {
     }
 
     private func captureLabel(_ capture: LidarCaptureMatch) -> String {
-        guard let date = capture.createdAt else { return capture.id }
-        return date.formatted(date: .abbreviated, time: .shortened)
+        Self.captureLabel(capture, date: capture.createdAt.map { $0.formatted(date: .abbreviated, time: .shortened) })
+    }
+
+    static func captureLabel(_ capture: LidarCaptureMatch, date: String?) -> String {
+        String(format: "%@, %.0f s, %ld frames", date ?? capture.id, capture.manifest.durationS, capture.savedFrames)
     }
 
     private func load() {

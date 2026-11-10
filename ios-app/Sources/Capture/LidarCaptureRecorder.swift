@@ -67,6 +67,36 @@ struct LidarSessionConfigReport: Codable, Equatable {
     }
 }
 
+struct LidarRoomRunReport: Codable, Equatable {
+    var room: Int
+    var roomPlanConfig: LidarSessionConfigReport? = nil
+    var configAfter: LidarSessionConfigReport? = nil
+    var configAtEnd: LidarSessionConfigReport? = nil
+    var meshFacesAtStart = 0
+    var meshFacesMax = 0
+    var newMeshAnchors = 0
+    var depthSeen = false
+    var keyframes = 0
+    var depthOnlyFrames = 0
+    var durationS: Double = 0
+
+    var meshGrew: Bool { newMeshAnchors > 0 || meshFacesMax > meshFacesAtStart }
+
+    enum CodingKeys: String, CodingKey {
+        case room
+        case roomPlanConfig = "roomplan_config"
+        case configAfter = "config_after"
+        case configAtEnd = "config_at_end"
+        case meshFacesAtStart = "mesh_faces_at_start"
+        case meshFacesMax = "mesh_faces_max"
+        case newMeshAnchors = "new_mesh_anchors"
+        case depthSeen = "depth_seen"
+        case keyframes
+        case depthOnlyFrames = "depth_only_frames"
+        case durationS = "duration_s"
+    }
+}
+
 struct LidarCaptureManifest: Codable, Equatable {
     var version = 1
     var createdAt: String
@@ -85,10 +115,16 @@ struct LidarCaptureManifest: Codable, Equatable {
     var sessionId: String? = nil
     var liveCoverage: LidarLiveCoverage? = nil
     var liveCoverageRooms: [LidarLiveCoverage]? = nil
+    var recordingGaps: [LidarRecordingGap]? = nil
+    var skipReasons: [String: Int]? = nil
+    var roomReports: [LidarRoomRunReport]? = nil
 
     enum CodingKeys: String, CodingKey {
         case version
+        case roomReports = "room_reports"
         case sessionId = "session_id"
+        case recordingGaps = "recording_gaps"
+        case skipReasons = "skip_reasons"
         case liveCoverage = "live_coverage"
         case liveCoverageRooms = "live_coverage_rooms"
         case createdAt = "created_at"
@@ -182,6 +218,14 @@ final class LidarCaptureRecorder {
     private var lastDepthAt: TimeInterval = -.infinity
     private var depthWriteInFlight = false
     private var depthIndex = 0
+    private var gaps = LidarGapTracker()
+    private var lastFrameTimestamp: TimeInterval?
+    private var pendingRoomConfig: (before: LidarSessionConfigReport?, after: LidarSessionConfigReport?)?
+    private var earlierMeshAnchorIds: Set<UUID> = []
+    private var roomMeshAnchorIds: Set<UUID> = []
+    private var roomStartedAt: Date?
+    private var roomStartFrames = 0
+    private var roomStartDepthOnly = 0
     private let writer = LidarCaptureWriter()
     let coverage = ScanCoverageTracker()
 
@@ -221,6 +265,7 @@ final class LidarCaptureRecorder {
             notes.append("RoomPlan's configuration already had depth and mesh, nothing changed")
         }
         manifest?.configAfter = (session.configuration as? ARWorldTrackingConfiguration).map(Self.report)
+        recordRoomConfig(before: Self.report(current), after: manifest?.configAfter)
         manifest?.configNotes.append(contentsOf: notes)
         DiagnosticsLog.shared.record("LiDAR recorder: \(notes.joined(separator: "; "))", category: .state)
         persistManifest()
@@ -232,8 +277,11 @@ final class LidarCaptureRecorder {
         ensureDirectory()
         lastPose = nil
         coverage.startRoom()
+        gaps.startRoom(at: ProcessInfo.processInfo.systemUptime)
+        lastFrameTimestamp = nil
         if startedAt == nil { startedAt = Date() }
         manifest?.roomRuns += 1
+        beginRoomReport()
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let recorder = self else { return }
@@ -277,6 +325,11 @@ final class LidarCaptureRecorder {
     func stop() {
         guard pollTask != nil else { return }
         stopPolling()
+        if let gap = gaps.finishRoom(at: ProcessInfo.processInfo.systemUptime) {
+            logGap(gap)
+        }
+        storeGaps()
+        endRoomReport()
         if !latestMeshAnchors.isEmpty {
             snapshotMesh(latestMeshAnchors, at: Date().timeIntervalSince1970)
         }
@@ -321,7 +374,17 @@ final class LidarCaptureRecorder {
     }
 
     private func sample() {
-        guard let session, let frame = session.currentFrame, let directory, manifest != nil else { return }
+        guard let session, let directory, manifest != nil else { return }
+        let uptime = ProcessInfo.processInfo.systemUptime
+        gaps.tick(at: uptime)
+        guard let frame = session.currentFrame else {
+            gaps.skipped(.noFrame)
+            return
+        }
+        let isSameFrame = frame.timestamp == lastFrameTimestamp
+        lastFrameTimestamp = frame.timestamp
+        let position = SIMD3<Float>(frame.camera.transform.columns.3.x, frame.camera.transform.columns.3.y, frame.camera.transform.columns.3.z)
+        gaps.seen(position: position)
         sampleHealth()
         if !lateConfigChecked, manifest?.roomPlanConfig == nil, let configuration = session.configuration {
             lateConfigChecked = true
@@ -330,6 +393,7 @@ final class LidarCaptureRecorder {
         }
         let meshAnchors = frame.anchors.compactMap { $0 as? ARMeshAnchor }
         coverage.ingest(frame: frame, meshAnchors: meshAnchors)
+        updateRoomReport(meshAnchors: meshAnchors, depthSeen: frame.sceneDepth != nil || frame.smoothedSceneDepth != nil)
         if !meshAnchors.isEmpty {
             latestMeshAnchors = meshAnchors
             manifest?.stats.meshSeen = true
@@ -345,14 +409,131 @@ final class LidarCaptureRecorder {
             lastMeshAt = now
             snapshotMesh(meshAnchors, at: now)
         }
-        guard case .normal = frame.camera.trackingState else { return }
-        sampleDepthOnly(frame, at: now, directory: directory)
-        guard now - lastKeyframeAt >= Self.keyframeMinIntervalS else { return }
+        if isSameFrame {
+            gaps.skipped(.sameFrame)
+            return
+        }
+        if let reason = LidarSkipReason.tracking(frame.camera.trackingState) {
+            gaps.skipped(reason)
+            return
+        }
+        let mark = GapMark(uptime: uptime, position: position)
+        let depthSkip = sampleDepthOnly(frame, at: now, directory: directory, mark: mark)
+        let keyframeSkip = sampleKeyframe(frame, at: now, directory: directory, mark: mark)
+        if let depthSkip, let keyframeSkip {
+            gaps.skipped(LidarSkipReason.moreTelling(depthSkip, keyframeSkip))
+        }
+    }
+
+    private struct GapMark: Sendable {
+        let uptime: TimeInterval
+        let position: SIMD3<Float>
+    }
+
+    private func frameSaved(_ mark: GapMark) {
+        guard pollTask != nil, let gap = gaps.recorded(at: mark.uptime, position: mark.position) else { return }
+        logGap(gap)
+        storeGaps()
+        persistManifest()
+    }
+
+    private func recordRoomConfig(before: LidarSessionConfigReport?, after: LidarSessionConfigReport?) {
+        if let last = manifest?.roomReports?.last, last.room == manifest?.roomRuns, last.roomPlanConfig == nil, pollTask != nil {
+            updateLastRoomReport { report in
+                report.roomPlanConfig = before
+                report.configAfter = after
+            }
+        } else {
+            pendingRoomConfig = (before: before, after: after)
+        }
+    }
+
+    private func beginRoomReport() {
+        guard let manifest else { return }
+        var report = LidarRoomRunReport(room: manifest.roomRuns)
+        if let pendingRoomConfig {
+            report.roomPlanConfig = pendingRoomConfig.before
+            report.configAfter = pendingRoomConfig.after
+            self.pendingRoomConfig = nil
+        }
+        let faces = latestMeshAnchors.reduce(0) { $0 + $1.geometry.faces.count }
+        report.meshFacesAtStart = faces
+        report.meshFacesMax = faces
+        earlierMeshAnchorIds.formUnion(roomMeshAnchorIds)
+        roomMeshAnchorIds = []
+        roomStartedAt = Date()
+        roomStartFrames = manifest.stats.frames
+        roomStartDepthOnly = manifest.stats.depthOnlyFrames ?? 0
+        var reports = manifest.roomReports ?? []
+        reports.append(report)
+        self.manifest?.roomReports = reports
+    }
+
+    private func updateRoomReport(meshAnchors: [ARMeshAnchor], depthSeen: Bool) {
+        var fresh = 0
+        for anchor in meshAnchors where !earlierMeshAnchorIds.contains(anchor.identifier) {
+            if roomMeshAnchorIds.insert(anchor.identifier).inserted { fresh += 1 }
+        }
+        let faces = meshAnchors.reduce(0) { $0 + $1.geometry.faces.count }
+        let newAnchors = roomMeshAnchorIds.count
+        guard let last = manifest?.roomReports?.last,
+              fresh > 0 || (depthSeen && !last.depthSeen) || faces > last.meshFacesMax else { return }
+        updateLastRoomReport { report in
+            report.newMeshAnchors = newAnchors
+            report.meshFacesMax = max(report.meshFacesMax, faces)
+            if depthSeen { report.depthSeen = true }
+        }
+    }
+
+    private func endRoomReport() {
+        guard let stats = manifest?.stats else { return }
+        let started = roomStartedAt
+        let frames = stats.frames - roomStartFrames
+        let depthOnly = (stats.depthOnlyFrames ?? 0) - roomStartDepthOnly
+        let configAtEnd = (session?.configuration as? ARWorldTrackingConfiguration).map(Self.report)
+        updateLastRoomReport { report in
+            report.configAtEnd = configAtEnd
+            report.keyframes = frames
+            report.depthOnlyFrames = depthOnly
+            if let started { report.durationS = Date().timeIntervalSince(started) }
+        }
+        if let report = manifest?.roomReports?.last {
+            DiagnosticsLog.shared.record(
+                "LiDAR room \(report.room): mesh \(report.configAtEnd?.sceneReconstruction ?? report.configAfter?.sceneReconstruction ?? "unknown"), \(report.newMeshAnchors) new mesh pieces, triangles \(report.meshFacesAtStart) to \(report.meshFacesMax), depth \(report.depthSeen ? "yes" : "no"), \(report.keyframes) keyframes",
+                category: .state
+            )
+        }
+    }
+
+    private func updateLastRoomReport(_ change: (inout LidarRoomRunReport) -> Void) {
+        guard var reports = manifest?.roomReports, !reports.isEmpty else { return }
+        change(&reports[reports.count - 1])
+        manifest?.roomReports = reports
+    }
+
+    private func logGap(_ gap: LidarRecordingGap) {
+        let moved = gap.movedM.map { String(format: ", moved %.1f m, height %+.1f m", $0, gap.heightChangeM ?? 0) } ?? ""
+        let reasons = gap.reasonShares.prefix(3).map { String(format: "%@ %.0f%%", $0.reason.label, $0.percent) }.joined(separator: ", ")
+        DiagnosticsLog.shared.record(
+            String(format: "LiDAR recording gap in room %ld: %.1f s from %.1f s%@%@: %@", gap.room, gap.durationS, gap.startS, moved, gap.atRoomEnd ? ", until the room ended" : "", reasons.isEmpty ? "no samples" : reasons),
+            category: .state
+        )
+    }
+
+    private func storeGaps() {
+        let recorded = gaps.gaps
+        let totals = gaps.totals
+        manifest?.recordingGaps = recorded
+        manifest?.skipReasons = totals
+    }
+
+    private func sampleKeyframe(_ frame: ARFrame, at now: TimeInterval, directory: URL, mark: GapMark) -> LidarSkipReason? {
+        guard now - lastKeyframeAt >= Self.keyframeMinIntervalS else { return .waiting }
         let pose = frame.camera.transform
-        if let lastPose, !Self.movedEnough(from: lastPose, to: pose, distance: Self.keyframeMinDistanceM, turnDeg: Self.keyframeMinTurnDeg) { return }
+        if let lastPose, !Self.movedEnough(from: lastPose, to: pose, distance: Self.keyframeMinDistanceM, turnDeg: Self.keyframeMinTurnDeg) { return .notMoved }
         guard !frameWriteInFlight else {
             manifest?.stats.skippedBusyFrames += 1
-            return
+            return .writerBusy
         }
         lastPose = pose
         lastKeyframeAt = now
@@ -375,15 +556,17 @@ final class LidarCaptureRecorder {
         let writer = self.writer
         Task { [weak self] in
             let result = await writer.writeKeyframe(keyframe, to: directory.appendingPathComponent(Self.framesFolder, isDirectory: true))
-            self?.frameWriteFinished(result, hadDepth: depth != nil)
+            self?.frameWriteFinished(result, hadDepth: depth != nil, mark: mark)
         }
+        return nil
     }
 
-    private func sampleDepthOnly(_ frame: ARFrame, at now: TimeInterval, directory: URL) {
-        guard now - lastDepthAt >= Self.depthOnlyMinIntervalS, !depthWriteInFlight else { return }
+    private func sampleDepthOnly(_ frame: ARFrame, at now: TimeInterval, directory: URL, mark: GapMark) -> LidarSkipReason? {
+        guard now - lastDepthAt >= Self.depthOnlyMinIntervalS else { return .waiting }
+        guard !depthWriteInFlight else { return .writerBusy }
         let pose = frame.camera.transform
-        if let lastDepthPose, !Self.movedEnough(from: lastDepthPose, to: pose, distance: Self.depthOnlyMinDistanceM, turnDeg: Self.depthOnlyMinTurnDeg) { return }
-        guard let depth = (frame.sceneDepth ?? frame.smoothedSceneDepth).flatMap(Self.copyDepth) else { return }
+        if let lastDepthPose, !Self.movedEnough(from: lastDepthPose, to: pose, distance: Self.depthOnlyMinDistanceM, turnDeg: Self.depthOnlyMinTurnDeg) { return .notMoved }
+        guard let depth = (frame.sceneDepth ?? frame.smoothedSceneDepth).flatMap(Self.copyDepth) else { return .noDepth }
         lastDepthPose = pose
         lastDepthAt = now
         depthIndex += 1
@@ -402,11 +585,12 @@ final class LidarCaptureRecorder {
         let writer = self.writer
         Task { [weak self] in
             let result = await writer.writeDepthFrame(record, to: directory.appendingPathComponent(Self.depthFramesFolder, isDirectory: true))
-            self?.depthWriteFinished(result)
+            self?.depthWriteFinished(result, mark: mark)
         }
+        return nil
     }
 
-    private func depthWriteFinished(_ result: Result<Int64, Error>) {
+    private func depthWriteFinished(_ result: Result<Int64, Error>, mark: GapMark) {
         depthWriteInFlight = false
         switch result {
         case .success(let bytes):
@@ -415,13 +599,15 @@ final class LidarCaptureRecorder {
                 stats.depthOnlyBytes = (stats.depthOnlyBytes ?? 0) + bytes
                 manifest?.stats = stats
             }
+            frameSaved(mark)
         case .failure(let error):
             manifest?.stats.writeFailures += 1
+            gaps.skipped(.writeFailed)
             DiagnosticsLog.shared.record("LiDAR depth frame write failed: \(error.localizedDescription)", category: .error)
         }
     }
 
-    private func frameWriteFinished(_ result: Result<Int64, Error>, hadDepth: Bool) {
+    private func frameWriteFinished(_ result: Result<Int64, Error>, hadDepth: Bool, mark: GapMark) {
         frameWriteInFlight = false
         switch result {
         case .success(let bytes):
@@ -429,8 +615,10 @@ final class LidarCaptureRecorder {
             if hadDepth { manifest?.stats.depthFrames += 1 }
             manifest?.stats.frameBytes += bytes
             if (manifest?.stats.frames ?? 0) % 25 == 0 { persistManifest() }
+            frameSaved(mark)
         case .failure(let error):
             manifest?.stats.writeFailures += 1
+            gaps.skipped(.writeFailed)
             DiagnosticsLog.shared.record("LiDAR keyframe write failed: \(error.localizedDescription)", category: .error)
         }
     }

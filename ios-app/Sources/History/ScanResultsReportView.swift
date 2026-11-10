@@ -56,7 +56,8 @@ struct ScanResultsReportView: View {
     @State private var showFullScreen3D = false
     @State private var lidarCaptures: [LidarCaptureMatch] = []
     @State private var lidarLookupError: String?
-    @State private var lidarMeshURL: URL?
+    @State private var lidarSelectedId: String?
+    @State private var lidarMeshIds: Set<String> = []
     @State private var showLidarMesh = false
     @State private var hotspotPhotoTarget: HotspotPhotoTarget?
 
@@ -87,7 +88,7 @@ struct ScanResultsReportView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     hero
-                    LidarCaptureEntryButton(captures: lidarCaptures, lookupError: lidarLookupError, identifierPrefix: "report")
+                    LidarCaptureEntryButton(captures: lidarCaptures, lookupError: lidarLookupError, identifierPrefix: "report", selectedId: $lidarSelectedId, onClose: refreshLidarCaptures)
 
                     if isLoading {
                         loadingState
@@ -1029,7 +1030,14 @@ struct ScanResultsReportView: View {
         let found = LidarCaptureLibrary.lookup(sessionId: entry.sessionId)
         lidarCaptures = found.captures
         lidarLookupError = found.error
-        lidarMeshURL = found.captures.first(where: \.hasMesh)?.url
+        lidarMeshIds = Set(found.captures.filter(\.hasMesh).map(\.id))
+        if !found.captures.contains(where: { $0.id == lidarSelectedId }) {
+            lidarSelectedId = found.captures.first?.id
+        }
+    }
+
+    private var lidarMeshURL: URL? {
+        LidarCaptureLibrary.meshURL(lidarCaptures, selectedId: lidarSelectedId, meshIds: lidarMeshIds)
     }
 
     private var openFullScreen3DButton: some View {

@@ -9,6 +9,8 @@ struct LidarCaptureMatch: Identifiable, Equatable {
 
     var createdAt: Date? { LidarCaptureLibrary.date(manifest.createdAt) }
 
+    var savedFrames: Int { manifest.stats.frames + (manifest.stats.depthOnlyFrames ?? 0) }
+
     var hasMesh: Bool {
         if manifest.stats.meshSeen { return true }
         if case .success(let report?) = DepthMeshFusion.loadReport(captureURL: url) {
@@ -50,7 +52,21 @@ extension LidarCaptureLibrary {
                 result.append(LidarCaptureMatch(url: url, manifest: manifest, matchedByTime: true))
             }
         }
-        return .success(result)
+        return .success(substantiveFirst(result))
+    }
+
+    static func substantiveFirst(_ captures: [LidarCaptureMatch]) -> [LidarCaptureMatch] {
+        captures.sorted { a, b in
+            if a.savedFrames != b.savedFrames { return a.savedFrames > b.savedFrames }
+            if a.manifest.durationS != b.manifest.durationS { return a.manifest.durationS > b.manifest.durationS }
+            return (a.createdAt ?? .distantPast) > (b.createdAt ?? .distantPast)
+        }
+    }
+
+    static func meshURL(_ captures: [LidarCaptureMatch], selectedId: String?, meshIds: Set<String>) -> URL? {
+        guard let capture = captures.first(where: { $0.id == selectedId }) ?? captures.first,
+              meshIds.contains(capture.id) else { return nil }
+        return capture.url
     }
 
     static func overlaps(_ manifest: LidarCaptureManifest, _ dates: [Date]) -> Bool {
@@ -126,6 +142,8 @@ struct LidarCaptureEntryButton: View {
     let captures: [LidarCaptureMatch]
     let lookupError: String?
     let identifierPrefix: String
+    @Binding var selectedId: String?
+    var onClose: () -> Void = {}
 
     @State private var showProof = false
 
@@ -164,9 +182,9 @@ struct LidarCaptureEntryButton: View {
                     .padding(.bottom, 12)
             }
         }
-        .sheet(isPresented: $showProof) {
+        .sheet(isPresented: $showProof, onDismiss: onClose) {
             NavigationStack {
-                LiDARProofView(captures: captures)
+                LiDARProofView(captures: captures, selectedId: $selectedId)
             }
         }
     }
