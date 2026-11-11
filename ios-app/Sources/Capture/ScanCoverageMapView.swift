@@ -19,6 +19,7 @@ struct ScanCoverageMapView: View {
                 }
                 .frame(width: size)
                 .padding(6)
+                .background(Color.black.opacity(Self.panelShade), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             } else {
                 toggleButton
@@ -58,7 +59,7 @@ struct ScanCoverageMapView: View {
                 legend(Color.white.opacity(0.35), vuuroLocalized("Stairs"))
             }
             Text(Self.percentText(snapshot))
-                .font(.caption.weight(.semibold))
+                .font(.caption.weight(.bold).monospacedDigit())
                 .foregroundStyle(.white)
                 .fixedSize(horizontal: false, vertical: true)
             if !snapshot.ceilingSeen, !snapshot.floor.isEmpty {
@@ -69,19 +70,24 @@ struct ScanCoverageMapView: View {
             }
             if let walls = Self.wallText(snapshot) {
                 Text(walls)
-                    .font(.caption.weight(.semibold))
+                    .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.white)
             }
             if let corners = Self.cornerText(snapshot) {
                 Text(corners)
-                    .font(.caption.weight(.semibold))
+                    .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.white)
             }
             if let hint = snapshot.hint {
-                Text(Self.hintText(hint))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(VuuroColor.accent)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Image(systemName: Self.hintSymbol(hint.direction))
+                        .font(.caption.weight(.bold))
+                        .accessibilityHidden(true)
+                    Text(Self.hintText(hint))
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(VuuroColor.accent)
             }
         }
         .frame(width: size, alignment: .leading)
@@ -115,6 +121,17 @@ struct ScanCoverageMapView: View {
     static func cornerText(_ snapshot: ScanCoverageSnapshot) -> String? {
         guard !snapshot.corners.isEmpty else { return nil }
         return String(format: vuuroLocalized("Corners %lld of %lld seen"), snapshot.cornersSeen, snapshot.corners.count)
+    }
+
+    static let panelShade = 0.35
+
+    static func hintSymbol(_ direction: ScanCoverageHint.Direction) -> String {
+        switch direction {
+        case .ahead: return "arrow.up"
+        case .left: return "arrow.left"
+        case .right: return "arrow.right"
+        case .behind: return "arrow.down"
+        }
     }
 
     static func hintText(_ hint: ScanCoverageHint) -> String {
@@ -226,7 +243,9 @@ struct ScanCoverageMapView: View {
         }
         if let hint = snapshot.hint {
             let center = point(hint.center.x, hint.center.y)
-            context.stroke(Path(ellipseIn: CGRect(x: center.x - 7, y: center.y - 7, width: 14, height: 14)), with: .color(VuuroColor.accent), lineWidth: 2)
+            let ring = Path(ellipseIn: CGRect(x: center.x - 7, y: center.y - 7, width: 14, height: 14))
+            context.stroke(ring, with: .color(.black.opacity(0.6)), lineWidth: 4)
+            context.stroke(ring, with: .color(VuuroColor.accent), lineWidth: 2)
         }
         if let camera = snapshot.camera {
             let center = point(camera.x, camera.y)

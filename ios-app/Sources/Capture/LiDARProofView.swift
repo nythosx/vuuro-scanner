@@ -88,7 +88,7 @@ struct LiDARProofView: View {
 
     private func answers(_ manifest: LidarCaptureManifest) -> some View {
         card {
-            row("Device", "\(manifest.device), iOS \(manifest.systemVersion)")
+            row("Device", "\(LidarDeviceName.display(manifest.device)), iOS \(manifest.systemVersion)")
             row("RoomPlan depth on its own", yesNo(manifest.roomPlanConfig?.sceneDepth))
             row("RoomPlan mesh on its own", manifest.roomPlanConfig?.sceneReconstruction ?? "unknown")
             row("Options added by the app", manifest.configAugmented ? "yes" : "no")

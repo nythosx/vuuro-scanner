@@ -437,4 +437,11 @@ final class ScanCoverageTests: XCTestCase {
         snapshot.hint = ScanCoverageHint(direction: .ahead, distanceM: 2, center: [0, -3], cells: 12)
         XCTAssertEqual(ScanCoverageGrid.moved(snapshot, to: matrix_identity_float4x4).hint?.cells, 12)
     }
+
+    func testHintArrowMatchesTheDirection() {
+        XCTAssertEqual(ScanCoverageMapView.hintSymbol(.ahead), "arrow.up")
+        XCTAssertEqual(ScanCoverageMapView.hintSymbol(.left), "arrow.left")
+        XCTAssertEqual(ScanCoverageMapView.hintSymbol(.right), "arrow.right")
+        XCTAssertEqual(ScanCoverageMapView.hintSymbol(.behind), "arrow.down")
+    }
 }

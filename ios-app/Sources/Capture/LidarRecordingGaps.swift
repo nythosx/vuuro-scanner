@@ -17,6 +17,8 @@ enum LidarSkipReason: String, CaseIterable, Codable, Sendable {
     case writeFailed = "write_failed"
     case waiting = "waiting"
     case pollStalled = "poll_stalled"
+    case poseJump = "pose_jump"
+    case lowStorage = "low_storage"
 
     var label: String {
         switch self {
@@ -34,6 +36,8 @@ enum LidarSkipReason: String, CaseIterable, Codable, Sendable {
         case .writeFailed: return "frame could not be saved"
         case .waiting: return "waiting for the next frame slot"
         case .pollStalled: return "app busy, recorder not called"
+        case .poseJump: return "position jumped, frame dropped"
+        case .lowStorage: return "phone storage full, frames not saved"
         }
     }
 

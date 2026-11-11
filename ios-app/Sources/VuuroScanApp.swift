@@ -409,6 +409,7 @@ private struct RoomCaptureFlowStep: View {
     @State private var showHowToScan = false
     @State private var cameraDenied = CameraAccess.isDenied
     @AppStorage("walkthroughCaptureEnabled") private var walkthroughCaptureEnabled = false
+    @AppStorage(PhotoTourSettings.afterRoomKey) private var photoTourAfterRoom = false
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
@@ -679,6 +680,8 @@ private struct RoomCaptureFlowStep: View {
             }
             .padding(.horizontal, 12)
 
+            LidarRecordingPausedBanner(status: coordinator.lidarRecorder.status)
+
             Spacer().frame(height: 14)
 
             VuuroCompletionPill(status: coordinator.completionStatus)
@@ -845,6 +848,11 @@ private struct RoomCaptureFlowStep: View {
 
     @MainActor
     private func beginPhotoStep(for room: CapturedRoom) async {
+        guard PhotoTourSettings.showsStep(photosAfterRoom: photoTourAfterRoom, walkthrough: walkthroughCaptureEnabled) else {
+            DiagnosticsLog.shared.record("Photos for the tour skipped after the room: off in Settings", category: .state)
+            await finishPhotoStepOrSubmit()
+            return
+        }
         guard let floor = room.floors.first else {
             await finishPhotoStepOrSubmit()
             return

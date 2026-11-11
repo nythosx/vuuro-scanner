@@ -23,12 +23,17 @@ struct MeshViewer: View {
     @State private var textureNote: String?
     @State private var showFilledFloor = false
     @State private var hasFilledFloor = false
+    @State private var photoTextured = false
+    @State private var photoNote: String?
+    @State private var exporting = false
+    @State private var exportError: String?
 
     enum Mode: String, CaseIterable, Identifiable {
         case clay = "Clay"
         case wireframe = "Mesh"
         case classes = "Classes"
         case texture = "Texture"
+        case photo = "Photo"
         var id: String { rawValue }
     }
 
@@ -52,7 +57,11 @@ struct MeshViewer: View {
             if isLoading {
                 ProgressView("Loading mesh")
             } else if texturing {
-                ProgressView("Coloring the mesh from the photos")
+                ProgressView(mode == .photo ? "Building the photo texture from the full photos" : "Coloring the mesh from the photos")
+                    .padding()
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            } else if exporting {
+                ProgressView("Saving the 3D model")
                     .padding()
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
             } else if let loadError {
@@ -90,6 +99,15 @@ struct MeshViewer: View {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Close") { dismiss() }
             }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    shareModel()
+                } label: {
+                    Label("Share 3D model", systemImage: "square.and.arrow.up")
+                }
+                .disabled(built == nil || texturing || exporting)
+                .accessibilityIdentifier("meshViewer.share")
+            }
         }
         .onChange(of: mode) { _, _ in
             applyMode()
@@ -102,6 +120,7 @@ struct MeshViewer: View {
         }
         .task(id: mode) {
             if mode == .texture { await colorize() }
+            if mode == .photo { await photoTexture() }
         }
         .task(id: photoKey) {
             await loadPhoto()
@@ -144,6 +163,16 @@ struct MeshViewer: View {
                 Text(textureNote)
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
+            }
+            if let photoNote, mode == .photo {
+                Text(photoNote)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+            if let exportError {
+                Text(exportError)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.red)
             }
             if let frameError {
                 Text(frameError)
@@ -268,6 +297,75 @@ struct MeshViewer: View {
         case .failure(let error):
             if error is CancellationError { return }
             textureNote = "Could not color the mesh: \(error.localizedDescription)"
+        }
+    }
+
+    private func photoTexture() async {
+        guard let built, !photoTextured, !texturing else { return }
+        guard !frames.isEmpty else {
+            photoNote = "This capture has no frame photos for a photo texture."
+            return
+        }
+        texturing = true
+        let inputs = built.parts.map {
+            MeshPhotoTexturer.PartInput(vertices: $0.vertices, vertexCount: $0.vertexCount, faces: $0.faces, faceCount: $0.faceCount, classes: $0.classes, transform: $0.transform)
+        }
+        let frameList = frames
+        let work = Task.detached(priority: .userInitiated) {
+            MeshPhotoTexturer.texture(parts: inputs, frames: frameList)
+        }
+        let result = await withTaskCancellationHandler {
+            await work.value
+        } onCancel: {
+            work.cancel()
+        }
+        texturing = false
+        switch result {
+        case .success(let output):
+            var cache: [Int: SCNMaterial] = [:]
+            for (part, partOutput) in zip(built.parts, output.parts) where partOutput.vertexCount > 0 {
+                part.photo = MeshSceneBuilder.photoGeometry(partOutput) { group in
+                    let key = (group.slot + 1) * 256 + Int(group.classId)
+                    if let cached = cache[key] { return cached }
+                    let image = output.images.indices.contains(group.slot) ? output.images[group.slot] : nil
+                    let material = MeshSceneBuilder.photoMaterial(classId: group.classId, image: image)
+                    cache[key] = material
+                    return material
+                }
+            }
+            photoTextured = true
+            let percent = output.totalFaces > 0 ? output.facesInPhoto * 100 / output.totalFaces : 0
+            photoNote = "Photo texture from \(output.photosUsed) full photos, \(percent)% of the mesh. Grey parts are not in those photos."
+            applyMode()
+        case .failure(let error):
+            if error is CancellationError { return }
+            photoNote = "Could not build the photo texture: \(error.localizedDescription)"
+        }
+    }
+
+    private func shareModel() {
+        guard let built, !exporting else { return }
+        exporting = true
+        exportError = nil
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("vuuro-lidar-\(captureURL.lastPathComponent)-\(mode.rawValue.lowercased()).usdz")
+        Task { @MainActor in
+            await Task.yield()
+            defer { exporting = false }
+            do {
+                if FileManager.default.fileExists(atPath: url.path) {
+                    try FileManager.default.removeItem(at: url)
+                }
+            } catch {
+                exportError = "Could not replace the old 3D model file: \(error.localizedDescription)"
+                return
+            }
+            guard built.scene.write(to: url, options: nil, delegate: nil, progressHandler: nil) else {
+                exportError = "The 3D model could not be saved as USDZ."
+                return
+            }
+            if !ShareSheetPresenter.present(items: [url]) {
+                exportError = "The share sheet could not open."
+            }
         }
     }
 
@@ -514,14 +612,21 @@ enum MeshSceneBuilder {
         let plain: SCNGeometry
         let vertices: Data
         let vertexCount: Int
+        let faces: Data
+        let faceCount: Int
+        let classes: Data?
         let transform: simd_float4x4
         var textured: SCNGeometry?
+        var photo: SCNGeometry?
 
-        init(node: SCNNode, plain: SCNGeometry, vertices: Data, vertexCount: Int, transform: simd_float4x4) {
+        init(node: SCNNode, plain: SCNGeometry, vertices: Data, vertexCount: Int, faces: Data, faceCount: Int, classes: Data?, transform: simd_float4x4) {
             self.node = node
             self.plain = plain
             self.vertices = vertices
             self.vertexCount = vertexCount
+            self.faces = faces
+            self.faceCount = faceCount
+            self.classes = classes
             self.transform = transform
         }
     }
@@ -588,7 +693,7 @@ enum MeshSceneBuilder {
                 let node = SCNNode(geometry: geometry)
                 node.simdTransform = matrix(entry.transform)
                 scene.rootNode.addChildNode(node)
-                parts.append(MeshPart(node: node, plain: geometry, vertices: vertices, vertexCount: entry.vertexCount, transform: node.simdTransform))
+                parts.append(MeshPart(node: node, plain: geometry, vertices: vertices, vertexCount: entry.vertexCount, faces: faces, faceCount: entry.faceCount, classes: classes, transform: node.simdTransform))
                 triangles += entry.faceCount
                 let (boxMin, boxMax) = node.boundingBox
                 for corner in corners(SIMD3<Float>(boxMin), SIMD3<Float>(boxMax)) {
@@ -620,7 +725,12 @@ enum MeshSceneBuilder {
 
     static func apply(_ mode: MeshViewer.Mode, showCeiling: Bool, showFilledFloor: Bool, parts: [MeshPart]) {
         for part in parts {
-            let geometry = (mode == .texture ? part.textured : nil) ?? part.plain
+            let geometry: SCNGeometry
+            switch mode {
+            case .texture: geometry = part.textured ?? part.plain
+            case .photo: geometry = part.photo ?? part.plain
+            default: geometry = part.plain
+            }
             if part.node.geometry !== geometry {
                 part.node.geometry = geometry
             }
@@ -644,9 +754,46 @@ enum MeshSceneBuilder {
                 case .texture:
                     material.fillMode = .fill
                     material.diffuse.contents = colored ? UIColor.white : UIColor(white: 0.82, alpha: 1)
+                case .photo:
+                    material.fillMode = .fill
+                    material.diffuse.contents = UIColor(white: 0.82, alpha: 1)
                 }
             }
+            for material in part.photo?.materials ?? [] {
+                let classId = UInt8(material.name ?? "") ?? 0
+                let hidden = (!showCeiling && classId == ceilingClass) || (!showFilledFloor && classId == filledFloorClass)
+                material.colorBufferWriteMask = hidden ? [] : .all
+                material.writesToDepthBuffer = !hidden
+            }
         }
+    }
+
+    static func photoGeometry(_ output: MeshPhotoTexturer.PartOutput, material: (MeshPhotoTexturer.Group) -> SCNMaterial) -> SCNGeometry {
+        let vertex = SCNGeometrySource(data: output.positions, semantic: .vertex, vectorCount: output.vertexCount, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: 4, dataOffset: 0, dataStride: 12)
+        let uv = SCNGeometrySource(data: output.uvs, semantic: .texcoord, vectorCount: output.vertexCount, usesFloatComponents: true, componentsPerVector: 2, bytesPerComponent: 4, dataOffset: 0, dataStride: 8)
+        var elements: [SCNGeometryElement] = []
+        var materials: [SCNMaterial] = []
+        for group in output.groups where group.count >= 3 {
+            let indices = (group.start..<(group.start + group.count)).map { UInt32($0) }
+            let data = indices.withUnsafeBufferPointer { Data(buffer: $0) }
+            elements.append(SCNGeometryElement(data: data, primitiveType: .triangles, primitiveCount: group.count / 3, bytesPerIndex: 4))
+            materials.append(material(group))
+        }
+        let geometry = SCNGeometry(sources: [vertex, uv], elements: elements)
+        geometry.materials = materials
+        return geometry
+    }
+
+    static func photoMaterial(classId: UInt8, image: CGImage?) -> SCNMaterial {
+        let material = SCNMaterial()
+        material.name = String(classId)
+        material.isDoubleSided = true
+        material.lightingModel = .constant
+        material.diffuse.contents = image ?? UIColor(white: 0.6, alpha: 1)
+        material.diffuse.wrapS = .clamp
+        material.diffuse.wrapT = .clamp
+        material.diffuse.mipFilter = .linear
+        return material
     }
 
     static func texturedGeometry(plain: SCNGeometry, colors: Data, vertexCount: Int) -> SCNGeometry {

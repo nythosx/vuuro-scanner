@@ -52,6 +52,7 @@ struct MultiRoomCaptureFlowView: View {
     @State private var showOtherWalkthroughPrompt = false
     @State private var photoCaptureContext: PhotoCaptureContext?
     @AppStorage("walkthroughCaptureEnabled") private var walkthroughCaptureEnabled = false
+    @AppStorage(PhotoTourSettings.afterRoomKey) private var photoTourAfterRoom = false
     @Environment(\.scenePhase) private var scenePhase
 
     private let client = ScanServiceClient()
@@ -749,6 +750,8 @@ struct MultiRoomCaptureFlowView: View {
             }
             .padding(.horizontal, 12)
 
+            LidarRecordingPausedBanner(status: coordinator.lidarRecorder.status)
+
             Spacer().frame(height: 14)
 
             VuuroScanHint(text: roomHintText)
@@ -926,6 +929,11 @@ struct MultiRoomCaptureFlowView: View {
 
     @MainActor
     private func beginPhotoStepOrContinue() async {
+        guard PhotoTourSettings.showsStep(photosAfterRoom: photoTourAfterRoom, walkthrough: walkthroughCaptureEnabled) else {
+            DiagnosticsLog.shared.record("Photos for the tour skipped after the room: off in Settings", category: .state)
+            await checkRescanThenContinue()
+            return
+        }
         guard let room = coordinator.capturedRooms.last, let floor = room.floors.first else {
             await checkRescanThenContinue()
             return

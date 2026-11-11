@@ -8,6 +8,7 @@ struct SettingsView: View {
     @AppStorage("darkModeEnabled") private var darkMode: Bool = false
     @AppStorage("scanExportMeasurementUnit") private var exportUnitRaw: String = MeasurementUnit.metric.rawValue
     @AppStorage("walkthroughCaptureEnabled") private var walkthroughCaptureEnabled: Bool = false
+    @AppStorage(PhotoTourSettings.afterRoomKey) private var photoTourAfterRoom: Bool = false
     @State private var roomTypeGuess = RoomTypeGuessSettings.isEnabled
     @State private var cacheSizeLabel: String = "—"
     @State private var darkModeLocal: Bool = false
@@ -60,6 +61,26 @@ struct SettingsView: View {
                         }
                     }
                     .padding(.horizontal, 20)
+
+                    VuuroSectionLabel(text: "Photo tour")
+                    VuuroInputGroup {
+                        VuuroInputRow(
+                            leadingIcon: "camera",
+                            label: vuuroLocalized("Photos for the tour after each room"),
+                            showsDivider: false
+                        ) {
+                            Toggle("", isOn: $photoTourAfterRoom)
+                                .accessibilityIdentifier("settings.photoTourAfterRoom")
+                                .labelsHidden()
+                                .tint(VuuroColor.lime)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    Text(vuuroLocalized("Off: Finish room goes straight on, so a LiDAR pass is not interrupted. On: the photo step opens after each room. Walk-through capture also opens it."))
+                        .font(.system(size: 13))
+                        .foregroundStyle(VuuroColor.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 24)
 
                     VuuroSectionLabel(text: "Walk-through")
                     VuuroInputGroup {

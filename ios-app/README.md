@@ -10,9 +10,12 @@
   data, since a cloud simulator has no LiDAR) and `Sources/Debug/DebugScanServiceURL`
   (pointed at a `localtunnel` URL, since the cloud simulator can't reach a local
   machine's `127.0.0.1`). Confirmed working: capture -> upload -> results -> PDF export.
-- **NOT yet verified**: real RoomPlan capture on real LiDAR hardware. Nothing in this
-  app has touched a real LiDAR sensor yet — this is the single biggest open item. See
-  the checklist below.
+- **Device-verified on real LiDAR hardware**: Mark ran build `3795796` on an iPhone 16 Pro
+  on 2026-11-10: a single-room attic and stairs run (363 s), the live coverage map, the
+  LiDAR proof screen per saved scan, the capture zip export and the History round trip.
+  Not yet run on hardware: two or more rooms in one session.
+- **Device smoke test for QA**: [`docs/QA-DEVICE-SMOKE.md`](../docs/QA-DEVICE-SMOKE.md) is
+  the short one-room run to repeat on every build handed to QA.
 - **Known gap, pending a product decision**: `ScanShareCode.encode` embeds the full
   session access token with no revocation path. Mark needs to decide between (a)
   accepting current behavior, (b) adding an explicit "revoke previous shares" action,
@@ -152,8 +155,8 @@ ad-hoc/local Xcode signing, nothing more). Multi-room "unit story" fusion into o
 spatially-coherent floor plan does exist today — `MultiRoomCaptureCoordinator` walks a
 structure across rooms in one continuous ARSession and fuses them into a shared
 coordinate frame (`docs/adr/0002-export-coordinate-frame.md`) — but that fusion path is
-still only simulator/fixture-verified, same as everything else on this list, until it's
-been run through on real LiDAR hardware.
+still only simulator/fixture-verified until a multi-room run has been done on real LiDAR
+hardware.
 
 ### Apple Developer account
 

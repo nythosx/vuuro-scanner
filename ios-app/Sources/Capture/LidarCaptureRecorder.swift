@@ -32,6 +32,7 @@ struct LidarCaptureStats: Codable, Equatable {
     var skippedBusyFrames = 0
     var depthOnlyFrames: Int?
     var depthOnlyBytes: Int64?
+    var lowestFreeDiskMB: Int?
 
     var totalBytes: Int64 { frameBytes + meshBytes + (depthOnlyBytes ?? 0) }
 
@@ -52,6 +53,7 @@ struct LidarCaptureStats: Codable, Equatable {
         case skippedBusyFrames = "skipped_busy_frames"
         case depthOnlyFrames = "depth_only_frames"
         case depthOnlyBytes = "depth_only_bytes"
+        case lowestFreeDiskMB = "lowest_free_disk_mb"
     }
 }
 
@@ -220,6 +222,10 @@ final class LidarCaptureRecorder {
     private var depthIndex = 0
     private var gaps = LidarGapTracker()
     private var lastFrameTimestamp: TimeInterval?
+    private var poseFilter = LidarPoseJumpFilter()
+    private var storageLevel = LidarStorageBudget.Level.ok
+    private var lastStorageAt = Date.distantPast
+    private var storageReadFailed = false
     private var pendingRoomConfig: (before: LidarSessionConfigReport?, after: LidarSessionConfigReport?)?
     private var earlierMeshAnchorIds: Set<UUID> = []
     private var roomMeshAnchorIds: Set<UUID> = []
@@ -228,6 +234,7 @@ final class LidarCaptureRecorder {
     private var roomStartDepthOnly = 0
     private let writer = LidarCaptureWriter()
     let coverage = ScanCoverageTracker()
+    let status = LidarRecordingStatus()
 
     func prepareSession(_ session: ARSession) {
         ensureDirectory()
@@ -279,6 +286,9 @@ final class LidarCaptureRecorder {
         coverage.startRoom()
         gaps.startRoom(at: ProcessInfo.processInfo.systemUptime)
         lastFrameTimestamp = nil
+        poseFilter.reset()
+        status.clear()
+        lastStorageAt = .distantPast
         if startedAt == nil { startedAt = Date() }
         manifest?.roomRuns += 1
         beginRoomReport()
@@ -325,6 +335,7 @@ final class LidarCaptureRecorder {
     func stop() {
         guard pollTask != nil else { return }
         stopPolling()
+        status.clear()
         if let gap = gaps.finishRoom(at: ProcessInfo.processInfo.systemUptime) {
             logGap(gap)
         }
@@ -379,6 +390,7 @@ final class LidarCaptureRecorder {
         gaps.tick(at: uptime)
         guard let frame = session.currentFrame else {
             gaps.skipped(.noFrame)
+            showPause(.noFrame, at: uptime)
             return
         }
         let isSameFrame = frame.timestamp == lastFrameTimestamp
@@ -411,18 +423,40 @@ final class LidarCaptureRecorder {
         }
         if isSameFrame {
             gaps.skipped(.sameFrame)
+            showPause(.sameFrame, at: uptime)
             return
         }
+        let poseIsPlausible = poseFilter.accepts(position, at: frame.timestamp)
         if let reason = LidarSkipReason.tracking(frame.camera.trackingState) {
             gaps.skipped(reason)
+            showPause(reason, at: uptime)
             return
         }
+        guard poseIsPlausible else {
+            gaps.skipped(.poseJump)
+            showPause(.poseJump, at: uptime)
+            if poseFilter.jumpsInRow == 1 {
+                DiagnosticsLog.shared.record("LiDAR frame dropped: the phone position jumped further than it can move between two frames", category: .state)
+            }
+            return
+        }
+        if storageLevel == .full {
+            gaps.skipped(.lowStorage)
+            showPause(.lowStorage, at: uptime)
+            return
+        }
+        showPause(nil, at: uptime)
         let mark = GapMark(uptime: uptime, position: position)
         let depthSkip = sampleDepthOnly(frame, at: now, directory: directory, mark: mark)
         let keyframeSkip = sampleKeyframe(frame, at: now, directory: directory, mark: mark)
         if let depthSkip, let keyframeSkip {
             gaps.skipped(LidarSkipReason.moreTelling(depthSkip, keyframeSkip))
         }
+    }
+
+    private func showPause(_ reason: LidarSkipReason?, at uptime: TimeInterval) {
+        guard status.update(reason, at: uptime), let reason else { return }
+        DiagnosticsLog.shared.record("LiDAR not recording for \(Int(LidarPauseWatch.showAfterS)) s: \(reason.label). Warning shown.", category: .state)
     }
 
     private struct GapMark: Sendable {
@@ -659,6 +693,30 @@ final class LidarCaptureRecorder {
         let freeMB = Int(os_proc_available_memory() / 1_048_576)
         if let lowest = manifest?.stats.lowestFreeMemoryMB, freeMB > 0, freeMB < lowest || lowest == 0 {
             manifest?.stats.lowestFreeMemoryMB = freeMB
+        }
+        sampleStorage(now)
+    }
+
+    private func sampleStorage(_ now: Date) {
+        guard let directory, now.timeIntervalSince(lastStorageAt) >= LidarStorageBudget.checkIntervalS else { return }
+        lastStorageAt = now
+        switch LidarStorageBudget.freeMB(at: directory) {
+        case .success(let freeMB):
+            storageReadFailed = false
+            if (manifest?.stats.lowestFreeDiskMB).map({ freeMB < $0 }) ?? true {
+                manifest?.stats.lowestFreeDiskMB = freeMB
+            }
+            let level = LidarStorageBudget.level(freeMB: freeMB)
+            if level != storageLevel {
+                DiagnosticsLog.shared.record("LiDAR storage: \(freeMB) MB free, level \(level)", category: level == .ok ? .state : .error)
+            }
+            storageLevel = level
+            status.setStorageNote(level == .low ? LidarStorageBudget.lowNote(freeMB: freeMB) : nil)
+        case .failure(let error):
+            if !storageReadFailed {
+                storageReadFailed = true
+                DiagnosticsLog.shared.record("LiDAR storage check failed: \(error.localizedDescription)", category: .error)
+            }
         }
     }
 
