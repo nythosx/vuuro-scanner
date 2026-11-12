@@ -56,9 +56,23 @@ final class MeshPhotoTexturerTests: XCTestCase {
         XCTAssertNotNil(MeshPhotoTexturer.score(a, b, c, camera(depth: [2000, 2000, 2000, 2000])))
     }
 
-    func testKeepsThePhotosThatWinMostTriangles() {
-        XCTAssertEqual(MeshPhotoTexturer.keptCameras(wins: [5, 0, 9, 1, 9], limit: 3), [0, 2, 4])
-        XCTAssertEqual(MeshPhotoTexturer.keptCameras(wins: [0, 0], limit: 3), [])
+    func testKeepsThePhotosThatCoverTheMostNewTriangles() {
+        let visible: [UInt64] = [0b0000_1111, 0b0000_0111, 0b1111_0000, 0b0000_0000]
+        XCTAssertEqual(MeshPhotoTexturer.coverCameras(visible: visible, cameras: 4, words: 1, limit: 3), [0, 2])
+        XCTAssertEqual(MeshPhotoTexturer.coverCameras(visible: visible, cameras: 4, words: 1, limit: 1), [0])
+        XCTAssertEqual(MeshPhotoTexturer.coverCameras(visible: [0, 0], cameras: 2, words: 1, limit: 3), [])
+    }
+
+    func testGainsEvenOutABrighterPhoto() {
+        let gains = MeshPhotoTexturer.levelGains(pairs: [(0, 1, log(1.5))], count: 2)
+        XCTAssertEqual(gains[1] / gains[0], 1 / 1.5, accuracy: 0.01)
+        XCTAssertEqual(gains[0] * gains[1], 1, accuracy: 0.01)
+        XCTAssertEqual(MeshPhotoTexturer.levelGains(pairs: [], count: 2), [1, 1])
+        let withIsolated = MeshPhotoTexturer.levelGains(pairs: [(0, 1, log(1.5))], count: 3)
+        XCTAssertEqual(withIsolated[2], 1, accuracy: 0.0001)
+        XCTAssertEqual(withIsolated[0] * withIsolated[1], 1, accuracy: 0.01)
+        let capped = MeshPhotoTexturer.levelGains(pairs: [(0, 1, log(10))], count: 2)
+        XCTAssertEqual(capped[0], MeshPhotoTexturer.maxGain, accuracy: 0.01)
     }
 }
 
@@ -73,6 +87,13 @@ final class LidarStorageBudgetTests: XCTestCase {
         XCTAssertEqual(LidarStorageBudget.minutesLeft(freeMB: 1024 + 415), 10)
         XCTAssertEqual(LidarStorageBudget.squareMetresLeft(freeMB: 1024 + 471), 100)
         XCTAssertEqual(LidarStorageBudget.minutesLeft(freeMB: 500), 0)
+    }
+
+    func testMBPerMinute() throws {
+        let rate = try XCTUnwrap(LidarStorageBudget.mbPerMinute(bytes: 42 * 1_048_576, durationS: 60))
+        XCTAssertEqual(rate, 42, accuracy: 0.01)
+        XCTAssertNil(LidarStorageBudget.mbPerMinute(bytes: 1_048_576, durationS: 5))
+        XCTAssertNil(LidarStorageBudget.mbPerMinute(bytes: 0, durationS: 60))
     }
 
     func testOlderStatsWithoutDiskStillDecode() throws {

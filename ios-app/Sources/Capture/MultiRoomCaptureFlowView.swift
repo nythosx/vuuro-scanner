@@ -25,6 +25,7 @@ struct MultiRoomCaptureFlowView: View {
     @State private var storedRescanResume: WalkthroughState?
     @State private var missingOpenings: CaptureLiveStats.MissingOpenings = .doorsAndWindows
     @State private var pendingFinishUnit = false
+    @State private var photosForLastRoom = false
     @State private var partialRoomFailureMessage: String?
     @State private var showDoorwayStep = false
     @State private var showCapturedRoomsList = false
@@ -430,11 +431,21 @@ struct MultiRoomCaptureFlowView: View {
             }
             .alert("Finish this unit?", isPresented: $showFinishConfirmation) {
                 Button("Finish") {
+                    photosForLastRoom = false
                     pendingFinishUnit = true
                     didRequestStopRoom = true
                     coordinator.stopCurrentRoom()
                 }
                 .accessibilityIdentifier("multiCapture.finishConfirm")
+                if !PhotoTourSettings.showsStep(photosAfterRoom: photoTourAfterRoom, walkthrough: walkthroughCaptureEnabled) {
+                    Button("Take photos for the tour, then finish") {
+                        photosForLastRoom = true
+                        pendingFinishUnit = true
+                        didRequestStopRoom = true
+                        coordinator.stopCurrentRoom()
+                    }
+                    .accessibilityIdentifier("multiCapture.finishWithPhotos")
+                }
                 Button("Keep scanning", role: .cancel) {}
                     .accessibilityIdentifier("multiCapture.finishKeepScanning")
             } message: {
@@ -929,12 +940,20 @@ struct MultiRoomCaptureFlowView: View {
 
     @MainActor
     private func beginPhotoStepOrContinue() async {
-        guard PhotoTourSettings.showsStep(photosAfterRoom: photoTourAfterRoom, walkthrough: walkthroughCaptureEnabled) else {
+        let fromMenu = photosForLastRoom
+        photosForLastRoom = false
+        if fromMenu {
+            DiagnosticsLog.shared.record("Photos for the tour started from the Finish menu for the last room", category: .state)
+        }
+        guard fromMenu || PhotoTourSettings.showsStep(photosAfterRoom: photoTourAfterRoom, walkthrough: walkthroughCaptureEnabled) else {
             DiagnosticsLog.shared.record("Photos for the tour skipped after the room: off in Settings", category: .state)
             await checkRescanThenContinue()
             return
         }
         guard let room = coordinator.capturedRooms.last, let floor = room.floors.first else {
+            if fromMenu {
+                VuuroToast.shared.show(vuuroLocalized("Photos for the tour need a room with a floor outline, so the unit was finished without them."))
+            }
             await checkRescanThenContinue()
             return
         }

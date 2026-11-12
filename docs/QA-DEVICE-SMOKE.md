@@ -26,6 +26,7 @@ A short run on a real LiDAR iPhone to check that one room captures, saves its Li
    - Tap Finish.
    - With the default setting, the app goes straight on and the "Photos for the tour" step does not open.
    - If that step opens anyway, tap Skip and note it in the report.
+   - After the upload, the "Room 1 captured" screen shows "Take photos for the tour". You do not need to use it for this test; only note whether it is there.
 5. **Result and LiDAR proof**
    - Wait for the upload and the result screen.
    - Open the LiDAR capture button and check:
@@ -36,23 +37,27 @@ A short run on a real LiDAR iPhone to check that one room captures, saves its Li
      - the floor, walls and corners coverage rows
      - "Recording gaps over 2 s"
      - Save failures: 0
+     - "Data on phone" with the MB per minute, and "Lowest free phone storage"
    - Take a screenshot of the whole proof screen. Scroll if needed.
 6. **Export the zip**
    - On the proof screen, tap "Export capture files" and save or share the zip.
    - Note the zip file name (lidar-YYYYMMDD-HHMMSS-XXXXXXXX.zip).
 7. **3D**
    - Back on the result screen, tap "Open LiDAR mesh in 3D". Check that the mesh opens and can be turned.
+   - Pick "Photo". Wait for the photo texture and note the line under the mesh: photos used, share of the mesh, seconds.
+   - Check that the photos are the right way up and note any visible seams or brightness jumps. Take a screenshot.
+   - Tap "Share 3D model", save the USDZ, and open it in Files or Quick Look. Note whether the photo texture is still there.
 8. **History round trip**
    - Close the result. Open History and open the same scan.
    - Open its LiDAR capture again. Check that it is the same capture, with the same time and numbers as in step 5.
-   - If more than one capture is listed, check that the longest one is selected.
+   - If more than one capture is listed, check that the one with the most keyframes is selected (if two have the same number, the longer one).
 
 ## Report
 
 Post in #LiDAR:
 - the git sha, the phone model and the iOS version
 - the zip name, with the zip attached
-- screenshots from steps 1, 3, 5 and 8
+- screenshots from steps 1, 3, 5, 7 and 8
 - any step that did not behave as written above, with the step number
 
 Pass means every step behaved as written. Anything else is a fail for that step, even if the rest passed.

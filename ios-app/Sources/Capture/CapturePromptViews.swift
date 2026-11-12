@@ -2,6 +2,8 @@ import SwiftUI
 
 struct AnotherRoomPromptView: View {
     let roomCount: Int
+    var onPhotos: (() -> Void)? = nil
+    var photosUploading = false
     let onChoice: (Bool) -> Void
 
     var body: some View {
@@ -25,6 +27,14 @@ struct AnotherRoomPromptView: View {
                 Button("Finish unit") { onChoice(false) }
                     .accessibilityIdentifier("anotherRoom.finishUnit")
                     .buttonStyle(.vuuroSecondary)
+                if photosUploading {
+                    ProgressView("Uploading photos for the tour")
+                        .accessibilityIdentifier("anotherRoom.photosUploading")
+                } else if let onPhotos {
+                    Button("Take photos for the tour") { onPhotos() }
+                        .accessibilityIdentifier("anotherRoom.photos")
+                        .buttonStyle(.vuuroSecondary)
+                }
             }
             .padding(.top, 12)
             .frame(maxWidth: 340)

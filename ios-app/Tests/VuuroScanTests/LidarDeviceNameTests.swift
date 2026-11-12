@@ -2,9 +2,9 @@ import XCTest
 @testable import VuuroScan
 
 final class LidarDeviceNameTests: XCTestCase {
-    func testKnownPhoneShowsItsNameAndHardwareId() {
-        XCTAssertEqual(LidarDeviceName.display("iPhone17,1"), "iPhone 16 Pro (iPhone17,1)")
-        XCTAssertEqual(LidarDeviceName.display("iPhone13,3"), "iPhone 12 Pro (iPhone13,3)")
+    func testKnownPhoneShowsItsModelName() {
+        XCTAssertEqual(LidarDeviceName.display("iPhone17,1"), "iPhone 16 Pro")
+        XCTAssertEqual(LidarDeviceName.display("iPhone13,3"), "iPhone 12 Pro")
     }
 
     func testUnknownIdIsShownAsIs() {

@@ -27,6 +27,11 @@ enum LidarStorageBudget {
         max(0, Int(Double(freeMB - stopBelowMB) / measuredMBPerSquareMetre))
     }
 
+    static func mbPerMinute(bytes: Int64, durationS: Double) -> Double? {
+        guard durationS >= 10, bytes > 0 else { return nil }
+        return Double(bytes) / 1_048_576 / (durationS / 60)
+    }
+
     static func freeMB(at url: URL) -> Result<Int, Error> {
         do {
             let values = try url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])

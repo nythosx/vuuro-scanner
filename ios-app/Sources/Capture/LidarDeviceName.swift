@@ -15,7 +15,6 @@ enum LidarDeviceName {
     ]
 
     static func display(_ identifier: String) -> String {
-        guard let name = names[identifier] else { return identifier }
-        return "\(name) (\(identifier))"
+        names[identifier] ?? identifier
     }
 }

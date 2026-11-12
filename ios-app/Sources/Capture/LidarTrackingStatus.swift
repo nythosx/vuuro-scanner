@@ -79,18 +79,29 @@ final class LidarRecordingStatus: ObservableObject {
         if note != storageNote { storageNote = note }
     }
 
+    nonisolated static func warnsWhenStuck(_ reason: LidarSkipReason) -> Bool {
+        switch reason {
+        case .notMoved, .waiting: return false
+        default: return true
+        }
+    }
+
     nonisolated static func message(_ reason: LidarSkipReason) -> String {
         switch reason {
         case .trackingExcessiveMotion:
-            return vuuroLocalized("Slow down. Tracking is lost, so nothing is being recorded.")
+            return vuuroLocalized("Slow down. Nothing is being recorded.")
         case .trackingInsufficientFeatures:
-            return vuuroLocalized("Point at furniture or a wall edge, not a blank floor or wall. Tracking is lost, so nothing is being recorded.")
+            return vuuroLocalized("Point at furniture or a wall edge. Nothing is being recorded.")
         case .lowStorage:
-            return vuuroLocalized("Phone storage is full, so LiDAR stopped saving frames. The room plan and the mesh are still saved. Finish this room.")
+            return vuuroLocalized("Phone storage is full. Finish this room; the plan and mesh are kept.")
         case .trackingInitializing, .trackingRelocalizing, .poseJump:
-            return vuuroLocalized("Hold still and point back at where you just were. Tracking is recovering, so nothing is being recorded.")
+            return vuuroLocalized("Hold still and point back where you were. Nothing is being recorded.")
+        case .noDepth:
+            return vuuroLocalized("Point at a wall or the floor nearby. Nothing is being recorded.")
+        case .writerBusy, .writeFailed:
+            return vuuroLocalized("Still saving. Slow down for a moment.")
         default:
-            return vuuroLocalized("LiDAR is not recording right now. Keep the phone steady and point at the room.")
+            return vuuroLocalized("LiDAR is not recording. Keep the phone steady and point at the room.")
         }
     }
 }

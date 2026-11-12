@@ -33,6 +33,7 @@ struct LidarCaptureStats: Codable, Equatable {
     var depthOnlyFrames: Int?
     var depthOnlyBytes: Int64?
     var lowestFreeDiskMB: Int?
+    var poseResets: Int?
 
     var totalBytes: Int64 { frameBytes + meshBytes + (depthOnlyBytes ?? 0) }
 
@@ -54,6 +55,7 @@ struct LidarCaptureStats: Codable, Equatable {
         case depthOnlyFrames = "depth_only_frames"
         case depthOnlyBytes = "depth_only_bytes"
         case lowestFreeDiskMB = "lowest_free_disk_mb"
+        case poseResets = "pose_resets"
     }
 }
 
@@ -104,6 +106,7 @@ struct LidarCaptureManifest: Codable, Equatable {
     var createdAt: String
     var updatedAt: String
     var device: String
+    var deviceName: String? = nil
     var systemVersion: String
     var supportsSceneDepth: Bool
     var supportsMeshClassification: Bool
@@ -132,6 +135,7 @@ struct LidarCaptureManifest: Codable, Equatable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case device
+        case deviceName = "device_name"
         case systemVersion = "system_version"
         case supportsSceneDepth = "supports_scene_depth"
         case supportsMeshClassification = "supports_mesh_classification"
@@ -214,6 +218,7 @@ final class LidarCaptureRecorder {
     private var meshWriteInFlight = false
     private var frameIndex = 0
     private var latestMeshAnchors: [ARMeshAnchor] = []
+    private var finalMeshPending: [ARMeshAnchor]?
     private var lateConfigChecked = false
     private var roomBoxes: [LidarRoomBox] = []
     private var lastDepthPose: simd_float4x4?
@@ -342,7 +347,11 @@ final class LidarCaptureRecorder {
         storeGaps()
         endRoomReport()
         if !latestMeshAnchors.isEmpty {
-            snapshotMesh(latestMeshAnchors, at: Date().timeIntervalSince1970)
+            if meshWriteInFlight {
+                finalMeshPending = latestMeshAnchors
+            } else {
+                snapshotMesh(latestMeshAnchors, at: Date().timeIntervalSince1970)
+            }
         }
         if let summary = coverage.finishRoom() {
             manifest?.liveCoverage = summary
@@ -370,10 +379,12 @@ final class LidarCaptureRecorder {
             try FileManager.default.createDirectory(at: url.appendingPathComponent(Self.framesFolder, isDirectory: true), withIntermediateDirectories: true)
             directory = url
             let now = ISO8601DateFormatter().string(from: Date())
+            let model = Self.deviceModel()
             manifest = LidarCaptureManifest(
                 createdAt: now,
                 updatedAt: now,
-                device: Self.deviceModel(),
+                device: model,
+                deviceName: LidarDeviceName.display(model),
                 systemVersion: UIDevice.current.systemVersion,
                 supportsSceneDepth: ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth),
                 supportsMeshClassification: ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification)
@@ -400,7 +411,8 @@ final class LidarCaptureRecorder {
         sampleHealth()
         if !lateConfigChecked, manifest?.roomPlanConfig == nil, let configuration = session.configuration {
             lateConfigChecked = true
-            manifest?.configNotes.append("RoomPlan configuration appeared during the scan: \(type(of: configuration))")
+            let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
+            manifest?.configNotes.append(String(format: "RoomPlan configuration appeared during the scan at %.1f s: %@", elapsed, String(describing: type(of: configuration))))
             prepareSession(session)
         }
         let meshAnchors = frame.anchors.compactMap { $0 as? ARMeshAnchor }
@@ -426,7 +438,13 @@ final class LidarCaptureRecorder {
             showPause(.sameFrame, at: uptime)
             return
         }
+        let jumpsBefore = poseFilter.jumpsInRow
         let poseIsPlausible = poseFilter.accepts(position, at: frame.timestamp)
+        if poseIsPlausible, jumpsBefore + 1 >= LidarPoseJumpFilter.acceptAfterJumps {
+            manifest?.stats.poseResets = (manifest?.stats.poseResets ?? 0) + 1
+            let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
+            DiagnosticsLog.shared.record(String(format: "LiDAR position reset accepted at %.1f s after %ld jumped frames", elapsed, jumpsBefore), category: .state)
+        }
         if let reason = LidarSkipReason.tracking(frame.camera.trackingState) {
             gaps.skipped(reason)
             showPause(reason, at: uptime)
@@ -445,12 +463,15 @@ final class LidarCaptureRecorder {
             showPause(.lowStorage, at: uptime)
             return
         }
-        showPause(nil, at: uptime)
         let mark = GapMark(uptime: uptime, position: position)
         let depthSkip = sampleDepthOnly(frame, at: now, directory: directory, mark: mark)
         let keyframeSkip = sampleKeyframe(frame, at: now, directory: directory, mark: mark)
         if let depthSkip, let keyframeSkip {
-            gaps.skipped(LidarSkipReason.moreTelling(depthSkip, keyframeSkip))
+            let reason = LidarSkipReason.moreTelling(depthSkip, keyframeSkip)
+            gaps.skipped(reason)
+            showPause(LidarRecordingStatus.warnsWhenStuck(reason) ? reason : nil, at: uptime)
+        } else {
+            showPause(nil, at: uptime)
         }
     }
 
@@ -671,6 +692,12 @@ final class LidarCaptureRecorder {
 
     private func meshWriteFinished(_ result: Result<Int64, Error>, copies: [LidarMeshAnchorCopy]) {
         meshWriteInFlight = false
+        defer {
+            if let pending = finalMeshPending {
+                finalMeshPending = nil
+                snapshotMesh(pending, at: Date().timeIntervalSince1970)
+            }
+        }
         switch result {
         case .success(let bytes):
             manifest?.stats.meshBytes = bytes
@@ -711,7 +738,11 @@ final class LidarCaptureRecorder {
                 DiagnosticsLog.shared.record("LiDAR storage: \(freeMB) MB free, level \(level)", category: level == .ok ? .state : .error)
             }
             storageLevel = level
-            status.setStorageNote(level == .low ? LidarStorageBudget.lowNote(freeMB: freeMB) : nil)
+            switch level {
+            case .ok: status.setStorageNote(nil)
+            case .low: status.setStorageNote(LidarStorageBudget.lowNote(freeMB: freeMB))
+            case .full: status.setStorageNote(LidarRecordingStatus.message(.lowStorage))
+            }
         case .failure(let error):
             if !storageReadFailed {
                 storageReadFailed = true

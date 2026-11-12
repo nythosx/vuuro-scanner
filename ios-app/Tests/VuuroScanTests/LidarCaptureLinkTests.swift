@@ -64,6 +64,12 @@ final class LidarCaptureLinkTests: XCTestCase {
         XCTAssertEqual(LidarCaptureLibrary.substantiveFirst([abandoned, real]).map(\.id), ["real", "abandoned"])
     }
 
+    func testMoreKeyframesWinOverManyDepthOnlyFrames() {
+        let depthHeavy = capture("depthHeavy", created: "2026-11-05T10:00:00Z", frames: 10, depthOnly: 1000, duration: 75)
+        let keyframes = capture("keyframes", created: "2026-11-05T09:00:00Z", frames: 200, duration: 60)
+        XCTAssertEqual(LidarCaptureLibrary.substantiveFirst([depthHeavy, keyframes]).map(\.id), ["keyframes", "depthHeavy"])
+    }
+
     func testEqualCapturesFallBackToLongerThenNewer() {
         let short = capture("short", created: "2026-11-05T10:00:00Z", frames: 10, duration: 20)
         let long = capture("long", created: "2026-11-05T09:00:00Z", frames: 10, duration: 40)

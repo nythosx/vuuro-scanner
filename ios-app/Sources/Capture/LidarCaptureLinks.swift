@@ -57,8 +57,9 @@ extension LidarCaptureLibrary {
 
     static func substantiveFirst(_ captures: [LidarCaptureMatch]) -> [LidarCaptureMatch] {
         captures.sorted { a, b in
-            if a.savedFrames != b.savedFrames { return a.savedFrames > b.savedFrames }
+            if a.manifest.stats.frames != b.manifest.stats.frames { return a.manifest.stats.frames > b.manifest.stats.frames }
             if a.manifest.durationS != b.manifest.durationS { return a.manifest.durationS > b.manifest.durationS }
+            if a.savedFrames != b.savedFrames { return a.savedFrames > b.savedFrames }
             return (a.createdAt ?? .distantPast) > (b.createdAt ?? .distantPast)
         }
     }

@@ -12,9 +12,12 @@ Why the current Texture mode is soft:
 What is built now (on the phone, new "Photo" mode in the 3D viewer):
 - Each triangle takes its image straight from the best full keyframe: the closest, most front-facing and least off-centre photo where the depth agrees, so a wall behind furniture is not painted with the furniture.
 - The triangles get texture coordinates into that photo, so detail inside a triangle comes from the photo itself, not from 3 vertex colours.
-- At most 24 photos are used, at 1440 px, to keep memory near 150 MB. Triangles not in those photos stay grey, and the viewer says what share of the mesh is covered.
-- Cost: built on the phone when the mode is opened, with no server work. On 788k triangles, expect several seconds up to about a minute (not measured on a device yet).
-- Not checked on a device yet: the seams between photos, exposure jumps between photos, and that the image is not flipped.
+- At most 40 photos are used, at 1152 × 864 px. The photos alone take about 160 MB; with the mesh copies and the visibility data, the peak on 788k triangles is estimated at about 300 MB (not measured on a device yet). Triangles not in those photos stay grey, and the viewer says what share of the mesh is covered and how long the build took.
+- The photos are picked to cover the most triangles, one after another, instead of the photos that are best for the most triangles. On Mark's zip, 24 photos picked the old way covered 60% of the mesh; 40 photos picked by coverage cover 88% (any photo at all could cover 94%).
+- Brightness is evened out between photos: where two photos see the same triangles, their brightness is compared, and each photo gets one gain (0.6 to 1.6) so they match. On Mark's zip, the median brightness jump where photos meet went from 1.25x to 1.05x, and the worst 10% from 1.73x to 1.27x.
+- Orientation checked on Mark's zip: projecting the mesh into the photos matches the depth for 78% of points as built, and 32% if the image were flipped, so the image rows are the right way up. Whether SceneKit reads the texture coordinates the same way is still to be seen on a device.
+- Cost: built on the phone when the mode is opened, with no server work. The visibility pass runs on all CPU cores. On a PC, the same work on Mark's 788k triangles took about 28 s in Python, so expect tens of seconds on the phone (not measured on a device yet).
+- Not checked on a device yet: the seams between photos and the build time.
 
 Next option if this is not good enough, on the server:
 - Build one texture atlas from all keyframes with seam levelling, for example with mvs-texturing or Open3D, from the uploaded zip.
@@ -33,7 +36,8 @@ What exists now:
 Built now (step 1):
 - "Share 3D model" in the 3D viewer saves the current view as a USDZ file and opens the share sheet.
 - On an iPhone or a Mac, the prospect can open it with Quick Look and turn it, or view it in AR.
-- Not checked on a device yet: whether the photo texture and the colours survive in the USDZ export. A plain mesh does.
+- The photo texture is handed to SceneKit as a UIImage, which the USDZ export can write as a texture file.
+- Not checked on a device yet: whether the photo texture and the Texture mode colours survive in the USDZ export. A plain mesh does.
 
 Next steps, with cost:
 1. Upload the USDZ, or a GLB made from it, with the scan. Store it beside the dollhouse files and add a "LiDAR model" button to the web tour (three.js already loads GLB). About 2 days.
@@ -52,5 +56,9 @@ Built now:
 - Below 1 GB free, the recorder stops saving frames, so the phone does not run out of space. The room plan and the mesh are still saved. A warning is shown, and the gap reason is `low_storage`.
 - Only captures linked to a saved scan are kept, up to 10, as before.
 
+Checked against a second run:
+- Mark's 4 Nov run (71 s, keyframes only) used 42.7 MB per minute, close to the 41.5 from the 10 Nov run, so the limits stay as they are.
+- The proof screen now shows the MB per minute and the lowest free storage of each run, so the numbers can be read from every new run without the zip.
+
 Open:
-- The MB per minute and per m² come from one run. They will be updated after the next runs.
+- The MB per m² comes from one run only.

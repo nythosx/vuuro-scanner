@@ -57,9 +57,15 @@ struct MeshViewer: View {
             if isLoading {
                 ProgressView("Loading mesh")
             } else if texturing {
-                ProgressView(mode == .photo ? "Building the photo texture from the full photos" : "Coloring the mesh from the photos")
-                    .padding()
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                VStack(spacing: 12) {
+                    ProgressView(mode == .photo ? "Building the photo texture from the keyframe photos. This can take a minute." : "Coloring the mesh from the photos")
+                    if mode == .photo {
+                        Button("Cancel") { mode = .clay }
+                            .accessibilityIdentifier("meshViewer.cancelPhoto")
+                    }
+                }
+                .padding()
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
             } else if exporting {
                 ProgressView("Saving the 3D model")
                     .padding()
@@ -307,6 +313,7 @@ struct MeshViewer: View {
             return
         }
         texturing = true
+        let started = Date()
         let inputs = built.parts.map {
             MeshPhotoTexturer.PartInput(vertices: $0.vertices, vertexCount: $0.vertexCount, faces: $0.faces, faceCount: $0.faceCount, classes: $0.classes, transform: $0.transform)
         }
@@ -327,7 +334,7 @@ struct MeshViewer: View {
                 part.photo = MeshSceneBuilder.photoGeometry(partOutput) { group in
                     let key = (group.slot + 1) * 256 + Int(group.classId)
                     if let cached = cache[key] { return cached }
-                    let image = output.images.indices.contains(group.slot) ? output.images[group.slot] : nil
+                    let image: CGImage? = output.images.indices.contains(group.slot) ? output.images[group.slot] : nil
                     let material = MeshSceneBuilder.photoMaterial(classId: group.classId, image: image)
                     cache[key] = material
                     return material
@@ -335,7 +342,8 @@ struct MeshViewer: View {
             }
             photoTextured = true
             let percent = output.totalFaces > 0 ? output.facesInPhoto * 100 / output.totalFaces : 0
-            photoNote = "Photo texture from \(output.photosUsed) full photos, \(percent)% of the mesh. Grey parts are not in those photos."
+            let seconds = Int(Date().timeIntervalSince(started).rounded())
+            photoNote = "Photo texture from \(output.photosUsed) keyframe photos at \(MeshPhotoTexturer.textureSize) px with brightness evened out, \(percent)% of the mesh, built in \(seconds) s. Grey parts are not in those photos.\(output.photosUnreadable > 0 ? " \(output.photosUnreadable) photos could not be opened, so their parts are grey too." : "")"
             applyMode()
         case .failure(let error):
             if error is CancellationError { return }
@@ -789,7 +797,7 @@ enum MeshSceneBuilder {
         material.name = String(classId)
         material.isDoubleSided = true
         material.lightingModel = .constant
-        material.diffuse.contents = image ?? UIColor(white: 0.6, alpha: 1)
+        material.diffuse.contents = image.map { UIImage(cgImage: $0) } ?? UIColor(white: 0.6, alpha: 1)
         material.diffuse.wrapS = .clamp
         material.diffuse.wrapT = .clamp
         material.diffuse.mipFilter = .linear

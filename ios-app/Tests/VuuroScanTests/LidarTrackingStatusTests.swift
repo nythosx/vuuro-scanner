@@ -1,6 +1,16 @@
 import XCTest
 @testable import VuuroScan
 
+final class LidarPauseReasonTests: XCTestCase {
+    func testStandingStillDoesNotWarnButBlockedSavingDoes() {
+        XCTAssertFalse(LidarRecordingStatus.warnsWhenStuck(.notMoved))
+        XCTAssertFalse(LidarRecordingStatus.warnsWhenStuck(.waiting))
+        XCTAssertTrue(LidarRecordingStatus.warnsWhenStuck(.writerBusy))
+        XCTAssertTrue(LidarRecordingStatus.warnsWhenStuck(.noDepth))
+        XCTAssertTrue(LidarRecordingStatus.warnsWhenStuck(.lowStorage))
+    }
+}
+
 final class LidarTrackingStatusTests: XCTestCase {
     func testOneFrameThatJumpsToTheOriginIsDropped() {
         var filter = LidarPoseJumpFilter()

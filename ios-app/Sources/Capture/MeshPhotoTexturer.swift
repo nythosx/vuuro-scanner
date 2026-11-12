@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreImage
 import Foundation
 import ImageIO
 import simd
@@ -29,10 +30,12 @@ enum MeshPhotoTexturer {
 
     struct Output {
         let parts: [PartOutput]
-        let images: [CGImage]
+        let images: [CGImage?]
+        let photosUnreadable: Int
         let facesInPhoto: Int
         let totalFaces: Int
         let photosUsed: Int
+        let gains: [Float]
     }
 
     struct Camera {
@@ -50,12 +53,16 @@ enum MeshPhotoTexturer {
     }
 
     static let maxCandidates = 200
-    static let maxTextures = 24
-    static let textureSize = 1440
+    static let maxTextures = 40
+    static let textureSize = 1152
+    static let gainSampleSize = 160
+    static let maxGain: Float = 1.6
+    static let chunkFaces = 4096
     static let minDistance: Float = 0.1
     static let maxDistance: Float = 6
     static let minFacing: Float = 0.2
     static let hiddenClasses: Set<UInt8> = [3, 9]
+    static let invalidPoint = SIMD3<Float>(repeating: 1e9)
 
     static func texture(parts: [PartInput], frames: [MeshFrame]) -> Result<Output, Error> {
         let usable = frames.filter { $0.imageURL != nil }
@@ -71,21 +78,25 @@ enum MeshPhotoTexturer {
             return .failure(PlainError(message: "The mesh has no triangles to texture."))
         }
 
-        var wins = [Int](repeating: 0, count: cameras.count)
+        var corners: [SIMD3<Float>] = []
+        corners.reserveCapacity(totalFaces * 3)
+        var partStart: [Int] = []
         for (part, input) in parts.enumerated() {
-            if Task.isCancelled { return .failure(CancellationError()) }
+            partStart.append(corners.count / 3)
             forEachFace(input, world: world[part]) { _, a, b, c in
-                if let best = bestCamera(a, b, c, cameras: cameras, allowed: nil) {
-                    wins[best] += 1
-                }
+                corners.append(a)
+                corners.append(b)
+                corners.append(c)
             }
         }
-        let kept = keptCameras(wins: wins, limit: maxTextures)
+        let faceTotal = corners.count / 3
+        let words = (faceTotal + 63) / 64
+        var visible = visibility(corners: corners, faceTotal: faceTotal, words: words, cameras: cameras)
+        if Task.isCancelled { return .failure(CancellationError()) }
+        let kept = coverCameras(visible: visible, cameras: cameras.count, words: words, limit: maxTextures)
         guard !kept.isEmpty else {
             return .failure(PlainError(message: "No triangle of the mesh is seen clearly in a photo."))
         }
-        let slotOf = Dictionary(uniqueKeysWithValues: kept.enumerated().map { ($1, $0) })
-        let allowed = Set(kept)
 
         var outputs: [PartOutput] = []
         var inPhoto = 0
@@ -94,12 +105,17 @@ enum MeshPhotoTexturer {
             var positionsBy: [Int: [Float]] = [:]
             var uvsBy: [Int: [Float]] = [:]
             let local = localFloats(input)
+            let base = partStart[part]
             forEachFace(input, world: world[part]) { face, a, b, c in
+                guard a != invalidPoint else { return }
+                let global = base + face
                 let classId = faceClass(input, face)
                 var slot = -1
                 var uv: [Float] = [0, 0, 0, 0, 0, 0]
-                if let best = bestCamera(a, b, c, cameras: cameras, allowed: allowed), let mapped = slotOf[best] {
-                    let camera = cameras[best]
+                var bestScore = Float.greatestFiniteMagnitude
+                for (mapped, index) in kept.enumerated() where isVisible(visible, camera: index, face: global, words: words) {
+                    guard let value = score(a, b, c, cameras[index]), value < bestScore else { continue }
+                    let camera = cameras[index]
                     var coords: [Float] = []
                     for point in [a, b, c] {
                         if let pixel = project(point, camera) {
@@ -107,12 +123,12 @@ enum MeshPhotoTexturer {
                             coords.append(pixel.y / camera.height)
                         }
                     }
-                    if coords.count == 6 {
-                        slot = mapped
-                        uv = coords
-                        inPhoto += 1
-                    }
+                    guard coords.count == 6 else { continue }
+                    bestScore = value
+                    slot = mapped
+                    uv = coords
                 }
+                if slot >= 0 { inPhoto += 1 }
                 let key = (slot + 1) * 256 + Int(classId)
                 for corner in 0..<3 {
                     let index = Int(faceIndex(input, face, corner))
@@ -138,23 +154,93 @@ enum MeshPhotoTexturer {
             ))
         }
 
-        var images: [CGImage] = []
-        for index in kept {
-            if Task.isCancelled { return .failure(CancellationError()) }
-            guard let url = candidates[index].imageURL, let image = loadImage(url) else {
-                return .failure(PlainError(message: "A frame photo could not be opened for the texture."))
-            }
-            images.append(image)
+        if Task.isCancelled { return .failure(CancellationError()) }
+        var centroids: [SIMD3<Float>] = []
+        centroids.reserveCapacity(faceTotal)
+        for face in 0..<faceTotal {
+            centroids.append((corners[face * 3] + corners[face * 3 + 1] + corners[face * 3 + 2]) / 3)
         }
-        return .success(Output(parts: outputs, images: images, facesInPhoto: inPhoto, totalFaces: totalFaces, photosUsed: kept.count))
+        let pairs = gainPairs(kept: kept, visible: visible, words: words, centroids: centroids, cameras: cameras, samples: kept.map { index in candidates[index].imageURL.flatMap(loadLuminance) })
+        let gains = levelGains(pairs: pairs, count: kept.count)
+        corners = []
+        centroids = []
+        visible = []
+
+        var images: [CGImage?] = []
+        let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+        for (slot, index) in kept.enumerated() {
+            if Task.isCancelled { return .failure(CancellationError()) }
+            if let url = candidates[index].imageURL, let image = loadImage(url) {
+                images.append(applyGain(gains[slot], to: image, context: context))
+            } else {
+                images.append(nil)
+            }
+        }
+        let unreadable = images.filter { $0 == nil }.count
+        guard unreadable < images.count else {
+            return .failure(PlainError(message: "None of the chosen frame photos could be opened for the texture."))
+        }
+        return .success(Output(parts: outputs, images: images, photosUnreadable: unreadable, facesInPhoto: inPhoto, totalFaces: totalFaces, photosUsed: kept.count, gains: gains))
     }
 
-    static func keptCameras(wins: [Int], limit: Int) -> [Int] {
-        wins.indices
-            .filter { wins[$0] > 0 }
-            .sorted { wins[$0] != wins[$1] ? wins[$0] > wins[$1] : $0 < $1 }
-            .prefix(limit)
-            .sorted()
+    static func coverCameras(visible: [UInt64], cameras: Int, words: Int, limit: Int) -> [Int] {
+        guard words > 0, visible.count >= cameras * words else { return [] }
+        var cover = [UInt64](repeating: 0, count: words)
+        var chosen: [Int] = []
+        var used = Set<Int>()
+        while chosen.count < limit {
+            var best = -1
+            var bestGain = 0
+            for camera in 0..<cameras where !used.contains(camera) {
+                let base = camera * words
+                var gain = 0
+                for word in 0..<words {
+                    gain += (visible[base + word] & ~cover[word]).nonzeroBitCount
+                }
+                if gain > bestGain {
+                    bestGain = gain
+                    best = camera
+                }
+            }
+            guard best >= 0 else { break }
+            chosen.append(best)
+            used.insert(best)
+            let base = best * words
+            for word in 0..<words {
+                cover[word] |= visible[base + word]
+            }
+        }
+        return chosen.sorted()
+    }
+
+    static func levelGains(pairs: [(Int, Int, Float)], count: Int) -> [Float] {
+        guard count > 0 else { return [] }
+        var logs = [Float](repeating: 0, count: count)
+        guard !pairs.isEmpty else { return logs.map { _ in 1 } }
+        var linked = [Bool](repeating: false, count: count)
+        for (a, b, _) in pairs {
+            linked[a] = true
+            linked[b] = true
+        }
+        let linkedCount = Float(linked.filter { $0 }.count)
+        for _ in 0..<100 {
+            var sum = [Float](repeating: 0, count: count)
+            var seen = [Int](repeating: 0, count: count)
+            for (a, b, ratio) in pairs {
+                sum[a] += logs[b] + ratio
+                seen[a] += 1
+                sum[b] += logs[a] - ratio
+                seen[b] += 1
+            }
+            var next = logs
+            for index in 0..<count where seen[index] > 0 {
+                next[index] = (logs[index] + sum[index] / Float(seen[index])) / 2
+            }
+            let mean = next.indices.reduce(Float(0)) { linked[$1] ? $0 + next[$1] : $0 } / linkedCount
+            logs = next.indices.map { linked[$0] ? next[$0] - mean : 0 }
+        }
+        let limit = log(maxGain)
+        return logs.map { exp(min(max($0, -limit), limit)) }
     }
 
     static func project(_ point: SIMD3<Float>, _ camera: Camera) -> SIMD2<Float>? {
@@ -194,18 +280,6 @@ enum MeshPhotoTexturer {
         return distance * (1 + offCenter) / facing
     }
 
-    private static func bestCamera(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, cameras: [Camera], allowed: Set<Int>?) -> Int? {
-        var best: Int?
-        var bestScore = Float.greatestFiniteMagnitude
-        for index in cameras.indices {
-            if let allowed, !allowed.contains(index) { continue }
-            guard let value = score(a, b, c, cameras[index]), value < bestScore else { continue }
-            bestScore = value
-            best = index
-        }
-        return best
-    }
-
     static func camera(_ frame: MeshFrame) -> Camera {
         let depth = loadDepth(frame)
         let transform = frame.cameraTransform
@@ -224,14 +298,111 @@ enum MeshPhotoTexturer {
         )
     }
 
+    private static func visibility(corners: [SIMD3<Float>], faceTotal: Int, words: Int, cameras: [Camera]) -> [UInt64] {
+        var visible = [UInt64](repeating: 0, count: cameras.count * words)
+        let chunks = (faceTotal + chunkFaces - 1) / chunkFaces
+        visible.withUnsafeMutableBufferPointer { bits in
+            corners.withUnsafeBufferPointer { points in
+                DispatchQueue.concurrentPerform(iterations: chunks) { chunk in
+                    let start = chunk * chunkFaces
+                    let end = min(start + chunkFaces, faceTotal)
+                    for face in start..<end {
+                        let a = points[face * 3]
+                        let b = points[face * 3 + 1]
+                        let c = points[face * 3 + 2]
+                        for (index, camera) in cameras.enumerated() where score(a, b, c, camera) != nil {
+                            bits[index * words + face / 64] |= UInt64(1) << UInt64(face % 64)
+                        }
+                    }
+                }
+            }
+        }
+        return visible
+    }
+
+    private static func isVisible(_ visible: [UInt64], camera: Int, face: Int, words: Int) -> Bool {
+        visible[camera * words + face / 64] & (UInt64(1) << UInt64(face % 64)) != 0
+    }
+
+    private struct Luminance {
+        let width: Int
+        let height: Int
+        let values: [UInt8]
+    }
+
+    private static func gainPairs(kept: [Int], visible: [UInt64], words: Int, centroids: [SIMD3<Float>], cameras: [Camera], samples: [Luminance?]) -> [(Int, Int, Float)] {
+        var pairs: [(Int, Int, Float)] = []
+        for a in kept.indices {
+            guard let first = samples[a] else { continue }
+            for b in kept.indices where b > a {
+                guard let second = samples[b] else { continue }
+                var shared: [Int] = []
+                for word in 0..<words {
+                    var bits = visible[kept[a] * words + word] & visible[kept[b] * words + word]
+                    while bits != 0 {
+                        shared.append(word * 64 + bits.trailingZeroBitCount)
+                        bits &= bits - 1
+                    }
+                }
+                guard shared.count >= 200 else { continue }
+                let step = max(1, shared.count / 400)
+                var ratios: [Float] = []
+                for position in stride(from: 0, to: shared.count, by: step) {
+                    let point = centroids[shared[position]]
+                    guard let la = luminance(point, cameras[kept[a]], first), let lb = luminance(point, cameras[kept[b]], second), la > 0.03, lb > 0.03 else { continue }
+                    ratios.append(log(lb / la))
+                }
+                guard ratios.count >= 100 else { continue }
+                ratios.sort()
+                pairs.append((a, b, ratios[ratios.count / 2]))
+            }
+        }
+        return pairs
+    }
+
+    private static func luminance(_ point: SIMD3<Float>, _ camera: Camera, _ sample: Luminance) -> Float? {
+        guard let pixel = project(point, camera) else { return nil }
+        let x = min(Int(pixel.x * Float(sample.width) / camera.width), sample.width - 1)
+        let y = min(Int(pixel.y * Float(sample.height) / camera.height), sample.height - 1)
+        return Float(sample.values[y * sample.width + x]) / 255
+    }
+
+    private static func loadLuminance(_ url: URL) -> Luminance? {
+        guard let image = thumbnail(url, size: gainSampleSize) else { return nil }
+        let width = image.width
+        let height = image.height
+        var values = [UInt8](repeating: 0, count: width * height)
+        let drawn = values.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        return drawn ? Luminance(width: width, height: height, values: values) : nil
+    }
+
+    private static func applyGain(_ gain: Float, to image: CGImage, context: CIContext) -> CGImage {
+        guard abs(gain - 1) > 0.02 else { return image }
+        let value = CGFloat(gain)
+        let input = CIImage(cgImage: image)
+        let output = input.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: value, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 0, y: value, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: value, w: 0)
+        ])
+        return context.createCGImage(output, from: input.extent) ?? image
+    }
+
     private static func forEachFace(_ input: PartInput, world: [SIMD3<Float>], _ body: (Int, SIMD3<Float>, SIMD3<Float>, SIMD3<Float>) -> Void) {
         guard input.faces.count >= input.faceCount * 12 else { return }
         for face in 0..<input.faceCount {
             let i0 = Int(faceIndex(input, face, 0))
             let i1 = Int(faceIndex(input, face, 1))
             let i2 = Int(faceIndex(input, face, 2))
-            guard i0 < world.count, i1 < world.count, i2 < world.count else { continue }
-            body(face, world[i0], world[i1], world[i2])
+            if i0 < world.count, i1 < world.count, i2 < world.count {
+                body(face, world[i0], world[i1], world[i2])
+            } else {
+                body(face, invalidPoint, invalidPoint, invalidPoint)
+            }
         }
     }
 
@@ -264,14 +435,18 @@ enum MeshPhotoTexturer {
         return points
     }
 
-    private static func loadImage(_ url: URL) -> CGImage? {
+    private static func thumbnail(_ url: URL, size: Int) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: textureSize,
+            kCGImageSourceThumbnailMaxPixelSize: size,
             kCGImageSourceCreateThumbnailWithTransform: false
         ]
         return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
+    private static func loadImage(_ url: URL) -> CGImage? {
+        thumbnail(url, size: textureSize)
     }
 
     private static func loadDepth(_ frame: MeshFrame) -> [UInt16]? {

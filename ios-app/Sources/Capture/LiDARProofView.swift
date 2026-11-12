@@ -124,7 +124,7 @@ struct LiDARProofView: View {
             ForEach(Array(coverageRooms.enumerated()), id: \.offset) { index, coverage in
                 let prefix = coverageRooms.count > 1 ? "Room \(index + 1): " : ""
                 row(prefix + "Floor seen during the scan", (coverage.floorPercent.map { String(format: "%.0f%%", $0) } ?? (coverage.floorSeenM2 > 0 ? "not measured" : "no floor yet")) + (coverage.ceilingSeen == false ? ", ceiling not scanned so no gap check" : ""))
-                row(prefix + "Floor seen / missing under the ceiling", String(format: "%.1f m2 / %.1f m2", coverage.floorSeenM2, coverage.floorMissingM2))
+                row(prefix + "Floor seen / missing under the ceiling", String(format: "%.1f m² / %.1f m²", coverage.floorSeenM2, coverage.floorMissingM2))
                 if let wallPercent = coverage.wallSeenPercent {
                     row(prefix + "RoomPlan walls the mesh reached", String(format: "%.0f%%, %.1f m missing", wallPercent, coverage.wallMissingM ?? 0))
                 }
@@ -142,19 +142,25 @@ struct LiDARProofView: View {
                         .foregroundStyle(.orange)
                 }
                 row("Depth mesh detail", String(format: "%.0f mm cells, built in %.1f s", depthMesh.voxelM * 1000, depthMesh.seconds))
-                row("Mesh footprint from above", String(format: "%.1f m2", depthMesh.footprintM2))
-                row("Floor seen by the camera", String(format: "%.1f m2", depthMesh.floorSeenM2))
-                row("Floor filled where unseen", String(format: "%.1f m2", depthMesh.floorFilledM2) + (depthMesh.fillClippedToRoomPlan ? ", inside the RoomPlan outline" : ", no RoomPlan outline"))
+                row("Mesh footprint from above", String(format: "%.1f m²", depthMesh.footprintM2))
+                row("Floor seen by the camera", String(format: "%.1f m²", depthMesh.floorSeenM2))
+                row("Floor filled where unseen", String(format: "%.1f m²", depthMesh.floorFilledM2) + (depthMesh.fillClippedToRoomPlan ? ", inside the RoomPlan outline" : ", no RoomPlan outline"))
                 row("RoomPlan doors, windows, objects", depthMesh.roomBoxesUnreadable ? "file unreadable" : "\(depthMesh.roomBoxes)")
                 row("Labelled from RoomPlan", "\(depthMesh.openingFaces) door/window, \(depthMesh.objectFaces) furniture triangles")
             }
-            row("Data on phone", ByteCountFormatter.string(fromByteCount: stats.totalBytes, countStyle: .file))
+            row("Data on phone", ByteCountFormatter.string(fromByteCount: stats.totalBytes, countStyle: .file) + (stats.depthOnlyBytes == nil && (stats.depthOnlyFrames ?? 0) > 0 ? ", depth-only frames not counted in this older capture, MB per minute not measured" : LidarStorageBudget.mbPerMinute(bytes: stats.totalBytes, durationS: manifest.durationS).map { String(format: ", %.0f MB per minute", $0) } ?? ""))
+            if let lowestFree = stats.lowestFreeDiskMB {
+                row("Lowest free phone storage", "\(lowestFree) MB")
+            }
             row("Hottest", thermalText(stats.worstThermalState))
             row("Lowest free memory", "\(stats.lowestFreeMemoryMB) MB")
             row("Skipped while saving", "\(stats.skippedBusyFrames)")
             row("Save failures", "\(stats.writeFailures)")
+            if let poseResets = stats.poseResets {
+                row("Position resets accepted", "\(poseResets)")
+            }
             if let recordingGaps = manifest.recordingGaps {
-                row("Recording gaps over 2 s", recordingGaps.isEmpty ? "none" : String(format: "%ld, %.0f s in total", recordingGaps.count, recordingGaps.reduce(0) { $0 + $1.durationS }))
+                row("Recording gaps over 2 s", recordingGaps.isEmpty ? "none" : String(format: "%ld, %.0f s in total", recordingGaps.count, recordingGaps.reduce(0) { $0 + $1.durationS }) + (recordingGaps.count > Self.gapRowsShown ? ", \(Self.gapRowsShown) longest shown, all in the zip" : ""))
                 ForEach(Array(recordingGaps.sorted { $0.durationS > $1.durationS }.prefix(Self.gapRowsShown).enumerated()), id: \.offset) { _, gap in
                     Text(Self.gapText(gap, showRoom: manifest.roomRuns > 1))
                         .font(.system(size: 13))
