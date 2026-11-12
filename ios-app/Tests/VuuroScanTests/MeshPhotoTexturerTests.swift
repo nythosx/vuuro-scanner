@@ -64,14 +64,14 @@ final class MeshPhotoTexturerTests: XCTestCase {
     }
 
     func testGainsEvenOutABrighterPhoto() {
-        let gains = MeshPhotoTexturer.levelGains(pairs: [(0, 1, log(1.5))], count: 2)
+        let gains = MeshPhotoTexturer.levelGains(pairs: [(0, 1, Float(log(1.5)))], count: 2)
         XCTAssertEqual(gains[1] / gains[0], 1 / 1.5, accuracy: 0.01)
         XCTAssertEqual(gains[0] * gains[1], 1, accuracy: 0.01)
         XCTAssertEqual(MeshPhotoTexturer.levelGains(pairs: [], count: 2), [1, 1])
-        let withIsolated = MeshPhotoTexturer.levelGains(pairs: [(0, 1, log(1.5))], count: 3)
+        let withIsolated = MeshPhotoTexturer.levelGains(pairs: [(0, 1, Float(log(1.5)))], count: 3)
         XCTAssertEqual(withIsolated[2], 1, accuracy: 0.0001)
         XCTAssertEqual(withIsolated[0] * withIsolated[1], 1, accuracy: 0.01)
-        let capped = MeshPhotoTexturer.levelGains(pairs: [(0, 1, log(10))], count: 2)
+        let capped = MeshPhotoTexturer.levelGains(pairs: [(0, 1, Float(log(10.0)))], count: 2)
         XCTAssertEqual(capped[0], MeshPhotoTexturer.maxGain, accuracy: 0.01)
     }
 }
