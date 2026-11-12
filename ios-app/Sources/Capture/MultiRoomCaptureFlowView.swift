@@ -1087,7 +1087,6 @@ struct MultiRoomCaptureFlowView: View {
     }
 
     @MainActor
-    @MainActor
     private func uploadTourPhotosThenFinish(session: ScanSessionResponse, floorPlan: FloorPlan) async {
         let outcome = await RoomPhotoUploader.uploadAll(
             captureGroupId: captureGroupId,
@@ -1107,6 +1106,7 @@ struct MultiRoomCaptureFlowView: View {
         onFinished(session, plan)
     }
 
+    @MainActor
     private func showTourPhotoOutcome(_ outcome: RoomPhotoUploadOutcome) {
         if let reason = outcome.skipReason {
             VuuroToast.shared.show(reason)

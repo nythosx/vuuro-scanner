@@ -52,6 +52,67 @@ enum MeshPhotoTexturer {
         let depthHeight: Int
     }
 
+    final class Monitor: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: Double = 0
+        private var stopped = false
+        private var done = 0
+        private var stageStartedAt = ProcessInfo.processInfo.systemUptime
+        private var finished: [MeshPhotoBuildLog.Stage] = []
+
+        var stages: [MeshPhotoBuildLog.Stage] {
+            lock.lock()
+            defer { lock.unlock() }
+            return finished
+        }
+
+        func endStage(_ name: String) {
+            let now = ProcessInfo.processInfo.systemUptime
+            lock.lock()
+            finished.append(MeshPhotoBuildLog.Stage(name: name, seconds: now - stageStartedAt))
+            stageStartedAt = now
+            lock.unlock()
+        }
+
+        var fraction: Double {
+            lock.lock()
+            defer { lock.unlock() }
+            return value
+        }
+
+        var isCancelled: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return stopped
+        }
+
+        func cancel() {
+            lock.lock()
+            stopped = true
+            lock.unlock()
+        }
+
+        func report(_ fraction: Double) {
+            lock.lock()
+            value = max(value, min(max(fraction, 0), 1))
+            lock.unlock()
+        }
+
+        func beginStage() {
+            lock.lock()
+            done = 0
+            lock.unlock()
+        }
+
+        func tick(of total: Int, from start: Double, to end: Double) {
+            lock.lock()
+            done += 1
+            let next = start + (end - start) * Double(done) / Double(max(total, 1))
+            value = max(value, min(next, 1))
+            lock.unlock()
+        }
+    }
+
     static let maxCandidates = 200
     static let maxTextures = 40
     static let textureSize = 1152
@@ -64,14 +125,23 @@ enum MeshPhotoTexturer {
     static let hiddenClasses: Set<UInt8> = [3, 9]
     static let invalidPoint = SIMD3<Float>(repeating: 1e9)
 
-    static func texture(parts: [PartInput], frames: [MeshFrame]) -> Result<Output, Error> {
+    static func texture(parts: [PartInput], frames: [MeshFrame], monitor: Monitor = Monitor()) -> Result<Output, Error> {
+        func stopped() -> Bool { monitor.isCancelled || Task.isCancelled }
         let usable = frames.filter { $0.imageURL != nil }
         guard !usable.isEmpty else {
             return .failure(PlainError(message: "This capture has no frame photos."))
         }
         let step = max(1, (usable.count + maxCandidates - 1) / maxCandidates)
         let candidates = stride(from: 0, to: usable.count, by: step).map { usable[$0] }
-        let cameras = candidates.map(camera)
+        var cameras: [Camera] = []
+        cameras.reserveCapacity(candidates.count)
+        monitor.beginStage()
+        for frame in candidates {
+            if stopped() { return .failure(CancellationError()) }
+            cameras.append(camera(frame))
+            monitor.tick(of: candidates.count, from: 0, to: 0.15)
+        }
+        monitor.endStage("photo depth")
         let world = parts.map(worldVertices)
         let totalFaces = parts.reduce(0) { $0 + $1.faceCount }
         guard totalFaces > 0 else {
@@ -91,8 +161,9 @@ enum MeshPhotoTexturer {
         }
         let faceTotal = corners.count / 3
         let words = (faceTotal + 63) / 64
-        var visible = visibility(corners: corners, faceTotal: faceTotal, words: words, cameras: cameras)
-        if Task.isCancelled { return .failure(CancellationError()) }
+        var visible = visibility(corners: corners, faceTotal: faceTotal, words: words, cameras: cameras, monitor: monitor)
+        monitor.endStage("visibility")
+        if stopped() { return .failure(CancellationError()) }
         let kept = coverCameras(visible: visible, cameras: cameras.count, words: words, limit: maxTextures)
         guard !kept.isEmpty else {
             return .failure(PlainError(message: "No triangle of the mesh is seen clearly in a photo."))
@@ -100,8 +171,9 @@ enum MeshPhotoTexturer {
 
         var outputs: [PartOutput] = []
         var inPhoto = 0
+        monitor.beginStage()
         for (part, input) in parts.enumerated() {
-            if Task.isCancelled { return .failure(CancellationError()) }
+            if stopped() { return .failure(CancellationError()) }
             var positionsBy: [Int: [Float]] = [:]
             var uvsBy: [Int: [Float]] = [:]
             let local = localFloats(input)
@@ -152,30 +224,38 @@ enum MeshPhotoTexturer {
                 vertexCount: positions.count / 3,
                 groups: groups
             ))
+            monitor.tick(of: parts.count, from: 0.7, to: 0.85)
         }
+        monitor.endStage("picking photos")
 
-        if Task.isCancelled { return .failure(CancellationError()) }
+        if stopped() { return .failure(CancellationError()) }
         var centroids: [SIMD3<Float>] = []
         centroids.reserveCapacity(faceTotal)
         for face in 0..<faceTotal {
             centroids.append((corners[face * 3] + corners[face * 3 + 1] + corners[face * 3 + 2]) / 3)
         }
         let pairs = gainPairs(kept: kept, visible: visible, words: words, centroids: centroids, cameras: cameras, samples: kept.map { index in candidates[index].imageURL.flatMap(loadLuminance) })
+        if stopped() { return .failure(CancellationError()) }
         let gains = levelGains(pairs: pairs, count: kept.count)
+        monitor.report(0.9)
+        monitor.endStage("brightness")
         corners = []
         centroids = []
         visible = []
 
         var images: [CGImage?] = []
         let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
+        monitor.beginStage()
         for (slot, index) in kept.enumerated() {
-            if Task.isCancelled { return .failure(CancellationError()) }
+            if stopped() { return .failure(CancellationError()) }
             if let url = candidates[index].imageURL, let image = loadImage(url) {
                 images.append(applyGain(gains[slot], to: image, context: context))
             } else {
                 images.append(nil)
             }
+            monitor.tick(of: kept.count, from: 0.9, to: 1)
         }
+        monitor.endStage("loading photos")
         let unreadable = images.filter { $0 == nil }.count
         guard unreadable < images.count else {
             return .failure(PlainError(message: "None of the chosen frame photos could be opened for the texture."))
@@ -298,15 +378,18 @@ enum MeshPhotoTexturer {
         )
     }
 
-    private static func visibility(corners: [SIMD3<Float>], faceTotal: Int, words: Int, cameras: [Camera]) -> [UInt64] {
+    private static func visibility(corners: [SIMD3<Float>], faceTotal: Int, words: Int, cameras: [Camera], monitor: Monitor) -> [UInt64] {
         var visible = [UInt64](repeating: 0, count: cameras.count * words)
         let chunks = (faceTotal + chunkFaces - 1) / chunkFaces
         visible.withUnsafeMutableBufferPointer { bits in
             corners.withUnsafeBufferPointer { points in
+                monitor.beginStage()
                 DispatchQueue.concurrentPerform(iterations: chunks) { chunk in
+                    guard !monitor.isCancelled else { return }
                     let start = chunk * chunkFaces
                     let end = min(start + chunkFaces, faceTotal)
                     for face in start..<end {
+                        if face % 256 == 0, monitor.isCancelled { return }
                         let a = points[face * 3]
                         let b = points[face * 3 + 1]
                         let c = points[face * 3 + 2]
@@ -314,6 +397,7 @@ enum MeshPhotoTexturer {
                             bits[index * words + face / 64] |= UInt64(1) << UInt64(face % 64)
                         }
                     }
+                    monitor.tick(of: chunks, from: 0.15, to: 0.7)
                 }
             }
         }

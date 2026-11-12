@@ -25,6 +25,9 @@ struct MeshViewer: View {
     @State private var hasFilledFloor = false
     @State private var photoTextured = false
     @State private var photoNote: String?
+    @State private var photoMonitor: MeshPhotoTexturer.Monitor?
+    @State private var photoProgress: Double = 0
+    @State private var photoStopping = false
     @State private var exporting = false
     @State private var exportError: String?
 
@@ -58,10 +61,20 @@ struct MeshViewer: View {
                 ProgressView("Loading mesh")
             } else if texturing {
                 VStack(spacing: 12) {
-                    ProgressView(mode == .photo ? "Building the photo texture from the keyframe photos. This can take a minute." : "Coloring the mesh from the photos")
-                    if mode == .photo {
-                        Button("Cancel") { mode = .clay }
+                    if photoMonitor != nil {
+                        ProgressView(value: photoProgress) {
+                            Text(photoStopping ? "Stopping the photo texture" : "Building the photo texture from the keyframe photos")
+                        } currentValueLabel: {
+                            Text("\(Int((photoProgress * 100).rounded()))%")
+                                .monospacedDigit()
+                        }
+                        .frame(width: 260)
+                        .accessibilityIdentifier("meshViewer.photoProgress")
+                        Button("Cancel") { cancelPhotoTexture() }
+                            .disabled(photoStopping)
                             .accessibilityIdentifier("meshViewer.cancelPhoto")
+                    } else {
+                        ProgressView("Coloring the mesh from the photos")
                     }
                 }
                 .padding()
@@ -313,22 +326,41 @@ struct MeshViewer: View {
             return
         }
         texturing = true
+        let monitor = MeshPhotoTexturer.Monitor()
+        photoMonitor = monitor
+        photoProgress = 0
+        photoStopping = false
         let started = Date()
         let inputs = built.parts.map {
             MeshPhotoTexturer.PartInput(vertices: $0.vertices, vertexCount: $0.vertexCount, faces: $0.faces, faceCount: $0.faceCount, classes: $0.classes, transform: $0.transform)
         }
         let frameList = frames
         let work = Task.detached(priority: .userInitiated) {
-            MeshPhotoTexturer.texture(parts: inputs, frames: frameList)
+            MeshPhotoTexturer.texture(parts: inputs, frames: frameList, monitor: monitor)
+        }
+        let poll = Task { @MainActor in
+            while !Task.isCancelled {
+                photoProgress = monitor.fraction
+                do {
+                    try await Task.sleep(nanoseconds: 250_000_000)
+                } catch {
+                    return
+                }
+            }
         }
         let result = await withTaskCancellationHandler {
             await work.value
         } onCancel: {
+            monitor.cancel()
             work.cancel()
         }
+        poll.cancel()
         texturing = false
+        photoMonitor = nil
+        photoStopping = false
         switch result {
         case .success(let output):
+            let sceneStarted = Date()
             var cache: [Int: SCNMaterial] = [:]
             for (part, partOutput) in zip(built.parts, output.parts) where partOutput.vertexCount > 0 {
                 part.photo = MeshSceneBuilder.photoGeometry(partOutput) { group in
@@ -345,10 +377,38 @@ struct MeshViewer: View {
             let seconds = Int(Date().timeIntervalSince(started).rounded())
             photoNote = "Photo texture from \(output.photosUsed) keyframe photos at \(MeshPhotoTexturer.textureSize) px with brightness evened out, \(percent)% of the mesh, built in \(seconds) s. Grey parts are not in those photos.\(output.photosUnreadable > 0 ? " \(output.photosUnreadable) photos could not be opened, so their parts are grey too." : "")"
             applyMode()
+            let stages = monitor.stages + [MeshPhotoBuildLog.Stage(name: "3D scene", seconds: Date().timeIntervalSince(sceneStarted))]
+            logPhotoBuild(.done, started: started, monitor: monitor, stages: stages, triangles: output.totalFaces, photosUsed: output.photosUsed)
         case .failure(let error):
-            if error is CancellationError { return }
+            if error is CancellationError {
+                logPhotoBuild(.cancelled, started: started, monitor: monitor, stages: monitor.stages, triangles: built.triangles, photosUsed: 0)
+                return
+            }
             photoNote = "Could not build the photo texture: \(error.localizedDescription)"
+            logPhotoBuild(.failed, started: started, monitor: monitor, stages: monitor.stages, triangles: built.triangles, photosUsed: 0)
         }
+    }
+
+    private func logPhotoBuild(_ outcome: MeshPhotoBuildLog.Outcome, started: Date, monitor: MeshPhotoTexturer.Monitor, stages: [MeshPhotoBuildLog.Stage], triangles: Int, photosUsed: Int) {
+        let entry = MeshPhotoBuildLog.Entry(
+            finishedAt: Date(),
+            seconds: Date().timeIntervalSince(started),
+            outcome: outcome,
+            percentDone: Int((monitor.fraction * 100).rounded()),
+            debugBuild: MeshPhotoBuildLog.isDebugBuild,
+            triangles: triangles,
+            photosUsed: photosUsed,
+            stages: stages
+        )
+        if case .failure(let error) = MeshPhotoBuildLog.save(entry, capture: captureURL) {
+            DiagnosticsLog.shared.record("Photo texture build time not saved: \(error.localizedDescription)", category: .error)
+        }
+    }
+
+    private func cancelPhotoTexture() {
+        photoStopping = true
+        photoMonitor?.cancel()
+        mode = .clay
     }
 
     private func shareModel() {

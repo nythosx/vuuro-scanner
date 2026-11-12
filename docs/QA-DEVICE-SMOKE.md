@@ -26,7 +26,7 @@ A short run on a real LiDAR iPhone to check that one room captures, saves its Li
    - Tap Finish.
    - With the default setting, the app goes straight on and the "Photos for the tour" step does not open.
    - If that step opens anyway, tap Skip and note it in the report.
-   - After the upload, the "Room 1 captured" screen shows "Take photos for the tour". You do not need to use it for this test; only note whether it is there.
+   - After the upload, the notes and photos screen opens straight away, with no "Room 1 captured" screen in between.
 5. **Result and LiDAR proof**
    - Wait for the upload and the result screen.
    - Open the LiDAR capture button and check:

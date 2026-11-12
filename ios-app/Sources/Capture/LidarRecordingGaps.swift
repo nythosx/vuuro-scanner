@@ -48,7 +48,7 @@ enum LidarSkipReason: String, CaseIterable, Codable, Sendable {
         case .writerBusy: return 3
         case .noDepth: return 2
         case .notMoved: return 1
-        default: return 0
+        case .noFrame, .sameFrame, .trackingNotAvailable, .trackingInitializing, .trackingExcessiveMotion, .trackingInsufficientFeatures, .trackingRelocalizing, .trackingLimitedOther, .writeFailed, .waiting, .pollStalled, .poseJump, .lowStorage, .appInactive: return 0
         }
     }
 

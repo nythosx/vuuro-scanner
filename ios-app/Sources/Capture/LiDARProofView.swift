@@ -16,6 +16,8 @@ struct LiDARProofView: View {
     @State private var fusionProgress: Double = 0
     @State private var fusionTask: Task<Void, Never>?
     @State private var depthReport: LidarDepthMeshReport?
+    @State private var photoBuild: MeshPhotoBuildLog.Entry?
+    @State private var photoBuildError: String?
 
     var body: some View {
         ScrollView {
@@ -78,7 +80,7 @@ struct LiDARProofView: View {
             fusionTask?.cancel()
             fusionTask = nil
         }
-        .fullScreenCover(isPresented: $showMesh) {
+        .fullScreenCover(isPresented: $showMesh, onDismiss: loadPhotoBuild) {
             if let captureURL {
                 NavigationStack {
                     MeshViewer(captureURL: captureURL)
@@ -124,8 +126,8 @@ struct LiDARProofView: View {
     private func answers(_ manifest: LidarCaptureManifest) -> some View {
         card {
             row("Device", "\(LidarDeviceName.display(manifest.device)), iOS \(manifest.systemVersion)")
-            row("RoomPlan depth on its own", yesNo(manifest.roomPlanConfig?.sceneDepth))
-            row("RoomPlan mesh on its own", manifest.roomPlanConfig?.sceneReconstruction ?? "unknown")
+            row("Depth turned on by RoomPlan", yesNo(manifest.roomPlanConfig?.sceneDepth))
+            row("Mesh turned on by RoomPlan", Self.roomPlanMeshText(manifest.roomPlanConfig?.sceneReconstruction))
             row("Options added by the app", manifest.configAugmented ? "yes" : "no")
             row("Depth received", manifest.stats.sceneDepthSeen ? "yes" : "no")
             row("Mesh received", manifest.stats.meshSeen ? "yes" : "no")
@@ -168,6 +170,19 @@ struct LiDARProofView: View {
                 }
             }
             row("Mesh", "\(stats.meshAnchors) pieces, \(stats.meshVertices) points, \(stats.meshFaces) triangles")
+            if let photoBuild {
+                row("Last photo texture build", MeshPhotoBuildLog.text(photoBuild))
+                if !photoBuild.stages.isEmpty {
+                    Text(MeshPhotoBuildLog.stagesText(photoBuild))
+                        .font(.system(size: 13))
+                        .foregroundStyle(VuuroColor.textSecondary)
+                        .accessibilityIdentifier("lidarProof.photoBuildStages")
+                }
+            } else if let photoBuildError {
+                Text(photoBuildError)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.orange)
+            }
             if let depthMesh = depthReport {
                 row("Depth mesh", "\(depthMesh.vertices) points, \(depthMesh.faces) triangles")
                 row("Depth mesh frames", "\(depthMesh.framesUsed) used (\(depthMesh.depthOnlyFramesUsed) depth-only), \(depthMesh.framesFailed) unreadable")
@@ -353,6 +368,17 @@ struct LiDARProofView: View {
         }
     }
 
+    static func roomPlanMeshText(_ value: String?) -> String {
+        switch value {
+        case "mesh_with_classification": return "yes, with classes"
+        case "mesh": return "yes, without classes"
+        case "none": return "no"
+        case "other": return "RoomPlan used a different mesh setting"
+        case nil: return "unknown"
+        default: return value ?? "unknown"
+        }
+    }
+
     private func yesNo(_ value: Bool?) -> String {
         guard let value else { return "unknown" }
         return value ? "yes" : "no"
@@ -399,10 +425,23 @@ struct LiDARProofView: View {
                 depthReport = nil
                 fusionError = "The saved depth mesh report could not be read: \(error.localizedDescription)"
             }
+            loadPhotoBuild()
             buildDepthMeshIfNeeded()
         } catch {
             manifest = nil
             loadError = "Could not read the LiDAR capture: \(error.localizedDescription)"
+        }
+    }
+
+    private func loadPhotoBuild() {
+        photoBuild = nil
+        photoBuildError = nil
+        guard let captureURL else { return }
+        switch MeshPhotoBuildLog.load(capture: captureURL) {
+        case .success(let entry):
+            photoBuild = entry
+        case .failure(let error):
+            photoBuildError = "The last photo texture build time could not be read: \(error.localizedDescription)"
         }
     }
 

@@ -221,7 +221,7 @@ final class LidarCaptureRecorder {
     private var frameIndex = 0
     private var latestMeshAnchors: [ARMeshAnchor] = []
     private var finalMeshPending: [ARMeshAnchor]?
-    private var appObservers: [NSObjectProtocol] = []
+    private let appObservers = LidarAppObservers()
     static let maxAppEvents = 100
     private var lateConfigChecked = false
     private var roomBoxes: [LidarRoomBox] = []
@@ -269,8 +269,8 @@ final class LidarCaptureRecorder {
             updated.frameSemantics.insert(.smoothedSceneDepth)
             changed = true
         }
-        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification), updated.sceneReconstruction != .meshWithClassification {
-            updated.sceneReconstruction = .meshWithClassification
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification), !updated.sceneReconstruction.contains(.meshWithClassification) {
+            updated.sceneReconstruction.insert(.meshWithClassification)
             changed = true
         }
         if changed {
@@ -369,13 +369,13 @@ final class LidarCaptureRecorder {
     }
 
     private func watchAppEvents() {
-        guard appObservers.isEmpty else { return }
+        guard appObservers.tokens.isEmpty else { return }
         let events: [(Notification.Name, String)] = [
             (UIApplication.willResignActiveNotification, "app inactive"),
             (UIApplication.didBecomeActiveNotification, "app active"),
             (UIApplication.userDidTakeScreenshotNotification, "screenshot")
         ]
-        appObservers = events.map { name, label in
+        appObservers.tokens = events.map { name, label in
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in self?.recordAppEvent(label) }
             }
@@ -383,8 +383,7 @@ final class LidarCaptureRecorder {
     }
 
     private func stopWatchingAppEvents() {
-        appObservers.forEach { NotificationCenter.default.removeObserver($0) }
-        appObservers = []
+        appObservers.removeAll()
     }
 
     private func recordAppEvent(_ label: String) {
@@ -434,10 +433,6 @@ final class LidarCaptureRecorder {
         guard let session, let directory, manifest != nil else { return }
         let uptime = ProcessInfo.processInfo.systemUptime
         gaps.tick(at: uptime)
-        if UIApplication.shared.applicationState != .active {
-            gaps.skipped(.appInactive)
-            return
-        }
         guard let frame = session.currentFrame else {
             gaps.skipped(.noFrame)
             showPause(.noFrame, at: uptime)
@@ -473,8 +468,9 @@ final class LidarCaptureRecorder {
             snapshotMesh(meshAnchors, at: now)
         }
         if isSameFrame {
-            gaps.skipped(.sameFrame)
-            showPause(.sameFrame, at: uptime)
+            let reason: LidarSkipReason = UIApplication.shared.applicationState == .active ? .sameFrame : .appInactive
+            gaps.skipped(reason)
+            showPause(reason, at: uptime)
             return
         }
         let jumpsBefore = poseFilter.jumpsInRow
@@ -780,7 +776,7 @@ final class LidarCaptureRecorder {
             storageLevel = level
             switch level {
             case .ok: status.setStorageNote(nil)
-            case .low: status.setStorageNote(LidarStorageBudget.lowNote(freeMB: freeMB))
+            case .low: status.setStorageNote(LidarStorageBudget.lowNote(freeMB: freeMB, mbPerMinute: currentMBPerMinute(now)))
             case .full: status.setStorageNote(LidarRecordingStatus.message(.lowStorage))
             }
         case .failure(let error):
@@ -789,6 +785,11 @@ final class LidarCaptureRecorder {
                 DiagnosticsLog.shared.record("LiDAR storage check failed: \(error.localizedDescription)", category: .error)
             }
         }
+    }
+
+    private func currentMBPerMinute(_ now: Date) -> Double? {
+        guard let bytes = manifest?.stats.totalBytes, let startedAt else { return nil }
+        return LidarStorageBudget.measuredRate(bytes: bytes, durationS: now.timeIntervalSince(startedAt))
     }
 
     func link(sessionId: String) {
@@ -817,10 +818,13 @@ final class LidarCaptureRecorder {
 
     static func report(_ configuration: ARWorldTrackingConfiguration) -> LidarSessionConfigReport {
         let reconstruction: String
-        switch configuration.sceneReconstruction {
-        case .meshWithClassification: reconstruction = "mesh_with_classification"
-        case .mesh: reconstruction = "mesh"
-        default: reconstruction = configuration.sceneReconstruction.isEmpty ? "none" : "other"
+        let options = configuration.sceneReconstruction
+        if options.contains(.meshWithClassification) {
+            reconstruction = "mesh_with_classification"
+        } else if options.contains(.mesh) {
+            reconstruction = "mesh"
+        } else {
+            reconstruction = options.isEmpty ? "none" : "other"
         }
         return LidarSessionConfigReport(
             sceneDepth: configuration.frameSemantics.contains(.sceneDepth),
@@ -1106,5 +1110,18 @@ actor LidarCaptureWriter {
         } catch {
             return .failure(error)
         }
+    }
+}
+
+final class LidarAppObservers {
+    var tokens: [NSObjectProtocol] = []
+
+    func removeAll() {
+        tokens.forEach { NotificationCenter.default.removeObserver($0) }
+        tokens = []
+    }
+
+    deinit {
+        tokens.forEach { NotificationCenter.default.removeObserver($0) }
     }
 }

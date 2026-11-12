@@ -64,6 +64,14 @@ final class LidarCaptureLinkTests: XCTestCase {
         XCTAssertEqual(LidarCaptureLibrary.substantiveFirst([abandoned, real]).map(\.id), ["real", "abandoned"])
     }
 
+    func testRoomPlanMeshRowReadsAsPlainWords() {
+        XCTAssertEqual(LiDARProofView.roomPlanMeshText("mesh_with_classification"), "yes, with classes")
+        XCTAssertEqual(LiDARProofView.roomPlanMeshText("mesh"), "yes, without classes")
+        XCTAssertEqual(LiDARProofView.roomPlanMeshText("none"), "no")
+        XCTAssertEqual(LiDARProofView.roomPlanMeshText("other"), "RoomPlan used a different mesh setting")
+        XCTAssertEqual(LiDARProofView.roomPlanMeshText(nil), "unknown")
+    }
+
     func testRunSummaryNamesWhatToCheck() {
         var good = manifest(created: "2026-11-05T10:00:00Z", updated: "2026-11-05T10:00:00Z")
         good.stats.sceneDepthSeen = true

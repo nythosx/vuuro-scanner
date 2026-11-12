@@ -382,7 +382,6 @@ private struct RoomCaptureFlowStep: View {
     @StateObject private var coordinator = CaptureCoordinator()
     @State private var isUploading = false
     @State private var uploadTask: Task<Void, Never>?
-    @State private var justCaptured: (session: ScanSessionResponse, floorPlan: FloorPlan)?
     @State private var didRequestStop = false
     @State private var showMissingOpeningsPrompt = false
     @State private var missingOpenings: CaptureLiveStats.MissingOpenings = .doorsAndWindows
@@ -398,9 +397,6 @@ private struct RoomCaptureFlowStep: View {
     @State private var capturedHeadingDeg: Double?
     @State private var photoCaptureContext: PhotoCaptureContext?
     @State private var captureGroupId: String = ""
-    @State private var photosFromMenu = false
-    @State private var photosFromMenuDone = false
-    @State private var photosFromMenuUploading = false
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
     @State private var didStart = false
     @State private var showCorrectionDialog = false
@@ -437,20 +433,12 @@ private struct RoomCaptureFlowStep: View {
                 RoomPhotoCaptureOverlay(
                     coordinator: photoCaptureContext.coordinator,
                     onSkip: {
-                        Task { await endPhotoStep() }
+                        Task { await finishPhotoStepOrSubmit() }
                     },
                     onFinish: {
-                        Task { await endPhotoStep() }
+                        Task { await finishPhotoStepOrSubmit() }
                     }
                 )
-            } else if let justCaptured {
-                AnotherRoomPromptView(
-                    roomCount: justCaptured.floorPlan.rooms.count,
-                    onPhotos: photosFromMenuAction,
-                    photosUploading: photosFromMenuUploading
-                ) { addAnother in
-                    onRoomCaptured(justCaptured.session, justCaptured.floorPlan, addAnother)
-                }
             } else if isUploadingPartialCapture {
                 UploadProgressView(message: "Uploading capture…", onCancel: { uploadTask?.cancel() })
                     .padding()
@@ -853,78 +841,15 @@ private struct RoomCaptureFlowStep: View {
         }
     }
 
-    private var canTakePhotosFromMenu: Bool {
-        !photosFromMenuDone
-            && !captureGroupId.isEmpty
-            && coordinator.capturedRoom?.floors.isEmpty == false
-            && !PhotoTourSettings.showsStep(photosAfterRoom: photoTourAfterRoom, walkthrough: walkthroughCaptureEnabled)
-    }
-
-    private var photosFromMenuAction: (() -> Void)? {
-        guard canTakePhotosFromMenu else { return nil }
-        return { _ = Task { await beginPhotosFromMenu() } }
-    }
-
     @MainActor
-    private func beginPhotosFromMenu() async {
-        guard let room = coordinator.capturedRoom else { return }
-        DiagnosticsLog.shared.record("Photos for the tour started from the menu after the room", category: .state)
-        photosFromMenu = true
-        await beginPhotoStep(for: room, fromMenu: true)
-    }
-
-    @MainActor
-    private func endPhotoStep() async {
-        guard photosFromMenu else {
-            await finishPhotoStepOrSubmit()
-            return
-        }
-        photoCaptureContext?.coordinator.stopWalkSampling()
-        photoCaptureContext?.coordinator.recordFinishCoverage()
-        photoCaptureContext = nil
-        photosFromMenu = false
-        photosFromMenuDone = true
-        guard let justCaptured else { return }
-        photosFromMenuUploading = true
-        let outcome = await RoomPhotoUploader.uploadAll(
-            captureGroupId: captureGroupId,
-            session: justCaptured.session,
-            floorPlan: justCaptured.floorPlan,
-            store: .shared,
-            trigger: "from_menu"
-        )
-        photosFromMenuUploading = false
-        if outcome.photosUploaded > 0 {
-            do {
-                let refreshed = try await client.fetchSession(sessionId: justCaptured.session.id, accessToken: justCaptured.session.accessToken)
-                if self.justCaptured?.session.id == justCaptured.session.id {
-                    self.justCaptured = (justCaptured.session, refreshed)
-                }
-            } catch {
-                DiagnosticsLog.shared.record("Could not refresh the plan after tour photos from the menu: \(error.localizedDescription)", category: .error)
-            }
-        }
-        if let reason = outcome.skipReason {
-            VuuroToast.shared.show(reason)
-        } else if outcome.photosFailed > 0 {
-            VuuroToast.shared.show(String(format: vuuroLocalized("%lld tour photo(s) couldn't be uploaded"), outcome.photosFailed))
-        }
-    }
-
-    @MainActor
-    private func beginPhotoStep(for room: CapturedRoom, fromMenu: Bool = false) async {
-        guard fromMenu || PhotoTourSettings.showsStep(photosAfterRoom: photoTourAfterRoom, walkthrough: walkthroughCaptureEnabled) else {
+    private func beginPhotoStep(for room: CapturedRoom) async {
+        guard PhotoTourSettings.showsStep(photosAfterRoom: photoTourAfterRoom, walkthrough: walkthroughCaptureEnabled) else {
             DiagnosticsLog.shared.record("Photos for the tour skipped after the room: off in Settings", category: .state)
             await finishPhotoStepOrSubmit()
             return
         }
         guard let floor = room.floors.first else {
-            if fromMenu {
-                photosFromMenu = false
-                VuuroToast.shared.show(vuuroLocalized("Photos for the tour need a room with a floor outline, so they could not start."))
-            } else {
-                await finishPhotoStepOrSubmit()
-            }
+            await finishPhotoStepOrSubmit()
             return
         }
 

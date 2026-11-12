@@ -82,7 +82,7 @@ final class LidarRecordingStatus: ObservableObject {
     nonisolated static func warnsWhenStuck(_ reason: LidarSkipReason) -> Bool {
         switch reason {
         case .notMoved, .waiting: return false
-        default: return true
+        case .noFrame, .sameFrame, .trackingNotAvailable, .trackingInitializing, .trackingExcessiveMotion, .trackingInsufficientFeatures, .trackingRelocalizing, .trackingLimitedOther, .noDepth, .writerBusy, .writeFailed, .pollStalled, .poseJump, .lowStorage, .appInactive: return true
         }
     }
 
@@ -100,7 +100,7 @@ final class LidarRecordingStatus: ObservableObject {
             return vuuroLocalized("Point at a wall or the floor nearby. Nothing is being recorded.")
         case .writerBusy, .writeFailed:
             return vuuroLocalized("Still saving. Slow down for a moment.")
-        default:
+        case .noFrame, .sameFrame, .trackingNotAvailable, .trackingLimitedOther, .notMoved, .waiting, .pollStalled, .appInactive:
             return vuuroLocalized("LiDAR is not recording. Keep the phone steady and point at the room.")
         }
     }

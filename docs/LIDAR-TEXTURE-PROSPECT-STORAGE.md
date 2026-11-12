@@ -47,17 +47,19 @@ Next steps, with cost:
 ## LIDAR-101: on-device storage budget
 
 Measured from Mark's run:
-- About 41.5 MB per minute, or about 4.7 MB per m² of floor.
-- A 150 m² house is about 0.7 GB. A 30-minute scan is about 1.2 GB.
+- 10 Nov run: about 41.5 MB per minute, or about 4.7 MB per m² of floor.
+- 12 Nov run (attic with stairs, 315 s, 376 keyframes and 1008 depth-only frames): 313.5 MB, 57 MB per minute, or about 6 MB per m² of the 51.6 m² floor seen.
+- The app now plans with 57 MB per minute, the higher of the two. A 150 m² house is about 0.7 to 0.9 GB. A 30-minute scan is about 1.7 GB.
 
 Built now:
 - The recorder checks the free space every 5 s and saves the lowest value in capture.json as `lowest_free_disk_mb`.
-- Below 2 GB free, a line under the ring shows about how many minutes and m² are left.
+- Below 2 GB free, a line under the ring shows about how many minutes and m² are left. The minutes use the MB per minute measured so far in the same run, and 57 MB per minute until at least 10 s are recorded.
 - Below 1 GB free, the recorder stops saving frames, so the phone does not run out of space. The room plan and the mesh are still saved. A warning is shown, and the gap reason is `low_storage`.
 - Only captures linked to a saved scan are kept, up to 10, as before.
 
 Checked against a second run:
-- Mark's 4 Nov run (71 s, keyframes only) used 42.7 MB per minute, close to the 41.5 from the 10 Nov run, so the limits stay as they are.
+- Mark's 4 Nov run (71 s, keyframes only) used 42.7 MB per minute, close to the 41.5 from the 10 Nov run.
+- Mark's 12 Nov run used 57 MB per minute, so the planning rate was raised from 41.5 to 57. The m² left now uses 6.1 MB per m², the 12 Nov figure and the higher of the two runs.
 - The proof screen now shows the MB per minute and the lowest free storage of each run, so the numbers can be read from every new run without the zip.
 
 Open:

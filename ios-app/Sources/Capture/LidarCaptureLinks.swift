@@ -105,6 +105,7 @@ extension LidarCaptureLibrary {
                 }
                 if !keep {
                     try FileManager.default.removeItem(at: url)
+                    MeshPhotoBuildLog.forget(capture: url)
                 }
             }
         } catch {
@@ -121,6 +122,7 @@ extension LidarCaptureLibrary {
                     continue
                 }
                 try FileManager.default.removeItem(at: url)
+                MeshPhotoBuildLog.forget(capture: url)
             }
         } catch {
             DiagnosticsLog.shared.record("LiDAR captures for scan \(sessionId) could not be removed: \(error.localizedDescription)", category: .error)

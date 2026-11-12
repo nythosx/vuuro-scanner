@@ -50,7 +50,7 @@ struct ScanInstructionsView: View {
                 ScanInstructionItem(icon: "", title: "Fill in the property details", detail: "Then tap Start room scan. Scanning starts right away."),
                 ScanInstructionItem(icon: "", title: "Pan slowly around the walls", detail: "Hold the phone upright at chest height. Keep each wall in view for a few seconds. The ring counts the walls found."),
                 ScanInstructionItem(icon: "", title: "Cover every corner and doorway", detail: "The plan follows the floor outline. Make sure it closes all the way around."),
-                ScanInstructionItem(icon: "", title: "Tap Finish room", detail: "The room uploads. Then tap Scan another room, or Finish unit to add notes and photos."),
+                ScanInstructionItem(icon: "", title: "Tap Finish room", detail: "The room uploads and the notes and photos screen opens. Scan another room is there too."),
             ]
         case .multi:
             return [

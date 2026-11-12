@@ -84,9 +84,101 @@ final class LidarStorageBudgetTests: XCTestCase {
     }
 
     func testMinutesAndAreaLeftMatchMarksRun() {
-        XCTAssertEqual(LidarStorageBudget.minutesLeft(freeMB: 1024 + 415), 10)
-        XCTAssertEqual(LidarStorageBudget.squareMetresLeft(freeMB: 1024 + 471), 100)
+        XCTAssertEqual(LidarStorageBudget.minutesLeft(freeMB: 1024 + 570), 10)
+        XCTAssertEqual(LidarStorageBudget.squareMetresLeft(freeMB: 1024 + 610), 100)
         XCTAssertEqual(LidarStorageBudget.minutesLeft(freeMB: 500), 0)
+    }
+
+    func testMinutesLeftUsesTheRateMeasuredInThisRun() {
+        XCTAssertEqual(LidarStorageBudget.minutesLeft(freeMB: 1024 + 300, mbPerMinute: 30), 10)
+        XCTAssertEqual(LidarStorageBudget.minutesLeft(freeMB: 1024 + 570, mbPerMinute: nil), 10)
+        XCTAssertEqual(LidarStorageBudget.minutesLeft(freeMB: 1024 + 570, mbPerMinute: 0), 10)
+        XCTAssertEqual(LidarStorageBudget.minutesLeft(freeMB: 1024 + 570, mbPerMinute: .infinity), 10)
+        XCTAssertTrue(LidarStorageBudget.lowNote(freeMB: 1024 + 300, mbPerMinute: 30).contains("10"))
+    }
+
+    func testProgressOnlyMovesForwardAndStaysInRange() {
+        let monitor = MeshPhotoTexturer.Monitor()
+        monitor.report(0.4)
+        monitor.report(0.2)
+        XCTAssertEqual(monitor.fraction, 0.4, accuracy: 1e-9)
+        monitor.beginStage()
+        monitor.tick(of: 2, from: 0.4, to: 0.6)
+        XCTAssertEqual(monitor.fraction, 0.5, accuracy: 1e-9)
+        monitor.report(3)
+        XCTAssertEqual(monitor.fraction, 1, accuracy: 1e-9)
+        monitor.endStage("visibility")
+        XCTAssertEqual(monitor.stages.map(\.name), ["visibility"])
+        XCTAssertGreaterThanOrEqual(monitor.stages[0].seconds, 0)
+    }
+
+    func testCancelledPhotoTextureStopsBeforeLoadingPhotos() throws {
+        let photo = FileManager.default.temporaryDirectory.appendingPathComponent("vuuro-cancel-\(UUID().uuidString).jpg")
+        try Data([0]).write(to: photo)
+        defer { try? FileManager.default.removeItem(at: photo) }
+        let frame = MeshFrame(index: 0, cameraTransform: matrix_identity_float4x4, verticalFieldOfView: 60, imageURL: photo, imageWidth: 1920, imageHeight: 1440, fx: 1337, fy: 1337, cx: 960, cy: 720, depthURL: nil, confidenceURL: nil, depthWidth: 0, depthHeight: 0)
+        var vertices: [Float] = [-0.05, -0.05, -2, 0.05, -0.05, -2, 0, 0.05, -2]
+        var faces: [UInt32] = [0, 1, 2]
+        let part = MeshPhotoTexturer.PartInput(
+            vertices: vertices.withUnsafeMutableBytes { Data($0) },
+            vertexCount: 3,
+            faces: faces.withUnsafeMutableBytes { Data($0) },
+            faceCount: 1,
+            classes: nil,
+            transform: matrix_identity_float4x4
+        )
+        let monitor = MeshPhotoTexturer.Monitor()
+        monitor.cancel()
+        switch MeshPhotoTexturer.texture(parts: [part], frames: [frame], monitor: monitor) {
+        case .success:
+            XCTFail("A cancelled photo texture must not finish")
+        case .failure(let error):
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertEqual(monitor.fraction, 0, accuracy: 1e-9)
+    }
+
+    func testPhotoBuildTimeIsKeptPerCaptureAndReadsPlainly() throws {
+        let suite = "vuuro-photo-build-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let capture = URL(fileURLWithPath: "/tmp/20261112-154844-C964E7F5")
+        XCTAssertNil(try MeshPhotoBuildLog.load(capture: capture, defaults: defaults).get())
+        let entry = MeshPhotoBuildLog.Entry(
+            finishedAt: Date(timeIntervalSince1970: 0),
+            seconds: 192,
+            outcome: .done,
+            percentDone: 100,
+            debugBuild: true,
+            triangles: 830283,
+            photosUsed: 40,
+            stages: [MeshPhotoBuildLog.Stage(name: "visibility", seconds: 150.4), MeshPhotoBuildLog.Stage(name: "3D scene", seconds: 4)]
+        )
+        try MeshPhotoBuildLog.save(entry, capture: capture, defaults: defaults).get()
+        XCTAssertEqual(try MeshPhotoBuildLog.load(capture: capture, defaults: defaults).get(), entry)
+        XCTAssertNil(try MeshPhotoBuildLog.load(capture: URL(fileURLWithPath: "/tmp/other"), defaults: defaults).get())
+        XCTAssertEqual(MeshPhotoBuildLog.text(entry), "3 min 12 s, Debug build, 40 photos, 830283 triangles")
+        XCTAssertEqual(MeshPhotoBuildLog.stagesText(entry), "visibility 2 min 30 s, 3D scene 4 s")
+        let cancelled = MeshPhotoBuildLog.Entry(finishedAt: Date(), seconds: 20, outcome: .cancelled, percentDone: 37, debugBuild: false, triangles: 1, photosUsed: 0, stages: [])
+        XCTAssertEqual(MeshPhotoBuildLog.text(cancelled), "20 s, Release build, cancelled at 37%")
+    }
+
+    func testCorruptPhotoBuildTimeIsAnErrorNotNothing() throws {
+        let suite = "vuuro-photo-build-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let capture = URL(fileURLWithPath: "/tmp/broken")
+        defaults.set(Data("nope".utf8), forKey: MeshPhotoBuildLog.key(capture))
+        XCTAssertThrowsError(try MeshPhotoBuildLog.load(capture: capture, defaults: defaults).get())
+        MeshPhotoBuildLog.forget(capture: capture, defaults: defaults)
+        XCTAssertNil(try MeshPhotoBuildLog.load(capture: capture, defaults: defaults).get())
+    }
+
+    func testMeasuredStorageRateWaitsForAMinuteOfRecording() throws {
+        XCTAssertNil(LidarStorageBudget.measuredRate(bytes: 4 * 1_048_576, durationS: 12))
+        XCTAssertNil(LidarStorageBudget.measuredRate(bytes: 50 * 1_048_576, durationS: 59))
+        let rate = try XCTUnwrap(LidarStorageBudget.measuredRate(bytes: 57 * 1_048_576, durationS: 60))
+        XCTAssertEqual(rate, 57, accuracy: 0.01)
     }
 
     func testMBPerMinute() throws {

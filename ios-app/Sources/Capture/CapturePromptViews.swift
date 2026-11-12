@@ -1,47 +1,5 @@
 import SwiftUI
 
-struct AnotherRoomPromptView: View {
-    let roomCount: Int
-    var onPhotos: (() -> Void)? = nil
-    var photosUploading = false
-    let onChoice: (Bool) -> Void
-
-    var body: some View {
-        VuuroCenterView {
-            VuuroIconBadge(systemName: "checkmark", tint: VuuroColor.goodText, background: VuuroColor.lime.opacity(0.20))
-            Text("Room \(roomCount) captured")
-                .font(.system(size: 20, weight: .bold))
-                .tracking(-0.4)
-                .foregroundStyle(VuuroColor.textPrimary)
-            Text("Scan another room in this unit, or finish and attach photos and notes.")
-                .font(.system(size: 15))
-                .lineSpacing(4)
-                .foregroundStyle(VuuroColor.textSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 300)
-
-            VStack(spacing: 10) {
-                Button("Scan another room") { onChoice(true) }
-                    .accessibilityIdentifier("anotherRoom.scanAnother")
-                    .buttonStyle(.vuuroPrimary)
-                Button("Finish unit") { onChoice(false) }
-                    .accessibilityIdentifier("anotherRoom.finishUnit")
-                    .buttonStyle(.vuuroSecondary)
-                if photosUploading {
-                    ProgressView("Uploading photos for the tour")
-                        .accessibilityIdentifier("anotherRoom.photosUploading")
-                } else if let onPhotos {
-                    Button("Take photos for the tour") { onPhotos() }
-                        .accessibilityIdentifier("anotherRoom.photos")
-                        .buttonStyle(.vuuroSecondary)
-                }
-            }
-            .padding(.top, 12)
-            .frame(maxWidth: 340)
-        }
-    }
-}
-
 struct PartialCaptureFailureView: View {
     let message: String
     let onUsePartial: () -> Void
