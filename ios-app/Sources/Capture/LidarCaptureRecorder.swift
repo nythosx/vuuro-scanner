@@ -441,7 +441,8 @@ final class LidarCaptureRecorder {
         let jumpsBefore = poseFilter.jumpsInRow
         let poseIsPlausible = poseFilter.accepts(position, at: frame.timestamp)
         if poseIsPlausible, jumpsBefore + 1 >= LidarPoseJumpFilter.acceptAfterJumps {
-            manifest?.stats.poseResets = (manifest?.stats.poseResets ?? 0) + 1
+            let resets = (manifest?.stats.poseResets ?? 0) + 1
+            manifest?.stats.poseResets = resets
             let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
             DiagnosticsLog.shared.record(String(format: "LiDAR position reset accepted at %.1f s after %ld jumped frames", elapsed, jumpsBefore), category: .state)
         }
