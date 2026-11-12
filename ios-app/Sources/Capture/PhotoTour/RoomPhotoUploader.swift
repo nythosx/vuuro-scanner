@@ -156,9 +156,15 @@ enum RoomPhotoUploader {
         }
 
         var jobs: [(photo: RoomPhotoMetadata, batch: RoomPhotoManifest, roomId: String)] = []
+        var unplaceable = 0
         for (batch, roomId) in matched {
-            for photo in batch.photos where isPlausiblePosition(photo.positionM) {
-                jobs.append((photo, batch, roomId))
+            for photo in batch.photos {
+                if isPlausiblePosition(photo.positionM) {
+                    jobs.append((photo, batch, roomId))
+                } else {
+                    unplaceable += 1
+                    trace.failures.append(PhotoStepSummary.Failure(photoId: photo.localId, reason: "position could not be placed on the plan"))
+                }
             }
         }
         let expected = jobs.count
@@ -198,7 +204,7 @@ enum RoomPhotoUploader {
             return RoomPhotoUploadOutcome(
                 batchesConsidered: batches.count,
                 photosUploaded: uploaded,
-                photosFailed: failed,
+                photosFailed: failed + unplaceable,
                 skipReason: nil
             )
         }
@@ -210,7 +216,7 @@ enum RoomPhotoUploader {
         return RoomPhotoUploadOutcome(
             batchesConsidered: batches.count,
             photosUploaded: uploaded,
-            photosFailed: failed,
+            photosFailed: failed + unplaceable,
             skipReason: nil
         )
     }

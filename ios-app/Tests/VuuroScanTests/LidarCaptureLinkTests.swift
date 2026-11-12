@@ -64,6 +64,20 @@ final class LidarCaptureLinkTests: XCTestCase {
         XCTAssertEqual(LidarCaptureLibrary.substantiveFirst([abandoned, real]).map(\.id), ["real", "abandoned"])
     }
 
+    func testRunSummaryNamesWhatToCheck() {
+        var good = manifest(created: "2026-11-05T10:00:00Z", updated: "2026-11-05T10:00:00Z")
+        good.stats.sceneDepthSeen = true
+        good.stats.meshSeen = true
+        good.recordingGaps = [LidarRecordingGap(room: 1, startS: 10, endS: 13, movedM: nil, heightChangeM: nil, atRoomEnd: false, reasons: [:])]
+        XCTAssertEqual(LiDARProofView.runIssues(good), [])
+
+        var bad = good
+        bad.stats.writeFailures = 2
+        bad.recordingGaps = [LidarRecordingGap(room: 1, startS: 19, endS: 64, movedM: nil, heightChangeM: nil, atRoomEnd: false, reasons: [:])]
+        bad.skipReasons = ["low_storage": 3]
+        XCTAssertEqual(LiDARProofView.runIssues(bad), ["2 save failures", "1 gap over 5 s, longest 45 s", "storage ran out"])
+    }
+
     func testMoreKeyframesWinOverManyDepthOnlyFrames() {
         let depthHeavy = capture("depthHeavy", created: "2026-11-05T10:00:00Z", frames: 10, depthOnly: 1000, duration: 75)
         let keyframes = capture("keyframes", created: "2026-11-05T09:00:00Z", frames: 200, duration: 60)

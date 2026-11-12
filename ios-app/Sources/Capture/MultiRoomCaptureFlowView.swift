@@ -626,14 +626,7 @@ struct MultiRoomCaptureFlowView: View {
             let labels = roomLabels(for: exports)
             uploadProgress.begin(roomLabels: labels)
             guard let result = await submitExports(exports, floors: storedFloors) else { return }
-            let photoOutcome = await RoomPhotoUploader.uploadAll(
-                captureGroupId: captureGroupId,
-                session: result.session,
-                floorPlan: result.floorPlan,
-                store: .shared
-            )
-            showTourPhotoOutcome(photoOutcome)
-            onFinished(result.session, result.floorPlan)
+            await uploadTourPhotosThenFinish(session: result.session, floorPlan: result.floorPlan)
         }
     }
 
@@ -924,14 +917,7 @@ struct MultiRoomCaptureFlowView: View {
                 category: .info
             )
             uploadTask = Task {
-                let photoOutcome = await RoomPhotoUploader.uploadAll(
-                    captureGroupId: captureGroupId,
-                    session: preUploadedSession.session,
-                    floorPlan: preUploadedSession.floorPlan,
-                    store: .shared
-                )
-                showTourPhotoOutcome(photoOutcome)
-                onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
+                await uploadTourPhotosThenFinish(session: preUploadedSession.session, floorPlan: preUploadedSession.floorPlan)
             }
         } else {
             onError(error, existingSession)
@@ -1101,6 +1087,26 @@ struct MultiRoomCaptureFlowView: View {
     }
 
     @MainActor
+    @MainActor
+    private func uploadTourPhotosThenFinish(session: ScanSessionResponse, floorPlan: FloorPlan) async {
+        let outcome = await RoomPhotoUploader.uploadAll(
+            captureGroupId: captureGroupId,
+            session: session,
+            floorPlan: floorPlan,
+            store: .shared
+        )
+        showTourPhotoOutcome(outcome)
+        var plan = floorPlan
+        if outcome.photosUploaded > 0 {
+            do {
+                plan = try await client.fetchSession(sessionId: session.id, accessToken: session.accessToken)
+            } catch {
+                DiagnosticsLog.shared.record("Could not refresh the plan after uploading tour photos for \(session.id): \(error.localizedDescription)", category: .error)
+            }
+        }
+        onFinished(session, plan)
+    }
+
     private func showTourPhotoOutcome(_ outcome: RoomPhotoUploadOutcome) {
         if let reason = outcome.skipReason {
             VuuroToast.shared.show(reason)
@@ -1161,14 +1167,7 @@ struct MultiRoomCaptureFlowView: View {
             )
             isFinishingUnit = false
             self.preUploadedSession = nil
-            let photoOutcome = await RoomPhotoUploader.uploadAll(
-                captureGroupId: captureGroupId,
-                session: preUploadedSession.session,
-                floorPlan: preUploadedSession.floorPlan,
-                store: .shared
-            )
-            showTourPhotoOutcome(photoOutcome)
-            onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
+            await uploadTourPhotosThenFinish(session: preUploadedSession.session, floorPlan: preUploadedSession.floorPlan)
             return
         }
 
@@ -1201,28 +1200,14 @@ struct MultiRoomCaptureFlowView: View {
             WalkthroughStore.clear()
             let finishedSession = preUploadedSession.session
             self.preUploadedSession = nil
-            let photoOutcome = await RoomPhotoUploader.uploadAll(
-                captureGroupId: captureGroupId,
-                session: finishedSession,
-                floorPlan: floorPlan,
-                store: .shared
-            )
-            showTourPhotoOutcome(photoOutcome)
-            onFinished(finishedSession, floorPlan)
+            await uploadTourPhotosThenFinish(session: finishedSession, floorPlan: floorPlan)
         } catch is CancellationError {
             self.preUploadedSession = nil
             DiagnosticsLog.shared.record(
                 "Fused upload cancelled — falling back to unfused per-room tiles.",
                 category: .info
             )
-            let photoOutcome = await RoomPhotoUploader.uploadAll(
-                captureGroupId: captureGroupId,
-                session: preUploadedSession.session,
-                floorPlan: preUploadedSession.floorPlan,
-                store: .shared
-            )
-            showTourPhotoOutcome(photoOutcome)
-            onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
+            await uploadTourPhotosThenFinish(session: preUploadedSession.session, floorPlan: preUploadedSession.floorPlan)
         } catch {
             DiagnosticsLog.shared.record(
                 "replaceRooms failed while submitting the fused structure — falling back to unfused per-room tiles: \(error.localizedDescription)",
@@ -1232,14 +1217,7 @@ struct MultiRoomCaptureFlowView: View {
                 uploadProgress.markFailed(index: index)
             }
             self.preUploadedSession = nil
-            let photoOutcome = await RoomPhotoUploader.uploadAll(
-                captureGroupId: captureGroupId,
-                session: preUploadedSession.session,
-                floorPlan: preUploadedSession.floorPlan,
-                store: .shared
-            )
-            showTourPhotoOutcome(photoOutcome)
-            onFinished(preUploadedSession.session, preUploadedSession.floorPlan)
+            await uploadTourPhotosThenFinish(session: preUploadedSession.session, floorPlan: preUploadedSession.floorPlan)
         }
     }
 

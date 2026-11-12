@@ -19,6 +19,7 @@ enum LidarSkipReason: String, CaseIterable, Codable, Sendable {
     case pollStalled = "poll_stalled"
     case poseJump = "pose_jump"
     case lowStorage = "low_storage"
+    case appInactive = "app_inactive"
 
     var label: String {
         switch self {
@@ -38,6 +39,7 @@ enum LidarSkipReason: String, CaseIterable, Codable, Sendable {
         case .pollStalled: return "app busy, recorder not called"
         case .poseJump: return "position jumped, frame dropped"
         case .lowStorage: return "phone storage full, frames not saved"
+        case .appInactive: return "app not in front (screenshot, notification or Control Center)"
         }
     }
 

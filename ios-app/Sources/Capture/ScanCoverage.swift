@@ -197,6 +197,7 @@ struct ScanCoverageGrid: Sendable {
     static let cornerMinTurnCos: Float = 0.866
     static let sameFloorToleranceM: Float = 1.0
     static let roomAreaTrustFraction = 0.8
+    static let underCeilingFloorFraction = 0.5
     static let floorHintSkipM: Float = 1.0
 
     static let wallClass: UInt8 = 1
@@ -401,11 +402,14 @@ struct ScanCoverageGrid: Sendable {
         snapshot.stairs = stairs.reduce(into: Set<CoverageCell>()) { $0.formUnion($1.cells()) }
         snapshot.missing = ceiling.subtracting(snapshot.floor).subtracting(snapshot.wall).subtracting(snapshot.furniture).subtracting(earlierWall).subtracting(snapshot.stairs)
         let stairsM2 = stairs.reduce(0) { $0 + $1.areaM2 }
+        let floorUnderCeiling = ceiling.subtracting(snapshot.wall).subtracting(earlierWall).subtracting(snapshot.stairs)
         snapshot.floorPercent = Self.floorPercent(
             seenCells: snapshot.floor.union(snapshot.furniture).subtracting(snapshot.stairs).count,
             missingCells: snapshot.missing.count,
             ceilingSeen: snapshot.ceilingSeen,
-            roomAreaM2: roomAreaM2.map { $0 - stairsM2 }
+            roomAreaM2: roomAreaM2.map { $0 - stairsM2 },
+            seenUnderCeilingCells: floorUnderCeiling.intersection(snapshot.floor.union(snapshot.furniture)).count,
+            floorUnderCeilingCells: floorUnderCeiling.count
         )
         let matchWall = snapshot.wall.union(earlierWall)
         snapshot.wallStrips = Self.strips(for: walls, meshWall: matchWall)
@@ -448,13 +452,18 @@ struct ScanCoverageGrid: Sendable {
         return result
     }
 
-    static func floorPercent(seenCells: Int, missingCells: Int, ceilingSeen: Bool, roomAreaM2: Double?) -> Double? {
+    static func floorPercent(seenCells: Int, missingCells: Int, ceilingSeen: Bool, roomAreaM2: Double?, seenUnderCeilingCells: Int = 0, floorUnderCeilingCells: Int = 0) -> Double? {
         let underCeiling = ceilingSeen ? Double(seenCells + missingCells) : 0
         let area = roomAreaM2 ?? 0
         let room = area.isFinite && area > 0 ? area / cellAreaM2 : 0
         let total = underCeiling > 0 && underCeiling >= room * roomAreaTrustFraction ? underCeiling : max(underCeiling, room)
         guard total > 0 else { return nil }
-        return min(100, Double(seenCells) / total * 100)
+        var percent = min(100, Double(seenCells) / total * 100)
+        if ceilingSeen, floorUnderCeilingCells > 0, Double(floorUnderCeilingCells) >= room * underCeilingFloorFraction {
+            let scanned = Double(min(seenUnderCeilingCells, floorUnderCeilingCells)) / Double(floorUnderCeilingCells) * 100
+            percent = max(percent, scanned)
+        }
+        return percent
     }
 
     static func fallbackFloorHeight(_ heights: [Float]) -> Float? {

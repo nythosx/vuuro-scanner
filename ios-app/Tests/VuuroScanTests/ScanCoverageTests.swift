@@ -372,6 +372,8 @@ final class ScanCoverageTests: XCTestCase {
     func testFloorPercentUsesTheScannedCeilingOnceItCoversMostOfTheRoom() {
         XCTAssertEqual(ScanCoverageGrid.floorPercent(seenCells: 830, missingCells: 24, ceilingSeen: true, roomAreaM2: 60.5) ?? -1, 830.0 / 854.0 * 100, accuracy: 0.001)
         XCTAssertEqual(ScanCoverageGrid.floorPercent(seenCells: 100, missingCells: 0, ceilingSeen: true, roomAreaM2: 60.5) ?? -1, 100.0 / 968.0 * 100, accuracy: 0.001)
+        XCTAssertEqual(ScanCoverageGrid.floorPercent(seenCells: 650, missingCells: 20, ceilingSeen: true, roomAreaM2: 60.5, seenUnderCeilingCells: 650, floorUnderCeilingCells: 670) ?? -1, 650.0 / 670.0 * 100, accuracy: 0.001)
+        XCTAssertEqual(ScanCoverageGrid.floorPercent(seenCells: 100, missingCells: 0, ceilingSeen: true, roomAreaM2: 60.5, seenUnderCeilingCells: 100, floorUnderCeilingCells: 100) ?? -1, 100.0 / 968.0 * 100, accuracy: 0.001)
     }
 
     func testStairsAreNotMissingFloor() {

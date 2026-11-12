@@ -1087,7 +1087,7 @@ private struct RoomCaptureFlowStep: View {
                 roomsByFloor: CachedFloorSummary.buckets(from: floorPlan.rooms)
             )
             await uploadPhotosIfNeeded(session: session, floorPlan: floorPlan, export: export)
-            justCaptured = (session, floorPlan)
+            onRoomCaptured(session, floorPlan, false)
         } catch {
             uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)
         }
@@ -1096,12 +1096,15 @@ private struct RoomCaptureFlowStep: View {
     @MainActor
     private func uploadPhotosIfNeeded(session: ScanSessionResponse, floorPlan: FloorPlan, export: RoomPlanCaptureExport) async {
         guard let groupId = export.captureGroupId, !groupId.isEmpty else { return }
-        _ = await RoomPhotoUploader.uploadAll(
+        let outcome = await RoomPhotoUploader.uploadAll(
             captureGroupId: groupId,
             session: session,
             floorPlan: floorPlan,
             store: .shared
         )
+        if outcome.photosFailed > 0 {
+            VuuroToast.shared.show(String(format: vuuroLocalized("%lld tour photo(s) couldn't be uploaded"), outcome.photosFailed))
+        }
     }
 
     @MainActor
@@ -1125,7 +1128,7 @@ private struct RoomCaptureFlowStep: View {
                 roomsByFloor: CachedFloorSummary.buckets(from: floorPlan.rooms)
             )
             await uploadPhotosIfNeeded(session: session, floorPlan: floorPlan, export: export)
-            justCaptured = (session, floorPlan)
+            onRoomCaptured(session, floorPlan, false)
         } catch {
             uploadRejection = (AppError(site: .captureUpload, underlying: error), export, session, idempotencyKey, bodyJSON)
         }

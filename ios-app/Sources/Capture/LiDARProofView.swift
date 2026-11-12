@@ -35,6 +35,7 @@ struct LiDARProofView: View {
                         .foregroundStyle(VuuroColor.textSecondary)
                 }
                 if let manifest {
+                    runSummary(manifest)
                     answers(manifest)
                     numbers(manifest)
                     actions
@@ -84,6 +85,40 @@ struct LiDARProofView: View {
                 }
             }
         }
+    }
+
+    static let goodFloorPercent = 95.0
+
+    static func runIssues(_ manifest: LidarCaptureManifest) -> [String] {
+        let stats = manifest.stats
+        var issues: [String] = []
+        if !stats.sceneDepthSeen { issues.append("no depth received") }
+        if !stats.meshSeen { issues.append("no mesh received") }
+        if stats.writeFailures > 0 { issues.append("\(stats.writeFailures) save failures") }
+        let longGaps = (manifest.recordingGaps ?? []).filter { $0.durationS >= longGapS }
+        if let longest = longGaps.map(\.durationS).max() {
+            issues.append(String(format: "%ld %@ over %.0f s, longest %.0f s", longGaps.count, longGaps.count == 1 ? "gap" : "gaps", longGapS, longest))
+        }
+        let rooms = manifest.liveCoverageRooms ?? manifest.liveCoverage.map { [$0] } ?? []
+        let floors = rooms.compactMap(\.floorPercent)
+        if let lowest = floors.min(), lowest < goodFloorPercent {
+            issues.append(String(format: "floor seen %.0f%%", lowest))
+        }
+        if let resets = stats.poseResets, resets > 0 { issues.append("\(resets) position resets") }
+        if (manifest.skipReasons?[LidarSkipReason.lowStorage.rawValue] ?? 0) > 0 { issues.append("storage ran out") }
+        return issues
+    }
+
+    private func runSummary(_ manifest: LidarCaptureManifest) -> some View {
+        let issues = Self.runIssues(manifest)
+        let good = issues.isEmpty
+        return Label(good ? "Good run" : "Check: " + issues.joined(separator: ", "), systemImage: good ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(good ? VuuroColor.goodText : VuuroColor.warningText)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(good ? VuuroColor.goodTint : VuuroColor.warningTint, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .accessibilityIdentifier("lidarProof.summary")
     }
 
     private func answers(_ manifest: LidarCaptureManifest) -> some View {
@@ -158,6 +193,14 @@ struct LiDARProofView: View {
             row("Save failures", "\(stats.writeFailures)")
             if let poseResets = stats.poseResets {
                 row("Position resets accepted", "\(poseResets)")
+            }
+            if let appEvents = manifest.appEvents, !appEvents.isEmpty {
+                row("App events while recording", "\(appEvents.count)")
+                ForEach(Array(appEvents.prefix(Self.gapRowsShown).enumerated()), id: \.offset) { _, event in
+                    Text(event)
+                        .font(.system(size: 13))
+                        .foregroundStyle(VuuroColor.textSecondary)
+                }
             }
             if let recordingGaps = manifest.recordingGaps {
                 row("Recording gaps over 2 s", recordingGaps.isEmpty ? "none" : String(format: "%ld, %.0f s in total", recordingGaps.count, recordingGaps.reduce(0) { $0 + $1.durationS }) + (recordingGaps.count > Self.gapRowsShown ? ", \(Self.gapRowsShown) longest shown, all in the zip" : ""))

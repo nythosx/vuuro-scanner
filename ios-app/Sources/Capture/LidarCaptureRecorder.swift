@@ -123,9 +123,11 @@ struct LidarCaptureManifest: Codable, Equatable {
     var recordingGaps: [LidarRecordingGap]? = nil
     var skipReasons: [String: Int]? = nil
     var roomReports: [LidarRoomRunReport]? = nil
+    var appEvents: [String]? = nil
 
     enum CodingKeys: String, CodingKey {
         case version
+        case appEvents = "app_events"
         case roomReports = "room_reports"
         case sessionId = "session_id"
         case recordingGaps = "recording_gaps"
@@ -219,6 +221,8 @@ final class LidarCaptureRecorder {
     private var frameIndex = 0
     private var latestMeshAnchors: [ARMeshAnchor] = []
     private var finalMeshPending: [ARMeshAnchor]?
+    private var appObservers: [NSObjectProtocol] = []
+    static let maxAppEvents = 100
     private var lateConfigChecked = false
     private var roomBoxes: [LidarRoomBox] = []
     private var lastDepthPose: simd_float4x4?
@@ -287,6 +291,7 @@ final class LidarCaptureRecorder {
         stopPolling()
         self.session = session
         ensureDirectory()
+        watchAppEvents()
         lastPose = nil
         coverage.startRoom()
         gaps.startRoom(at: ProcessInfo.processInfo.systemUptime)
@@ -340,6 +345,7 @@ final class LidarCaptureRecorder {
     func stop() {
         guard pollTask != nil else { return }
         stopPolling()
+        stopWatchingAppEvents()
         status.clear()
         if let gap = gaps.finishRoom(at: ProcessInfo.processInfo.systemUptime) {
             logGap(gap)
@@ -360,6 +366,35 @@ final class LidarCaptureRecorder {
             manifest?.liveCoverageRooms = rooms
         }
         persistManifest()
+    }
+
+    private func watchAppEvents() {
+        guard appObservers.isEmpty else { return }
+        let events: [(Notification.Name, String)] = [
+            (UIApplication.willResignActiveNotification, "app inactive"),
+            (UIApplication.didBecomeActiveNotification, "app active"),
+            (UIApplication.userDidTakeScreenshotNotification, "screenshot")
+        ]
+        appObservers = events.map { name, label in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.recordAppEvent(label) }
+            }
+        }
+    }
+
+    private func stopWatchingAppEvents() {
+        appObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        appObservers = []
+    }
+
+    private func recordAppEvent(_ label: String) {
+        guard pollTask != nil, manifest != nil else { return }
+        let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
+        var events = manifest?.appEvents ?? []
+        guard events.count < Self.maxAppEvents else { return }
+        events.append(String(format: "%.1f s: %@ (room %ld)", elapsed, label, manifest?.roomRuns ?? 0))
+        manifest?.appEvents = events
+        DiagnosticsLog.shared.record("LiDAR recorder: \(label) at \(String(format: "%.1f", elapsed)) s", category: .state)
     }
 
     private func stopPolling() {
@@ -399,6 +434,10 @@ final class LidarCaptureRecorder {
         guard let session, let directory, manifest != nil else { return }
         let uptime = ProcessInfo.processInfo.systemUptime
         gaps.tick(at: uptime)
+        if UIApplication.shared.applicationState != .active {
+            gaps.skipped(.appInactive)
+            return
+        }
         guard let frame = session.currentFrame else {
             gaps.skipped(.noFrame)
             showPause(.noFrame, at: uptime)
