@@ -216,6 +216,7 @@ struct ScanCoverageGrid: Sendable {
         var flatUnclassified: [CoverageCell: Float] = [:]
         var floorHeightSum: Double = 0
         var floorHeightCount = 0
+        var floorCellHeights: [CoverageCell: Float] = [:]
     }
 
     struct ContextWall: Equatable, Sendable {
@@ -237,15 +238,41 @@ struct ScanCoverageGrid: Sendable {
     }
 
     func floorHeight() -> Float? {
-        var heightSum = 0.0
-        var heightCount = 0
+        floorReference().y
+    }
+
+    func floorReference() -> (y: Float?, cellHeights: [CoverageCell: Float], flat: [CoverageCell: Float]) {
+        var cellHeights: [CoverageCell: Float] = [:]
         var flat: [CoverageCell: Float] = [:]
         for cells in anchors.values {
-            heightSum += cells.floorHeightSum
-            heightCount += cells.floorHeightCount
+            cellHeights.merge(cells.floorCellHeights) { max($0, $1) }
             flat.merge(cells.flatUnclassified) { min($0, $1) }
         }
-        return heightCount > 0 ? Float(heightSum / Double(heightCount)) : Self.fallbackFloorHeight(Array(flat.values))
+        let y = Self.dominantFloorHeight(Array(cellHeights.values)) ?? Self.fallbackFloorHeight(Array(flat.values))
+        return (y, cellHeights, flat)
+    }
+
+    static func dominantFloorHeight(_ heights: [Float]) -> Float? {
+        guard !heights.isEmpty else { return nil }
+        return heights.sorted()[heights.count / 2]
+    }
+
+    static func dilated(_ cells: Set<CoverageCell>) -> Set<CoverageCell> {
+        var result = cells
+        for cell in cells {
+            for dx: Int32 in -1...1 {
+                for dz: Int32 in -1...1 {
+                    result.insert(CoverageCell(x: cell.x + dx, z: cell.z + dz))
+                }
+            }
+        }
+        return result
+    }
+
+    static func nonDecreasing(_ latest: Double?, shown: Double?) -> Double? {
+        guard let latest else { return shown }
+        guard let shown else { return latest }
+        return max(latest, shown)
     }
 
     func contextWall(floorY: Float?) -> Set<CoverageCell> {
@@ -273,6 +300,7 @@ struct ScanCoverageGrid: Sendable {
                 result.floor.insert(key)
                 result.floorHeightSum += Double(face.center.y)
                 result.floorHeightCount += 1
+                result.floorCellHeights[key] = max(result.floorCellHeights[key] ?? -.infinity, face.center.y)
             case wallClass, windowClass, doorClass:
                 result.wall.insert(key)
             case tableClass, seatClass:
@@ -372,22 +400,22 @@ struct ScanCoverageGrid: Sendable {
     func snapshot(cameraTransform: simd_float4x4?, path: [SIMD2<Float>], walls: [ScanCoverageWall] = [], roomAreaM2: Double? = nil, stairs: [ScanCoverageStair] = [], skipFloorNear: [SIMD2<Float>] = []) -> ScanCoverageSnapshot {
         var snapshot = ScanCoverageSnapshot()
         var ceiling: Set<CoverageCell> = []
-        var heightSum = 0.0
-        var heightCount = 0
         for cells in anchors.values {
             snapshot.floor.formUnion(cells.floor)
             snapshot.wall.formUnion(cells.wall)
             snapshot.furniture.formUnion(cells.furniture)
             ceiling.formUnion(cells.ceiling)
-            heightSum += cells.floorHeightSum
-            heightCount += cells.floorHeightCount
         }
-        var flat: [CoverageCell: Float] = [:]
-        for cells in anchors.values {
-            flat.merge(cells.flatUnclassified) { min($0, $1) }
+        let reference = floorReference()
+        let floorY = reference.y
+        let flat = reference.flat
+        var lowerLevel: Set<CoverageCell> = []
+        if let floorY {
+            for (cell, y) in reference.cellHeights where abs(y - floorY) > Self.sameFloorToleranceM {
+                snapshot.floor.remove(cell)
+                if y < floorY { lowerLevel.insert(cell) }
+            }
         }
-        let classifiedFloor = heightCount > 0
-        let floorY: Float? = classifiedFloor ? Float(heightSum / Double(heightCount)) : Self.fallbackFloorHeight(Array(flat.values))
         if let floorY {
             for (cell, y) in flat {
                 if abs(y - floorY) <= Self.unclassifiedFloorToleranceM {
@@ -399,7 +427,7 @@ struct ScanCoverageGrid: Sendable {
         }
         snapshot.ceilingSeen = !ceiling.isEmpty
         let earlierWall = contextWall(floorY: floorY)
-        snapshot.stairs = stairs.reduce(into: Set<CoverageCell>()) { $0.formUnion($1.cells()) }
+        snapshot.stairs = stairs.reduce(into: Set<CoverageCell>()) { $0.formUnion($1.cells()) }.union(Self.dilated(lowerLevel))
         snapshot.missing = ceiling.subtracting(snapshot.floor).subtracting(snapshot.wall).subtracting(snapshot.furniture).subtracting(earlierWall).subtracting(snapshot.stairs)
         let stairsM2 = stairs.reduce(0) { $0 + $1.areaM2 }
         let floorUnderCeiling = ceiling.subtracting(snapshot.wall).subtracting(earlierWall).subtracting(snapshot.stairs)
@@ -696,6 +724,7 @@ final class ScanCoverageTracker: ObservableObject {
     private var roomAreaM2: Double?
     private var stairs: [ScanCoverageStair] = []
     private var floorWatch = ScanCoverageFloorHintWatch()
+    private var shownFloorPercent: Double?
     private var lastUpdateAt: TimeInterval = -.infinity
     private var rotation = 0
     private var generation = 0
@@ -755,6 +784,7 @@ final class ScanCoverageTracker: ObservableObject {
         roomAreaM2 = nil
         stairs = []
         floorWatch = ScanCoverageFloorHintWatch()
+        shownFloorPercent = nil
         lastUpdateAt = -.infinity
         rotation = 0
         isWorking = false
@@ -867,6 +897,8 @@ final class ScanCoverageTracker: ObservableObject {
         if floorWatch.update(current.hint, at: ProcessInfo.processInfo.systemUptime) {
             current.hint = ScanCoverageGrid.bestHint(current, skipFloorNear: floorWatch.skipped)
         }
+        shownFloorPercent = ScanCoverageGrid.nonDecreasing(current.floorPercent, shown: shownFloorPercent)
+        current.floorPercent = shownFloorPercent
         self.snapshot = current
         hasMesh = !current.isEmpty
         summary = hasMesh ? LidarLiveCoverage(current) : summary

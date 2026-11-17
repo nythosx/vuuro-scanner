@@ -34,6 +34,7 @@ struct LidarCaptureStats: Codable, Equatable {
     var depthOnlyBytes: Int64?
     var lowestFreeDiskMB: Int?
     var poseResets: Int?
+    var poseResetEvents: [LidarPoseReset]?
 
     var totalBytes: Int64 { frameBytes + meshBytes + (depthOnlyBytes ?? 0) }
 
@@ -56,6 +57,7 @@ struct LidarCaptureStats: Codable, Equatable {
         case depthOnlyBytes = "depth_only_bytes"
         case lowestFreeDiskMB = "lowest_free_disk_mb"
         case poseResets = "pose_resets"
+        case poseResetEvents = "pose_reset_events"
     }
 }
 
@@ -224,6 +226,8 @@ final class LidarCaptureRecorder {
     private let appObservers = LidarAppObservers()
     static let maxAppEvents = 100
     private var lateConfigChecked = false
+    private var configAfterDueAt: TimeInterval?
+    static let configAfterDelayS: TimeInterval = 1
     private var roomBoxes: [LidarRoomBox] = []
     private var lastDepthPose: simd_float4x4?
     private var lastDepthAt: TimeInterval = -.infinity
@@ -232,6 +236,7 @@ final class LidarCaptureRecorder {
     private var gaps = LidarGapTracker()
     private var lastFrameTimestamp: TimeInterval?
     private var poseFilter = LidarPoseJumpFilter()
+    private var roomFirstKeyframe = 1
     private var storageLevel = LidarStorageBudget.Level.ok
     private var lastStorageAt = Date.distantPast
     private var storageReadFailed = false
@@ -280,8 +285,9 @@ final class LidarCaptureRecorder {
         } else {
             notes.append("RoomPlan's configuration already had depth and mesh, nothing changed")
         }
-        manifest?.configAfter = (session.configuration as? ARWorldTrackingConfiguration).map(Self.report)
-        recordRoomConfig(before: Self.report(current), after: manifest?.configAfter)
+        manifest?.configAfter = nil
+        configAfterDueAt = ProcessInfo.processInfo.systemUptime + Self.configAfterDelayS
+        recordRoomConfig(before: Self.report(current), after: nil)
         manifest?.configNotes.append(contentsOf: notes)
         DiagnosticsLog.shared.record("LiDAR recorder: \(notes.joined(separator: "; "))", category: .state)
         persistManifest()
@@ -297,6 +303,7 @@ final class LidarCaptureRecorder {
         gaps.startRoom(at: ProcessInfo.processInfo.systemUptime)
         lastFrameTimestamp = nil
         poseFilter.reset()
+        roomFirstKeyframe = frameIndex + 1
         status.clear()
         lastStorageAt = .distantPast
         if startedAt == nil { startedAt = Date() }
@@ -443,6 +450,9 @@ final class LidarCaptureRecorder {
         let position = SIMD3<Float>(frame.camera.transform.columns.3.x, frame.camera.transform.columns.3.y, frame.camera.transform.columns.3.z)
         gaps.seen(position: position)
         sampleHealth()
+        if let due = configAfterDueAt, uptime >= due, let configuration = session.configuration as? ARWorldTrackingConfiguration {
+            readConfigAfter(configuration)
+        }
         if !lateConfigChecked, manifest?.roomPlanConfig == nil, let configuration = session.configuration {
             lateConfigChecked = true
             let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
@@ -479,6 +489,9 @@ final class LidarCaptureRecorder {
             let resets = (manifest?.stats.poseResets ?? 0) + 1
             manifest?.stats.poseResets = resets
             let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
+            var events = manifest?.stats.poseResetEvents ?? []
+            events.append(LidarPoseReset(room: manifest?.roomRuns ?? 0, atS: elapsed, roomFirstKeyframe: roomFirstKeyframe, firstKeyframeAfter: frameIndex + 1))
+            manifest?.stats.poseResetEvents = events
             DiagnosticsLog.shared.record(String(format: "LiDAR position reset accepted at %.1f s after %ld jumped frames", elapsed, jumpsBefore), category: .state)
         }
         if let reason = LidarSkipReason.tracking(frame.camera.trackingState) {
@@ -525,6 +538,18 @@ final class LidarCaptureRecorder {
         guard pollTask != nil, let gap = gaps.recorded(at: mark.uptime, position: mark.position) else { return }
         logGap(gap)
         storeGaps()
+        persistManifest()
+    }
+
+    private func readConfigAfter(_ configuration: ARWorldTrackingConfiguration) {
+        configAfterDueAt = nil
+        let report = Self.report(configuration)
+        manifest?.configAfter = report
+        if pendingRoomConfig != nil {
+            pendingRoomConfig?.after = report
+        } else {
+            updateLastRoomReport { $0.configAfter = report }
+        }
         persistManifest()
     }
 

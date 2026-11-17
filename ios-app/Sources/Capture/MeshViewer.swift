@@ -12,6 +12,7 @@ struct MeshViewer: View {
     @State private var loadError: String?
     @State private var frames: [MeshFrame] = []
     @State private var skippedFrames = 0
+    @State private var poseResets: [LidarPoseReset] = []
     @State private var frameError: String?
     @State private var frameIndex: Int?
     @State private var orbitPose: simd_float4x4?
@@ -290,7 +291,8 @@ struct MeshViewer: View {
         }
         texturing = true
         let inputs = built.parts.map { MeshTexturer.PartInput(vertices: $0.vertices, vertexCount: $0.vertexCount, transform: $0.transform) }
-        let frameList = frames
+        let usable = LidarPoseReset.usable(frames, resets: poseResets)
+        let frameList = usable.frames
         let work = Task.detached(priority: .userInitiated) {
             MeshTexturer.colorize(parts: inputs, frames: frameList)
         }
@@ -308,6 +310,10 @@ struct MeshViewer: View {
             textured = true
             let percent = output.totalVertices > 0 ? output.coloredVertices * 100 / output.totalVertices : 0
             var note = "Colored from \(output.framesUsed) photos, \(percent)% of the mesh seen in a photo"
+            if usable.dropped > 0 {
+                note += ", \(usable.dropped) photos from before a position reset left out"
+                DiagnosticsLog.shared.record("Texture: \(usable.dropped) frames from before a position reset were left out", category: .state)
+            }
             if output.framesFailed > 0 {
                 note += ", \(output.framesFailed) photos could not be opened"
             }
@@ -334,7 +340,8 @@ struct MeshViewer: View {
         let inputs = built.parts.map {
             MeshPhotoTexturer.PartInput(vertices: $0.vertices, vertexCount: $0.vertexCount, faces: $0.faces, faceCount: $0.faceCount, classes: $0.classes, transform: $0.transform)
         }
-        let frameList = frames
+        let usable = LidarPoseReset.usable(frames, resets: poseResets)
+        let frameList = usable.frames
         let work = Task.detached(priority: .userInitiated) {
             MeshPhotoTexturer.texture(parts: inputs, frames: frameList, monitor: monitor)
         }
@@ -361,6 +368,9 @@ struct MeshViewer: View {
         switch result {
         case .success(let output):
             let sceneStarted = Date()
+            if usable.dropped > 0 {
+                DiagnosticsLog.shared.record("Photo texture: \(usable.dropped) frames from before a position reset were left out", category: .state)
+            }
             var cache: [Int: SCNMaterial] = [:]
             for (part, partOutput) in zip(built.parts, output.parts) where partOutput.vertexCount > 0 {
                 part.photo = MeshSceneBuilder.photoGeometry(partOutput) { group in
@@ -375,7 +385,7 @@ struct MeshViewer: View {
             photoTextured = true
             let percent = output.totalFaces > 0 ? output.facesInPhoto * 100 / output.totalFaces : 0
             let seconds = Int(Date().timeIntervalSince(started).rounded())
-            photoNote = "Photo texture from \(output.photosUsed) keyframe photos at \(MeshPhotoTexturer.textureSize) px with brightness evened out, \(percent)% of the mesh, built in \(seconds) s. Grey parts are not in those photos.\(output.photosUnreadable > 0 ? " \(output.photosUnreadable) photos could not be opened, so their parts are grey too." : "")"
+            photoNote = "Photo texture from \(output.photosUsed) keyframe photos at \(MeshPhotoTexturer.textureSize) px with brightness evened out, \(percent)% of the mesh, built in \(seconds) s. Grey parts are not in those photos.\(usable.dropped > 0 ? " \(usable.dropped) photos from before a position reset were left out." : "")\(output.photosUnreadable > 0 ? " \(output.photosUnreadable) photos could not be opened, so their parts are grey too." : "")"
             applyMode()
             let stages = monitor.stages + [MeshPhotoBuildLog.Stage(name: "3D scene", seconds: Date().timeIntervalSince(sceneStarted))]
             logPhotoBuild(.done, started: started, monitor: monitor, stages: stages, triangles: output.totalFaces, photosUsed: output.photosUsed)
@@ -494,6 +504,11 @@ struct MeshViewer: View {
             MeshFrameIndex.load(captureURL: url)
         }.value
         isLoading = false
+        do {
+            poseResets = try LidarCaptureLibrary.manifest(at: url).stats.poseResetEvents ?? []
+        } catch {
+            DiagnosticsLog.shared.record("Mesh viewer could not read capture.json for position resets: \(error.localizedDescription)", category: .error)
+        }
         switch frameResult {
         case .success(let loaded):
             frames = loaded.frames.filter { $0.imageURL != nil }

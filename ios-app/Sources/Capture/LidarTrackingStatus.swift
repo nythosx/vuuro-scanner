@@ -36,6 +36,32 @@ struct LidarPoseJumpFilter {
     }
 }
 
+struct LidarPoseReset: Codable, Equatable, Sendable {
+    var room: Int
+    var atS: Double
+    var roomFirstKeyframe: Int
+    var firstKeyframeAfter: Int
+
+    enum CodingKeys: String, CodingKey {
+        case room
+        case atS = "at_s"
+        case roomFirstKeyframe = "room_first_keyframe"
+        case firstKeyframeAfter = "first_keyframe_after"
+    }
+
+    static func usable(_ frames: [MeshFrame], resets: [LidarPoseReset]) -> (frames: [MeshFrame], dropped: Int) {
+        var cutoffs: [Int: (first: Int, before: Int)] = [:]
+        for reset in resets {
+            if let known = cutoffs[reset.room], known.before >= reset.firstKeyframeAfter { continue }
+            cutoffs[reset.room] = (reset.roomFirstKeyframe, reset.firstKeyframeAfter)
+        }
+        let kept = frames.filter { frame in
+            !cutoffs.values.contains { frame.index >= $0.first && frame.index < $0.before }
+        }
+        return (kept, frames.count - kept.count)
+    }
+}
+
 struct LidarPauseWatch {
     static let showAfterS: TimeInterval = 2
 
@@ -100,7 +126,9 @@ final class LidarRecordingStatus: ObservableObject {
             return vuuroLocalized("Point at a wall or the floor nearby. Nothing is being recorded.")
         case .writerBusy, .writeFailed:
             return vuuroLocalized("Still saving. Slow down for a moment.")
-        case .noFrame, .sameFrame, .trackingNotAvailable, .trackingLimitedOther, .notMoved, .waiting, .pollStalled, .appInactive:
+        case .appInactive:
+            return vuuroLocalized("Recording paused. Come back to the app and keep scanning.")
+        case .noFrame, .sameFrame, .trackingNotAvailable, .trackingLimitedOther, .notMoved, .waiting, .pollStalled:
             return vuuroLocalized("LiDAR is not recording. Keep the phone steady and point at the room.")
         }
     }

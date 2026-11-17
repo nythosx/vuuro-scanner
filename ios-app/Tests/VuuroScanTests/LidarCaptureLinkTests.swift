@@ -70,6 +70,10 @@ final class LidarCaptureLinkTests: XCTestCase {
         XCTAssertEqual(LiDARProofView.roomPlanMeshText("none"), "no")
         XCTAssertEqual(LiDARProofView.roomPlanMeshText("other"), "RoomPlan used a different mesh setting")
         XCTAssertEqual(LiDARProofView.roomPlanMeshText(nil), "unknown")
+        XCTAssertEqual(LiDARProofView.meshSettingText("mesh_with_classification"), "yes, with classes (mesh_with_classification)")
+        XCTAssertEqual(LiDARProofView.meshSettingText(nil), "unknown")
+        XCTAssertEqual(LiDARProofView.resetText(LidarPoseReset(room: 2, atS: 105, roomFirstKeyframe: 5, firstKeyframeAfter: 9), showRoom: true), "Room 2, reset at 1:45")
+        XCTAssertEqual(LiDARProofView.resetText(LidarPoseReset(room: 1, atS: 31.4, roomFirstKeyframe: 1, firstKeyframeAfter: 9), showRoom: false), "reset at 0:31")
     }
 
     func testRunSummaryNamesWhatToCheck() {

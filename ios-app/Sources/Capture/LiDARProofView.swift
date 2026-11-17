@@ -106,7 +106,7 @@ struct LiDARProofView: View {
         if let lowest = floors.min(), lowest < goodFloorPercent {
             issues.append(String(format: "floor seen %.0f%%", lowest))
         }
-        if let resets = stats.poseResets, resets > 0 { issues.append("\(resets) position resets") }
+        if let resets = stats.poseResets, resets > 0 { issues.append("\(resets) position \(resets == 1 ? "reset" : "resets")") }
         if (manifest.skipReasons?[LidarSkipReason.lowStorage.rawValue] ?? 0) > 0 { issues.append("storage ran out") }
         return issues
     }
@@ -127,7 +127,8 @@ struct LiDARProofView: View {
         card {
             row("Device", "\(LidarDeviceName.display(manifest.device)), iOS \(manifest.systemVersion)")
             row("Depth turned on by RoomPlan", yesNo(manifest.roomPlanConfig?.sceneDepth))
-            row("Mesh turned on by RoomPlan", Self.roomPlanMeshText(manifest.roomPlanConfig?.sceneReconstruction))
+            row("RoomPlan's own setting", Self.meshSettingText(manifest.roomPlanConfig?.sceneReconstruction))
+            row("What we run", Self.meshSettingText(manifest.configAfter?.sceneReconstruction ?? manifest.roomReports?.last?.configAtEnd?.sceneReconstruction))
             row("Options added by the app", manifest.configAugmented ? "yes" : "no")
             row("Depth received", manifest.stats.sceneDepthSeen ? "yes" : "no")
             row("Mesh received", manifest.stats.meshSeen ? "yes" : "no")
@@ -208,10 +209,15 @@ struct LiDARProofView: View {
             row("Save failures", "\(stats.writeFailures)")
             if let poseResets = stats.poseResets {
                 row("Position resets accepted", "\(poseResets)")
+                ForEach(Array((stats.poseResetEvents ?? []).enumerated()), id: \.offset) { _, reset in
+                    Text(Self.resetText(reset, showRoom: manifest.roomRuns > 1))
+                        .font(.system(size: 13))
+                        .foregroundStyle(VuuroColor.textSecondary)
+                }
             }
             if let appEvents = manifest.appEvents, !appEvents.isEmpty {
-                row("App events while recording", "\(appEvents.count)")
-                ForEach(Array(appEvents.prefix(Self.gapRowsShown).enumerated()), id: \.offset) { _, event in
+                row("App events while recording", "\(appEvents.count)" + (appEvents.count > Self.appEventRowsShown ? ", first \(Self.appEventRowsShown) shown, all in the zip" : ""))
+                ForEach(Array(appEvents.prefix(Self.appEventRowsShown).enumerated()), id: \.offset) { _, event in
                     Text(event)
                         .font(.system(size: 13))
                         .foregroundStyle(VuuroColor.textSecondary)
@@ -235,6 +241,7 @@ struct LiDARProofView: View {
     }
 
     static let gapRowsShown = 5
+    static let appEventRowsShown = 20
     static let longGapS = 5.0
 
     static func gapText(_ gap: LidarRecordingGap, showRoom: Bool) -> String {
@@ -366,6 +373,16 @@ struct LiDARProofView: View {
                 DiagnosticsLog.shared.record("Depth mesh failed: \(error.localizedDescription)", category: .error)
             }
         }
+    }
+
+    static func meshSettingText(_ value: String?) -> String {
+        guard let value else { return "unknown" }
+        return "\(roomPlanMeshText(value)) (\(value))"
+    }
+
+    static func resetText(_ reset: LidarPoseReset, showRoom: Bool) -> String {
+        let seconds = Int(reset.atS.rounded())
+        return (showRoom ? "Room \(reset.room), " : "") + String(format: "reset at %ld:%02ld", seconds / 60, seconds % 60)
     }
 
     static func roomPlanMeshText(_ value: String?) -> String {

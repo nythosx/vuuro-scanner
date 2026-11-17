@@ -446,4 +446,31 @@ final class ScanCoverageTests: XCTestCase {
         XCTAssertEqual(ScanCoverageMapView.hintSymbol(.right), "arrow.right")
         XCTAssertEqual(ScanCoverageMapView.hintSymbol(.behind), "arrow.down")
     }
+
+    func testFloorSeenThroughAStairwellIsNotFloorAndIsNotMissing() {
+        let room = patch(ScanCoverageGrid.ceilingClass, y: 2.5, xRange: 0...9, zRange: 0...9)
+            + patch(ScanCoverageGrid.floorClass, y: 0, xRange: 0...7, zRange: 0...9)
+        let before = grid(room).snapshot(cameraTransform: nil, path: [])
+        let withWell = room + patch(ScanCoverageGrid.floorClass, y: -2.6, xRange: 8...9, zRange: 3...6)
+        let after = grid(withWell).snapshot(cameraTransform: nil, path: [])
+        XCTAssertEqual(after.floor, before.floor)
+        XCTAssertFalse(after.floor.contains(CoverageCell(x: 8, z: 4)))
+        XCTAssertTrue(after.stairs.contains(CoverageCell(x: 8, z: 4)))
+        XCTAssertFalse(after.missing.contains(CoverageCell(x: 8, z: 4)))
+        XCTAssertGreaterThanOrEqual(after.floorPercent ?? -1, before.floorPercent ?? 101)
+    }
+
+    func testFloorReferenceHeightIgnoresALowerFloorSeenThroughAnOpening() {
+        let heights: [Float] = Array(repeating: 0, count: 80) + Array(repeating: -2.6, count: 20)
+        XCTAssertEqual(ScanCoverageGrid.dominantFloorHeight(heights) ?? 99, 0, accuracy: 0.001)
+        XCTAssertNil(ScanCoverageGrid.dominantFloorHeight([]))
+    }
+
+    func testShownFloorPercentNeverDrops() {
+        XCTAssertEqual(ScanCoverageGrid.nonDecreasing(40, shown: nil) ?? -1, 40, accuracy: 0.001)
+        XCTAssertEqual(ScanCoverageGrid.nonDecreasing(55, shown: 40) ?? -1, 55, accuracy: 0.001)
+        XCTAssertEqual(ScanCoverageGrid.nonDecreasing(20, shown: 55) ?? -1, 55, accuracy: 0.001)
+        XCTAssertEqual(ScanCoverageGrid.nonDecreasing(nil, shown: 55) ?? -1, 55, accuracy: 0.001)
+        XCTAssertNil(ScanCoverageGrid.nonDecreasing(nil, shown: nil))
+    }
 }
