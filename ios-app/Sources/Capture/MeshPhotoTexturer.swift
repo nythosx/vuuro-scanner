@@ -113,9 +113,9 @@ enum MeshPhotoTexturer {
         }
     }
 
-    static let maxCandidates = 200
-    static let maxTextures = 40
-    static let textureSize = 1152
+    static let maxCandidates = 240
+    static let maxTextures = 52
+    static let textureSize = 1024
     static let gainSampleSize = 160
     static let maxGain: Float = 1.6
     static let chunkFaces = 4096
@@ -164,7 +164,7 @@ enum MeshPhotoTexturer {
         var visible = visibility(corners: corners, faceTotal: faceTotal, words: words, cameras: cameras, monitor: monitor)
         monitor.endStage("visibility")
         if stopped() { return .failure(CancellationError()) }
-        let kept = coverCameras(visible: visible, cameras: cameras.count, words: words, limit: maxTextures)
+        let kept = coverCameras(visible: visible, cameras: cameras.count, words: words, limit: maxTextures, steadiness: candidates.map { steadiness(motionDegPerS: $0.motionDegPerS) })
         guard !kept.isEmpty else {
             return .failure(PlainError(message: "No triangle of the mesh is seen clearly in a photo."))
         }
@@ -263,22 +263,27 @@ enum MeshPhotoTexturer {
         return .success(Output(parts: outputs, images: images, photosUnreadable: unreadable, facesInPhoto: inPhoto, totalFaces: totalFaces, photosUsed: kept.count, gains: gains))
     }
 
-    static func coverCameras(visible: [UInt64], cameras: Int, words: Int, limit: Int) -> [Int] {
+    static func steadiness(motionDegPerS: Float) -> Float {
+        1 / (1 + max(0, motionDegPerS) / LidarMotionSpeed.steadyAngularDegPerS)
+    }
+
+    static func coverCameras(visible: [UInt64], cameras: Int, words: Int, limit: Int, steadiness: [Float] = []) -> [Int] {
         guard words > 0, visible.count >= cameras * words else { return [] }
         var cover = [UInt64](repeating: 0, count: words)
         var chosen: [Int] = []
         var used = Set<Int>()
         while chosen.count < limit {
             var best = -1
-            var bestGain = 0
+            var bestGain: Float = 0
             for camera in 0..<cameras where !used.contains(camera) {
                 let base = camera * words
                 var gain = 0
                 for word in 0..<words {
                     gain += (visible[base + word] & ~cover[word]).nonzeroBitCount
                 }
-                if gain > bestGain {
-                    bestGain = gain
+                let weighted = Float(gain) * (camera < steadiness.count ? steadiness[camera] : 1)
+                if weighted > bestGain {
+                    bestGain = weighted
                     best = camera
                 }
             }

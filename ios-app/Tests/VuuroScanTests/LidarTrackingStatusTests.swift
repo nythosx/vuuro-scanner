@@ -96,4 +96,38 @@ final class LidarTrackingStatusTests: XCTestCase {
         XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("\"pose_reset_events\""))
         XCTAssertEqual(try JSONDecoder().decode(LidarCaptureStats.self, from: data), stats)
     }
+
+    private func pose(x: Float, yawDeg: Float) -> simd_float4x4 {
+        let r = yawDeg * .pi / 180
+        var m = matrix_identity_float4x4
+        m.columns.0 = SIMD4<Float>(cos(r), 0, -sin(r), 0)
+        m.columns.2 = SIMD4<Float>(sin(r), 0, cos(r), 0)
+        m.columns.3 = SIMD4<Float>(x, 0, 0, 1)
+        return m
+    }
+
+    func testSlowHandIsSteadyAndFastTurnIsNot() {
+        var motion = LidarMotionSpeed()
+        motion.update(pose(x: 0, yawDeg: 0), at: 10)
+        motion.update(pose(x: 0.02, yawDeg: 2), at: 10.1)
+        XCTAssertTrue(motion.steady)
+        motion.update(pose(x: 0.02, yawDeg: 12), at: 10.2)
+        XCTAssertGreaterThan(motion.angularDegPerS, 90)
+        XCTAssertFalse(motion.steady)
+    }
+
+    func testFastWalkIsNotSteady() {
+        var motion = LidarMotionSpeed()
+        motion.update(pose(x: 0, yawDeg: 0), at: 5)
+        motion.update(pose(x: 0.2, yawDeg: 0), at: 5.1)
+        XCTAssertEqual(motion.linearMPerS, 2, accuracy: 0.01)
+        XCTAssertFalse(motion.steady)
+    }
+
+    func testBlurryFrameIsHeldOnlyForALimitedTime() {
+        XCTAssertTrue(LidarMotionSpeed.holdsKeyframe(steady: false, secondsSinceLastKeyframe: 0.5))
+        XCTAssertFalse(LidarMotionSpeed.holdsKeyframe(steady: false, secondsSinceLastKeyframe: 1.6))
+        XCTAssertFalse(LidarMotionSpeed.holdsKeyframe(steady: true, secondsSinceLastKeyframe: 0.5))
+        XCTAssertFalse(LidarMotionSpeed.holdsKeyframe(steady: false, secondsSinceLastKeyframe: .infinity))
+    }
 }

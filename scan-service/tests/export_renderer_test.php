@@ -766,6 +766,7 @@ $fundaSvg = $svgRenderer->render($barPlan, 'auto', null, 'metric', null, \VuuroS
 x_check('Funda SVG has a white canvas with the grid over it', str_contains($fundaSvg, 'fill="#ffffff"') && str_contains($fundaSvg, 'fill="url(#grid)"'));
 x_check('Funda SVG has no Vuuro Scan header', !str_contains($fundaSvg, 'Vuuro Scan'));
 x_check('Funda SVG shows the total floor area title', str_contains($fundaSvg, 'Total floor area'));
+x_check('Funda SVG labels every room with its own area', substr_count($fundaSvg, " m\u{00B2}") >= count($barPlan['rooms']) + 1);
 
 echo "\n== Listing plan room colors ==\n";
 $fill = static fn (?string $type, string $key = 'room-x') => \VuuroScan\Export\FloorPlanPalette::fundaFillFor($type, $key);

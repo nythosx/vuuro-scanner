@@ -61,6 +61,10 @@ final class MeshPhotoTexturerTests: XCTestCase {
         XCTAssertEqual(MeshPhotoTexturer.coverCameras(visible: visible, cameras: 4, words: 1, limit: 3), [0, 2])
         XCTAssertEqual(MeshPhotoTexturer.coverCameras(visible: visible, cameras: 4, words: 1, limit: 1), [0])
         XCTAssertEqual(MeshPhotoTexturer.coverCameras(visible: [0, 0], cameras: 2, words: 1, limit: 3), [])
+        XCTAssertEqual(MeshPhotoTexturer.coverCameras(visible: [0b1111, 0b1111], cameras: 2, words: 1, limit: 1, steadiness: [0.4, 1]), [1])
+        XCTAssertEqual(MeshPhotoTexturer.coverCameras(visible: [0b1111, 0b1111], cameras: 2, words: 1, limit: 1), [0])
+        XCTAssertEqual(MeshPhotoTexturer.steadiness(motionDegPerS: 0), 1, accuracy: 0.001)
+        XCTAssertEqual(MeshPhotoTexturer.steadiness(motionDegPerS: 40), 0.5, accuracy: 0.001)
     }
 
     func testGainsEvenOutABrighterPhoto() {

@@ -37,6 +37,8 @@ final class DollhouseCamera: NSObject {
     private var verticalFovDeg: Float = 40
     private var framedBoundsSize: SIMD3<Float> = SIMD3<Float>(1, 1, 1)
     var onYawChange: ((Float) -> Void)?
+    var followsNodePose = false
+    static let minimumPivotDistanceM: Float = 0.4
 
     static let minimumPitch: Float = 20 * .pi / 180
     static let maximumPitch: Float = 80 * .pi / 180
@@ -175,11 +177,51 @@ final class DollhouseCamera: NSObject {
         onYawChange?(yaw)
     }
 
+    static func repivoted(position: SIMD3<Float>, focus: SIMD3<Float>) -> (yaw: Float, pitch: Float, distance: Float)? {
+        let offset = position - focus
+        let length = simd_length(offset)
+        guard length.isFinite, length > minimumPivotDistanceM else { return nil }
+        let pitch = asin(max(-1, min(1, offset.y / length)))
+        guard pitch >= minimumPitch, pitch <= maximumPitch else { return nil }
+        return (atan2(offset.z, offset.x), pitch, length)
+    }
+
+    private func pivot(on focus: SIMD3<Float>) {
+        guard let cameraNode, focus.x.isFinite, focus.y.isFinite, focus.z.isFinite else { return }
+        let position = SIMD3<Float>(cameraNode.position.x, cameraNode.position.y, cameraNode.position.z)
+        guard let pivoted = Self.repivoted(position: position, focus: focus) else { return }
+        target = focus
+        yaw = pivoted.yaw
+        pitch = pivoted.pitch
+        distance = pivoted.distance
+    }
+
+    private func followNodePose() {
+        guard followsNodePose, let cameraNode else { return }
+        let position = SIMD3<Float>(cameraNode.position.x, cameraNode.position.y, cameraNode.position.z)
+        let offset = position - target
+        let length = simd_length(offset)
+        guard length.isFinite, length > 0.01 else { return }
+        yaw = atan2(offset.z, offset.x)
+        pitch = Self.clampedPitch(asin(max(-1, min(1, offset.y / length))))
+        distance = length
+    }
+
+    func setGesturesEnabled(_ enabled: Bool, on view: SCNView) {
+        for recognizer in view.gestureRecognizers ?? [] where recognizer.name == "dollhouseCamera" {
+            recognizer.isEnabled = enabled
+        }
+    }
+
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
         guard let view else { return }
         if gesture.state == .began {
             stopInertia()
             userAdjusted = true
+            followNodePose()
+            if let focus = surfacePoint(at: gesture.location(in: view), in: view) {
+                pivot(on: focus)
+            }
         }
         let translation = gesture.translation(in: view)
         gesture.setTranslation(.zero, in: view)
@@ -210,6 +252,7 @@ final class DollhouseCamera: NSObject {
     @objc func handleTwist(_ gesture: UIRotationGestureRecognizer) {
         if gesture.state == .began {
             stopInertia()
+            followNodePose()
             twistAccumulated = 0
             twistEngaged = false
         }
@@ -234,6 +277,7 @@ final class DollhouseCamera: NSObject {
         if gesture.state == .began {
             stopInertia()
             userAdjusted = true
+            followNodePose()
         }
         let translation = gesture.translation(in: view)
         gesture.setTranslation(.zero, in: view)
@@ -347,6 +391,7 @@ final class DollhouseCamera: NSObject {
     @objc func handlePinch(_ gesture: UIPinchGestureRecognizer) {
         if gesture.state == .began {
             stopInertia()
+            followNodePose()
         }
         userAdjusted = true
         let scale = Float(gesture.scale)

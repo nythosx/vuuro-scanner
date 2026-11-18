@@ -36,6 +36,43 @@ struct LidarPoseJumpFilter {
     }
 }
 
+struct LidarMotionSpeed {
+    static let steadyAngularDegPerS: Float = 40
+    static let steadyLinearMPerS: Float = 0.7
+    static let steadyWaitLimitS: TimeInterval = 1.5
+
+    private var last: (pose: simd_float4x4, time: TimeInterval)?
+    private(set) var angularDegPerS: Float = 0
+    private(set) var linearMPerS: Float = 0
+
+    mutating func update(_ pose: simd_float4x4, at time: TimeInterval) {
+        defer { last = (pose, time) }
+        guard let last, time > last.time else { return }
+        let dt = Float(time - last.time)
+        let a = SIMD3<Float>(last.pose.columns.3.x, last.pose.columns.3.y, last.pose.columns.3.z)
+        let b = SIMD3<Float>(pose.columns.3.x, pose.columns.3.y, pose.columns.3.z)
+        let fa = simd_normalize(-SIMD3<Float>(last.pose.columns.2.x, last.pose.columns.2.y, last.pose.columns.2.z))
+        let fb = simd_normalize(-SIMD3<Float>(pose.columns.2.x, pose.columns.2.y, pose.columns.2.z))
+        let cosine = max(-1, min(1, simd_dot(fa, fb)))
+        angularDegPerS = acos(cosine) * 180 / .pi / dt
+        linearMPerS = simd_distance(a, b) / dt
+    }
+
+    mutating func reset() {
+        last = nil
+        angularDegPerS = 0
+        linearMPerS = 0
+    }
+
+    var steady: Bool {
+        angularDegPerS <= Self.steadyAngularDegPerS && linearMPerS <= Self.steadyLinearMPerS
+    }
+
+    static func holdsKeyframe(steady: Bool, secondsSinceLastKeyframe: TimeInterval) -> Bool {
+        !steady && secondsSinceLastKeyframe < steadyWaitLimitS
+    }
+}
+
 struct LidarPoseReset: Codable, Equatable, Sendable {
     var room: Int
     var atS: Double

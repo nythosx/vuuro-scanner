@@ -47,7 +47,8 @@ struct MeshViewer: View {
                 MeshSceneView(
                     scene: built.scene,
                     cameraNode: built.cameraNode,
-                    target: built.center,
+                    boundsMin: built.boundsMin,
+                    boundsMax: built.boundsMax,
                     background: mode == .wireframe ? .black : UIColor(white: 0.93, alpha: 1),
                     interactive: frameIndex == nil
                 )
@@ -534,6 +535,7 @@ struct MeshFrame {
     let confidenceURL: URL?
     let depthWidth: Int
     let depthHeight: Int
+    var motionDegPerS: Float = 0
 
     var portraitPose: simd_float4x4 {
         cameraTransform * simd_float4x4(simd_quatf(angle: .pi / 2, axis: SIMD3<Float>(0, 0, 1)))
@@ -559,6 +561,7 @@ enum MeshFrameIndex {
         let confidence: String?
         let depthWidth: Int?
         let depthHeight: Int?
+        let motionDegPerS: Float?
 
         enum CodingKeys: String, CodingKey {
             case index
@@ -571,6 +574,7 @@ enum MeshFrameIndex {
             case confidence
             case depthWidth = "depth_width"
             case depthHeight = "depth_height"
+            case motionDegPerS = "motion_deg_per_s"
         }
     }
 
@@ -636,7 +640,8 @@ enum MeshFrameIndex {
             depthURL: meta.depth.map { folder.appendingPathComponent($0) },
             confidenceURL: meta.confidence.map { folder.appendingPathComponent($0) },
             depthWidth: meta.depthWidth ?? 0,
-            depthHeight: meta.depthHeight ?? 0
+            depthHeight: meta.depthHeight ?? 0,
+            motionDegPerS: meta.motionDegPerS ?? 0
         )
     }
 }
@@ -644,30 +649,46 @@ enum MeshFrameIndex {
 struct MeshSceneView: UIViewRepresentable {
     let scene: SCNScene
     let cameraNode: SCNNode
-    let target: SCNVector3
+    let boundsMin: SIMD3<Float>
+    let boundsMax: SIMD3<Float>
     let background: UIColor
     let interactive: Bool
+
+    final class Coordinator {
+        let camera = DollhouseCamera()
+        var lastSize: CGSize = .zero
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
 
     func makeUIView(context: Context) -> SCNView {
         let view = SCNView()
         view.scene = scene
         view.pointOfView = cameraNode
-        view.allowsCameraControl = interactive
+        view.allowsCameraControl = false
         view.autoenablesDefaultLighting = true
         view.antialiasingMode = .multisampling4X
         view.backgroundColor = background
-        view.defaultCameraController.pointOfView = cameraNode
-        view.defaultCameraController.interactionMode = .orbitTurntable
-        view.defaultCameraController.target = target
-        view.defaultCameraController.inertiaEnabled = true
+        var framing = DollhouseScene(meshes: [], boundsMin: boundsMin, boundsMax: boundsMax, roomCount: 1, floorSections: [], usedEstimatedHeight: false)
+        framing.defaultYaw = MeshSceneBuilder.orbitYaw
+        context.coordinator.camera.followsNodePose = true
+        context.coordinator.camera.attach(to: view, cameraNode: cameraNode, framing: framing)
+        context.coordinator.camera.setGesturesEnabled(interactive, on: view)
         return view
     }
 
     func updateUIView(_ view: SCNView, context: Context) {
         view.backgroundColor = background
-        view.allowsCameraControl = interactive
         if view.pointOfView !== cameraNode {
             view.pointOfView = cameraNode
+        }
+        context.coordinator.camera.setGesturesEnabled(interactive, on: view)
+        let size = view.bounds.size
+        if interactive, size != context.coordinator.lastSize {
+            context.coordinator.lastSize = size
+            context.coordinator.camera.viewportChanged(size)
         }
     }
 }
@@ -689,6 +710,7 @@ enum MeshSceneBuilder {
     static let ceilingClass: UInt8 = 3
     static let filledFloorClass: UInt8 = 9
     static let orbitFieldOfView: CGFloat = 50
+    static let orbitYaw: Float = .pi / 2
 
     final class MeshPart {
         let node: SCNNode
@@ -719,6 +741,8 @@ enum MeshSceneBuilder {
         let triangles: Int
         let cameraNode: SCNNode
         let center: SCNVector3
+        let boundsMin: SIMD3<Float>
+        let boundsMax: SIMD3<Float>
         let parts: [MeshPart]
     }
 
@@ -800,7 +824,7 @@ enum MeshSceneBuilder {
             cameraNode.simdPosition = center + SIMD3<Float>(0, size * 0.8, size * 0.7)
             cameraNode.simdLook(at: center, up: SIMD3<Float>(0, 1, 0), localFront: SIMD3<Float>(0, 0, -1))
             scene.rootNode.addChildNode(cameraNode)
-            return .success(Built(scene: scene, triangles: triangles, cameraNode: cameraNode, center: SCNVector3(center), parts: parts))
+            return .success(Built(scene: scene, triangles: triangles, cameraNode: cameraNode, center: SCNVector3(center), boundsMin: lower, boundsMax: upper, parts: parts))
         } catch {
             return .failure(error)
         }

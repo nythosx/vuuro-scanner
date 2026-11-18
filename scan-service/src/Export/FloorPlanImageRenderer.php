@@ -491,6 +491,8 @@ final class FloorPlanImageRenderer
         $name = $this->printable(RoomType::planName($room));
         $sizeKey = ((float) ($room['floor_area_m2'] ?? 0)) < 4.0 ? 2 : 4;
         $this->drawBoldText($image, $sizeKey, $x - (int) ($this->textWidth($sizeKey, $name) / 2), $y - 9, $name, $text);
+        $area = $this->printable($this->fundaArea((float) ($room['floor_area_m2'] ?? 0), $unit));
+        $this->drawText($image, 2, $x - (int) ($this->textWidth(2, $area) / 2), $y + ($sizeKey === 2 ? 6 : 10), $area, $subtext);
     }
 
     private function drawArrowHead($image, float $tipX, float $tipY, float $fromX, float $fromY, int $color): void

@@ -170,6 +170,7 @@ struct LidarKeyframe {
     let intrinsics: [Float]
     let timestamp: TimeInterval
     let tracking: String
+    var motionDegPerS: Float = 0
 }
 
 struct LidarDepthFrame {
@@ -236,6 +237,7 @@ final class LidarCaptureRecorder {
     private var gaps = LidarGapTracker()
     private var lastFrameTimestamp: TimeInterval?
     private var poseFilter = LidarPoseJumpFilter()
+    private var motion = LidarMotionSpeed()
     private var roomFirstKeyframe = 1
     private var storageLevel = LidarStorageBudget.Level.ok
     private var lastStorageAt = Date.distantPast
@@ -303,6 +305,7 @@ final class LidarCaptureRecorder {
         gaps.startRoom(at: ProcessInfo.processInfo.systemUptime)
         lastFrameTimestamp = nil
         poseFilter.reset()
+        motion.reset()
         roomFirstKeyframe = frameIndex + 1
         status.clear()
         lastStorageAt = .distantPast
@@ -449,6 +452,7 @@ final class LidarCaptureRecorder {
         lastFrameTimestamp = frame.timestamp
         let position = SIMD3<Float>(frame.camera.transform.columns.3.x, frame.camera.transform.columns.3.y, frame.camera.transform.columns.3.z)
         gaps.seen(position: position)
+        if !isSameFrame { motion.update(frame.camera.transform, at: frame.timestamp) }
         sampleHealth()
         if let due = configAfterDueAt, uptime >= due, let configuration = session.configuration as? ARWorldTrackingConfiguration {
             readConfigAfter(configuration)
@@ -647,6 +651,7 @@ final class LidarCaptureRecorder {
         guard now - lastKeyframeAt >= Self.keyframeMinIntervalS else { return .waiting }
         let pose = frame.camera.transform
         if let lastPose, !Self.movedEnough(from: lastPose, to: pose, distance: Self.keyframeMinDistanceM, turnDeg: Self.keyframeMinTurnDeg) { return .notMoved }
+        if LidarMotionSpeed.holdsKeyframe(steady: motion.steady, secondsSinceLastKeyframe: now - lastKeyframeAt) { return .waiting }
         guard !frameWriteInFlight else {
             manifest?.stats.skippedBusyFrames += 1
             return .writerBusy
@@ -666,7 +671,8 @@ final class LidarCaptureRecorder {
             transform: Self.flatten(pose),
             intrinsics: [intrinsics[0][0], intrinsics[1][1], intrinsics[2][0], intrinsics[2][1]],
             timestamp: now,
-            tracking: "normal"
+            tracking: "normal",
+            motionDegPerS: motion.angularDegPerS
         )
         frameWriteInFlight = true
         let writer = self.writer
@@ -1062,7 +1068,8 @@ actor LidarCaptureWriter {
                 "image_orientation": "sensor_landscape",
                 "camera_transform": keyframe.transform.map(Double.init),
                 "intrinsics_fx_fy_cx_cy": keyframe.intrinsics.map(Double.init),
-                "tracking": keyframe.tracking
+                "tracking": keyframe.tracking,
+                "motion_deg_per_s": Double(keyframe.motionDegPerS)
             ]
             if let depth = keyframe.depth {
                 try depth.millimeters.write(to: framesDirectory.appendingPathComponent("\(stem).depth"), options: .atomic)

@@ -346,4 +346,20 @@ final class DollhouseCameraTests: XCTestCase {
             XCTAssertNotNil(recognizer.delegate, "pan/pinch/two-finger-pan/twist must have a delegate so they can recognize simultaneously — otherwise a one-finger drag that grows into a pinch drops one of them")
         }
     }
+
+    func testPivotOnATouchedPointKeepsTheCameraWhereItIs() throws {
+        let position = SIMD3<Float>(4, 3, 4)
+        let focus = SIMD3<Float>(1, 0.5, 2)
+        let pivoted = try XCTUnwrap(DollhouseCamera.repivoted(position: position, focus: focus))
+        let rebuilt = focus + SIMD3<Float>(cos(pivoted.yaw) * cos(pivoted.pitch), sin(pivoted.pitch), sin(pivoted.yaw) * cos(pivoted.pitch)) * pivoted.distance
+        XCTAssertEqual(simd_distance(rebuilt, position), 0, accuracy: 0.001)
+        XCTAssertEqual(pivoted.distance, simd_distance(position, focus), accuracy: 0.001)
+    }
+
+    func testPivotIsSkippedWhenItWouldJumpTheCamera() {
+        XCTAssertNil(DollhouseCamera.repivoted(position: SIMD3<Float>(0, 5, 0.1), focus: SIMD3<Float>(0, 0, 0)))
+        XCTAssertNil(DollhouseCamera.repivoted(position: SIMD3<Float>(5, 0.2, 0), focus: SIMD3<Float>(0, 0, 0)))
+        XCTAssertNil(DollhouseCamera.repivoted(position: SIMD3<Float>(0.1, 0.1, 0.1), focus: SIMD3<Float>(0, 0, 0)))
+        XCTAssertNil(DollhouseCamera.repivoted(position: SIMD3<Float>(.nan, 1, 1), focus: SIMD3<Float>(0, 0, 0)))
+    }
 }

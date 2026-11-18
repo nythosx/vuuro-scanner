@@ -213,11 +213,14 @@ final class FloorPlanSvgRenderer
         return [$cx / (3 * $twiceArea), $cz / (3 * $twiceArea)];
     }
 
-    private function fundaRoomLabelSvg(array $room, float $x, float $y): string
+    private function fundaRoomLabelSvg(array $room, float $x, float $y, string $unit): string
     {
         $name = RoomType::planName($room);
         $size = ((float) ($room['floor_area_m2'] ?? 0)) < 4.0 ? 11 : 16;
-        return '<text x="' . $this->num($x) . '" y="' . $this->num($y + $size * 0.35) . '" font-size="' . $size . '" font-weight="700" fill="' . self::FUNDA_INK . '" text-anchor="middle">' . $this->esc($name) . '</text>';
+        $areaSize = $size === 11 ? 10 : 12;
+        $areaText = self::fundaArea((float) ($room['floor_area_m2'] ?? 0), $unit);
+        return '<text x="' . $this->num($x) . '" y="' . $this->num($y + $size * 0.35) . '" font-size="' . $size . '" font-weight="700" fill="' . self::FUNDA_INK . '" text-anchor="middle">' . $this->esc($name) . '</text>'
+            . '<text x="' . $this->num($x) . '" y="' . $this->num($y + $size * 0.35 + $areaSize + 3) . '" font-size="' . $areaSize . '" fill="' . self::FUNDA_INK . '" text-anchor="middle">' . $this->esc($areaText) . '</text>';
     }
 
     private function defs(): string
@@ -1131,7 +1134,7 @@ SVG;
         if ($this->planStyle->isFunda) {
             [$cx, $cz] = $this->areaCentroidM($room['outline_m']);
             [$labelPx, $labelPy] = $toPx($cx, $cz);
-            return $out . $this->fundaRoomLabelSvg($room, $labelPx, $labelPy);
+            return $out . $this->fundaRoomLabelSvg($room, $labelPx, $labelPy, $unit);
         }
 
         $labelY = $tile['height'] - self::LABEL_HEIGHT + 20;
@@ -1291,7 +1294,7 @@ SVG;
                 [$cx, $cz] = $this->areaCentroidM($room['outline_m']);
                 [$wx, $wz] = RoomFusionSolver::transformPoint($pose, $cx, $cz);
                 [$labelX, $labelY] = $toPx($wx, $wz);
-                $labels .= $this->fundaRoomLabelSvg($room, $labelX, $labelY);
+                $labels .= $this->fundaRoomLabelSvg($room, $labelX, $labelY, $unit);
                 continue;
             }
             [$cx, $cz] = $this->centroidM($room['outline_m']);
