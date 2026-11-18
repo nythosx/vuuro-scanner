@@ -20,8 +20,19 @@ final class LiveMeshOverlayView: SCNView {
         material.diffuse.contents = UIColor(red: 0.2, green: 0.9, blue: 1, alpha: 0.8)
         material.isDoubleSided = true
         material.writesToDepthBuffer = false
+        material.readsFromDepthBuffer = true
         return material
     }()
+    private let occluderMaterial: SCNMaterial = {
+        let material = SCNMaterial()
+        material.colorBufferWriteMask = []
+        material.lightingModel = .constant
+        material.isDoubleSided = true
+        material.writesToDepthBuffer = true
+        material.readsFromDepthBuffer = true
+        return material
+    }()
+    static let occluderInsetM: Float = 0.02
 
     init() {
         super.init(frame: .zero, options: nil)
@@ -95,10 +106,13 @@ final class LiveMeshOverlayView: SCNView {
                 known.node.simdTransform = anchor.transform
                 if known.faces == faces && known.vertices == vertices { continue }
             }
-            guard let geometry = Self.geometry(for: anchor) else { continue }
-            geometry.materials = [lineMaterial]
-            let node = nodes[id]?.node ?? SCNNode()
-            node.geometry = geometry
+            guard let lines = Self.geometry(for: anchor) else { continue }
+            lines.materials = [lineMaterial]
+            let occluder = Self.occluderGeometry(for: anchor, inset: Self.occluderInsetM)
+            occluder?.materials = [occluderMaterial]
+            let node = nodes[id]?.node ?? Self.makeAnchorNode()
+            node.childNode(withName: Self.occluderName, recursively: false)?.geometry = occluder
+            node.childNode(withName: Self.linesName, recursively: false)?.geometry = lines
             node.simdTransform = anchor.transform
             if node.parent == nil { root.addChildNode(node) }
             nodes[id] = (node, faces, vertices)
@@ -107,6 +121,46 @@ final class LiveMeshOverlayView: SCNView {
             nodes[id]?.node.removeFromParentNode()
             nodes[id] = nil
         }
+    }
+
+    static let occluderName = "occluder"
+    static let linesName = "lines"
+
+    static func makeAnchorNode() -> SCNNode {
+        let node = SCNNode()
+        let occluder = SCNNode()
+        occluder.name = occluderName
+        occluder.renderingOrder = -1
+        let lines = SCNNode()
+        lines.name = linesName
+        lines.renderingOrder = 1
+        node.addChildNode(occluder)
+        node.addChildNode(lines)
+        return node
+    }
+
+    static func occluderGeometry(for anchor: ARMeshAnchor, inset: Float) -> SCNGeometry? {
+        let vertices = anchor.geometry.vertices
+        let normals = anchor.geometry.normals
+        let faces = anchor.geometry.faces
+        guard vertices.count > 0, faces.count > 0, faces.indexCountPerPrimitive == 3, normals.count == vertices.count,
+              vertices.format == .float3, normals.format == .float3 else { return nil }
+        let vertexBase = UnsafeRawPointer(vertices.buffer.contents().advanced(by: vertices.offset))
+        let normalBase = UnsafeRawPointer(normals.buffer.contents().advanced(by: normals.offset))
+        var points: [SCNVector3] = []
+        points.reserveCapacity(vertices.count)
+        for index in 0..<vertices.count {
+            let v = index * vertices.stride
+            let n = index * normals.stride
+            let x = vertexBase.load(fromByteOffset: v, as: Float.self) - normalBase.load(fromByteOffset: n, as: Float.self) * inset
+            let y = vertexBase.load(fromByteOffset: v + 4, as: Float.self) - normalBase.load(fromByteOffset: n + 4, as: Float.self) * inset
+            let z = vertexBase.load(fromByteOffset: v + 8, as: Float.self) - normalBase.load(fromByteOffset: n + 8, as: Float.self) * inset
+            points.append(SCNVector3(x, y, z))
+        }
+        let source = SCNGeometrySource(vertices: points)
+        let indexData = Data(bytes: faces.buffer.contents(), count: faces.count * faces.indexCountPerPrimitive * faces.bytesPerIndex)
+        let element = SCNGeometryElement(data: indexData, primitiveType: .triangles, primitiveCount: faces.count, bytesPerIndex: faces.bytesPerIndex)
+        return SCNGeometry(sources: [source], elements: [element])
     }
 
     static func geometry(for anchor: ARMeshAnchor) -> SCNGeometry? {

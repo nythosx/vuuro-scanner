@@ -162,7 +162,7 @@ struct LiDARProofView: View {
             ForEach(Array(coverageRooms.enumerated()), id: \.offset) { index, coverage in
                 let prefix = coverageRooms.count > 1 ? "Room \(index + 1): " : ""
                 row(prefix + "Floor seen during the scan", (coverage.floorPercent.map { String(format: "%.0f%%", $0) } ?? (coverage.floorSeenM2 > 0 ? "not measured" : "no floor yet")) + (coverage.ceilingSeen == false ? ", ceiling not scanned so no gap check" : ""))
-                row(prefix + "Floor seen / missing under the ceiling", String(format: "%.1f m² / %.1f m²", coverage.floorSeenM2, coverage.floorMissingM2))
+                row(prefix + "Floor seen / missing under the ceiling (not the room area)", String(format: "%.1f m² / %.1f m²", coverage.floorSeenM2, coverage.floorMissingM2))
                 if let wallPercent = coverage.wallSeenPercent {
                     row(prefix + "RoomPlan walls the mesh reached", String(format: "%.0f%%, %.1f m missing", wallPercent, coverage.wallMissingM ?? 0))
                 }
