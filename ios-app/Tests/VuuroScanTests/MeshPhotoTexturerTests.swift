@@ -64,6 +64,9 @@ final class MeshPhotoTexturerTests: XCTestCase {
         XCTAssertEqual(MeshPhotoTexturer.coverCameras(visible: [0b1111, 0b1111], cameras: 2, words: 1, limit: 1, steadiness: [0.4, 1]), [1])
         XCTAssertEqual(MeshPhotoTexturer.coverCameras(visible: [0b1111, 0b1111], cameras: 2, words: 1, limit: 1), [0])
         XCTAssertEqual(MeshPhotoTexturer.steadiness(motionDegPerS: 0), 1, accuracy: 0.001)
+        XCTAssertTrue(MeshPhotoTexturer.lowMemory(available: 100 * 1_048_576))
+        XCTAssertFalse(MeshPhotoTexturer.lowMemory(available: 400 * 1_048_576))
+        XCTAssertFalse(MeshPhotoTexturer.lowMemory(available: 0))
         XCTAssertEqual(MeshPhotoTexturer.steadiness(motionDegPerS: 40), 0.5, accuracy: 0.001)
     }
 

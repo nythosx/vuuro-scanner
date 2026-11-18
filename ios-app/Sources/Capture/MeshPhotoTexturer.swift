@@ -2,6 +2,7 @@ import CoreGraphics
 import CoreImage
 import Foundation
 import ImageIO
+import os
 import simd
 
 enum MeshPhotoTexturer {
@@ -114,6 +115,7 @@ enum MeshPhotoTexturer {
     }
 
     static let maxCandidates = 240
+    static let minAvailableMemoryBytes = 200 * 1_048_576
     static let maxTextures = 52
     static let textureSize = 1024
     static let gainSampleSize = 160
@@ -248,6 +250,9 @@ enum MeshPhotoTexturer {
         monitor.beginStage()
         for (slot, index) in kept.enumerated() {
             if stopped() { return .failure(CancellationError()) }
+            if lowMemory(available: Int(os_proc_available_memory())) {
+                return .failure(PlainError(message: "The phone is low on memory for the photo texture. Close other apps and try again."))
+            }
             if let url = candidates[index].imageURL, let image = loadImage(url) {
                 images.append(applyGain(gains[slot], to: image, context: context))
             } else {
@@ -261,6 +266,10 @@ enum MeshPhotoTexturer {
             return .failure(PlainError(message: "None of the chosen frame photos could be opened for the texture."))
         }
         return .success(Output(parts: outputs, images: images, photosUnreadable: unreadable, facesInPhoto: inPhoto, totalFaces: totalFaces, photosUsed: kept.count, gains: gains))
+    }
+
+    static func lowMemory(available: Int) -> Bool {
+        available > 0 && available < minAvailableMemoryBytes
     }
 
     static func steadiness(motionDegPerS: Float) -> Float {

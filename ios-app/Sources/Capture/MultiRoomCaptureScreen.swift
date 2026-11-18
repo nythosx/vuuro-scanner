@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MultiRoomCaptureScreen: UIViewRepresentable {
     let coordinator: MultiRoomCaptureCoordinator
+    var liveMesh = false
 
     func makeUIView(context: Context) -> RoomCaptureHostView {
         let host = RoomCaptureHostView()
@@ -14,6 +15,7 @@ struct MultiRoomCaptureScreen: UIViewRepresentable {
 
     func updateUIView(_ uiView: RoomCaptureHostView, context: Context) {
         uiView.embed(coordinator.captureView)
+        uiView.setLiveMesh(liveMesh, session: coordinator.arSession)
     }
 
     static func dismantleUIView(_ uiView: RoomCaptureHostView, coordinator: ()) {

@@ -1,9 +1,11 @@
 
+import ARKit
 import RoomPlan
 import SwiftUI
 
 struct RoomCaptureScreen: UIViewRepresentable {
     let coordinator: CaptureCoordinator
+    var liveMesh = false
 
     func makeUIView(context: Context) -> RoomCaptureHostView {
         let host = RoomCaptureHostView()
@@ -15,6 +17,7 @@ struct RoomCaptureScreen: UIViewRepresentable {
 
     func updateUIView(_ uiView: RoomCaptureHostView, context: Context) {
         uiView.embed(coordinator.captureView)
+        uiView.setLiveMesh(liveMesh, session: coordinator.arSession)
     }
 
     static func dismantleUIView(_ uiView: RoomCaptureHostView, coordinator: ()) {
@@ -25,6 +28,7 @@ struct RoomCaptureScreen: UIViewRepresentable {
 final class RoomCaptureHostView: UIView {
     var onWindowChange: (@MainActor () -> Void)?
     var onDismantle: (@MainActor () -> Void)?
+    private var liveMeshView: LiveMeshOverlayView?
 
     func embed(_ view: UIView) {
         guard view.superview !== self else { return }
@@ -32,7 +36,24 @@ final class RoomCaptureHostView: UIView {
         view.frame = bounds
         view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         addSubview(view)
+        if let liveMeshView { bringSubviewToFront(liveMeshView) }
         onWindowChange?()
+    }
+
+    func setLiveMesh(_ on: Bool, session: ARSession) {
+        guard on else {
+            liveMeshView?.removeFromSuperview()
+            liveMeshView = nil
+            return
+        }
+        let overlay = liveMeshView ?? LiveMeshOverlayView()
+        overlay.session = session
+        liveMeshView = overlay
+        if overlay.superview !== self {
+            overlay.frame = bounds
+            addSubview(overlay)
+        }
+        bringSubviewToFront(overlay)
     }
 
     func dismantle() {

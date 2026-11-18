@@ -114,7 +114,7 @@ struct MeshViewer: View {
                 pathControls
             }
         }
-        .navigationTitle((built?.triangles ?? 0) > 0 ? "\(built?.triangles ?? 0) triangles" : "3D mesh")
+        .navigationTitle((built?.triangles ?? 0) > 0 ? "\((built?.triangles ?? 0).formatted()) triangles" : "3D mesh")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -313,6 +313,7 @@ struct MeshViewer: View {
             var note = "Colored from \(output.framesUsed) photos, \(percent)% of the mesh seen in a photo"
             if usable.dropped > 0 {
                 note += ", \(usable.dropped) photos from before a position reset left out"
+                if LidarPoseReset.mostlyLeftOut(dropped: usable.dropped, total: frames.count) { note += ". " + LidarPoseReset.mostlyLeftOutText }
                 DiagnosticsLog.shared.record("Texture: \(usable.dropped) frames from before a position reset were left out", category: .state)
             }
             if output.framesFailed > 0 {
@@ -386,7 +387,7 @@ struct MeshViewer: View {
             photoTextured = true
             let percent = output.totalFaces > 0 ? output.facesInPhoto * 100 / output.totalFaces : 0
             let seconds = Int(Date().timeIntervalSince(started).rounded())
-            photoNote = "Photo texture from \(output.photosUsed) keyframe photos at \(MeshPhotoTexturer.textureSize) px with brightness evened out, \(percent)% of the mesh, built in \(seconds) s. Grey parts are not in those photos.\(usable.dropped > 0 ? " \(usable.dropped) photos from before a position reset were left out." : "")\(output.photosUnreadable > 0 ? " \(output.photosUnreadable) photos could not be opened, so their parts are grey too." : "")"
+            photoNote = "Photo texture from \(output.photosUsed) keyframe photos at \(MeshPhotoTexturer.textureSize) px with brightness evened out, \(percent)% of the mesh, built in \(seconds) s. Grey parts are not in those photos.\(usable.dropped > 0 ? " \(usable.dropped) photos from before a position reset were left out." : "")\(LidarPoseReset.mostlyLeftOut(dropped: usable.dropped, total: frames.count) ? " " + LidarPoseReset.mostlyLeftOutText : "")\(output.photosUnreadable > 0 ? " \(output.photosUnreadable) photos could not be opened, so their parts are grey too." : "")"
             applyMode()
             let stages = monitor.stages + [MeshPhotoBuildLog.Stage(name: "3D scene", seconds: Date().timeIntervalSince(sceneStarted))]
             logPhotoBuild(.done, started: started, monitor: monitor, stages: stages, triangles: output.totalFaces, photosUsed: output.photosUsed)

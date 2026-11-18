@@ -66,6 +66,16 @@ struct LidarSessionConfigReport: Codable, Equatable {
     var smoothedSceneDepth: Bool
     var sceneReconstruction: String
 
+    static let settleLimitS: TimeInterval = 10
+
+    var hasMesh: Bool {
+        sceneReconstruction == "mesh" || sceneReconstruction == "mesh_with_classification"
+    }
+
+    static func settled(_ report: LidarSessionConfigReport, secondsSinceFirstRead: TimeInterval) -> Bool {
+        report.hasMesh || secondsSinceFirstRead >= settleLimitS
+    }
+
     enum CodingKeys: String, CodingKey {
         case sceneDepth = "scene_depth"
         case smoothedSceneDepth = "smoothed_scene_depth"
@@ -228,6 +238,7 @@ final class LidarCaptureRecorder {
     static let maxAppEvents = 100
     private var lateConfigChecked = false
     private var configAfterDueAt: TimeInterval?
+    private var configAfterFirstReadAt: TimeInterval?
     static let configAfterDelayS: TimeInterval = 1
     private var roomBoxes: [LidarRoomBox] = []
     private var lastDepthPose: simd_float4x4?
@@ -288,6 +299,7 @@ final class LidarCaptureRecorder {
             notes.append("RoomPlan's configuration already had depth and mesh, nothing changed")
         }
         manifest?.configAfter = nil
+        configAfterFirstReadAt = nil
         configAfterDueAt = ProcessInfo.processInfo.systemUptime + Self.configAfterDelayS
         recordRoomConfig(before: Self.report(current), after: nil)
         manifest?.configNotes.append(contentsOf: notes)
@@ -455,7 +467,7 @@ final class LidarCaptureRecorder {
         if !isSameFrame { motion.update(frame.camera.transform, at: frame.timestamp) }
         sampleHealth()
         if let due = configAfterDueAt, uptime >= due, let configuration = session.configuration as? ARWorldTrackingConfiguration {
-            readConfigAfter(configuration)
+            readConfigAfter(configuration, at: uptime)
         }
         if !lateConfigChecked, manifest?.roomPlanConfig == nil, let configuration = session.configuration {
             lateConfigChecked = true
@@ -545,9 +557,13 @@ final class LidarCaptureRecorder {
         persistManifest()
     }
 
-    private func readConfigAfter(_ configuration: ARWorldTrackingConfiguration) {
-        configAfterDueAt = nil
+    private func readConfigAfter(_ configuration: ARWorldTrackingConfiguration, at uptime: TimeInterval) {
+        let firstReadAt = configAfterFirstReadAt ?? uptime
+        configAfterFirstReadAt = firstReadAt
         let report = Self.report(configuration)
+        let settled = LidarSessionConfigReport.settled(report, secondsSinceFirstRead: uptime - firstReadAt)
+        if settled { configAfterDueAt = nil }
+        guard settled || report != manifest?.configAfter else { return }
         manifest?.configAfter = report
         if pendingRoomConfig != nil {
             pendingRoomConfig?.after = report

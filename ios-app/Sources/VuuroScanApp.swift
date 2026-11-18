@@ -398,6 +398,7 @@ private struct RoomCaptureFlowStep: View {
     @State private var photoCaptureContext: PhotoCaptureContext?
     @State private var captureGroupId: String = ""
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
+    @State private var showsLiveMesh = false
     @State private var didStart = false
     @State private var showCorrectionDialog = false
     @State private var showRoomNamePrompt = false
@@ -530,7 +531,7 @@ private struct RoomCaptureFlowStep: View {
                     Color.black.ignoresSafeArea()
                     VStack(spacing: 0) {
                         ZStack {
-                            RoomCaptureScreen(coordinator: coordinator)
+                            RoomCaptureScreen(coordinator: coordinator, liveMesh: showsLiveMesh)
                                 .ignoresSafeArea(edges: .top)
 
                             if isUploading {
@@ -626,6 +627,13 @@ private struct RoomCaptureFlowStep: View {
                 }
                 .accessibilityIdentifier("capture.cancel")
                 Spacer(minLength: 0)
+                VuuroCaptureCircleButton(
+                    systemName: showsLiveMesh ? "cube.fill" : "cube",
+                    accessibilityLabel: showsLiveMesh ? "Hide live mesh" : "Show live mesh"
+                ) {
+                    showsLiveMesh.toggle()
+                }
+                .accessibilityIdentifier("capture.liveMesh")
                 VuuroCaptureTogglePill(isOn: roomTypeGuessOn) {
                     roomTypeGuessOn.toggle()
                     RoomTypeGuessSettings.isEnabled = roomTypeGuessOn

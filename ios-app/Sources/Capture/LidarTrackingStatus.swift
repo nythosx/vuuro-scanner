@@ -86,6 +86,12 @@ struct LidarPoseReset: Codable, Equatable, Sendable {
         case firstKeyframeAfter = "first_keyframe_after"
     }
 
+    static let mostlyLeftOutText = "Most of the photos were taken before the phone lost its position, so they are left out. Scan this room again for a full photo view."
+
+    static func mostlyLeftOut(dropped: Int, total: Int) -> Bool {
+        total > 0 && dropped * 2 > total
+    }
+
     static func usable(_ frames: [MeshFrame], resets: [LidarPoseReset]) -> (frames: [MeshFrame], dropped: Int) {
         var cutoffs: [Int: (first: Int, before: Int)] = [:]
         for reset in resets {

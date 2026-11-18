@@ -1,4 +1,5 @@
 import XCTest
+import simd
 @testable import VuuroScan
 
 final class LidarPauseReasonTests: XCTestCase {
@@ -129,5 +130,23 @@ final class LidarTrackingStatusTests: XCTestCase {
         XCTAssertFalse(LidarMotionSpeed.holdsKeyframe(steady: false, secondsSinceLastKeyframe: 1.6))
         XCTAssertFalse(LidarMotionSpeed.holdsKeyframe(steady: true, secondsSinceLastKeyframe: 0.5))
         XCTAssertFalse(LidarMotionSpeed.holdsKeyframe(steady: false, secondsSinceLastKeyframe: .infinity))
+    }
+
+    func testWarnsOnlyWhenMoreThanHalfTheFramesAreLeftOut() {
+        XCTAssertTrue(LidarPoseReset.mostlyLeftOut(dropped: 190, total: 200))
+        XCTAssertTrue(LidarPoseReset.mostlyLeftOut(dropped: 101, total: 200))
+        XCTAssertFalse(LidarPoseReset.mostlyLeftOut(dropped: 100, total: 200))
+        XCTAssertFalse(LidarPoseReset.mostlyLeftOut(dropped: 0, total: 0))
+    }
+
+    func testConfigAfterKeepsReadingUntilTheMeshShowsOrTheLimitPasses() {
+        let early = LidarSessionConfigReport(sceneDepth: true, smoothedSceneDepth: true, sceneReconstruction: "other")
+        let later = LidarSessionConfigReport(sceneDepth: true, smoothedSceneDepth: true, sceneReconstruction: "mesh_with_classification")
+        XCTAssertFalse(LidarSessionConfigReport.settled(early, secondsSinceFirstRead: 0))
+        XCTAssertFalse(LidarSessionConfigReport.settled(early, secondsSinceFirstRead: 9.9))
+        XCTAssertTrue(LidarSessionConfigReport.settled(early, secondsSinceFirstRead: 10))
+        XCTAssertTrue(LidarSessionConfigReport.settled(later, secondsSinceFirstRead: 0))
+        XCTAssertTrue(LidarSessionConfigReport.settled(LidarSessionConfigReport(sceneDepth: true, smoothedSceneDepth: true, sceneReconstruction: "mesh"), secondsSinceFirstRead: 0))
+        XCTAssertFalse(LidarSessionConfigReport.settled(LidarSessionConfigReport(sceneDepth: true, smoothedSceneDepth: true, sceneReconstruction: "none"), secondsSinceFirstRead: 1))
     }
 }

@@ -37,6 +37,7 @@ struct MultiRoomCaptureFlowView: View {
     @State private var capturedHeadingDeg: Double?
     @State private var preUploadedSession: (session: ScanSessionResponse, floorPlan: FloorPlan)?
     @State private var roomTypeGuessOn = RoomTypeGuessSettings.isEnabled
+    @State private var showsLiveMesh = false
     @State private var didStart = false
     @State private var continueState = ContinueScanState()
     @State private var continueRooms: [FloorPlan.Room] = []
@@ -249,7 +250,7 @@ struct MultiRoomCaptureFlowView: View {
             Color.black.ignoresSafeArea()
             VStack(spacing: 0) {
                 ZStack {
-                    MultiRoomCaptureScreen(coordinator: coordinator)
+                    MultiRoomCaptureScreen(coordinator: coordinator, liveMesh: showsLiveMesh)
                         .ignoresSafeArea(edges: .top)
 
                     if isDegenerateCapture {
@@ -705,6 +706,13 @@ struct MultiRoomCaptureFlowView: View {
                 }
                 .accessibilityIdentifier("multiCapture.cancel")
                 Spacer(minLength: 0)
+                VuuroCaptureCircleButton(
+                    systemName: showsLiveMesh ? "cube.fill" : "cube",
+                    accessibilityLabel: showsLiveMesh ? "Hide live mesh" : "Show live mesh"
+                ) {
+                    showsLiveMesh.toggle()
+                }
+                .accessibilityIdentifier("multiCapture.liveMesh")
                 VuuroCaptureTogglePill(isOn: roomTypeGuessOn) {
                     roomTypeGuessOn.toggle()
                     RoomTypeGuessSettings.isEnabled = roomTypeGuessOn

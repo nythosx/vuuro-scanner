@@ -194,7 +194,7 @@ struct LiDARProofView: View {
                 }
                 row("Depth mesh detail", String(format: "%.0f mm cells, built in %.1f s", depthMesh.voxelM * 1000, depthMesh.seconds))
                 row("Mesh footprint from above", String(format: "%.1f m²", depthMesh.footprintM2))
-                row("Floor seen by the camera", String(format: "%.1f m²", depthMesh.floorSeenM2))
+                row("Floor seen by the camera (not the room area)", String(format: "%.1f m²", depthMesh.floorSeenM2))
                 row("Floor filled where unseen", String(format: "%.1f m²", depthMesh.floorFilledM2) + (depthMesh.fillClippedToRoomPlan ? ", inside the RoomPlan outline" : ", no RoomPlan outline"))
                 row("RoomPlan doors, windows, objects", depthMesh.roomBoxesUnreadable ? "file unreadable" : "\(depthMesh.roomBoxes)")
                 row("Labelled from RoomPlan", "\(depthMesh.openingFaces) door/window, \(depthMesh.objectFaces) furniture triangles")
@@ -216,7 +216,7 @@ struct LiDARProofView: View {
                 }
             }
             if let appEvents = manifest.appEvents, !appEvents.isEmpty {
-                row("App events while recording", "\(appEvents.count)" + (appEvents.count > Self.appEventRowsShown ? ", first \(Self.appEventRowsShown) shown, all in the zip" : ""))
+                row("App events while recording", "\(appEvents.count)" + (appEvents.count > Self.appEventRowsShown ? ", first \(Self.appEventRowsShown) shown, up to \(LidarCaptureRecorder.maxAppEvents) in the zip" : ""))
                 ForEach(Array(appEvents.prefix(Self.appEventRowsShown).enumerated()), id: \.offset) { _, event in
                     Text(event)
                         .font(.system(size: 13))
