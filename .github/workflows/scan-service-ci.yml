@@ -57,6 +57,7 @@ jobs:
           php tests/stand_skybox_test.php
           php tests/stand_depth_cube_test.php
           php tests/tour_stand_strings_test.php
+          php tests/lidar_model_store_test.php
 
       - name: The independent net (every suite, fresh servers and DBs)
         working-directory: scan-service

@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var MODES = { PLAN: 'plan', PHOTOS: 'photos', DOLLHOUSE: 'dollhouse', STAND: 'stand' };
+  var MODES = { PLAN: 'plan', PHOTOS: 'photos', DOLLHOUSE: 'dollhouse', STAND: 'stand', MODEL: 'model' };
 
   function parse(hash) {
     var raw = String(hash || '').replace(/^#/, '').replace(/^\//, '');
@@ -21,6 +21,9 @@
     if (parts[0] === 'dollhouse') {
       return { mode: MODES.DOLLHOUSE };
     }
+    if (parts[0] === 'model') {
+      return { mode: MODES.MODEL };
+    }
     if (parts[0] === 'stand') {
       var sid = parts[1] ? decodeURIComponent(parts[1]) : '';
       var pi = parseInt(parts[2], 10);
@@ -39,6 +42,9 @@
     }
     if (s.mode === MODES.DOLLHOUSE) {
       return '#/dollhouse';
+    }
+    if (s.mode === MODES.MODEL) {
+      return '#/model';
     }
     if (s.mode === MODES.STAND) {
       return '#/stand/' + encodeURIComponent(s.standId || '') + '/' + (s.photoIndex || 0);

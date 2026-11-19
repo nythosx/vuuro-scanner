@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 enum ScanServiceError: Error {
@@ -63,6 +64,22 @@ struct PhotoUploadResponse: Decodable {
     enum CodingKeys: String, CodingKey {
         case url
         case photoUploadId = "photo_upload_id"
+    }
+}
+
+struct LidarModelInfo: Decodable, Equatable {
+    let url: String
+    let bytes: Int
+    let uploadedAt: String
+    let triangles: Int?
+    let photos: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case url
+        case bytes
+        case uploadedAt = "uploaded_at"
+        case triangles
+        case photos
     }
 }
 
@@ -771,6 +788,88 @@ struct ScanServiceClient {
         request.httpBody = body
 
         return try await send(request, timeoutSeconds: 90)
+    }
+
+    static let lidarModelChunkBytes = 4 * 1_048_576
+
+    private struct LidarChunkResponse: Decodable {
+        let receivedBytes: Int
+
+        enum CodingKeys: String, CodingKey {
+            case receivedBytes = "received_bytes"
+        }
+    }
+
+    private struct LidarCompleteResponse: Decodable {
+        let lidarModel: LidarModelInfo
+
+        enum CodingKeys: String, CodingKey {
+            case lidarModel = "lidar_model"
+        }
+    }
+
+    private struct LidarCompleteBody: Encodable {
+        let totalBytes: Int
+        let sha256: String
+        let triangles: Int
+        let photos: Int
+        let capture: String
+
+        enum CodingKeys: String, CodingKey {
+            case totalBytes = "total_bytes"
+            case sha256
+            case triangles
+            case photos
+            case capture
+        }
+    }
+
+    static func receivedBytes(inErrorBody body: String) -> Int? {
+        guard let data = body.data(using: .utf8) else { return nil }
+        do {
+            let object = try JSONSerialization.jsonObject(with: data)
+            return (object as? [String: Any])?["received_bytes"] as? Int
+        } catch {
+            return nil
+        }
+    }
+
+    static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    func uploadLidarModel(sessionId: String, accessToken: String, glb: Data, triangles: Int, photos: Int, capture: String, progress: @escaping @MainActor (Double) -> Void) async throws -> LidarModelInfo {
+        guard !glb.isEmpty else { throw PlainError(message: "The 3D model to send is empty.") }
+        var offset = 0
+        var resumes = 0
+        while offset < glb.count {
+            try Task.checkCancellation()
+            let end = min(offset + Self.lidarModelChunkBytes, glb.count)
+            var request = URLRequest(url: url(for: "/scan-sessions/\(sessionId)/lidar-model/chunks"))
+            request.httpMethod = "POST"
+            request.setValue(accessToken, forHTTPHeaderField: "X-Scan-Access-Token")
+            request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+            request.setValue(String(offset), forHTTPHeaderField: "X-Upload-Offset")
+            request.setValue(String(glb.count), forHTTPHeaderField: "X-Upload-Total")
+            request.httpBody = glb.subdata(in: offset..<end)
+            do {
+                let response: LidarChunkResponse = try await send(request, timeoutSeconds: 120)
+                guard response.receivedBytes > offset, response.receivedBytes <= glb.count else {
+                    throw PlainError(message: "The Scan Service reported \(response.receivedBytes) bytes received, which does not fit this upload.")
+                }
+                offset = response.receivedBytes
+            } catch let error as ScanServiceError {
+                guard case .unexpectedStatus(409, let body) = error, resumes < 3,
+                      let received = Self.receivedBytes(inErrorBody: body), received <= glb.count else { throw error }
+                resumes += 1
+                offset = received
+            }
+            let fraction = Double(offset) / Double(glb.count)
+            await progress(fraction)
+        }
+        let body = LidarCompleteBody(totalBytes: glb.count, sha256: Self.sha256Hex(glb), triangles: triangles, photos: photos, capture: capture)
+        let done: LidarCompleteResponse = try await post(path: "/scan-sessions/\(sessionId)/lidar-model/complete", body: body, accessToken: accessToken, timeoutSeconds: 60)
+        return done.lidarModel
     }
 
     func addPhoto(sessionId: String, accessToken: String, url: String, caption: String? = nil, roomId: String? = nil) async throws -> FloorPlan {

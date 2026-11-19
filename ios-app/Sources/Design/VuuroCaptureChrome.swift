@@ -306,6 +306,35 @@ struct VuuroCaptureTogglePill: View {
     }
 }
 
+struct VuuroLiveMeshPill: View {
+    let isOn: Bool
+    let action: () -> Void
+
+    static func toast(isOn: Bool) -> String {
+        isOn ? "Live mesh on: blue lines show what LiDAR has seen. Holes are places still to scan." : "Live mesh off"
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: isOn ? "cube.fill" : "cube")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(isOn ? "Mesh on" : "Mesh off")
+                    .font(.system(size: 13, weight: .bold))
+                    .tracking(-0.1)
+                    .lineLimit(1)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 44)
+            .background(.ultraThinMaterial, in: Capsule())
+            .background(isOn ? Color.cyan.opacity(0.35) : Color.white.opacity(0.12), in: Capsule())
+        }
+        .buttonStyle(VuuroCapturePressStyle())
+        .accessibilityLabel(isOn ? "Hide live mesh" : "Show live mesh")
+    }
+}
+
 struct VuuroRoomsButton: View {
     let count: Int
     let action: () -> Void

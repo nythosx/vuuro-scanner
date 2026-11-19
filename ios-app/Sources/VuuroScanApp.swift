@@ -627,11 +627,9 @@ private struct RoomCaptureFlowStep: View {
                 }
                 .accessibilityIdentifier("capture.cancel")
                 Spacer(minLength: 0)
-                VuuroCaptureCircleButton(
-                    systemName: showsLiveMesh ? "cube.fill" : "cube",
-                    accessibilityLabel: showsLiveMesh ? "Hide live mesh" : "Show live mesh"
-                ) {
+                VuuroLiveMeshPill(isOn: showsLiveMesh) {
                     showsLiveMesh.toggle()
+                    VuuroToast.shared.show(vuuroLocalized(VuuroLiveMeshPill.toast(isOn: showsLiveMesh)))
                 }
                 .accessibilityIdentifier("capture.liveMesh")
                 VuuroCaptureTogglePill(isOn: roomTypeGuessOn) {

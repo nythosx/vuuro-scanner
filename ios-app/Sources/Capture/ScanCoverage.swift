@@ -835,6 +835,7 @@ final class ScanCoverageTracker: ObservableObject {
             if hasMesh {
                 hasMesh = false
                 snapshot = ScanCoverageSnapshot()
+                DiagnosticsLog.shared.record("Coverage map hidden: the session reported no new LiDAR mesh for this room (\(meshAnchors.count) mesh pieces, all from an earlier room or none)", category: .state)
             }
             return
         }

@@ -31,6 +31,11 @@ struct MeshViewer: View {
     @State private var photoStopping = false
     @State private var exporting = false
     @State private var exportError: String?
+    @State private var photoBuild: MeshPhotoTexturer.Output?
+    @State private var sending = false
+    @State private var sendProgress: Double = 0
+    @State private var sendNote: String?
+    @State private var sendError: String?
 
     enum Mode: String, CaseIterable, Identifiable {
         case clay = "Clay"
@@ -85,6 +90,17 @@ struct MeshViewer: View {
                 ProgressView("Saving the 3D model")
                     .padding()
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            } else if sending {
+                ProgressView(value: sendProgress) {
+                    Text("Sending the Photo model to the web tour")
+                } currentValueLabel: {
+                    Text("\(Int((sendProgress * 100).rounded()))%")
+                        .monospacedDigit()
+                }
+                .frame(width: 260)
+                .padding()
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityIdentifier("meshViewer.sendProgress")
             } else if let loadError {
                 messageCard(loadError)
             }
@@ -128,6 +144,15 @@ struct MeshViewer: View {
                 }
                 .disabled(built == nil || texturing || exporting)
                 .accessibilityIdentifier("meshViewer.share")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    sendToWebTour()
+                } label: {
+                    Label("Send to web tour", systemImage: "globe")
+                }
+                .disabled(built == nil || texturing || exporting || sending)
+                .accessibilityIdentifier("meshViewer.sendToWeb")
             }
         }
         .onChange(of: mode) { _, _ in
@@ -194,6 +219,18 @@ struct MeshViewer: View {
                 Text(exportError)
                     .font(.system(size: 13))
                     .foregroundStyle(.red)
+            }
+            if let sendError {
+                Text(sendError)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier("meshViewer.sendError")
+            }
+            if let sendNote {
+                Text(sendNote)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("meshViewer.sendNote")
             }
             if let frameError {
                 Text(frameError)
@@ -385,6 +422,7 @@ struct MeshViewer: View {
                 }
             }
             photoTextured = true
+            photoBuild = output
             let seconds = Int(Date().timeIntervalSince(started).rounded())
             photoNote = Self.photoTextureNote(output, seconds: seconds, dropped: usable.dropped, total: frames.count)
             applyMode()
@@ -471,6 +509,68 @@ struct MeshViewer: View {
             }
             if !ShareSheetPresenter.present(items: [url]) {
                 exportError = "The share sheet could not open."
+            }
+        }
+    }
+
+    static func sentNote(bytes: Int, triangles: Int, photos: Int) -> String {
+        let megabytes = Double(bytes) / 1_048_576
+        return "Sent to the web tour: \(String(format: "%.1f", megabytes)) MB, \(triangles.formatted()) triangles, \(Self.photos(photos)). Open the tour link and tap 3D scan."
+    }
+
+    private func sendToWebTour() {
+        guard let built, !sending else { return }
+        sendNote = nil
+        sendError = nil
+        guard let output = photoBuild else {
+            sendError = "Open Photo first. The web tour gets the Photo model."
+            return
+        }
+        let sessionId: String
+        do {
+            guard let linked = try LidarCaptureLibrary.manifest(at: captureURL).sessionId else {
+                sendError = "This LiDAR capture is not linked to a saved scan, so there is no web tour to send it to."
+                return
+            }
+            sessionId = linked
+        } catch {
+            sendError = "Could not read this capture: \(error.localizedDescription)"
+            return
+        }
+        guard let token = ScanHistoryStore.shared.all().first(where: { $0.sessionId == sessionId })?.accessToken, !token.isEmpty else {
+            sendError = "The access token of this scan is not on this phone, so the 3D model cannot be sent."
+            return
+        }
+        let parts = zip(built.parts, output.parts).map { LidarModelGlb.Part(output: $0.1, transform: $0.0.transform) }
+        let images = output.images
+        let capture = captureURL.lastPathComponent
+        sending = true
+        sendProgress = 0
+        Task { @MainActor in
+            defer { sending = false }
+            let encoded = await Task.detached(priority: .userInitiated) {
+                LidarModelGlb.encode(parts: parts, images: images)
+            }.value
+            let model: LidarModelGlb.Encoded
+            switch encoded {
+            case .success(let value):
+                model = value
+            case .failure(let error):
+                sendError = "Could not build the 3D model for the web: \(error.localizedDescription)"
+                DiagnosticsLog.shared.record("Web 3D model not built: \(error.localizedDescription)", category: .error)
+                return
+            }
+            do {
+                let info = try await ScanServiceClient().uploadLidarModel(sessionId: sessionId, accessToken: token, glb: model.data, triangles: model.triangles, photos: model.photos, capture: capture) { fraction in
+                    sendProgress = fraction
+                }
+                sendNote = Self.sentNote(bytes: info.bytes, triangles: model.triangles, photos: model.photos)
+                DiagnosticsLog.shared.record("Web 3D model sent for scan \(sessionId): \(info.bytes) bytes, \(model.triangles) triangles", category: .state)
+            } catch is CancellationError {
+                sendError = "Sending the 3D model was stopped."
+            } catch {
+                sendError = "Could not send the 3D model: \(error.localizedDescription)"
+                DiagnosticsLog.shared.record("Web 3D model not sent: \(error.localizedDescription)", category: .error)
             }
         }
     }

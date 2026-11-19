@@ -1320,3 +1320,68 @@ body {
   .tour-dollhouse-label { font-size: 13px; }
   .tour-reel .tour-stand-toolbar:last-child { padding: 0 10px 10px; }
 }
+
+.tour-model {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.tour-model .tour-status {
+  padding-top: 40px;
+  text-align: center;
+}
+
+.tour-model-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.tour-model-bar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: calc(100% - 32px);
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.15);
+}
+
+.tour-model-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  background: transparent;
+  color: #222;
+  cursor: pointer;
+}
+
+.tour-model-btn.is-active {
+  background: #222;
+  color: #fff;
+}
+
+.tour-model-caption {
+  position: absolute;
+  left: 16px;
+  bottom: 84px;
+  margin: 0;
+  font-size: 12px;
+  color: #555;
+  pointer-events: none;
+}

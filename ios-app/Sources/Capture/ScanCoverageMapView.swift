@@ -26,7 +26,30 @@ struct ScanCoverageMapView: View {
                     .padding(.horizontal, 6)
                     .background(.ultraThinMaterial, in: Capsule())
             }
+        } else {
+            waiting
         }
+    }
+
+    static let waitingText = "Map shows once LiDAR sees the room. Keep walking slowly."
+
+    private var waiting: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Image(systemName: "map")
+                .font(.caption.weight(.bold))
+                .accessibilityHidden(true)
+            Text(vuuroLocalized(Self.waitingText))
+                .font(.caption.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(.white)
+        .frame(width: size, alignment: .leading)
+        .padding(6)
+        .background(Color.black.opacity(Self.panelShade), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("capture.coverageMapWaiting")
     }
 
     private var toggleButton: some View {

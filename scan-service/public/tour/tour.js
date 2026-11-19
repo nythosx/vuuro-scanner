@@ -10,6 +10,7 @@
     photoIndex: 0,
     hasPhotos: false,
     hasDollhouse: false,
+    hasModel: false,
     roomsWithPhotos: [],
     roomSequenceIndex: 0,
     isEmbed: false,
@@ -188,13 +189,15 @@
     var rawRooms = Array.isArray(data.rooms) ? data.rooms : [];
     state.data = {
       rooms: rawRooms,
-      dollhouse_glb_url: data.dollhouse_glb_url || null
+      dollhouse_glb_url: data.dollhouse_glb_url || null,
+      lidar_model: data.lidar_model && typeof data.lidar_model.url === 'string' ? data.lidar_model : null
     };
     state.features = data.features && typeof data.features === 'object' ? data.features : null;
     state.walkthroughMode = readWalkthroughMode();
     state.roomsWithPhotos = computeRoomsWithPhotos(rawRooms);
     state.hasPhotos = state.roomsWithPhotos.length > 0;
     state.hasDollhouse = !!state.data.dollhouse_glb_url;
+    state.hasModel = !!state.data.lidar_model;
     state.mode = 'plan';
     state.roomIndex = 0;
     state.photoIndex = 0;
@@ -275,6 +278,10 @@
       state.mode = 'dollhouse';
       return;
     }
+    if (parsed.mode === window.TourRoute.MODES.MODEL && state.hasModel) {
+      state.mode = 'model';
+      return;
+    }
     state.mode = 'plan';
   }
 
@@ -302,6 +309,9 @@
     }
     if (state.mode === 'dollhouse') {
       return { mode: 'dollhouse' };
+    }
+    if (state.mode === 'model') {
+      return { mode: 'model' };
     }
     return { mode: 'plan' };
   }
@@ -465,6 +475,9 @@
     }
     var modes = document.createElement('div');
     modes.className = 'tour-stand-pill';
+    if (state.hasModel) {
+      modes.appendChild(toolbarButton('model', window.TourStrings.t('menu_model'), state.mode === 'model', function () { switchMode('model'); }));
+    }
     if (state.hasDollhouse) {
       modes.appendChild(toolbarButton('dollhouse', window.TourStrings.t('menu_dollhouse'), state.mode === 'dollhouse', function () { switchMode('dollhouse'); }));
     }
@@ -565,6 +578,9 @@
     if (mode === 'dollhouse' && !state.hasDollhouse) {
       return;
     }
+    if (mode === 'model' && !state.hasModel) {
+      return;
+    }
     stopGuidedTour();
     state.mode = mode;
     syncUrl(false);
@@ -578,6 +594,9 @@
     if (window.TourStands && typeof window.TourStands.destroy === 'function') {
       window.TourStands.destroy();
     }
+    if (window.TourModel) {
+      window.TourModel.stop();
+    }
     clearNode(els.viewport);
     if (state.mode === 'plan') {
       renderPlan();
@@ -587,7 +606,22 @@
       renderStandView();
     } else if (state.mode === 'dollhouse') {
       renderDollhouse();
+    } else if (state.mode === 'model') {
+      renderModel();
     }
+  }
+
+  function renderModel() {
+    if (window.TourModel) {
+      window.TourModel.render(els.viewport, state.data.lidar_model, withToken);
+      return;
+    }
+    setStatus(window.TourStrings.t('loading_3d'), false);
+    window.addEventListener('tourmodelready', function () {
+      if (state.mode === 'model') {
+        window.TourModel.render(els.viewport, state.data.lidar_model, withToken);
+      }
+    }, { once: true });
   }
 
   function renderStandView() {
@@ -747,7 +781,7 @@
     } else if (state.mode === 'plan' && walkthroughEnabled()) {
       showHint(window.TourStandStrings.t('hint_plan_walk'));
     } else {
-      var hintKey = state.mode === 'photos' ? 'hint_photos' : state.mode === 'dollhouse' ? 'hint_dollhouse' : 'hint_plan';
+      var hintKey = state.mode === 'photos' ? 'hint_photos' : state.mode === 'dollhouse' ? 'hint_dollhouse' : state.mode === 'model' ? 'hint_model' : 'hint_plan';
       showHint(window.TourStrings.t(hintKey));
     }
     els.minimap.hidden = state.mode !== 'photos';

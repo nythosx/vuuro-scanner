@@ -176,9 +176,30 @@ function finishResponseEarly(): bool
     return false;
 }
 
+function lidarModelStore(): \VuuroScan\Export\LidarModelStore
+{
+    return new \VuuroScan\Export\LidarModelStore(__DIR__ . '/../data/lidar-model');
+}
+
+function lidarModelInfo(string $sessionId): ?array
+{
+    $meta = lidarModelStore()->meta($sessionId);
+    if ($meta === null) {
+        return null;
+    }
+    return [
+        'url' => publicBaseUrl() . "/scan-sessions/{$sessionId}/export/lidar-model.glb",
+        'bytes' => (int) ($meta['bytes'] ?? 0),
+        'uploaded_at' => (string) ($meta['uploaded_at'] ?? ''),
+        'triangles' => $meta['triangles'] ?? null,
+        'photos' => $meta['photos'] ?? null,
+    ];
+}
+
 function deleteSessionPhotoDir(string $sessionId): void
 {
     skyboxStore()->deleteSession($sessionId);
+    lidarModelStore()->deleteSession($sessionId);
     $photoDir = __DIR__ . '/../data/photos/' . $sessionId;
     if (!is_dir($photoDir)) {
         return;
@@ -523,6 +544,7 @@ function attachTourMetadata(array $floorPlan, array $session, ?string $token, \V
             . '&lang=' . rawurlencode($lang),
         'plan_image_url' => $base . "/scan-sessions/{$sessionId}/export/floorplan.png?style=auto&lang=" . urlencode($lang) . '&unit=metric',
         'dollhouse_glb_url' => $base . "/scan-sessions/{$sessionId}/export/dollhouse.glb",
+        'lidar_model' => lidarModelInfo($sessionId),
     ];
     return $floorPlan;
 }
@@ -566,7 +588,7 @@ function purgeExpiredSessions(ScanSessionRepository $repo, \VuuroScan\ServiceSet
 
 const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'view_client_events', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload', 'compare', 'read_tour', 'view_tour_readiness'];
 const ADMIN_WRITE_ACTIONS = ['publish_to_platform'];
-const VIEW_TOKEN_ACTIONS = ['read_tour', 'read_photo_upload', 'export_png', 'export_dollhouse'];
+const VIEW_TOKEN_ACTIONS = ['read_tour', 'read_photo_upload', 'export_png', 'export_dollhouse', 'export_lidar_model'];
 
 function compareRequested(): bool
 {
@@ -783,7 +805,7 @@ if ($method === 'GET' && ($path === '/tour' || str_starts_with($path, '/tour/'))
         header('Content-Type: ' . ($mimeMap[$extension] ?? 'application/octet-stream'));
         header('Cache-Control: public, max-age=300');
         if ($extension === 'html') {
-            header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none';");
+            header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob:; object-src 'none'; base-uri 'none';");
         }
         readfile($target);
         return;
@@ -797,7 +819,7 @@ if ($method === 'GET' && ($path === '/tour' || str_starts_with($path, '/tour/'))
     }
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: no-store');
-    header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none';");
+    header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob:; object-src 'none'; base-uri 'none';");
     $tourLang = $settings->exportLanguage();
     if (isset($_GET['lang']) && is_string($_GET['lang']) && ExportLanguage::isSupported($_GET['lang'])) {
         $tourLang = $_GET['lang'];
@@ -2586,6 +2608,100 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/floorplan\.
     return;
 }
 
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/lidar-model/chunks$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'upload_lidar_model');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':upload_lidar_model', 120, 300)) {
+        return;
+    }
+    $offsetHeader = (string) ($_SERVER['HTTP_X_UPLOAD_OFFSET'] ?? '');
+    $totalHeader = (string) ($_SERVER['HTTP_X_UPLOAD_TOTAL'] ?? '');
+    if (!ctype_digit($offsetHeader) || !ctype_digit($totalHeader)) {
+        respondError(422, 'missing_upload_range', 'Send X-Upload-Offset and X-Upload-Total as whole byte counts.');
+        return;
+    }
+    $result = lidarModelStore()->appendChunk($session['id'], (int) $offsetHeader, (int) $totalHeader, $rawRequestBody);
+    if (!$result['ok']) {
+        $repo->logAccess($session['id'], 'upload_lidar_model', 'rejected_' . $result['code']);
+        respondError($result['status'], $result['code'], $result['message'], isset($result['received_bytes']) ? ['received_bytes' => $result['received_bytes']] : []);
+        return;
+    }
+    respond(200, ['received_bytes' => $result['received_bytes']]);
+    return;
+}
+
+if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/lidar-model/complete$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'upload_lidar_model');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':complete_lidar_model', 20, 300)) {
+        return;
+    }
+    $body = json_body($rawRequestBody);
+    $total = $body['total_bytes'] ?? null;
+    $sha256 = $body['sha256'] ?? null;
+    if (!is_int($total) || !is_string($sha256) || preg_match('/^[a-fA-F0-9]{64}$/', $sha256) !== 1) {
+        respondError(422, 'invalid_completion', 'Send total_bytes as a whole number and sha256 as 64 hex characters.');
+        return;
+    }
+    $result = lidarModelStore()->complete($session['id'], $total, $sha256, $body);
+    if (!$result['ok']) {
+        $repo->logAccess($session['id'], 'upload_lidar_model', 'rejected_' . $result['code']);
+        respondError($result['status'], $result['code'], $result['message'], isset($result['received_bytes']) ? ['received_bytes' => $result['received_bytes']] : []);
+        return;
+    }
+    $repo->logAccess($session['id'], 'upload_lidar_model', 'stored');
+    respond(201, ['lidar_model' => lidarModelInfo($session['id'])]);
+    return;
+}
+
+if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)/lidar-model$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'delete_lidar_model');
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':delete_lidar_model', 20, 300)) {
+        return;
+    }
+    lidarModelStore()->deleteSession($session['id']);
+    respond(200, ['deleted' => true]);
+    return;
+}
+
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/lidar-model\.glb$#', $path, $m)) {
+    $session = authorizeSession($repo, $m[1], 'export_lidar_model', true);
+    if ($session === null) {
+        return;
+    }
+    if (rateLimited($repo, $session['id'] . ':' . clientIp() . ':export_lidar_model', 30, 300)) {
+        return;
+    }
+    $store = lidarModelStore();
+    $modelPath = $store->modelPath($session['id']);
+    if ($modelPath === null) {
+        respondError(404, 'no_lidar_model', 'No 3D scan model has been uploaded for this session yet.');
+        return;
+    }
+    $meta = $store->meta($session['id']) ?? [];
+    $modelEtag = '"' . (string) ($meta['sha256'] ?? md5_file($modelPath)) . '"';
+    $clientEtag = $_SERVER['HTTP_IF_NONE_MATCH'] ?? '';
+    if (is_string($clientEtag) && trim($clientEtag) === $modelEtag) {
+        http_response_code(304);
+        header('ETag: ' . $modelEtag);
+        header('Cache-Control: private, no-cache');
+        return;
+    }
+    header('Content-Type: model/gltf-binary');
+    header('Content-Length: ' . (string) filesize($modelPath));
+    header('ETag: ' . $modelEtag);
+    header('Cache-Control: private, no-cache');
+    readfile($modelPath);
+    return;
+}
+
 if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/dollhouse\.glb$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'export_dollhouse', true);
     if ($session === null) {
@@ -3149,6 +3265,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
         'viewer_url' => $viewerUrl,
         'plan_image_url' => $planImageUrl,
         'dollhouse_glb_url' => $floorPlan['rooms'] !== [] ? ($base . "/scan-sessions/{$sessionId}/export/dollhouse.glb") : null,
+        'lidar_model' => lidarModelInfo($sessionId),
         'rooms' => $rooms,
         'features' => ['walkthrough' => $standsResult['walkthrough']],
     ]);

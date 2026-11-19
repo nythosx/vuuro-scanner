@@ -34,7 +34,20 @@
       popout_full_tour: 'Open full tour',
       hint_plan: 'Tap a room to open its photos.',
       hint_photos: 'Use the arrows to see the next photo. Tap \u00D7 to go back to the plan.',
-      hint_dollhouse: 'Drag to rotate, pinch or scroll to zoom, drag with two fingers or right-click to move. Tap a dot to open its photo.'
+      hint_dollhouse: 'Drag to rotate, pinch or scroll to zoom, drag with two fingers or right-click to move. Tap a dot to open its photo.',
+      hint_model: 'Drag to rotate, pinch or scroll to zoom, drag with two fingers or right-click to move. Double-tap a spot to turn around it.',
+      menu_model: '3D scan',
+      model_mode_photo: 'Photo',
+      model_mode_clay: 'Clay',
+      model_mode_mesh: 'Mesh',
+      model_ceiling: 'Ceiling',
+      model_reset_view: 'Reset view',
+      model_unavailable: 'No 3D scan has been sent for this tour yet.',
+      model_load_failed: 'Could not load the 3D scan: {reason}.',
+      model_loading_percent: 'Loading 3D scan\u2026 {percent}%',
+      model_triangles: '{count} triangles',
+      model_photo_one: '{count} photo',
+      model_photos: '{count} photos'
     },
     nl: {
       loading_tour: 'Rondleiding laden\u2026',
@@ -68,7 +81,20 @@
       popout_full_tour: 'Open volledige rondleiding',
       hint_plan: 'Tik op een ruimte om de foto\u2019s te openen.',
       hint_photos: 'Gebruik de pijlen voor de volgende foto. Tik op \u00D7 om terug te gaan naar de plattegrond.',
-      hint_dollhouse: 'Sleep om te draaien, knijp of scroll om te zoomen, sleep met twee vingers of rechtsklik om te verschuiven. Tik op een punt om de foto te openen.'
+      hint_dollhouse: 'Sleep om te draaien, knijp of scroll om te zoomen, sleep met twee vingers of rechtsklik om te verschuiven. Tik op een punt om de foto te openen.',
+      hint_model: 'Sleep om te draaien, knijp of scroll om te zoomen, sleep met twee vingers of rechtsklik om te verschuiven. Dubbeltik op een plek om eromheen te draaien.',
+      menu_model: '3D-scan',
+      model_mode_photo: 'Foto',
+      model_mode_clay: 'Klei',
+      model_mode_mesh: 'Mesh',
+      model_ceiling: 'Plafond',
+      model_reset_view: 'Beeld herstellen',
+      model_unavailable: 'Voor deze rondleiding is nog geen 3D-scan verstuurd.',
+      model_load_failed: 'Kon de 3D-scan niet laden: {reason}.',
+      model_loading_percent: '3D-scan laden\u2026 {percent}%',
+      model_triangles: '{count} driehoeken',
+      model_photo_one: '{count} foto',
+      model_photos: '{count} foto\u2019s'
     }
   };
 
