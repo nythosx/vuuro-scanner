@@ -216,6 +216,26 @@ if ($shapeUploadStatus === 201) {
     check('photos[] entries are scoped to their own room only', $otherRooms === 0, "got $otherRooms other room(s) with photos");
 }
 
+echo "\n== The tour link carries a read-only view token ==\n";
+parse_str((string) parse_url((string) ($tourBody['viewer_url'] ?? ''), PHP_URL_QUERY), $viewerQuery);
+$viewToken = (string) ($viewerQuery['token'] ?? '');
+check('viewer_url carries a view token, not the access token', str_starts_with($viewToken, 'view-') && $viewToken !== $accessToken, "got '$viewToken'");
+[$planStatus, $planBody] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId", null, $accessToken);
+check('the floor plan tour link carries the same view token', str_contains((string) ($planBody['tour']['viewer_url'] ?? ''), 'token=' . rawurlencode($viewToken)));
+[$viewTourStatus, $viewTourBody] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId/tour.json?token=" . rawurlencode($viewToken));
+check('tour.json opens with the view token', $viewTourStatus === 200, "got HTTP $viewTourStatus");
+check('tour.json opened with the view token keeps the view token in viewer_url', str_contains((string) ($viewTourBody['viewer_url'] ?? ''), 'token=' . rawurlencode($viewToken)));
+[$viewPngStatus] = net_http_raw('GET', "$baseUrl/scan-sessions/$sessionId/export/floorplan.png?style=auto&token=" . rawurlencode($viewToken));
+check('the plan picture opens with the view token', $viewPngStatus === 200, "got HTTP $viewPngStatus");
+[$viewReadStatus] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId", null, $viewToken);
+check('the view token cannot read the full session', $viewReadStatus === 401, "got HTTP $viewReadStatus");
+[$viewDeleteStatus] = net_http_json('DELETE', "$baseUrl/scan-sessions/$sessionId", null, $viewToken);
+check('the view token cannot delete the scan', $viewDeleteStatus === 401, "got HTTP $viewDeleteStatus");
+[$viewDeleteRoomStatus] = net_http_json('DELETE', "$baseUrl/scan-sessions/$sessionId/rooms/" . rawurlencode((string) $roomId), null, $viewToken);
+check('the view token cannot delete a room', $viewDeleteRoomStatus === 401, "got HTTP $viewDeleteRoomStatus");
+[$stillThereStatus] = net_http_json('GET', "$baseUrl/scan-sessions/$sessionId", null, $accessToken);
+check('the scan is still there after the view token tried to delete it', $stillThereStatus === 200, "got HTTP $stillThereStatus");
+
 echo "\n" . count($failures) . " failure(s) out of $checks check(s).\n";
 if ($failures !== []) {
     fwrite(STDERR, "\nNET VERDICT: RED\n");

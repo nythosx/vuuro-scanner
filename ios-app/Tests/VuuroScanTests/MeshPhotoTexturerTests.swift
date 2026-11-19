@@ -202,4 +202,158 @@ final class LidarStorageBudgetTests: XCTestCase {
         let stats = try JSONDecoder().decode(LidarCaptureStats.self, from: Data(json.utf8))
         XCTAssertNil(stats.lowestFreeDiskMB)
     }
+
+
+    func testSlopeTooSteepForAPhotoIsStillFilledFromIt() {
+        let a = SIMD3<Float>(0, -0.05, -2)
+        let b = SIMD3<Float>(0, 0.05, -2)
+        let c = SIMD3<Float>(0.01, 0, -2.1)
+        XCTAssertNil(MeshPhotoTexturer.score(a, b, c, camera()))
+        XCTAssertNotNil(MeshPhotoTexturer.score(a, b, c, camera(), relaxed: true))
+        XCTAssertNil(MeshPhotoTexturer.score(a, b, c, camera(depth: [800, 800, 800, 800]), relaxed: true))
+    }
+
+    func testCornerOutsideThePhotoTakesTheEdgeOfIt() throws {
+        let coords = try XCTUnwrap(MeshPhotoTexturer.clampedUVs(SIMD3(0, 0, -2), SIMD3(5, 0, -2), SIMD3(0, 5, -2), camera()))
+        XCTAssertEqual(coords[0], 0.5, accuracy: 0.001)
+        XCTAssertEqual(coords[2], 1, accuracy: 0.001)
+        XCTAssertEqual(coords[5], 0, accuracy: 0.001)
+        XCTAssertNil(MeshPhotoTexturer.clampedUVs(SIMD3(0, 0, -2), SIMD3(0, 0, 2), SIMD3(0, 1, -2), camera()))
+    }
+
+    func testTrianglesWithNoPhotoTakeTheirNeighboursPhoto() {
+        var vertices: [Float] = [0, 0, -2, 0.1, 0, -2, 0, 0.1, -2, 0.1, 0.1, -2, 0.2, 0.1, -2]
+        var faces: [UInt32] = [0, 1, 2, 1, 3, 2, 1, 4, 3]
+        let part = MeshPhotoTexturer.PartInput(
+            vertices: vertices.withUnsafeMutableBytes { Data($0) },
+            vertexCount: 5,
+            faces: faces.withUnsafeMutableBytes { Data($0) },
+            faceCount: 3,
+            classes: nil,
+            transform: matrix_identity_float4x4
+        )
+        let world = stride(from: 0, to: vertices.count, by: 3).map { SIMD3<Float>(vertices[$0], vertices[$0 + 1], vertices[$0 + 2]) }
+        var slots = [0, -1, -1]
+        var uvs = [Float](repeating: 0, count: 18)
+        let filled = MeshPhotoTexturer.fillFromNeighbours(part, world: world, valid: [true, true, true], slots: &slots, uvs: &uvs, cameras: [camera()])
+        XCTAssertEqual(filled, 2)
+        XCTAssertEqual(slots, [0, 0, 0])
+        XCTAssertEqual(uvs[6], 0.5 + 0.1 * 1337 / 2 / 1920, accuracy: 0.001)
+    }
+
+    func testTriangleWithNoNeighbourInAPhotoStaysGrey() {
+        var vertices: [Float] = [0, 0, -2, 0.1, 0, -2, 0, 0.1, -2, 1, 1, -2, 1.1, 1, -2, 1, 1.1, -2]
+        var faces: [UInt32] = [0, 1, 2, 3, 4, 5]
+        let part = MeshPhotoTexturer.PartInput(
+            vertices: vertices.withUnsafeMutableBytes { Data($0) },
+            vertexCount: 6,
+            faces: faces.withUnsafeMutableBytes { Data($0) },
+            faceCount: 2,
+            classes: nil,
+            transform: matrix_identity_float4x4
+        )
+        let world = stride(from: 0, to: vertices.count, by: 3).map { SIMD3<Float>(vertices[$0], vertices[$0 + 1], vertices[$0 + 2]) }
+        var slots = [0, -1]
+        var uvs = [Float](repeating: 0, count: 12)
+        XCTAssertEqual(MeshPhotoTexturer.fillFromNeighbours(part, world: world, valid: [true, true], slots: &slots, uvs: &uvs, cameras: [camera()]), 0)
+        XCTAssertEqual(slots, [0, -1])
+    }
+
+    @MainActor
+    func testPhotoNotesSayOnePhotoAndTheFilledShare() {
+        XCTAssertEqual(MeshViewer.photos(1), "1 photo")
+        XCTAssertEqual(MeshViewer.photos(3), "3 photos")
+        XCTAssertEqual(MeshViewer.photos(1, kind: "keyframe"), "1 keyframe photo")
+        let output = MeshPhotoTexturer.Output(parts: [], images: [], photosUnreadable: 1, facesInPhoto: 80, facesFilled: 15, totalFaces: 100, photosUsed: 1, gains: [])
+        let note = MeshViewer.photoTextureNote(output, seconds: 4, dropped: 1, total: 10)
+        XCTAssertTrue(note.hasPrefix("Photo texture from 1 keyframe photo at"))
+        XCTAssertTrue(note.contains("80% of the mesh, 15% more filled in from a nearby photo"))
+        XCTAssertTrue(note.contains("Grey parts are not in any photo."))
+        XCTAssertTrue(note.contains("1 photo from before a position reset was left out."))
+        XCTAssertTrue(note.contains("1 photo could not be opened, so its parts are grey too."))
+        let full = MeshPhotoTexturer.Output(parts: [], images: [], photosUnreadable: 0, facesInPhoto: 90, facesFilled: 10, totalFaces: 100, photosUsed: 2, gains: [])
+        XCTAssertFalse(MeshViewer.photoTextureNote(full, seconds: 4, dropped: 0, total: 10).contains("Grey"))
+    }
+
+    private func fan() -> (MeshPhotoTexturer.PartInput, [SIMD3<Float>]) {
+        var vertices: [Float] = [0, 0, -2, 0.1, 0, -2, 0, 0.1, -2, -0.1, 0, -2, 0, -0.1, -2]
+        var faces: [UInt32] = [0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 1]
+        let part = MeshPhotoTexturer.PartInput(
+            vertices: vertices.withUnsafeMutableBytes { Data($0) },
+            vertexCount: 5,
+            faces: faces.withUnsafeMutableBytes { Data($0) },
+            faceCount: 4,
+            classes: nil,
+            transform: matrix_identity_float4x4
+        )
+        let world = stride(from: 0, to: vertices.count, by: 3).map { SIMD3<Float>(vertices[$0], vertices[$0 + 1], vertices[$0 + 2]) }
+        return (part, world)
+    }
+
+    func testMajorityPhotoOfTheNeighbours() {
+        XCTAssertEqual(MeshPhotoTexturer.majoritySlot([2, 2, 2, 1], current: 1), 2)
+        XCTAssertNil(MeshPhotoTexturer.majoritySlot([2, 1], current: 0))
+        XCTAssertNil(MeshPhotoTexturer.majoritySlot([-1, -1, 2], current: 0))
+        XCTAssertNil(MeshPhotoTexturer.majoritySlot([1, 1, 1], current: 1))
+        XCTAssertNil(MeshPhotoTexturer.majoritySlot([], current: 0))
+    }
+
+    func testOddTriangleTakesTheNeighboursPhotoWhenItIsNearlyAsGood() {
+        let (part, world) = fan()
+        let valid = [true, true, true, true]
+        var slots = [1, 0, 0, 0]
+        var uvs = [Float](repeating: 0, count: 24)
+        let cameras = [camera(), camera()]
+        let best = [Float](repeating: MeshPhotoTexturer.score(world[0], world[1], world[2], camera()) ?? 0, count: 4)
+        let facesOf = MeshPhotoTexturer.facesByVertex(part, vertexCount: world.count, valid: valid)
+        let changed = MeshPhotoTexturer.smoothChoices(part, world: world, facesOf: facesOf, valid: valid, best: best, slots: &slots, uvs: &uvs, cameras: cameras, isVisible: { _, _ in true })
+        XCTAssertEqual(changed, 1)
+        XCTAssertEqual(slots, [0, 0, 0, 0])
+        XCTAssertEqual(uvs[0], 0.5, accuracy: 0.001)
+    }
+
+    func testOddTriangleKeepsItsPhotoWhenTheNeighboursPhotoIsMuchWorse() {
+        let (part, world) = fan()
+        let valid = [true, true, true, true]
+        var slots = [1, 0, 0, 0]
+        var uvs = [Float](repeating: 0, count: 24)
+        let near = camera(at: SIMD3(0, 0, -1))
+        let cameras = [camera(), near]
+        let best = [Float](repeating: MeshPhotoTexturer.score(world[0], world[1], world[2], near) ?? 0, count: 4)
+        let facesOf = MeshPhotoTexturer.facesByVertex(part, vertexCount: world.count, valid: valid)
+        XCTAssertEqual(MeshPhotoTexturer.smoothChoices(part, world: world, facesOf: facesOf, valid: valid, best: best, slots: &slots, uvs: &uvs, cameras: cameras, isVisible: { _, _ in true }), 0)
+        XCTAssertEqual(slots, [1, 0, 0, 0])
+        let blocked = MeshPhotoTexturer.smoothChoices(part, world: world, facesOf: facesOf, valid: valid, best: best.map { $0 * 10 }, slots: &slots, uvs: &uvs, cameras: cameras, isVisible: { _, _ in false })
+        XCTAssertEqual(blocked, 0)
+    }
+
+    func testSeamDarkensTheBrighterPhotoToMeetTheOther() {
+        let (part, world) = fan()
+        let valid = [true, true, true, true]
+        let slots = [0, 1, 1, 1]
+        let bright = MeshPhotoTexturer.Luminance(width: 2, height: 2, values: [180, 180, 180, 180])
+        let dark = MeshPhotoTexturer.Luminance(width: 2, height: 2, values: [120, 120, 120, 120])
+        let shades = MeshPhotoTexturer.seamShades(part, world: world, valid: valid, slots: slots, cameras: [camera(), camera()], samples: [bright, dark], gains: [1, 1])
+        XCTAssertEqual(shades.count, 12)
+        for corner in 0..<3 {
+            XCTAssertEqual(shades[corner], 120.0 / 180.0, accuracy: 0.01)
+        }
+        for corner in 3..<12 {
+            XCTAssertEqual(shades[corner], 1, accuracy: 0.001)
+        }
+    }
+
+    func testSeamShadeNeverGoesBelowTheFloorAndFollowsTheGain() {
+        let (part, world) = fan()
+        let valid = [true, true, true, true]
+        let slots = [0, 1, 1, 1]
+        let bright = MeshPhotoTexturer.Luminance(width: 2, height: 2, values: [250, 250, 250, 250])
+        let dark = MeshPhotoTexturer.Luminance(width: 2, height: 2, values: [50, 50, 50, 50])
+        let floor = MeshPhotoTexturer.seamShades(part, world: world, valid: valid, slots: slots, cameras: [camera(), camera()], samples: [bright, dark], gains: [1, 1])
+        XCTAssertEqual(floor[0], MeshPhotoTexturer.seamMinShade, accuracy: 0.001)
+        let evened = MeshPhotoTexturer.seamShades(part, world: world, valid: valid, slots: slots, cameras: [camera(), camera()], samples: [bright, dark], gains: [0.2, 1])
+        XCTAssertEqual(evened[0], 1, accuracy: 0.001)
+        let noSamples = MeshPhotoTexturer.seamShades(part, world: world, valid: valid, slots: slots, cameras: [camera(), camera()], samples: [nil, nil], gains: [1, 1])
+        XCTAssertEqual(noSamples, [Float](repeating: 1, count: 12))
+    }
 }

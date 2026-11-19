@@ -34,6 +34,36 @@ is built yet; it is the shape to confirm with Mark before any platform work star
   schedule (or when a listing is opened) and uses the newest data. No push or webhook from
   Scan Service.
 
+## Update 19 Nov 2026: the owner attaches their own scan
+
+Mark's direction on 17 Nov: the owner who scanned signs up for free on Vuuro and attaches
+the scan to their object. This adds an owner path next to the staff path above. Nothing
+below is built on the platform side.
+
+1. The owner scans with the app. No Vuuro account is needed to scan.
+2. In History, the owner taps share and gets the `VUURO-SCAN-1:` code, the same code staff
+   use today.
+3. The owner signs up for free on Vuuro, opens their object and pastes the code.
+4. The Vuuro backend decodes it, calls `GET /scan-sessions/{id}` with the token to check it
+   is real, and stores `(session_id, access_token)` against the object, server-side only.
+   The full token never goes to the browser.
+5. For the object page, Vuuro uses the tour link from `GET /scan-sessions/{id}`
+   (`tour.viewer_url`). Since 19 Nov that link carries a read-only view token (`view-...`).
+   It opens the tour, the plan picture, the dollhouse and the tour photos. It cannot read
+   the full session, change anything or delete the scan; those answer 401. Rotating the
+   full token retires the view token too.
+6. Identity: for the owner path, the ids typed at scan time do not have to match Vuuro's
+   object ids. Vuuro keeps its own link from object to `session_id`, so the id check in the
+   staff path above is skipped here.
+7. One scan, one object: if the same code is pasted on a second object, Vuuro refuses it
+   unless the first link is removed. Vuuro holds this rule, not Scan Service.
+8. Interior photos of an occupied unit stay hidden on the public page until move-out, as in
+   the staff path. The owner sees everything behind their own login.
+
+What Scan Service still needs for this path: nothing new beyond the view token. The
+production server (LIDAR-102) has to be live first, because the tour link must point at
+`https://scan.vuuro.nl`.
+
 ## Why this is a proposal and not an implementation
 
 Scan Service is API-first on purpose (root `README.md`'s roadmap: "prove capture and the

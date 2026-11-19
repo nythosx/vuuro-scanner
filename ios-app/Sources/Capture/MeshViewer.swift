@@ -310,14 +310,14 @@ struct MeshViewer: View {
             }
             textured = true
             let percent = output.totalVertices > 0 ? output.coloredVertices * 100 / output.totalVertices : 0
-            var note = "Colored from \(output.framesUsed) photos, \(percent)% of the mesh seen in a photo"
+            var note = "Colored from \(Self.photos(output.framesUsed)), \(percent)% of the mesh seen in a photo"
             if usable.dropped > 0 {
-                note += ", \(usable.dropped) photos from before a position reset left out"
+                note += ", \(Self.photos(usable.dropped)) from before a position reset left out"
                 if LidarPoseReset.mostlyLeftOut(dropped: usable.dropped, total: frames.count) { note += ". " + LidarPoseReset.mostlyLeftOutText }
                 DiagnosticsLog.shared.record("Texture: \(usable.dropped) frames from before a position reset were left out", category: .state)
             }
             if output.framesFailed > 0 {
-                note += ", \(output.framesFailed) photos could not be opened"
+                note += ", \(Self.photos(output.framesFailed)) could not be opened"
             }
             textureNote = note
             applyMode()
@@ -385,9 +385,8 @@ struct MeshViewer: View {
                 }
             }
             photoTextured = true
-            let percent = output.totalFaces > 0 ? output.facesInPhoto * 100 / output.totalFaces : 0
             let seconds = Int(Date().timeIntervalSince(started).rounded())
-            photoNote = "Photo texture from \(output.photosUsed) keyframe photos at \(MeshPhotoTexturer.textureSize) px with brightness evened out, \(percent)% of the mesh, built in \(seconds) s. Grey parts are not in those photos.\(usable.dropped > 0 ? " \(usable.dropped) photos from before a position reset were left out." : "")\(LidarPoseReset.mostlyLeftOut(dropped: usable.dropped, total: frames.count) ? " " + LidarPoseReset.mostlyLeftOutText : "")\(output.photosUnreadable > 0 ? " \(output.photosUnreadable) photos could not be opened, so their parts are grey too." : "")"
+            photoNote = Self.photoTextureNote(output, seconds: seconds, dropped: usable.dropped, total: frames.count)
             applyMode()
             let stages = monitor.stages + [MeshPhotoBuildLog.Stage(name: "3D scene", seconds: Date().timeIntervalSince(sceneStarted))]
             logPhotoBuild(.done, started: started, monitor: monitor, stages: stages, triangles: output.totalFaces, photosUsed: output.photosUsed)
@@ -399,6 +398,33 @@ struct MeshViewer: View {
             photoNote = "Could not build the photo texture: \(error.localizedDescription)"
             logPhotoBuild(.failed, started: started, monitor: monitor, stages: monitor.stages, triangles: built.triangles, photosUsed: 0)
         }
+    }
+
+    static func photos(_ count: Int, kind: String = "") -> String {
+        "\(count) \(kind.isEmpty ? "" : kind + " ")\(count == 1 ? "photo" : "photos")"
+    }
+
+    static func photoTextureNote(_ output: MeshPhotoTexturer.Output, seconds: Int, dropped: Int, total: Int) -> String {
+        let percent = output.totalFaces > 0 ? output.facesInPhoto * 100 / output.totalFaces : 0
+        let filledPercent = output.totalFaces > 0 ? output.facesFilled * 100 / output.totalFaces : 0
+        var note = "Photo texture from \(photos(output.photosUsed, kind: "keyframe")) at \(MeshPhotoTexturer.textureSize) px with brightness evened out, \(percent)% of the mesh"
+        if output.facesFilled > 0 {
+            note += ", \(filledPercent < 1 ? "under 1" : String(filledPercent))% more filled in from a nearby photo"
+        }
+        note += ", built in \(seconds) s."
+        if output.facesInPhoto + output.facesFilled < output.totalFaces {
+            note += " Grey parts are not in any photo."
+        }
+        if dropped > 0 {
+            note += " \(photos(dropped)) from before a position reset \(dropped == 1 ? "was" : "were") left out."
+        }
+        if LidarPoseReset.mostlyLeftOut(dropped: dropped, total: total) {
+            note += " " + LidarPoseReset.mostlyLeftOutText
+        }
+        if output.photosUnreadable > 0 {
+            note += " \(photos(output.photosUnreadable)) could not be opened, so \(output.photosUnreadable == 1 ? "its" : "their") parts are grey too."
+        }
+        return note
     }
 
     private func logPhotoBuild(_ outcome: MeshPhotoBuildLog.Outcome, started: Date, monitor: MeshPhotoTexturer.Monitor, stages: [MeshPhotoBuildLog.Stage], triangles: Int, photosUsed: Int) {
@@ -887,7 +913,11 @@ enum MeshSceneBuilder {
             elements.append(SCNGeometryElement(data: data, primitiveType: .triangles, primitiveCount: group.count / 3, bytesPerIndex: 4))
             materials.append(material(group))
         }
-        let geometry = SCNGeometry(sources: [vertex, uv], elements: elements)
+        var sources = [vertex, uv]
+        if output.colors.count == output.vertexCount * 12 {
+            sources.append(SCNGeometrySource(data: output.colors, semantic: .color, vectorCount: output.vertexCount, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: 4, dataOffset: 0, dataStride: 12))
+        }
+        let geometry = SCNGeometry(sources: sources, elements: elements)
         geometry.materials = materials
         return geometry
     }

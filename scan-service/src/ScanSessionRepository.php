@@ -294,6 +294,23 @@ final class ScanSessionRepository
         return $presentedToken !== null && $storedHash !== '' && hash_equals($storedHash, hash('sha256', $presentedToken));
     }
 
+    public static function viewTokenFromHash(string $sessionId, string $accessTokenHash): string
+    {
+        return 'view-' . substr(hash_hmac('sha256', 'tour-view:' . $sessionId, $accessTokenHash), 0, 40);
+    }
+
+    public function viewToken(array $session): ?string
+    {
+        $storedHash = (string) ($session['access_token_hash'] ?? '');
+        return $storedHash === '' ? null : self::viewTokenFromHash((string) $session['id'], $storedHash);
+    }
+
+    public function viewTokenMatches(array $session, ?string $presentedToken): bool
+    {
+        $expected = $this->viewToken($session);
+        return $presentedToken !== null && $expected !== null && hash_equals($expected, $presentedToken);
+    }
+
     public function logAccess(string $sessionId, string $action, string $outcome): void
     {
         $stmt = $this->db->prepare(

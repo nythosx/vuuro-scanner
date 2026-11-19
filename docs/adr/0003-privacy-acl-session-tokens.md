@@ -69,3 +69,12 @@ been closed: `ScanHistoryStore` now writes the token to the iOS Keychain via
 it persists, re-hydrating from the Keychain on read. The paragraph above is kept
 as-is for history; read it as the state that existed at the time this ADR was
 written, not as current behaviour.
+
+## Addendum (2026-11-19): read-only view token for the tour link
+
+The tour link (`viewer_url` in the floor plan and in `tour.json`) no longer carries the
+access token. It carries a view token, `view-` plus 40 hex characters, made with HMAC-SHA256
+from the session id and the stored token hash. The view token only opens `read_tour`,
+`read_photo_upload`, `export_png` and `export_dollhouse`; every other route answers 401.
+It follows the session expiry, and rotating the access token retires it. Its access log
+outcome is `granted_view`.

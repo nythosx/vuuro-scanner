@@ -516,9 +516,10 @@ function attachTourMetadata(array $floorPlan, array $session, ?string $token, \V
     $base = publicBaseUrl();
     $lang = $settings->exportLanguage();
     $sessionId = (string) $session['id'];
+    $viewToken = str_starts_with($token, 'view-') ? $token : ScanSessionRepository::viewTokenFromHash($sessionId, hash('sha256', $token));
     $floorPlan['tour'] = [
         'viewer_url' => $base . '/tour/' . rawurlencode($sessionId)
-            . '?token=' . rawurlencode($token)
+            . '?token=' . rawurlencode($viewToken)
             . '&lang=' . rawurlencode($lang),
         'plan_image_url' => $base . "/scan-sessions/{$sessionId}/export/floorplan.png?style=auto&lang=" . urlencode($lang) . '&unit=metric',
         'dollhouse_glb_url' => $base . "/scan-sessions/{$sessionId}/export/dollhouse.glb",
@@ -565,6 +566,7 @@ function purgeExpiredSessions(ScanSessionRepository $repo, \VuuroScan\ServiceSet
 
 const ADMIN_READ_ACTIONS = ['read', 'view_access_log', 'view_client_events', 'export_png', 'export_pdf', 'export_svg', 'export_vuuroscan', 'read_photo_upload', 'compare', 'read_tour', 'view_tour_readiness'];
 const ADMIN_WRITE_ACTIONS = ['publish_to_platform'];
+const VIEW_TOKEN_ACTIONS = ['read_tour', 'read_photo_upload', 'export_png', 'export_dollhouse'];
 
 function compareRequested(): bool
 {
@@ -660,8 +662,13 @@ function authorizeSession(ScanSessionRepository $repo, string $sessionId, string
         return $session;
     }
 
+    $viaViewToken = false;
     if ($session !== null) {
         $granted = $repo->tokenMatches($session, $token);
+        if (!$granted && in_array($action, VIEW_TOKEN_ACTIONS, true) && $repo->viewTokenMatches($session, $token)) {
+            $granted = true;
+            $viaViewToken = true;
+        }
     } else {
         hash_equals('00000000-0000-0000-0000-000000000000', $token);
         $granted = false;
@@ -678,7 +685,7 @@ function authorizeSession(ScanSessionRepository $repo, string $sessionId, string
     }
 
     if ($session !== null && !($granted && $action === 'upload_photo')) {
-        $repo->logAccess($session['id'], $action, $granted ? 'granted' : 'denied');
+        $repo->logAccess($session['id'], $action, $granted ? ($viaViewToken ? 'granted_view' : 'granted') : 'denied');
     }
 
     if (!$granted) {
@@ -3083,7 +3090,7 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/tour\.json$#', $pa
         $tourLang = $_GET['lang'];
     }
     $planImageUrl = $base . "/scan-sessions/{$sessionId}/export/floorplan.png?style=auto&lang=" . urlencode($tourLang) . "&unit=metric";
-    $viewerUrl = $base . '/tour/' . rawurlencode($sessionId) . '?token=' . rawurlencode((string) (presented_token_with_query_fallback() ?? '')) . '&lang=' . rawurlencode($tourLang);
+    $viewerUrl = $base . '/tour/' . rawurlencode($sessionId) . '?token=' . rawurlencode((string) ($repo->viewToken($session) ?? '')) . '&lang=' . rawurlencode($tourLang);
 
     $tourRooms = [];
     foreach ($floorPlan['rooms'] as $roomEntry) {

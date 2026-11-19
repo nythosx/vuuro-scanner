@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 extension ScanServiceClient {
@@ -14,9 +15,19 @@ extension ScanServiceClient {
             return nil
         }
         components.queryItems = [
-            URLQueryItem(name: "token", value: session.accessToken),
+            URLQueryItem(name: "token", value: Self.viewToken(sessionId: session.id, accessToken: session.accessToken)),
             URLQueryItem(name: "lang", value: AppLanguageSettings.exportLanguageCode),
         ]
         return components.url
+    }
+
+    static func viewToken(sessionId: String, accessToken: String) -> String {
+        let tokenHash = hex(SHA256.hash(data: Data(accessToken.utf8)))
+        let mac = HMAC<SHA256>.authenticationCode(for: Data("tour-view:\(sessionId)".utf8), using: SymmetricKey(data: Data(tokenHash.utf8)))
+        return "view-" + String(hex(mac).prefix(40))
+    }
+
+    private static func hex<D: Sequence>(_ bytes: D) -> String where D.Element == UInt8 {
+        bytes.map { String(format: "%02x", $0) }.joined()
     }
 }

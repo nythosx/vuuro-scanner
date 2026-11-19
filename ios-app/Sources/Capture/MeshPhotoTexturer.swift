@@ -25,6 +25,7 @@ enum MeshPhotoTexturer {
     struct PartOutput {
         let positions: Data
         let uvs: Data
+        let colors: Data
         let vertexCount: Int
         let groups: [Group]
     }
@@ -34,9 +35,16 @@ enum MeshPhotoTexturer {
         let images: [CGImage?]
         let photosUnreadable: Int
         let facesInPhoto: Int
+        let facesFilled: Int
         let totalFaces: Int
         let photosUsed: Int
         let gains: [Float]
+    }
+
+    struct PartState {
+        let valid: [Bool]
+        let slots: [Int]
+        let uvs: [Float]
     }
 
     struct Camera {
@@ -124,6 +132,12 @@ enum MeshPhotoTexturer {
     static let minDistance: Float = 0.1
     static let maxDistance: Float = 6
     static let minFacing: Float = 0.2
+    static let relaxedMinFacing: Float = 0.05
+    static let fillRings = 12
+    static let smoothRounds = 2
+    static let smoothSlack: Float = 1.2
+    static let seamRounds = 30
+    static let seamMinShade: Float = 0.6
     static let hiddenClasses: Set<UInt8> = [3, 9]
     static let invalidPoint = SIMD3<Float>(repeating: 1e9)
 
@@ -171,61 +185,57 @@ enum MeshPhotoTexturer {
             return .failure(PlainError(message: "No triangle of the mesh is seen clearly in a photo."))
         }
 
-        var outputs: [PartOutput] = []
+        var states: [PartState] = []
         var inPhoto = 0
+        var filled = 0
+        let keptCameras = kept.map { cameras[$0] }
         monitor.beginStage()
         for (part, input) in parts.enumerated() {
             if stopped() { return .failure(CancellationError()) }
-            var positionsBy: [Int: [Float]] = [:]
-            var uvsBy: [Int: [Float]] = [:]
-            let local = localFloats(input)
             let base = partStart[part]
-            forEachFace(input, world: world[part]) { face, a, b, c in
+            let points = world[part]
+            var slots = [Int](repeating: -1, count: input.faceCount)
+            var faceUVs = [Float](repeating: 0, count: input.faceCount * 6)
+            var valid = [Bool](repeating: false, count: input.faceCount)
+            var best = [Float](repeating: .greatestFiniteMagnitude, count: input.faceCount)
+            var cancelledHere = false
+            forEachFace(input, world: points) { face, a, b, c in
                 guard a != invalidPoint else { return }
+                valid[face] = true
+                if face % 256 == 0, monitor.isCancelled { cancelledHere = true }
+                if cancelledHere { return }
                 let global = base + face
-                let classId = faceClass(input, face)
-                var slot = -1
-                var uv: [Float] = [0, 0, 0, 0, 0, 0]
-                var bestScore = Float.greatestFiniteMagnitude
                 for (mapped, index) in kept.enumerated() where isVisible(visible, camera: index, face: global, words: words) {
-                    guard let value = score(a, b, c, cameras[index]), value < bestScore else { continue }
-                    let camera = cameras[index]
-                    var coords: [Float] = []
-                    for point in [a, b, c] {
-                        if let pixel = project(point, camera) {
-                            coords.append(pixel.x / camera.width)
-                            coords.append(pixel.y / camera.height)
-                        }
-                    }
-                    guard coords.count == 6 else { continue }
-                    bestScore = value
-                    slot = mapped
-                    uv = coords
+                    guard let value = score(a, b, c, cameras[index]), value < best[face], let coords = clampedUVs(a, b, c, cameras[index]) else { continue }
+                    best[face] = value
+                    slots[face] = mapped
+                    faceUVs.replaceSubrange((face * 6)..<(face * 6 + 6), with: coords)
                 }
-                if slot >= 0 { inPhoto += 1 }
-                let key = (slot + 1) * 256 + Int(classId)
-                for corner in 0..<3 {
-                    let index = Int(faceIndex(input, face, corner))
-                    positionsBy[key, default: []].append(contentsOf: local[(index * 3)..<(index * 3 + 3)])
+            }
+            if stopped() { return .failure(CancellationError()) }
+            let facesOf = facesByVertex(input, vertexCount: points.count, valid: valid)
+            smoothChoices(input, world: points, facesOf: facesOf, valid: valid, best: best, slots: &slots, uvs: &faceUVs, cameras: keptCameras, isVisible: { slot, face in
+                isVisible(visible, camera: kept[slot], face: base + face, words: words)
+            }, isCancelled: stopped)
+            for face in 0..<input.faceCount where valid[face] {
+                if slots[face] >= 0 {
+                    inPhoto += 1
+                    continue
                 }
-                uvsBy[key, default: []].append(contentsOf: uv)
+                if face % 256 == 0, stopped() { break }
+                let (a, b, c) = facePoints(input, world: points, face: face)
+                var bestRelaxed = Float.greatestFiniteMagnitude
+                for (mapped, camera) in keptCameras.enumerated() {
+                    guard let value = score(a, b, c, camera, relaxed: true), value < bestRelaxed, let coords = clampedUVs(a, b, c, camera) else { continue }
+                    bestRelaxed = value
+                    slots[face] = mapped
+                    faceUVs.replaceSubrange((face * 6)..<(face * 6 + 6), with: coords)
+                }
+                if slots[face] >= 0 { filled += 1 }
             }
-            var positions: [Float] = []
-            var uvs: [Float] = []
-            var groups: [Group] = []
-            for key in positionsBy.keys.sorted() {
-                guard let bucketPositions = positionsBy[key], let bucketUVs = uvsBy[key] else { continue }
-                let start = positions.count / 3
-                positions.append(contentsOf: bucketPositions)
-                uvs.append(contentsOf: bucketUVs)
-                groups.append(Group(slot: key / 256 - 1, classId: UInt8(key % 256), start: start, count: bucketPositions.count / 3))
-            }
-            outputs.append(PartOutput(
-                positions: positions.withUnsafeBufferPointer { Data(buffer: $0) },
-                uvs: uvs.withUnsafeBufferPointer { Data(buffer: $0) },
-                vertexCount: positions.count / 3,
-                groups: groups
-            ))
+            if stopped() { return .failure(CancellationError()) }
+            filled += fillFromNeighbours(input, world: points, valid: valid, slots: &slots, uvs: &faceUVs, cameras: keptCameras, facesOf: facesOf, isCancelled: stopped)
+            states.append(PartState(valid: valid, slots: slots, uvs: faceUVs))
             monitor.tick(of: parts.count, from: 0.7, to: 0.85)
         }
         monitor.endStage("picking photos")
@@ -236,7 +246,8 @@ enum MeshPhotoTexturer {
         for face in 0..<faceTotal {
             centroids.append((corners[face * 3] + corners[face * 3 + 1] + corners[face * 3 + 2]) / 3)
         }
-        let pairs = gainPairs(kept: kept, visible: visible, words: words, centroids: centroids, cameras: cameras, samples: kept.map { index in candidates[index].imageURL.flatMap(loadLuminance) })
+        let samples = kept.map { index in candidates[index].imageURL.flatMap(loadLuminance) }
+        let pairs = gainPairs(kept: kept, visible: visible, words: words, centroids: centroids, cameras: cameras, samples: samples)
         if stopped() { return .failure(CancellationError()) }
         let gains = levelGains(pairs: pairs, count: kept.count)
         monitor.report(0.9)
@@ -244,6 +255,50 @@ enum MeshPhotoTexturer {
         corners = []
         centroids = []
         visible = []
+
+        var outputs: [PartOutput] = []
+        monitor.beginStage()
+        for (part, input) in parts.enumerated() {
+            if stopped() { return .failure(CancellationError()) }
+            let state = states[part]
+            let shades = seamShades(input, world: world[part], valid: state.valid, slots: state.slots, cameras: keptCameras, samples: samples, gains: gains, isCancelled: stopped)
+            let local = localFloats(input)
+            var positionsBy: [Int: [Float]] = [:]
+            var uvsBy: [Int: [Float]] = [:]
+            var colorsBy: [Int: [Float]] = [:]
+            for face in 0..<input.faceCount where state.valid[face] {
+                let key = (state.slots[face] + 1) * 256 + Int(faceClass(input, face))
+                for corner in 0..<3 {
+                    let index = Int(faceIndex(input, face, corner))
+                    positionsBy[key, default: []].append(contentsOf: local[(index * 3)..<(index * 3 + 3)])
+                    let shade = shades[face * 3 + corner]
+                    colorsBy[key, default: []].append(contentsOf: [shade, shade, shade])
+                }
+                uvsBy[key, default: []].append(contentsOf: state.uvs[(face * 6)..<(face * 6 + 6)])
+            }
+            var positions: [Float] = []
+            var uvs: [Float] = []
+            var colors: [Float] = []
+            var groups: [Group] = []
+            for key in positionsBy.keys.sorted() {
+                guard let bucketPositions = positionsBy[key], let bucketUVs = uvsBy[key], let bucketColors = colorsBy[key] else { continue }
+                let start = positions.count / 3
+                positions.append(contentsOf: bucketPositions)
+                uvs.append(contentsOf: bucketUVs)
+                colors.append(contentsOf: bucketColors)
+                groups.append(Group(slot: key / 256 - 1, classId: UInt8(key % 256), start: start, count: bucketPositions.count / 3))
+            }
+            outputs.append(PartOutput(
+                positions: positions.withUnsafeBufferPointer { Data(buffer: $0) },
+                uvs: uvs.withUnsafeBufferPointer { Data(buffer: $0) },
+                colors: colors.withUnsafeBufferPointer { Data(buffer: $0) },
+                vertexCount: positions.count / 3,
+                groups: groups
+            ))
+            monitor.tick(of: parts.count, from: 0.9, to: 0.92)
+        }
+        states = []
+        monitor.endStage("seams")
 
         var images: [CGImage?] = []
         let context = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull()])
@@ -258,14 +313,14 @@ enum MeshPhotoTexturer {
             } else {
                 images.append(nil)
             }
-            monitor.tick(of: kept.count, from: 0.9, to: 1)
+            monitor.tick(of: kept.count, from: 0.92, to: 1)
         }
         monitor.endStage("loading photos")
         let unreadable = images.filter { $0 == nil }.count
         guard unreadable < images.count else {
             return .failure(PlainError(message: "None of the chosen frame photos could be opened for the texture."))
         }
-        return .success(Output(parts: outputs, images: images, photosUnreadable: unreadable, facesInPhoto: inPhoto, totalFaces: totalFaces, photosUsed: kept.count, gains: gains))
+        return .success(Output(parts: outputs, images: images, photosUnreadable: unreadable, facesInPhoto: inPhoto, facesFilled: filled, totalFaces: totalFaces, photosUsed: kept.count, gains: gains))
     }
 
     static func lowMemory(available: Int) -> Bool {
@@ -347,17 +402,39 @@ enum MeshPhotoTexturer {
         return SIMD2<Float>(u, v)
     }
 
-    static func score(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, _ camera: Camera) -> Float? {
+    static func projectInFront(_ point: SIMD3<Float>, _ camera: Camera) -> SIMD2<Float>? {
+        let local = camera.view * SIMD4<Float>(point, 1)
+        let distance = -local.z
+        guard distance >= minDistance else { return nil }
+        return SIMD2<Float>(camera.fx * local.x / distance + camera.cx, -camera.fy * local.y / distance + camera.cy)
+    }
+
+    static func clampedUVs(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, _ camera: Camera) -> [Float]? {
+        var coords: [Float] = []
+        coords.reserveCapacity(6)
+        for point in [a, b, c] {
+            guard let pixel = projectInFront(point, camera) else { return nil }
+            coords.append(min(max(pixel.x / camera.width, 0), 1))
+            coords.append(min(max(pixel.y / camera.height, 0), 1))
+        }
+        return coords
+    }
+
+    static func score(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, _ camera: Camera, relaxed: Bool = false) -> Float? {
         let centroid = (a + b + c) / 3
         guard let center = project(centroid, camera) else { return nil }
-        guard project(a, camera) != nil, project(b, camera) != nil, project(c, camera) != nil else { return nil }
+        if relaxed {
+            guard projectInFront(a, camera) != nil, projectInFront(b, camera) != nil, projectInFront(c, camera) != nil else { return nil }
+        } else {
+            guard project(a, camera) != nil, project(b, camera) != nil, project(c, camera) != nil else { return nil }
+        }
         let toCamera = camera.position - centroid
         let distance = simd_length(toCamera)
         guard distance > 0 else { return nil }
         let cross = simd_cross(b - a, c - a)
         let area = simd_length(cross)
         let facing = area > 0 ? abs(simd_dot(cross / area, toCamera / distance)) : 1
-        guard facing >= minFacing else { return nil }
+        guard facing >= (relaxed ? relaxedMinFacing : minFacing) else { return nil }
         if let depth = camera.depth, camera.depthWidth > 0, camera.depthHeight > 0 {
             let du = min(Int(center.x * Float(camera.depthWidth) / camera.width), camera.depthWidth - 1)
             let dv = min(Int(center.y * Float(camera.depthHeight) / camera.height), camera.depthHeight - 1)
@@ -365,13 +442,166 @@ enum MeshPhotoTexturer {
             if millimeters > 0 {
                 let along = -(camera.view * SIMD4<Float>(centroid, 1)).z
                 let measured = Float(millimeters) / 1000
-                if abs(measured - along) > 0.08 + 0.03 * along { return nil }
+                let tolerance: Float = relaxed ? 0.2 + 0.06 * along : 0.08 + 0.03 * along
+                if abs(measured - along) > tolerance { return nil }
             }
         }
         let halfWidth = camera.width / 2
         let halfHeight = camera.height / 2
         let offCenter = max(abs(center.x - halfWidth) / halfWidth, abs(center.y - halfHeight) / halfHeight)
         return distance * (1 + offCenter) / facing
+    }
+
+    static func facesByVertex(_ input: PartInput, vertexCount: Int, valid: [Bool]) -> [[Int32]] {
+        var facesOf = [[Int32]](repeating: [], count: vertexCount)
+        for face in 0..<input.faceCount where valid[face] {
+            for corner in 0..<3 {
+                facesOf[Int(faceIndex(input, face, corner))].append(Int32(face))
+            }
+        }
+        return facesOf
+    }
+
+    static func facePoints(_ input: PartInput, world: [SIMD3<Float>], face: Int) -> (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>) {
+        (world[Int(faceIndex(input, face, 0))], world[Int(faceIndex(input, face, 1))], world[Int(faceIndex(input, face, 2))])
+    }
+
+    static func majoritySlot(_ neighbours: [Int], current: Int) -> Int? {
+        var counts: [Int: Int] = [:]
+        for slot in neighbours where slot >= 0 {
+            counts[slot, default: 0] += 1
+        }
+        guard let top = counts.max(by: { $0.value < $1.value || ($0.value == $1.value && $0.key > $1.key) }) else { return nil }
+        guard top.key != current, top.value * 2 > neighbours.count, top.value > counts[current, default: 0] else { return nil }
+        return top.key
+    }
+
+    @discardableResult
+    static func smoothChoices(_ input: PartInput, world: [SIMD3<Float>], facesOf: [[Int32]], valid: [Bool], best: [Float], slots: inout [Int], uvs: inout [Float], cameras: [Camera], isVisible: (Int, Int) -> Bool, isCancelled: () -> Bool = { false }) -> Int {
+        var total = 0
+        for _ in 0..<smoothRounds {
+            if isCancelled() { break }
+            var found: [(face: Int, slot: Int, coords: [Float])] = []
+            for face in 0..<input.faceCount where valid[face] && slots[face] >= 0 {
+                var seen: Set<Int32> = [Int32(face)]
+                var neighbourSlots: [Int] = []
+                for corner in 0..<3 {
+                    for neighbour in facesOf[Int(faceIndex(input, face, corner))] where seen.insert(neighbour).inserted {
+                        neighbourSlots.append(slots[Int(neighbour)])
+                    }
+                }
+                guard let choice = majoritySlot(neighbourSlots, current: slots[face]), isVisible(choice, face) else { continue }
+                let (a, b, c) = facePoints(input, world: world, face: face)
+                guard let value = score(a, b, c, cameras[choice]), value <= best[face] * smoothSlack, let coords = clampedUVs(a, b, c, cameras[choice]) else { continue }
+                found.append((face: face, slot: choice, coords: coords))
+            }
+            if found.isEmpty { break }
+            for item in found {
+                slots[item.face] = item.slot
+                uvs.replaceSubrange((item.face * 6)..<(item.face * 6 + 6), with: item.coords)
+            }
+            total += found.count
+        }
+        return total
+    }
+
+    static func fillFromNeighbours(_ input: PartInput, world: [SIMD3<Float>], valid: [Bool], slots: inout [Int], uvs: inout [Float], cameras: [Camera], facesOf known: [[Int32]]? = nil, isCancelled: () -> Bool = { false }) -> Int {
+        let facesOf = known ?? facesByVertex(input, vertexCount: world.count, valid: valid)
+        var open = (0..<input.faceCount).filter { valid[$0] && slots[$0] < 0 }
+        var total = 0
+        for _ in 0..<fillRings where !open.isEmpty {
+            if isCancelled() { break }
+            var found: [(face: Int, slot: Int, coords: [Float])] = []
+            for face in open {
+                let (a, b, c) = facePoints(input, world: world, face: face)
+                search: for corner in 0..<3 {
+                    for neighbour in facesOf[Int(faceIndex(input, face, corner))] where slots[Int(neighbour)] >= 0 {
+                        let slot = slots[Int(neighbour)]
+                        guard let coords = clampedUVs(a, b, c, cameras[slot]) else { continue }
+                        found.append((face: face, slot: slot, coords: coords))
+                        break search
+                    }
+                }
+            }
+            if found.isEmpty { break }
+            for item in found {
+                slots[item.face] = item.slot
+                uvs.replaceSubrange((item.face * 6)..<(item.face * 6 + 6), with: item.coords)
+            }
+            total += found.count
+            let done = Set(found.map(\.face))
+            open.removeAll { done.contains($0) }
+        }
+        return total
+    }
+
+    static func seamShades(_ input: PartInput, world: [SIMD3<Float>], valid: [Bool], slots: [Int], cameras: [Camera], samples: [Luminance?], gains: [Float], isCancelled: () -> Bool = { false }) -> [Float] {
+        var shades = [Float](repeating: 1, count: input.faceCount * 3)
+        let slotSpan = cameras.count + 1
+        var nodeOf: [Int: Int] = [:]
+        var nodeVertex: [Int] = []
+        var nodeSlot: [Int] = []
+        var cornerNode = [Int](repeating: -1, count: input.faceCount * 3)
+        for face in 0..<input.faceCount where valid[face] && slots[face] >= 0 && slots[face] < cameras.count {
+            for corner in 0..<3 {
+                let vertex = Int(faceIndex(input, face, corner))
+                let key = vertex * slotSpan + slots[face]
+                if let node = nodeOf[key] {
+                    cornerNode[face * 3 + corner] = node
+                } else {
+                    nodeOf[key] = nodeVertex.count
+                    cornerNode[face * 3 + corner] = nodeVertex.count
+                    nodeVertex.append(vertex)
+                    nodeSlot.append(slots[face])
+                }
+            }
+        }
+        guard !nodeVertex.isEmpty else { return shades }
+        var nodesAt: [Int: [Int]] = [:]
+        for node in nodeVertex.indices {
+            nodesAt[nodeVertex[node], default: []].append(node)
+        }
+        var value = [Float](repeating: 1, count: nodeVertex.count)
+        var fixed = [Bool](repeating: false, count: nodeVertex.count)
+        for (vertex, nodes) in nodesAt where nodes.count > 1 {
+            var levels: [(node: Int, level: Float)] = []
+            for node in nodes {
+                let slot = nodeSlot[node]
+                guard slot < samples.count, let sample = samples[slot], let raw = luminance(world[vertex], cameras[slot], sample) else { continue }
+                let level = raw * (slot < gains.count ? gains[slot] : 1)
+                if level > 0.03 { levels.append((node: node, level: level)) }
+            }
+            guard levels.count > 1, let target = levels.map(\.level).min() else { continue }
+            for item in levels {
+                value[item.node] = max(seamMinShade, min(1, target / item.level))
+                fixed[item.node] = true
+            }
+        }
+        guard fixed.contains(true) else { return shades }
+        var neighbours = [[Int32]](repeating: [], count: nodeVertex.count)
+        for face in 0..<input.faceCount {
+            let n0 = cornerNode[face * 3], n1 = cornerNode[face * 3 + 1], n2 = cornerNode[face * 3 + 2]
+            guard n0 >= 0, n1 >= 0, n2 >= 0 else { continue }
+            neighbours[n0].append(contentsOf: [Int32(n1), Int32(n2)])
+            neighbours[n1].append(contentsOf: [Int32(n0), Int32(n2)])
+            neighbours[n2].append(contentsOf: [Int32(n0), Int32(n1)])
+        }
+        for _ in 0..<seamRounds {
+            if isCancelled() { break }
+            var next = value
+            for node in value.indices where !fixed[node] && !neighbours[node].isEmpty {
+                var sum: Float = 0
+                for neighbour in neighbours[node] {
+                    sum += value[Int(neighbour)]
+                }
+                next[node] = sum / Float(neighbours[node].count)
+            }
+            value = next
+        }
+        for corner in cornerNode.indices where cornerNode[corner] >= 0 {
+            shades[corner] = value[cornerNode[corner]]
+        }
+        return shades
     }
 
     static func camera(_ frame: MeshFrame) -> Camera {
@@ -422,7 +652,7 @@ enum MeshPhotoTexturer {
         visible[camera * words + face / 64] & (UInt64(1) << UInt64(face % 64)) != 0
     }
 
-    private struct Luminance {
+    struct Luminance {
         let width: Int
         let height: Int
         let values: [UInt8]

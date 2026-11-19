@@ -25,6 +25,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSCameraUsageDescription: Vuuro Scan uses the camera and LiDAR sensor to capture room geometry for floor plans.
+        NSPhotoLibraryAddUsageDescription: Vuuro Scan saves floor plan images and scan photos to your photo library only when you choose Save Image.
         NSLocationWhenInUseUsageDescription: Vuuro Scan can record the approximate location of a scan so it's attached to the right property. Denying this only skips the location - the scan still works.
         NSLocalNetworkUsageDescription: Vuuro Scan uploads captures to your own Scan Service on this network.
         NSAppTransportSecurity:

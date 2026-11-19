@@ -83,13 +83,14 @@ final class ScanServiceClientTourTests: XCTestCase {
         let url = client().webTourURL(session: session(), floorPlan: nil)
         let string = url?.absoluteString ?? ""
         XCTAssertTrue(string.hasPrefix("https://scan.example.test/tour/s-1?"), string)
-        XCTAssertTrue(string.contains("token=\(token)"), string)
+        XCTAssertTrue(string.contains("token=view-8c8b67a0ecab539118636c963c814819c9ef301d"), string)
+        XCTAssertFalse(string.contains(token), string)
         XCTAssertTrue(string.contains("lang="), string)
     }
 
-    func testFallbackUsesTheSessionTokenVerbatim() throws {
-        let url = client().webTourURL(session: session(accessToken: token), floorPlan: nil)
-        XCTAssertTrue(url?.absoluteString.contains("token=\(token)") == true)
+    func testViewTokenMatchesTheScanService() {
+        XCTAssertEqual(ScanServiceClient.viewToken(sessionId: "s-1", accessToken: token), "view-8c8b67a0ecab539118636c963c814819c9ef301d")
+        XCTAssertEqual(ScanServiceClient.viewToken(sessionId: "sess-1", accessToken: "tok-1"), "view-beba046ba7ab5a1352b53faaf242b1986f77d747")
     }
 
     func testReturnsNilWhenNotConfiguredAndNoServerURL() throws {

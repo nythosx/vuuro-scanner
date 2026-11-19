@@ -473,4 +473,15 @@ final class ScanCoverageTests: XCTestCase {
         XCTAssertEqual(ScanCoverageGrid.nonDecreasing(nil, shown: 55) ?? -1, 55, accuracy: 0.001)
         XCTAssertNil(ScanCoverageGrid.nonDecreasing(nil, shown: nil))
     }
+
+
+    func testShownWallPercentDoesNotDrop() {
+        var snapshot = ScanCoverageSnapshot()
+        snapshot.wallStrips = ScanCoverageGrid.strips(for: [ScanCoverageWall(start: SIMD2(0, 0), end: SIMD2(4, 0))], meshWall: [])
+        XCTAssertEqual(snapshot.wallPercent ?? -1, 0, accuracy: 0.001)
+        snapshot.wallPercentAtLeast = 60
+        XCTAssertEqual(snapshot.wallPercent ?? -1, 60, accuracy: 0.001)
+        snapshot.wallStrips = []
+        XCTAssertEqual(snapshot.wallPercent ?? -1, 60, accuracy: 0.001)
+    }
 }

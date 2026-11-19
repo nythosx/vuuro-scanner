@@ -69,7 +69,7 @@ struct AccessLogView: View {
     }
 
     private static func isSuccessOutcome(_ outcome: String) -> Bool {
-        ["granted", "granted_grace_rotation", "stored"].contains(outcome)
+        ["granted", "granted_view", "granted_grace_rotation", "stored"].contains(outcome)
     }
 
     @MainActor

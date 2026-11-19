@@ -152,6 +152,7 @@ struct ScanCoverageSnapshot: Equatable, Sendable {
     var camera: SIMD2<Float>?
     var cameraForward: SIMD2<Float>?
     var hint: ScanCoverageHint?
+    var wallPercentAtLeast: Double?
 
     var isEmpty: Bool {
         floor.isEmpty && wall.isEmpty && furniture.isEmpty && missing.isEmpty
@@ -165,8 +166,8 @@ struct ScanCoverageSnapshot: Equatable, Sendable {
             total += length
             if strip.seen { seen += length }
         }
-        guard total > 0 else { return nil }
-        return Double(seen / total * 100)
+        guard total > 0 else { return wallPercentAtLeast }
+        return max(Double(seen / total * 100), wallPercentAtLeast ?? 0)
     }
 
     var wallMissingM: Double {
@@ -725,6 +726,7 @@ final class ScanCoverageTracker: ObservableObject {
     private var stairs: [ScanCoverageStair] = []
     private var floorWatch = ScanCoverageFloorHintWatch()
     private var shownFloorPercent: Double?
+    private var shownWallPercent: Double?
     private var lastUpdateAt: TimeInterval = -.infinity
     private var rotation = 0
     private var generation = 0
@@ -785,6 +787,7 @@ final class ScanCoverageTracker: ObservableObject {
         stairs = []
         floorWatch = ScanCoverageFloorHintWatch()
         shownFloorPercent = nil
+        shownWallPercent = nil
         lastUpdateAt = -.infinity
         rotation = 0
         isWorking = false
@@ -899,6 +902,8 @@ final class ScanCoverageTracker: ObservableObject {
         }
         shownFloorPercent = ScanCoverageGrid.nonDecreasing(current.floorPercent, shown: shownFloorPercent)
         current.floorPercent = shownFloorPercent
+        shownWallPercent = ScanCoverageGrid.nonDecreasing(current.wallPercent, shown: shownWallPercent)
+        current.wallPercentAtLeast = shownWallPercent
         self.snapshot = current
         hasMesh = !current.isEmpty
         summary = hasMesh ? LidarLiveCoverage(current) : summary

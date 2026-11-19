@@ -80,6 +80,16 @@ r_check('rotateToken() stores the hash of the NEW token', hash_equals($rotRow['a
 r_check('the stored hash itself is not accepted as a token', !$repo->tokenMatches($repo->find($hashSession['id']), $hashRow['access_token_hash']));
 r_check('an empty presented token is rejected', !$repo->tokenMatches($repo->find($hashSession['id']), ''));
 r_check('a null presented token is rejected', !$repo->tokenMatches($repo->find($hashSession['id']), null));
+
+$viewSession = $repo->find($hashSession['id']);
+$viewToken = (string) $repo->viewToken($viewSession);
+r_check('a view token starts with view-', str_starts_with($viewToken, 'view-'));
+r_check('the view token matches as a view token', $repo->viewTokenMatches($viewSession, $viewToken));
+r_check('the view token is not the access token', !$repo->tokenMatches($viewSession, $viewToken));
+r_check('the view token is the same when built from the access token', $viewToken === ScanSessionRepository::viewTokenFromHash($viewSession['id'], hash('sha256', $hashSession['access_token'])));
+r_check('an empty view token is rejected', !$repo->viewTokenMatches($viewSession, ''));
+$repo->rotateToken($viewSession['id']);
+r_check('rotating the access token retires the old view token', !$repo->viewTokenMatches($repo->find($viewSession['id']), $viewToken));
 echo "\n";
 
 echo "== Legacy plaintext tokens are hashed in place on connect ==\n";
