@@ -24,6 +24,10 @@ final class VuuroToast: ObservableObject {
         present(Content(message: text, undoLabel: nil, duration: 2.2), undo: nil)
     }
 
+    func show(_ text: String, duration: TimeInterval) {
+        present(Content(message: text, undoLabel: nil, duration: duration), undo: nil)
+    }
+
     func show(_ text: String, undoLabel: String, duration: TimeInterval = 5, undo: @escaping () -> Void) {
         present(Content(message: text, undoLabel: undoLabel, duration: duration), undo: undo)
     }

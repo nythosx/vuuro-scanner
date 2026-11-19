@@ -27,9 +27,6 @@ final class DollhouseCamera: NSObject {
     static let rotationSensitivity: Float = 0.008
     static let minimumFlickPointsPerSecond: CGFloat = 180
     static let maximumSpinRadiansPerSecond: Float = 5
-    static let twistStartRadians: Float = 0.17
-    private var twistAccumulated: Float = 0
-    private var twistEngaged = false
 
     private var hasFramed = false
     private var userAdjusted = false
@@ -38,10 +35,11 @@ final class DollhouseCamera: NSObject {
     private var framedBoundsSize: SIMD3<Float> = SIMD3<Float>(1, 1, 1)
     var onYawChange: ((Float) -> Void)?
     var followsNodePose = false
-    static let minimumPivotDistanceM: Float = 0.4
 
-    static let minimumPitch: Float = 20 * .pi / 180
-    static let maximumPitch: Float = 80 * .pi / 180
+    static let minimumPitch: Float = 5 * .pi / 180
+    static let maximumPitch: Float = 85 * .pi / 180
+    static let minimumDistanceM: Float = 0.5
+    static let maximumDistanceM: Float = 200
 
     static let zoomSpeedKey = "dollhouseZoomSpeed"
     static let rotationSpeedKey = "dollhouseRotationSpeed"
@@ -121,9 +119,6 @@ final class DollhouseCamera: NSObject {
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
         let twoFingerPan = UIPanGestureRecognizer(target: self, action: #selector(handleTwoFingerPan(_:)))
-        let twist = UIRotationGestureRecognizer(target: self, action: #selector(handleTwist(_:)))
-        twist.delegate = self
-        twist.name = "dollhouseCamera"
         twoFingerPan.minimumNumberOfTouches = 2
         twoFingerPan.maximumNumberOfTouches = 2
         pan.maximumNumberOfTouches = 1
@@ -136,7 +131,6 @@ final class DollhouseCamera: NSObject {
         view.addGestureRecognizer(pan)
         view.addGestureRecognizer(pinch)
         view.addGestureRecognizer(twoFingerPan)
-        view.addGestureRecognizer(twist)
         let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
         doubleTap.numberOfTapsRequired = 2
         doubleTap.require(toFail: pan)
@@ -177,25 +171,6 @@ final class DollhouseCamera: NSObject {
         onYawChange?(yaw)
     }
 
-    static func repivoted(position: SIMD3<Float>, focus: SIMD3<Float>) -> (yaw: Float, pitch: Float, distance: Float)? {
-        let offset = position - focus
-        let length = simd_length(offset)
-        guard length.isFinite, length > minimumPivotDistanceM else { return nil }
-        let pitch = asin(max(-1, min(1, offset.y / length)))
-        guard pitch >= minimumPitch, pitch <= maximumPitch else { return nil }
-        return (atan2(offset.z, offset.x), pitch, length)
-    }
-
-    private func pivot(on focus: SIMD3<Float>) {
-        guard let cameraNode, focus.x.isFinite, focus.y.isFinite, focus.z.isFinite else { return }
-        let position = SIMD3<Float>(cameraNode.position.x, cameraNode.position.y, cameraNode.position.z)
-        guard let pivoted = Self.repivoted(position: position, focus: focus) else { return }
-        target = focus
-        yaw = pivoted.yaw
-        pitch = pivoted.pitch
-        distance = pivoted.distance
-    }
-
     private func followNodePose() {
         guard followsNodePose, let cameraNode else { return }
         let position = SIMD3<Float>(cameraNode.position.x, cameraNode.position.y, cameraNode.position.z)
@@ -219,9 +194,6 @@ final class DollhouseCamera: NSObject {
             stopInertia()
             userAdjusted = true
             followNodePose()
-            if let focus = surfacePoint(at: gesture.location(in: view), in: view) {
-                pivot(on: focus)
-            }
         }
         let translation = gesture.translation(in: view)
         gesture.setTranslation(.zero, in: view)
@@ -249,29 +221,6 @@ final class DollhouseCamera: NSObject {
         max(-maximumSpinRadiansPerSecond, min(maximumSpinRadiansPerSecond, value))
     }
 
-    @objc func handleTwist(_ gesture: UIRotationGestureRecognizer) {
-        if gesture.state == .began {
-            stopInertia()
-            followNodePose()
-            twistAccumulated = 0
-            twistEngaged = false
-        }
-        let rotation = Float(gesture.rotation)
-        gesture.rotation = 0
-        twistAccumulated += rotation
-        if !twistEngaged {
-            twistEngaged = Self.isDeliberateTwist(twistAccumulated)
-            return
-        }
-        userAdjusted = true
-        yaw -= rotation
-        update()
-    }
-
-    static func isDeliberateTwist(_ radians: Float) -> Bool {
-        abs(radians) >= twistStartRadians
-    }
-
     @objc private func handleTwoFingerPan(_ gesture: UIPanGestureRecognizer) {
         guard let view else { return }
         if gesture.state == .began {
@@ -281,7 +230,7 @@ final class DollhouseCamera: NSObject {
         }
         let translation = gesture.translation(in: view)
         gesture.setTranslation(.zero, in: view)
-        target = clampedTarget(target + groundPanOffset(dx: Float(translation.x), dy: Float(translation.y)))
+        target = clampedTarget(target + screenPanOffset(dx: Float(translation.x), dy: Float(translation.y)))
         update()
         if gesture.state == .ended {
             let velocity = gesture.velocity(in: view)
@@ -289,29 +238,25 @@ final class DollhouseCamera: NSObject {
                 stopInertia()
                 return
             }
-            panVelocity = groundPanOffset(dx: Float(velocity.x), dy: Float(velocity.y))
+            panVelocity = screenPanOffset(dx: Float(velocity.x), dy: Float(velocity.y))
             startInertia()
         }
     }
 
-    func groundPanOffset(dx: Float, dy: Float) -> SIMD3<Float> {
-        let scale = distance * 0.002
-        let forward = SIMD3<Float>(-cos(yaw), 0, -sin(yaw))
+    func screenPanOffset(dx: Float, dy: Float) -> SIMD3<Float> {
+        let scale = distance * 0.0015
         let right = SIMD3<Float>(sin(yaw), 0, -cos(yaw))
-        return (forward * dy - right * dx) * scale
+        return (SIMD3<Float>(0, dy, 0) - right * dx) * scale
     }
 
     private func clampedTarget(_ value: SIMD3<Float>) -> SIMD3<Float> {
+        let halfHeight = max(framedBoundsSize.y, 1)
+        let y = max(defaultTarget.y - halfHeight, min(defaultTarget.y + halfHeight, value.y))
         let offset = SIMD2<Float>(value.x - defaultTarget.x, value.z - defaultTarget.z)
         let length = simd_length(offset)
-        guard length > targetRangeM, length > 0 else { return value }
+        guard length > targetRangeM, length > 0 else { return SIMD3<Float>(value.x, y, value.z) }
         let limited = offset * (targetRangeM / length)
-        return SIMD3<Float>(defaultTarget.x + limited.x, value.y, defaultTarget.z + limited.y)
-    }
-
-    static func zoomedTarget(target: SIMD3<Float>, focus: SIMD3<Float>, oldDistance: Float, newDistance: Float) -> SIMD3<Float> {
-        guard oldDistance > 0 else { return target }
-        return focus + (target - focus) * (newDistance / oldDistance)
+        return SIMD3<Float>(defaultTarget.x + limited.x, y, defaultTarget.z + limited.y)
     }
 
     private func surfacePoint(at location: CGPoint, in view: SCNView) -> SIMD3<Float>? {
@@ -326,18 +271,11 @@ final class DollhouseCamera: NSObject {
                 return focus
             }
         }
-        return groundPoint(at: location, in: view)
+        return nil
     }
 
-    private func groundPoint(at location: CGPoint, in view: SCNView) -> SIMD3<Float>? {
-        let near = view.unprojectPoint(SCNVector3(Float(location.x), Float(location.y), 0))
-        let far = view.unprojectPoint(SCNVector3(Float(location.x), Float(location.y), 1))
-        let origin = SIMD3<Float>(near.x, near.y, near.z)
-        let direction = SIMD3<Float>(far.x - near.x, far.y - near.y, far.z - near.z)
-        guard abs(direction.y) > 1e-5 else { return nil }
-        let t = (target.y - origin.y) / direction.y
-        guard t > 0, t.isFinite else { return nil }
-        return origin + direction * t
+    static func clampedDistance(_ value: Float) -> Float {
+        max(minimumDistanceM, min(maximumDistanceM, value))
     }
 
     static func clampedPitch(_ value: Float) -> Float {
@@ -397,16 +335,8 @@ final class DollhouseCamera: NSObject {
         let scale = Float(gesture.scale)
         gesture.scale = 1
         guard scale > 0 else { return }
-        let oldDistance = distance
         distance /= pow(scale, Self.storedSpeed(Self.zoomSpeedKey, fallback: Self.defaultZoomSpeed))
-        distance = max(1.5, min(200, distance))
-        if let view = gesture.view as? SCNView, gesture.numberOfTouches >= 2,
-           let focus = surfacePoint(at: gesture.location(in: view), in: view) {
-            var zoomed = clampedTarget(Self.zoomedTarget(target: target, focus: focus, oldDistance: oldDistance, newDistance: distance))
-            let halfHeight = max(framedBoundsSize.y / 2, 0.5)
-            zoomed.y = max(defaultTarget.y - halfHeight, min(defaultTarget.y + halfHeight, zoomed.y))
-            target = zoomed
-        }
+        distance = Self.clampedDistance(distance)
         update()
     }
 
@@ -423,7 +353,7 @@ final class DollhouseCamera: NSObject {
     func zoom(by factor: Float) {
         stopInertia()
         userAdjusted = true
-        distance = max(1.5, min(200, distance * factor))
+        distance = Self.clampedDistance(distance * factor)
         animateUpdate()
     }
 
@@ -446,6 +376,15 @@ final class DollhouseCamera: NSObject {
 
     @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
         stopInertia()
+        if let view = gesture.view as? SCNView,
+           let focus = surfacePoint(at: gesture.location(in: view), in: view) {
+            followNodePose()
+            userAdjusted = true
+            target = clampedTarget(focus)
+            distance = Self.clampedDistance(distance * 0.6)
+            animateUpdate()
+            return
+        }
         userAdjusted = false
         yaw = defaultYaw
         pitch = .pi / 4

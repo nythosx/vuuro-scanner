@@ -54,6 +54,57 @@ function prepare(root) {
   return parts;
 }
 
+var KEEP_SHARE = 0.9;
+var KEEP_MARGIN_M = 2;
+
+function weightedValue(entries, share, total) {
+  var passed = 0;
+  for (var i = 0; i < entries.length; i++) {
+    passed += entries[i].weight;
+    if (passed >= total * share) {
+      return entries[i].value;
+    }
+  }
+  return entries.length ? entries[entries.length - 1].value : 0;
+}
+
+function framingBox(parts, root) {
+  var full = new THREE.Box3().setFromObject(root);
+  var boxes = [];
+  var total = 0;
+  parts.forEach(function (part) {
+    if (part.classId === CEILING_CLASS) {
+      return;
+    }
+    var geometry = part.mesh.geometry;
+    var weight = geometry.index ? geometry.index.count / 3 : geometry.getAttribute('position').count / 3;
+    var box = new THREE.Box3().setFromObject(part.mesh);
+    if (!(weight > 0) || box.isEmpty()) {
+      return;
+    }
+    boxes.push({ box: box, center: box.getCenter(new THREE.Vector3()), weight: weight });
+    total += weight;
+  });
+  if (!total) {
+    return full;
+  }
+  var middle = new THREE.Vector3();
+  ['x', 'y', 'z'].forEach(function (axis) {
+    var sorted = boxes.map(function (b) { return { value: b.center[axis], weight: b.weight }; }).sort(function (a, b) { return a.value - b.value; });
+    middle[axis] = weightedValue(sorted, 0.5, total);
+  });
+  var distances = boxes.map(function (b) { return { value: b.center.distanceTo(middle), weight: b.weight }; }).sort(function (a, b) { return a.value - b.value; });
+  var reach = weightedValue(distances, KEEP_SHARE, total);
+  var limit = Math.max(reach * 2, reach + KEEP_MARGIN_M);
+  var kept = new THREE.Box3();
+  boxes.forEach(function (b) {
+    if (b.center.distanceTo(middle) <= limit) {
+      kept.union(b.box);
+    }
+  });
+  return kept.isEmpty() ? full : kept;
+}
+
 function Viewer(viewport, gltf, info) {
   var self = this;
   this.viewport = viewport;
@@ -92,10 +143,12 @@ function Viewer(viewport, gltf, info) {
   this.clay = new THREE.MeshLambertMaterial({ color: 0xd1d1d1, side: THREE.DoubleSide });
   this.wire = new THREE.MeshBasicMaterial({ color: 0x7373ff, wireframe: true });
 
-  var box = new THREE.Box3().setFromObject(this.root);
+  var full = new THREE.Box3().setFromObject(this.root);
+  var box = framingBox(this.parts, this.root);
   var center = box.getCenter(new THREE.Vector3());
   var size = Math.max(box.getSize(new THREE.Vector3()).length(), 1);
-  this.camera = new THREE.PerspectiveCamera(50, 1, 0.05, size * 20);
+  var fullSize = Math.max(full.getSize(new THREE.Vector3()).length(), size);
+  this.camera = new THREE.PerspectiveCamera(50, 1, 0.02, fullSize * 20);
   this.camera.position.copy(center).add(new THREE.Vector3(0, size * 0.8, size * 0.7));
   this.controls = new OrbitControls(this.camera, canvas);
   this.controls.target.copy(center);

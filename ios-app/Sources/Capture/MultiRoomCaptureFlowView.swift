@@ -362,6 +362,7 @@ struct MultiRoomCaptureFlowView: View {
                 )
             }
         }
+        .captureInterruptionWarnings(isScanning: coordinator.state == .scanning)
         if let photoCaptureContext {
             RoomPhotoCaptureOverlay(
                 coordinator: photoCaptureContext.coordinator,

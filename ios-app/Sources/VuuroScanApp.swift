@@ -579,6 +579,7 @@ private struct RoomCaptureFlowStep: View {
                         DiagnosticsLog.shared.record("App backgrounded mid-scan — ARKit/RoomPlan behavior here is unverified.", category: .state)
                     }
                 }
+                .captureInterruptionWarnings(isScanning: coordinator.state == .scanning)
             }
         }
     }

@@ -36,6 +36,8 @@ struct MeshViewer: View {
     @State private var sendProgress: Double = 0
     @State private var sendNote: String?
     @State private var sendError: String?
+    @State private var usableCache: PoseResetRealigner.Outcome?
+    @State private var sentModelURL: URL?
 
     enum Mode: String, CaseIterable, Identifiable {
         case clay = "Clay"
@@ -202,6 +204,8 @@ struct MeshViewer: View {
         .ignoresSafeArea(edges: .bottom)
     }
 
+    static let orbitHint = "Drag to turn, pinch to zoom, two fingers to move. Double tap a spot to go closer, or empty space to reset."
+
     @ViewBuilder
     private var pathControls: some View {
         VStack(spacing: 10) {
@@ -232,6 +236,13 @@ struct MeshViewer: View {
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("meshViewer.sendNote")
             }
+            if let sentModelURL {
+                Link(destination: sentModelURL) {
+                    Label("Open the 3D scan in the web tour", systemImage: "safari")
+                        .font(.system(size: 15, weight: .semibold))
+                }
+                .accessibilityIdentifier("meshViewer.openWebModel")
+            }
             if let frameError {
                 Text(frameError)
                     .font(.system(size: 13))
@@ -240,6 +251,13 @@ struct MeshViewer: View {
                 Text("\(skippedFrames) frames could not be read")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
+            }
+            if frameIndex == nil {
+                Text(Self.orbitHint)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("meshViewer.orbitHint")
             }
             if let frameIndex, !frames.isEmpty {
                 Text("Frame \(frameIndex + 1) of \(frames.count)")
@@ -289,6 +307,27 @@ struct MeshViewer: View {
         .background(.ultraThinMaterial)
     }
 
+    private func usableFrames(_ built: MeshSceneBuilder.Built) async -> PoseResetRealigner.Outcome {
+        if let usableCache { return usableCache }
+        let frameList = frames
+        let resets = poseResets
+        guard !resets.isEmpty else {
+            let plain = LidarPoseReset.usable(frameList, resets: resets)
+            return PoseResetRealigner.Outcome(frames: plain.frames, dropped: plain.dropped, realigned: 0)
+        }
+        let inputs = built.parts.map {
+            MeshPhotoTexturer.PartInput(vertices: $0.vertices, vertexCount: $0.vertexCount, faces: $0.faces, faceCount: $0.faceCount, classes: $0.classes, transform: $0.transform)
+        }
+        let outcome = await Task.detached(priority: .userInitiated) {
+            PoseResetRealigner.realign(frames: frameList, resets: resets, meshPoints: PoseResetRealigner.meshPoints(inputs))
+        }.value
+        if outcome.realigned > 0 {
+            DiagnosticsLog.shared.record("Position reset: \(outcome.realigned) frames lined up with the mesh again, \(outcome.dropped) still left out", category: .state)
+        }
+        usableCache = outcome
+        return outcome
+    }
+
     private func messageCard(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 15))
@@ -329,7 +368,7 @@ struct MeshViewer: View {
         }
         texturing = true
         let inputs = built.parts.map { MeshTexturer.PartInput(vertices: $0.vertices, vertexCount: $0.vertexCount, transform: $0.transform) }
-        let usable = LidarPoseReset.usable(frames, resets: poseResets)
+        let usable = await usableFrames(built)
         let frameList = usable.frames
         let work = Task.detached(priority: .userInitiated) {
             MeshTexturer.colorize(parts: inputs, frames: frameList)
@@ -348,6 +387,9 @@ struct MeshViewer: View {
             textured = true
             let percent = output.totalVertices > 0 ? output.coloredVertices * 100 / output.totalVertices : 0
             var note = "Colored from \(Self.photos(output.framesUsed)), \(percent)% of the mesh seen in a photo"
+            if usable.realigned > 0 {
+                note += ", \(Self.photos(usable.realigned)) from before a position reset lined up with the mesh again and used"
+            }
             if usable.dropped > 0 {
                 note += ", \(Self.photos(usable.dropped)) from before a position reset left out"
                 if LidarPoseReset.mostlyLeftOut(dropped: usable.dropped, total: frames.count) { note += ". " + LidarPoseReset.mostlyLeftOutText }
@@ -379,7 +421,7 @@ struct MeshViewer: View {
         let inputs = built.parts.map {
             MeshPhotoTexturer.PartInput(vertices: $0.vertices, vertexCount: $0.vertexCount, faces: $0.faces, faceCount: $0.faceCount, classes: $0.classes, transform: $0.transform)
         }
-        let usable = LidarPoseReset.usable(frames, resets: poseResets)
+        let usable = await usableFrames(built)
         let frameList = usable.frames
         let work = Task.detached(priority: .userInitiated) {
             MeshPhotoTexturer.texture(parts: inputs, frames: frameList, monitor: monitor)
@@ -424,7 +466,7 @@ struct MeshViewer: View {
             photoTextured = true
             photoBuild = output
             let seconds = Int(Date().timeIntervalSince(started).rounded())
-            photoNote = Self.photoTextureNote(output, seconds: seconds, dropped: usable.dropped, total: frames.count)
+            photoNote = Self.photoTextureNote(output, seconds: seconds, dropped: usable.dropped, total: frames.count, realigned: usable.realigned)
             applyMode()
             let stages = monitor.stages + [MeshPhotoBuildLog.Stage(name: "3D scene", seconds: Date().timeIntervalSince(sceneStarted))]
             logPhotoBuild(.done, started: started, monitor: monitor, stages: stages, triangles: output.totalFaces, photosUsed: output.photosUsed)
@@ -442,7 +484,7 @@ struct MeshViewer: View {
         "\(count) \(kind.isEmpty ? "" : kind + " ")\(count == 1 ? "photo" : "photos")"
     }
 
-    static func photoTextureNote(_ output: MeshPhotoTexturer.Output, seconds: Int, dropped: Int, total: Int) -> String {
+    static func photoTextureNote(_ output: MeshPhotoTexturer.Output, seconds: Int, dropped: Int, total: Int, realigned: Int = 0) -> String {
         let percent = output.totalFaces > 0 ? output.facesInPhoto * 100 / output.totalFaces : 0
         let filledPercent = output.totalFaces > 0 ? output.facesFilled * 100 / output.totalFaces : 0
         var note = "Photo texture from \(photos(output.photosUsed, kind: "keyframe")) at \(MeshPhotoTexturer.textureSize) px with brightness evened out, \(percent)% of the mesh"
@@ -452,6 +494,9 @@ struct MeshViewer: View {
         note += ", built in \(seconds) s."
         if output.facesInPhoto + output.facesFilled < output.totalFaces {
             note += " Grey parts are not in any photo."
+        }
+        if realigned > 0 {
+            note += " \(photos(realigned)) from before a position reset lined up with the mesh again and \(realigned == 1 ? "was" : "were") used."
         }
         if dropped > 0 {
             note += " \(photos(dropped)) from before a position reset \(dropped == 1 ? "was" : "were") left out."
@@ -522,6 +567,7 @@ struct MeshViewer: View {
         guard let built, !sending else { return }
         sendNote = nil
         sendError = nil
+        sentModelURL = nil
         guard let output = photoBuild else {
             sendError = "Open Photo first. The web tour gets the Photo model."
             return
@@ -561,10 +607,12 @@ struct MeshViewer: View {
                 return
             }
             do {
-                let info = try await ScanServiceClient().uploadLidarModel(sessionId: sessionId, accessToken: token, glb: model.data, triangles: model.triangles, photos: model.photos, capture: capture) { fraction in
+                let client = ScanServiceClient()
+                let info = try await client.uploadLidarModel(sessionId: sessionId, accessToken: token, glb: model.data, triangles: model.triangles, photos: model.photos, capture: capture) { fraction in
                     sendProgress = fraction
                 }
                 sendNote = Self.sentNote(bytes: info.bytes, triangles: model.triangles, photos: model.photos)
+                sentModelURL = client.webTourModelURL(sessionId: sessionId, accessToken: token)
                 DiagnosticsLog.shared.record("Web 3D model sent for scan \(sessionId): \(info.bytes) bytes, \(model.triangles) triangles", category: .state)
             } catch is CancellationError {
                 sendError = "Sending the 3D model was stopped."
@@ -904,6 +952,7 @@ enum MeshSceneBuilder {
             var parts: [MeshPart] = []
             var lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
             var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+            var boxes: [WeightedBox] = []
             for entry in index.anchors {
                 guard entry.transform.count == 16, entry.vertexCount > 0, entry.faceCount > 0 else { continue }
                 let vertices = try Data(contentsOf: meshURL.appendingPathComponent("\(entry.fileStem).vertices"))
@@ -930,22 +979,29 @@ enum MeshSceneBuilder {
                 parts.append(MeshPart(node: node, plain: geometry, vertices: vertices, vertexCount: entry.vertexCount, faces: faces, faceCount: entry.faceCount, classes: classes, transform: node.simdTransform))
                 triangles += entry.faceCount
                 let (boxMin, boxMax) = node.boundingBox
+                var boxLower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+                var boxUpper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
                 for corner in corners(SIMD3<Float>(boxMin), SIMD3<Float>(boxMax)) {
                     let world = node.simdTransform * SIMD4<Float>(corner, 1)
                     let point = SIMD3<Float>(world.x, world.y, world.z)
-                    lower = simd_min(lower, point)
-                    upper = simd_max(upper, point)
+                    boxLower = simd_min(boxLower, point)
+                    boxUpper = simd_max(boxUpper, point)
                 }
+                lower = simd_min(lower, boxLower)
+                upper = simd_max(upper, boxUpper)
+                boxes.append(WeightedBox(lower: boxLower, upper: boxUpper, weight: entry.faceCount))
             }
             guard triangles > 0 else {
                 return .failure(PlainError(message: "The capture has no mesh triangles."))
             }
+            let fullSize = max(simd_length(upper - lower), 1)
+            (lower, upper) = trimmedBounds(boxes) ?? (lower, upper)
             let center = (lower + upper) / 2
             let size = max(simd_length(upper - lower), 1)
             let camera = SCNCamera()
             camera.fieldOfView = orbitFieldOfView
-            camera.zNear = 0.05
-            camera.zFar = Double(size * 10)
+            camera.zNear = 0.02
+            camera.zFar = Double(max(size, fullSize) * 10)
             let cameraNode = SCNNode()
             cameraNode.camera = camera
             cameraNode.simdPosition = center + SIMD3<Float>(0, size * 0.8, size * 0.7)
@@ -1067,6 +1123,47 @@ enum MeshSceneBuilder {
         material.isDoubleSided = true
         material.lightingModel = .lambert
         return material
+    }
+
+    struct WeightedBox {
+        let lower: SIMD3<Float>
+        let upper: SIMD3<Float>
+        let weight: Int
+    }
+
+    static let keepShare: Float = 0.9
+    static let keepMarginM: Float = 2
+
+    static func trimmedBounds(_ boxes: [WeightedBox]) -> (SIMD3<Float>, SIMD3<Float>)? {
+        let usable = boxes.filter { $0.weight > 0 }
+        let total = Float(usable.reduce(0) { $0 + $1.weight })
+        guard total > 0 else { return nil }
+        let centers = usable.map { ($0.lower + $0.upper) / 2 }
+        var middle = SIMD3<Float>.zero
+        for axis in 0..<3 {
+            middle[axis] = weightedValue(zip(centers, usable).map { ($0.0[axis], $0.1.weight) }, share: 0.5, total: total)
+        }
+        let distances = centers.map { simd_distance($0, middle) }
+        let reach = weightedValue(zip(distances, usable).map { ($0.0, $0.1.weight) }, share: keepShare, total: total)
+        let limit = max(reach * 2, reach + keepMarginM)
+        var lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        for (box, distance) in zip(usable, distances) where distance <= limit {
+            lower = simd_min(lower, box.lower)
+            upper = simd_max(upper, box.upper)
+        }
+        guard (0..<3).allSatisfy({ upper[$0] >= lower[$0] }) else { return nil }
+        return (lower, upper)
+    }
+
+    private static func weightedValue(_ entries: [(Float, Int)], share: Float, total: Float) -> Float {
+        var passed: Float = 0
+        let ordered = entries.sorted { $0.0 < $1.0 }
+        for (value, weight) in ordered {
+            passed += Float(weight)
+            if passed >= total * share { return value }
+        }
+        return ordered.last?.0 ?? 0
     }
 
     private static func corners(_ low: SIMD3<Float>, _ high: SIMD3<Float>) -> [SIMD3<Float>] {
