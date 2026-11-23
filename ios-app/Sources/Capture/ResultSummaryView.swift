@@ -332,6 +332,23 @@ struct ResultSummaryView: View {
                 NavigationStack {
                     MeshViewer(captureURL: lidarMeshURL)
                 }
+            } else {
+                ZStack {
+                    Color.black.ignoresSafeArea()
+                    VStack(spacing: 16) {
+                        Text("The LiDAR capture for this scan is no longer on this phone.")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                        Button("Close") {
+                            showLidarMesh = false
+                        }
+                        .accessibilityIdentifier("result.lidarMeshErrorClose")
+                        .buttonStyle(.vuuroPrimary)
+                        .frame(maxWidth: 200)
+                    }
+                }
             }
         }
         .fullScreenCover(isPresented: $showFullScreen3D) {

@@ -54,6 +54,126 @@ function prepare(root) {
   return parts;
 }
 
+var PHONE_TEXTURE_PIXELS = 12000000;
+var DESKTOP_TEXTURE_PIXELS = 48000000;
+
+function textureBudget() {
+  var coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  return coarse ? PHONE_TEXTURE_PIXELS : DESKTOP_TEXTURE_PIXELS;
+}
+
+function fitTextures(root, budget) {
+  var textures = [];
+  root.traverse(function (object) {
+    if (!object.isMesh || !object.material || !object.material.map) {
+      return;
+    }
+    var map = object.material.map;
+    if (textures.indexOf(map) === -1 && map.image && map.image.width > 0 && map.image.height > 0) {
+      textures.push(map);
+    }
+  });
+  var total = textures.reduce(function (sum, map) { return sum + map.image.width * map.image.height; }, 0);
+  if (total <= budget) {
+    return 1;
+  }
+  var scale = Math.sqrt(budget / total);
+  textures.forEach(function (map) {
+    var image = map.image;
+    var canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    var context = canvas.getContext('2d');
+    if (!context) {
+      return;
+    }
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    if (typeof image.close === 'function') {
+      image.close();
+    }
+    map.image = canvas;
+    map.needsUpdate = true;
+  });
+  return scale;
+}
+
+var PORTRAIT_MAX_PULL_BACK = 3;
+var LABEL_LIFT_M = 0.1;
+var ROOM_AREA_SLACK_M2 = 0.15;
+var ROOM_AREA_SLACK_SHARE = 0.03;
+
+function finiteTriple(value) {
+  return Array.isArray(value) && value.length === 3 && value.every(function (v) { return typeof v === 'number' && isFinite(v); });
+}
+
+function startViewOf(extras) {
+  var start = extras && extras.start_view;
+  if (!start || !finiteTriple(start.position) || !finiteTriple(start.target)) {
+    return null;
+  }
+  var position = new THREE.Vector3().fromArray(start.position);
+  var target = new THREE.Vector3().fromArray(start.target);
+  if (position.distanceTo(target) < 0.1) {
+    return null;
+  }
+  return { position: position, target: target };
+}
+
+function outlineExtent(outline) {
+  if (!Array.isArray(outline) || outline.length < 3) {
+    return null;
+  }
+  var xs = outline.map(function (p) { return Number(p[0]); });
+  var ys = outline.map(function (p) { return Number(p[1]); });
+  if (!xs.concat(ys).every(isFinite)) {
+    return null;
+  }
+  return [Math.max.apply(null, xs) - Math.min.apply(null, xs), Math.max.apply(null, ys) - Math.min.apply(null, ys)];
+}
+
+function matchRoomLabels(marks, rooms) {
+  if (!Array.isArray(marks) || !Array.isArray(rooms)) {
+    return [];
+  }
+  var pairs = [];
+  marks.forEach(function (mark, markIndex) {
+    if (!mark || !finiteTriple(mark.center) || !(mark.area_m2 > 0)) {
+      return;
+    }
+    rooms.forEach(function (room, roomIndex) {
+      var area = Number(room && room.floor_area_m2);
+      if (!room || !room.label || !(area > 0)) {
+        return;
+      }
+      var diff = Math.abs(area - mark.area_m2);
+      if (diff > Math.max(ROOM_AREA_SLACK_M2, mark.area_m2 * ROOM_AREA_SLACK_SHARE)) {
+        return;
+      }
+      var score = diff / mark.area_m2;
+      var extent = outlineExtent(room.outline_m);
+      if (extent && mark.width_m > 0 && mark.length_m > 0) {
+        var straight = Math.abs(extent[0] - mark.width_m) + Math.abs(extent[1] - mark.length_m);
+        var turned = Math.abs(extent[0] - mark.length_m) + Math.abs(extent[1] - mark.width_m);
+        score += Math.min(straight, turned) / (mark.width_m + mark.length_m);
+      }
+      pairs.push({ mark: markIndex, room: roomIndex, score: score });
+    });
+  });
+  pairs.sort(function (a, b) { return a.score - b.score; });
+  var usedMarks = {};
+  var usedRooms = {};
+  var labels = [];
+  pairs.forEach(function (pair) {
+    if (usedMarks[pair.mark] || usedRooms[pair.room]) {
+      return;
+    }
+    usedMarks[pair.mark] = true;
+    usedRooms[pair.room] = true;
+    var center = marks[pair.mark].center;
+    labels.push({ text: String(rooms[pair.room].label), position: new THREE.Vector3(center[0], center[1] + LABEL_LIFT_M, center[2]) });
+  });
+  return labels;
+}
 var KEEP_SHARE = 0.9;
 var KEEP_MARGIN_M = 2;
 
@@ -105,7 +225,7 @@ function framingBox(parts, root) {
   return kept.isEmpty() ? full : kept;
 }
 
-function Viewer(viewport, gltf, info) {
+function Viewer(viewport, gltf, info, rooms) {
   var self = this;
   this.viewport = viewport;
   this.mode = 'photo';
@@ -127,6 +247,9 @@ function Viewer(viewport, gltf, info) {
     caption.textContent = info;
     stage.appendChild(caption);
   }
+  this.labelLayer = document.createElement('div');
+  this.labelLayer.className = 'tour-model-labels';
+  stage.appendChild(this.labelLayer);
   viewport.appendChild(stage);
   this.stage = stage;
 
@@ -157,6 +280,27 @@ function Viewer(viewport, gltf, info) {
   this.controls.maxDistance = size * 5;
   this.controls.update();
   this.home = { position: this.camera.position.clone(), target: center.clone() };
+  this.homeOffset = new THREE.Vector3(0, size * 0.8, size * 0.7);
+  this.homeFollowsAspect = true;
+  var extras = gltf.scene.userData || {};
+  var start = startViewOf(extras);
+  if (start) {
+    this.home.target.copy(start.target);
+    this.homeOffset.copy(start.position).sub(start.target);
+    this.homeFollowsAspect = false;
+    this.controls.maxDistance = Math.max(this.controls.maxDistance, this.homeOffset.length() * 3);
+  }
+  this.labels = matchRoomLabels(extras.rooms, rooms).map(function (label) {
+    var node = document.createElement('span');
+    node.className = 'tour-model-label';
+    node.textContent = label.text;
+    self.labelLayer.appendChild(node);
+    return { node: node, position: label.position };
+  });
+  this.projected = new THREE.Vector3();
+  this.atHome = true;
+  this.onControlStart = function () { self.atHome = false; };
+  this.controls.addEventListener('start', this.onControlStart);
 
   this.raycaster = new THREE.Raycaster();
   this.onDoubleClick = function (event) { self.focusAt(event.clientX, event.clientY); };
@@ -186,6 +330,7 @@ function Viewer(viewport, gltf, info) {
     self.frameId = requestAnimationFrame(loop);
     self.controls.update();
     self.renderer.render(self.scene, self.camera);
+    self.placeLabels();
   };
   loop();
 }
@@ -248,12 +393,33 @@ Viewer.prototype.focusAt = function (clientX, clientY) {
     return;
   }
   var offset = this.camera.position.clone().sub(this.controls.target);
+  this.atHome = false;
   this.controls.target.copy(hits[0].point);
   this.camera.position.copy(hits[0].point).add(offset.multiplyScalar(0.6));
   this.controls.update();
 };
 
+Viewer.prototype.placeLabels = function () {
+  if (this.labels.length === 0) {
+    return;
+  }
+  var width = this.stage.clientWidth;
+  var height = this.stage.clientHeight;
+  var self = this;
+  this.labels.forEach(function (label) {
+    self.projected.copy(label.position).project(self.camera);
+    var visible = self.projected.z > -1 && self.projected.z < 1 && Math.abs(self.projected.x) <= 1 && Math.abs(self.projected.y) <= 1;
+    label.node.hidden = !visible;
+    if (visible) {
+      var x = (self.projected.x + 1) / 2 * width;
+      var y = (1 - self.projected.y) / 2 * height;
+      label.node.style.transform = 'translate(' + x.toFixed(1) + 'px, ' + y.toFixed(1) + 'px) translate(-50%, -50%)';
+    }
+  });
+};
+
 Viewer.prototype.resetView = function () {
+  this.atHome = true;
   this.camera.position.copy(this.home.position);
   this.controls.target.copy(this.home.target);
   this.controls.update();
@@ -265,6 +431,13 @@ Viewer.prototype.resize = function () {
   this.renderer.setSize(width, height, false);
   this.camera.aspect = width / height;
   this.camera.updateProjectionMatrix();
+  var scale = this.homeFollowsAspect ? Math.min(PORTRAIT_MAX_PULL_BACK, Math.max(1, 1 / this.camera.aspect)) : 1;
+  this.home.position.copy(this.home.target).add(this.homeOffset.clone().multiplyScalar(scale));
+  if (this.atHome) {
+    this.camera.position.copy(this.home.position);
+    this.controls.target.copy(this.home.target);
+    this.controls.update();
+  }
 };
 
 Viewer.prototype.dispose = function () {
@@ -272,6 +445,7 @@ Viewer.prototype.dispose = function () {
   window.removeEventListener('resize', this.onResize);
   this.renderer.domElement.removeEventListener('dblclick', this.onDoubleClick);
   this.renderer.domElement.removeEventListener('touchend', this.onTouchEnd);
+  this.controls.removeEventListener('start', this.onControlStart);
   this.controls.dispose();
   this.root.traverse(function (object) {
     if (object.isMesh) {
@@ -303,7 +477,7 @@ function caption(model) {
   return parts.join(' · ');
 }
 
-function render(viewport, model, buildUrl) {
+function render(viewport, model, buildUrl, rooms) {
   stop();
   if (!model || !model.url) {
     status(viewport, t('model_unavailable'), false);
@@ -351,7 +525,8 @@ function render(viewport, model, buildUrl) {
       if (token.cancelled) {
         return;
       }
-      active = new Viewer(viewport, gltf, caption(model));
+      fitTextures(gltf.scene, textureBudget());
+      active = new Viewer(viewport, gltf, caption(model), rooms);
     })
     .catch(function (err) {
       if (token.cancelled) {

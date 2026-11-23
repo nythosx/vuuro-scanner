@@ -84,6 +84,90 @@ final class LidarModelGlbTests: XCTestCase {
         XCTAssertEqual(json["extensionsUsed"] as? [String], ["KHR_materials_unlit"])
     }
 
+    func testSharedCornersAreWrittenOnceWithIndices() throws {
+        let positions: [Float] = [0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]
+        let uvs: [Float] = [0, 0, 1, 0, 0, 1, 1, 0, 1, 1, 0, 1]
+        let output = MeshPhotoTexturer.PartOutput(positions: data(positions), uvs: data(uvs), colors: Data(), vertexCount: 6, groups: [MeshPhotoTexturer.Group(slot: 0, classId: 1, start: 0, count: 6)])
+        let encoded = try LidarModelGlb.encode(parts: [LidarModelGlb.Part(output: output, transform: matrix_identity_float4x4)], images: [image()]).get()
+        XCTAssertEqual(encoded.triangles, 2)
+        let (json, bin) = try parse(encoded.data)
+        let primitive = try XCTUnwrap((json["meshes"] as? [[String: Any]])?.first?["primitives"] as? [[String: Any]]).first
+        let accessors = try XCTUnwrap(json["accessors"] as? [[String: Any]])
+        let attributes = try XCTUnwrap(primitive?["attributes"] as? [String: Int])
+        XCTAssertEqual(accessors[try XCTUnwrap(attributes["POSITION"])]["count"] as? Int, 4)
+        XCTAssertEqual(accessors[try XCTUnwrap(attributes["TEXCOORD_0"])]["count"] as? Int, 4)
+        let indices = accessors[try XCTUnwrap(primitive?["indices"] as? Int)]
+        XCTAssertEqual(indices["count"] as? Int, 6)
+        XCTAssertEqual(indices["componentType"] as? Int, 5123)
+        let views = try XCTUnwrap(json["bufferViews"] as? [[String: Any]])
+        let indexView = views[try XCTUnwrap(indices["bufferView"] as? Int)]
+        XCTAssertEqual(indexView["target"] as? Int, 34963)
+        let offset = try XCTUnwrap(indexView["byteOffset"] as? Int)
+        let values = bin.subdata(in: offset..<(offset + 12)).withUnsafeBytes { raw in (0..<6).map { raw.loadUnaligned(fromByteOffset: $0 * 2, as: UInt16.self) } }
+        XCTAssertEqual(values, [0, 1, 2, 1, 3, 2])
+    }
+
+    func testCornersWithDifferentPhotoPositionsStayApart() throws {
+        let positions: [Float] = [0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0]
+        let uvs: [Float] = [0, 0, 1, 0, 0, 1, 0.5, 0, 1, 1, 0, 1]
+        let output = MeshPhotoTexturer.PartOutput(positions: data(positions), uvs: data(uvs), colors: Data(), vertexCount: 6, groups: [MeshPhotoTexturer.Group(slot: 0, classId: 1, start: 0, count: 6)])
+        let encoded = try LidarModelGlb.encode(parts: [LidarModelGlb.Part(output: output, transform: matrix_identity_float4x4)], images: [image()]).get()
+        let (json, _) = try parse(encoded.data)
+        let primitive = try XCTUnwrap((json["meshes"] as? [[String: Any]])?.first?["primitives"] as? [[String: Any]]).first
+        let accessors = try XCTUnwrap(json["accessors"] as? [[String: Any]])
+        let attributes = try XCTUnwrap(primitive?["attributes"] as? [String: Int])
+        XCTAssertEqual(accessors[try XCTUnwrap(attributes["POSITION"])]["count"] as? Int, 5)
+    }
+
+    func testStartViewAndRoomsAreWrittenToTheScene() throws {
+        let start = LidarModelGlb.StartView(position: SIMD3<Float>(5, 2, 5), target: SIMD3<Float>(1, 0.5, 1))
+        let room = LidarModelGlb.RoomMark(center: SIMD3<Float>(1, 0, 1), areaM2: 12, widthM: 4, lengthM: 3)
+        let tiny = LidarModelGlb.RoomMark(center: SIMD3<Float>(9, 0, 9), areaM2: 0.1, widthM: 0.3, lengthM: 0.3)
+        let encoded = try LidarModelGlb.encode(parts: [part(shift: .zero)], images: [image()], startView: start, rooms: [room, tiny]).get()
+        let (json, _) = try parse(encoded.data)
+        let scene = try XCTUnwrap((json["scenes"] as? [[String: Any]])?.first)
+        let extras = try XCTUnwrap(scene["extras"] as? [String: Any])
+        let view = try XCTUnwrap(extras["start_view"] as? [String: [Double]])
+        XCTAssertEqual(view["position"], [5, 2, 5])
+        XCTAssertEqual(view["target"], [1, 0.5, 1])
+        let rooms = try XCTUnwrap(extras["rooms"] as? [[String: Any]])
+        XCTAssertEqual(rooms.count, 1)
+        XCTAssertEqual(rooms.first?["area_m2"] as? Double, 12)
+        XCTAssertEqual(rooms.first?["center"] as? [Double], [1, 0, 1])
+    }
+
+    func testWithoutStartViewOrRoomsTheSceneHasNoExtras() throws {
+        let encoded = try LidarModelGlb.encode(parts: [part(shift: .zero)], images: [image()]).get()
+        let (json, _) = try parse(encoded.data)
+        let scene = try XCTUnwrap((json["scenes"] as? [[String: Any]])?.first)
+        XCTAssertNil(scene["extras"])
+        XCTAssertEqual(scene["nodes"] as? [Int], [0])
+    }
+
+    func testStartViewLooksWhereTheCameraLooks() throws {
+        var pose = matrix_identity_float4x4
+        pose.columns.3 = SIMD4<Float>(0, 1.5, 6, 1)
+        let start = try XCTUnwrap(LidarModelGlb.startView(cameraTransform: pose, lookingToward: SIMD3<Float>(0, 0, 0)))
+        XCTAssertEqual(start.position, SIMD3<Float>(0, 1.5, 6))
+        XCTAssertEqual(start.target.x, 0, accuracy: 1e-5)
+        XCTAssertEqual(start.target.y, 1.5, accuracy: 1e-5)
+        XCTAssertEqual(start.target.z, 0, accuracy: 1e-5)
+        let behind = try XCTUnwrap(LidarModelGlb.startView(cameraTransform: pose, lookingToward: SIMD3<Float>(0, 0, 20)))
+        XCTAssertEqual(simd_distance(behind.position, behind.target), LidarModelGlb.minimumStartDistanceM, accuracy: 1e-5)
+    }
+
+    func testRoomMarksComeFromFloorCorners() {
+        let floor = LidarRoomBox(kind: "floor", category: "floor", transform: Array(repeating: 0, count: 16), dimensions: [4, 0, 3], corners: [[0, 0.1, 0], [4, 0.1, 0], [4, 0.1, 3], [0, 0.1, 3]])
+        let wall = LidarRoomBox(kind: "door", category: "door", transform: Array(repeating: 0, count: 16), dimensions: [1, 2, 0])
+        let broken = LidarRoomBox(kind: "floor", category: "floor", transform: Array(repeating: 0, count: 16), dimensions: [1, 0, 1], corners: [[0, 0, 0], [1, 0]])
+        let marks = LidarModelGlb.roomMarks(from: [floor, wall, broken])
+        XCTAssertEqual(marks.count, 1)
+        XCTAssertEqual(marks.first?.areaM2 ?? 0, 12, accuracy: 1e-4)
+        XCTAssertEqual(marks.first?.widthM ?? 0, 4, accuracy: 1e-4)
+        XCTAssertEqual(marks.first?.lengthM ?? 0, 3, accuracy: 1e-4)
+        XCTAssertEqual(simd_distance(marks.first?.center ?? .zero, SIMD3<Float>(2, 0.1, 1.5)), 0, accuracy: 1e-5)
+    }
+
     func testAGroupWithoutAPhotoGetsGreyAndNoImage() throws {
         let encoded = try LidarModelGlb.encode(parts: [part(shift: .zero)], images: [nil]).get()
         XCTAssertEqual(encoded.photos, 0)

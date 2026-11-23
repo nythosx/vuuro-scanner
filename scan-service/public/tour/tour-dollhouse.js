@@ -6,7 +6,7 @@
   var SPOT_MIN_PX = 14;
   var SPOT_MAX_PX = 64;
   var SPOT_LIFT_M = 0.02;
-  var FRAME_MARGIN = 0.98;
+  var FRAME_MARGIN = 0.9;
   var FLY_MS = 750;
   var FOV_Y = Math.PI / 3.5;
   var TAP_SLOP_PX = 6;

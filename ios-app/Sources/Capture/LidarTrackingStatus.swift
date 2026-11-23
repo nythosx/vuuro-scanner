@@ -71,6 +71,33 @@ struct LidarMotionSpeed {
     static func holdsKeyframe(steady: Bool, secondsSinceLastKeyframe: TimeInterval) -> Bool {
         !steady && secondsSinceLastKeyframe < steadyWaitLimitS
     }
+
+    static let blurryPx: Float = 3
+    static let assumedDistanceM: Float = 2
+
+    static func blurPixels(angularDegPerS: Float, linearMPerS: Float, exposureS: TimeInterval, focalPx: Float, distanceM: Float) -> Float {
+        guard exposureS.isFinite, exposureS > 0, focalPx.isFinite, focalPx > 0 else { return 0 }
+        let turn = max(0, angularDegPerS) * .pi / 180 * focalPx
+        let slide = distanceM.isFinite && distanceM > 0.1 ? max(0, linearMPerS) / distanceM * focalPx : 0
+        let blur = (turn + slide) * Float(exposureS)
+        return blur.isFinite ? blur : 0
+    }
+
+    static func centerDepthM(_ depth: LidarDepthCopy) -> Float? {
+        let index = (depth.height / 2) * depth.width + depth.width / 2
+        let offset = index * 2
+        guard depth.width > 0, depth.height > 0, offset + 2 <= depth.millimeters.count else { return nil }
+        let start = depth.millimeters.startIndex + offset
+        let millimeters = UInt16(depth.millimeters[start]) | (UInt16(depth.millimeters[start + 1]) << 8)
+        guard millimeters > 0 else { return nil }
+        return Float(millimeters) / 1000
+    }
+
+    static func median(_ values: [Float]) -> Float {
+        let sorted = values.filter(\.isFinite).sorted()
+        guard !sorted.isEmpty else { return 0 }
+        return sorted[sorted.count / 2]
+    }
 }
 
 struct LidarPoseReset: Codable, Equatable, Sendable {

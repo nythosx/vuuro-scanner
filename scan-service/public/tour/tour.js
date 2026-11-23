@@ -613,13 +613,13 @@
 
   function renderModel() {
     if (window.TourModel) {
-      window.TourModel.render(els.viewport, state.data.lidar_model, withToken);
+      window.TourModel.render(els.viewport, state.data.lidar_model, withToken, state.data.rooms);
       return;
     }
     setStatus(window.TourStrings.t('loading_3d'), false);
     window.addEventListener('tourmodelready', function () {
       if (state.mode === 'model') {
-        window.TourModel.render(els.viewport, state.data.lidar_model, withToken);
+        window.TourModel.render(els.viewport, state.data.lidar_model, withToken, state.data.rooms);
       }
     }, { once: true });
   }
@@ -721,13 +721,13 @@
     if (old && old.parentNode) {
       old.parentNode.removeChild(old);
     }
-    var overview = state.mode === 'dollhouse' || state.mode === 'plan';
+    var overview = state.mode === 'dollhouse' || state.mode === 'plan' || state.mode === 'model';
     if (!overview || state.isEmbed || !window.TourStands || typeof window.TourStands.buildReel !== 'function') {
       app.classList.remove('has-reel');
       return;
     }
     var maps = standMaps();
-    var withStrip = walkthroughEnabled() && window.TourStands.standCount(maps.stands) > 0;
+    var withStrip = state.mode !== 'model' && walkthroughEnabled() && window.TourStands.standCount(maps.stands) > 0;
     app.classList.toggle('has-reel', withStrip);
     var reel = document.createElement('div');
     reel.id = 'tour-reel';

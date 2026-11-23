@@ -204,6 +204,7 @@ struct MeshViewer: View {
         .ignoresSafeArea(edges: .bottom)
     }
 
+    static let startViewNote = "Send to web tour opens the web 3D scan from the view you see now."
     static let orbitHint = "Drag to turn, pinch to zoom, two fingers to move. Double tap a spot to go closer, or empty space to reset."
 
     @ViewBuilder
@@ -229,6 +230,13 @@ struct MeshViewer: View {
                     .font(.system(size: 13))
                     .foregroundStyle(.red)
                     .accessibilityIdentifier("meshViewer.sendError")
+            }
+            if photoBuild != nil, frameIndex == nil, !sending {
+                Text(Self.startViewNote)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("meshViewer.startViewNote")
             }
             if let sendNote {
                 Text(sendNote)
@@ -590,12 +598,19 @@ struct MeshViewer: View {
         let parts = zip(built.parts, output.parts).map { LidarModelGlb.Part(output: $0.1, transform: $0.0.transform) }
         let images = output.images
         let capture = captureURL.lastPathComponent
+        let pose = frameIndex == nil ? built.cameraNode.simdTransform : (orbitPose ?? built.cameraNode.simdTransform)
+        let startView = LidarModelGlb.startView(cameraTransform: pose, lookingToward: SIMD3<Float>(Float(built.center.x), Float(built.center.y), Float(built.center.z)))
+        let loadedBoxes = DepthMeshFusion.loadBoxes(captureURL: captureURL)
+        if loadedBoxes.unreadable {
+            DiagnosticsLog.shared.record("Web 3D model: the RoomPlan boxes of this capture could not be read, so it has no room labels", category: .error)
+        }
+        let rooms = LidarModelGlb.roomMarks(from: loadedBoxes.boxes)
         sending = true
         sendProgress = 0
         Task { @MainActor in
             defer { sending = false }
             let encoded = await Task.detached(priority: .userInitiated) {
-                LidarModelGlb.encode(parts: parts, images: images)
+                LidarModelGlb.encode(parts: parts, images: images, startView: startView, rooms: rooms)
             }.value
             let model: LidarModelGlb.Encoded
             switch encoded {

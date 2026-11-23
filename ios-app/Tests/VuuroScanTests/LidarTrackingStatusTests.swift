@@ -150,3 +150,40 @@ final class LidarTrackingStatusTests: XCTestCase {
         XCTAssertFalse(LidarSessionConfigReport.settled(LidarSessionConfigReport(sceneDepth: true, smoothedSceneDepth: true, sceneReconstruction: "none"), secondsSinceFirstRead: 1))
     }
 }
+
+final class LidarKeyframeBlurTests: XCTestCase {
+    func testBlurGrowsWithTurnSpeedAndExposure() {
+        let slow = LidarMotionSpeed.blurPixels(angularDegPerS: 10, linearMPerS: 0, exposureS: 1.0 / 60, focalPx: 1400, distanceM: 2)
+        let fast = LidarMotionSpeed.blurPixels(angularDegPerS: 40, linearMPerS: 0, exposureS: 1.0 / 60, focalPx: 1400, distanceM: 2)
+        let longer = LidarMotionSpeed.blurPixels(angularDegPerS: 40, linearMPerS: 0, exposureS: 1.0 / 30, focalPx: 1400, distanceM: 2)
+        XCTAssertEqual(fast, 40 * .pi / 180 * 1400 / 60, accuracy: 0.01)
+        XCTAssertLessThan(slow, fast)
+        XCTAssertEqual(longer, fast * 2, accuracy: 0.01)
+    }
+
+    func testSlidingCloseBlursMoreThanSlidingFar() {
+        let near = LidarMotionSpeed.blurPixels(angularDegPerS: 0, linearMPerS: 0.5, exposureS: 1.0 / 60, focalPx: 1400, distanceM: 1)
+        let far = LidarMotionSpeed.blurPixels(angularDegPerS: 0, linearMPerS: 0.5, exposureS: 1.0 / 60, focalPx: 1400, distanceM: 4)
+        XCTAssertEqual(near, far * 4, accuracy: 0.01)
+    }
+
+    func testNoExposureGivesNoBlur() {
+        XCTAssertEqual(LidarMotionSpeed.blurPixels(angularDegPerS: 90, linearMPerS: 1, exposureS: 0, focalPx: 1400, distanceM: 2), 0)
+        XCTAssertEqual(LidarMotionSpeed.blurPixels(angularDegPerS: 90, linearMPerS: 1, exposureS: .nan, focalPx: 1400, distanceM: 2), 0)
+    }
+
+    func testCenterDepthReadsTheMiddlePixel() {
+        var millimeters = [UInt16](repeating: 0, count: 16)
+        millimeters[2 * 4 + 2] = 1850
+        let data = millimeters.withUnsafeBufferPointer { Data(buffer: $0) }
+        let depth = LidarDepthCopy(width: 4, height: 4, millimeters: data, confidence: nil)
+        XCTAssertEqual(LidarMotionSpeed.centerDepthM(depth) ?? 0, 1.85, accuracy: 1e-4)
+        XCTAssertNil(LidarMotionSpeed.centerDepthM(LidarDepthCopy(width: 4, height: 4, millimeters: Data(count: 32), confidence: nil)))
+        XCTAssertNil(LidarMotionSpeed.centerDepthM(LidarDepthCopy(width: 4, height: 4, millimeters: Data(count: 4), confidence: nil)))
+    }
+
+    func testMedianIgnoresNotANumber() {
+        XCTAssertEqual(LidarMotionSpeed.median([5, .nan, 1, 3]), 3)
+        XCTAssertEqual(LidarMotionSpeed.median([]), 0)
+    }
+}

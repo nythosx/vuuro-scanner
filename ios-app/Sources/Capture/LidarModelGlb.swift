@@ -14,10 +14,34 @@ enum LidarModelGlb {
         let transform: simd_float4x4
     }
 
+    struct StartView: Equatable {
+        let position: SIMD3<Float>
+        let target: SIMD3<Float>
+    }
+
+    struct RoomMark: Equatable {
+        let center: SIMD3<Float>
+        let areaM2: Float
+        let widthM: Float
+        let lengthM: Float
+    }
+
+    static let minimumRoomAreaM2: Float = 0.25
+    static let minimumStartDistanceM: Float = 0.5
+
     struct Encoded {
         let data: Data
         let triangles: Int
         let photos: Int
+    }
+
+    private struct VertexKey: Hashable {
+        let x: UInt32
+        let y: UInt32
+        let z: UInt32
+        let u: UInt32
+        let v: UInt32
+        let shade: UInt8
     }
 
     private struct Builder {
@@ -25,17 +49,17 @@ enum LidarModelGlb {
         var bufferViews: [[String: Any]] = []
         var accessors: [[String: Any]] = []
 
-        mutating func view(_ bytes: Data, vertexData: Bool) -> Int {
+        mutating func view(_ bytes: Data, target: Int?) -> Int {
             pad()
             var view: [String: Any] = ["buffer": 0, "byteOffset": bin.count, "byteLength": bytes.count]
-            if vertexData { view["target"] = 34962 }
+            if let target { view["target"] = target }
             bin.append(bytes)
             bufferViews.append(view)
             return bufferViews.count - 1
         }
 
-        mutating func accessor(_ bytes: Data, componentType: Int, count: Int, type: String, normalized: Bool = false, min: [Double]? = nil, max: [Double]? = nil) -> Int {
-            var accessor: [String: Any] = ["bufferView": view(bytes, vertexData: true), "componentType": componentType, "count": count, "type": type]
+        mutating func accessor(_ bytes: Data, componentType: Int, count: Int, type: String, target: Int = 34962, normalized: Bool = false, min: [Double]? = nil, max: [Double]? = nil) -> Int {
+            var accessor: [String: Any] = ["bufferView": view(bytes, target: target), "componentType": componentType, "count": count, "type": type]
             if normalized { accessor["normalized"] = true }
             if let min { accessor["min"] = min }
             if let max { accessor["max"] = max }
@@ -48,7 +72,7 @@ enum LidarModelGlb {
         }
     }
 
-    static func encode(parts: [Part], images: [CGImage?]) -> Result<Encoded, Error> {
+    static func encode(parts: [Part], images: [CGImage?], startView: StartView? = nil, rooms: [RoomMark] = []) -> Result<Encoded, Error> {
         var builder = Builder()
         var materials: [[String: Any]] = []
         var materialIndex: [Int: Int] = [:]
@@ -77,6 +101,10 @@ enum LidarModelGlb {
                 groupUVs.reserveCapacity(range.count * 2)
                 var colors: [UInt8] = []
                 colors.reserveCapacity(range.count * 4)
+                var indices: [UInt32] = []
+                indices.reserveCapacity(range.count)
+                var lookup: [VertexKey: UInt32] = [:]
+                lookup.reserveCapacity(range.count / 2)
                 for vertex in range {
                     let local = SIMD4<Float>(positions[vertex * 3], positions[vertex * 3 + 1], positions[vertex * 3 + 2], 1)
                     let moved = part.transform * local
@@ -84,20 +112,34 @@ enum LidarModelGlb {
                     guard point.x.isFinite, point.y.isFinite, point.z.isFinite else {
                         return .failure(PlainError(message: "The photo model has a point that is not a number."))
                     }
+                    let rawU = uvs[vertex * 2]
+                    let rawV = uvs[vertex * 2 + 1]
+                    let u: Float = rawU.isFinite ? rawU : 0
+                    let v: Float = rawV.isFinite ? rawV : 0
+                    let shade = shades.isEmpty ? 1 : shades[vertex * 3]
+                    let byte = UInt8((min(max(shade.isFinite ? shade : 1, 0), 1) * 255).rounded())
+                    let key = VertexKey(x: point.x.bitPattern, y: point.y.bitPattern, z: point.z.bitPattern, u: u.bitPattern, v: v.bitPattern, shade: byte)
+                    if let existing = lookup[key] {
+                        indices.append(existing)
+                        continue
+                    }
+                    let next = UInt32(world.count / 3)
+                    lookup[key] = next
+                    indices.append(next)
                     lower = simd_min(lower, point)
                     upper = simd_max(upper, point)
                     world.append(contentsOf: [point.x, point.y, point.z])
-                    let u = uvs[vertex * 2]
-                    let v = uvs[vertex * 2 + 1]
-                    groupUVs.append(u.isFinite ? u : 0)
-                    groupUVs.append(v.isFinite ? v : 0)
-                    let shade = shades.isEmpty ? 1 : shades[vertex * 3]
-                    let byte = UInt8((min(max(shade.isFinite ? shade : 1, 0), 1) * 255).rounded())
+                    groupUVs.append(u)
+                    groupUVs.append(v)
                     colors.append(contentsOf: [byte, byte, byte, 255])
                 }
-                let position = builder.accessor(bytes(world), componentType: 5126, count: range.count, type: "VEC3", min: [Double(lower.x), Double(lower.y), Double(lower.z)], max: [Double(upper.x), Double(upper.y), Double(upper.z)])
-                let texcoord = builder.accessor(bytes(groupUVs), componentType: 5126, count: range.count, type: "VEC2")
-                let color = builder.accessor(Data(colors), componentType: 5121, count: range.count, type: "VEC4", normalized: true)
+                let vertexCount = world.count / 3
+                let position = builder.accessor(bytes(world), componentType: 5126, count: vertexCount, type: "VEC3", min: [Double(lower.x), Double(lower.y), Double(lower.z)], max: [Double(upper.x), Double(upper.y), Double(upper.z)])
+                let texcoord = builder.accessor(bytes(groupUVs), componentType: 5126, count: vertexCount, type: "VEC2")
+                let color = builder.accessor(Data(colors), componentType: 5121, count: vertexCount, type: "VEC4", normalized: true)
+                let index = vertexCount <= Int(UInt16.max)
+                    ? builder.accessor(indexBytes16(indices), componentType: 5123, count: indices.count, type: "SCALAR", target: 34963)
+                    : builder.accessor(indexBytes32(indices), componentType: 5125, count: indices.count, type: "SCALAR", target: 34963)
 
                 let key = (group.slot + 1) * 256 + Int(group.classId)
                 if materialIndex[key] == nil {
@@ -107,7 +149,7 @@ enum LidarModelGlb {
                             guard let jpeg = jpeg(image) else {
                                 return .failure(PlainError(message: "Photo \(group.slot + 1) of the model could not be saved as JPEG."))
                             }
-                            imageEntries.append(["bufferView": builder.view(jpeg, vertexData: false), "mimeType": "image/jpeg"])
+                            imageEntries.append(["bufferView": builder.view(jpeg, target: nil), "mimeType": "image/jpeg"])
                             textureIndex[group.slot] = imageEntries.count - 1
                         }
                         pbr["baseColorTexture"] = ["index": textureIndex[group.slot] ?? 0]
@@ -125,6 +167,7 @@ enum LidarModelGlb {
                 }
                 primitives.append([
                     "attributes": ["POSITION": position, "TEXCOORD_0": texcoord, "COLOR_0": color],
+                    "indices": index,
                     "material": materialIndex[key] ?? 0,
                     "mode": 4
                 ])
@@ -142,7 +185,7 @@ enum LidarModelGlb {
             "asset": ["version": "2.0", "generator": "Vuuro Scan LiDAR"],
             "extensionsUsed": ["KHR_materials_unlit"],
             "scene": 0,
-            "scenes": [["nodes": [0]]],
+            "scenes": [sceneEntry(startView: startView, rooms: rooms)],
             "nodes": [["mesh": 0]],
             "meshes": [["primitives": primitives]],
             "materials": materials,
@@ -169,6 +212,63 @@ enum LidarModelGlb {
             return .failure(PlainError(message: "The photo model is larger than \(maxBytes / 1_048_576) MB, too big to send."))
         }
         return .success(Encoded(data: glb, triangles: triangles, photos: imageEntries.count))
+    }
+
+    static func sceneEntry(startView: StartView?, rooms: [RoomMark]) -> [String: Any] {
+        var extras: [String: Any] = [:]
+        if let startView, finite(startView.position), finite(startView.target), simd_distance(startView.position, startView.target) >= minimumStartDistanceM * 0.99 {
+            extras["start_view"] = ["position": doubles(startView.position), "target": doubles(startView.target)]
+        }
+        let marks = rooms.filter { finite($0.center) && $0.areaM2.isFinite && $0.areaM2 >= minimumRoomAreaM2 && $0.widthM.isFinite && $0.lengthM.isFinite }
+        if !marks.isEmpty {
+            extras["rooms"] = marks.map { mark -> [String: Any] in
+                ["center": doubles(mark.center), "area_m2": Double(mark.areaM2), "width_m": Double(mark.widthM), "length_m": Double(mark.lengthM)]
+            }
+        }
+        var entry: [String: Any] = ["nodes": [0]]
+        if !extras.isEmpty { entry["extras"] = extras }
+        return entry
+    }
+
+    static func startView(cameraTransform: simd_float4x4, lookingToward center: SIMD3<Float>) -> StartView? {
+        let position = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+        let back = SIMD3<Float>(cameraTransform.columns.2.x, cameraTransform.columns.2.y, cameraTransform.columns.2.z)
+        guard finite(position), finite(center), finite(back), simd_length(back) > 0.0001 else { return nil }
+        let forward = -simd_normalize(back)
+        let along = simd_dot(center - position, forward)
+        let distance = max(along.isFinite ? along : 0, minimumStartDistanceM)
+        return StartView(position: position, target: position + forward * distance)
+    }
+
+    static func roomMarks(from boxes: [LidarRoomBox]) -> [RoomMark] {
+        boxes.compactMap { box -> RoomMark? in
+            guard box.kind == "floor", let corners = box.corners, corners.count >= 3 else { return nil }
+            let points = corners.compactMap { corner -> SIMD3<Float>? in
+                guard corner.count == 3, corner.allSatisfy({ $0.isFinite }) else { return nil }
+                return SIMD3<Float>(corner[0], corner[1], corner[2])
+            }
+            guard points.count == corners.count else { return nil }
+            var twiceArea: Float = 0
+            for index in points.indices {
+                let a = points[index]
+                let b = points[(index + 1) % points.count]
+                twiceArea += a.x * b.z - b.x * a.z
+            }
+            let area = abs(twiceArea) / 2
+            guard area.isFinite, area >= minimumRoomAreaM2 else { return nil }
+            let lower = points.reduce(SIMD3<Float>(repeating: .greatestFiniteMagnitude)) { simd_min($0, $1) }
+            let upper = points.reduce(SIMD3<Float>(repeating: -.greatestFiniteMagnitude)) { simd_max($0, $1) }
+            let center = points.reduce(SIMD3<Float>.zero, +) / Float(points.count)
+            return RoomMark(center: center, areaM2: area, widthM: upper.x - lower.x, lengthM: upper.z - lower.z)
+        }
+    }
+
+    private static func finite(_ value: SIMD3<Float>) -> Bool {
+        value.x.isFinite && value.y.isFinite && value.z.isFinite
+    }
+
+    private static func doubles(_ value: SIMD3<Float>) -> [Double] {
+        [Double(value.x), Double(value.y), Double(value.z)]
     }
 
     static func container(json: Data, bin: Data) -> Data {
@@ -211,5 +311,15 @@ enum LidarModelGlb {
 
     private static func bytes(_ values: [Float]) -> Data {
         values.withUnsafeBufferPointer { Data(buffer: $0) }
+    }
+
+    static func indexBytes16(_ indices: [UInt32]) -> Data {
+        let narrow = indices.map { UInt16(truncatingIfNeeded: $0).littleEndian }
+        return narrow.withUnsafeBufferPointer { Data(buffer: $0) }
+    }
+
+    static func indexBytes32(_ indices: [UInt32]) -> Data {
+        let little = indices.map { $0.littleEndian }
+        return little.withUnsafeBufferPointer { Data(buffer: $0) }
     }
 }

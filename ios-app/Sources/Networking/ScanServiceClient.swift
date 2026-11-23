@@ -860,7 +860,7 @@ struct ScanServiceClient {
                 offset = response.receivedBytes
             } catch let error as ScanServiceError {
                 guard case .unexpectedStatus(409, let body) = error, resumes < 3,
-                      let received = Self.receivedBytes(inErrorBody: body), received <= glb.count else { throw error }
+                      let received = Self.receivedBytes(inErrorBody: body), received >= 0, received <= glb.count else { throw error }
                 resumes += 1
                 offset = received
             }

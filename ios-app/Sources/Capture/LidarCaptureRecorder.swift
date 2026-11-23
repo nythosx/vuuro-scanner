@@ -95,6 +95,9 @@ struct LidarRoomRunReport: Codable, Equatable {
     var keyframes = 0
     var depthOnlyFrames = 0
     var durationS: Double = 0
+    var blurryKeyframes: Int? = nil
+    var medianBlurPx: Double? = nil
+    var medianExposureMs: Double? = nil
 
     var meshGrew: Bool { newMeshAnchors > 0 || meshFacesMax > meshFacesAtStart }
 
@@ -110,6 +113,9 @@ struct LidarRoomRunReport: Codable, Equatable {
         case keyframes
         case depthOnlyFrames = "depth_only_frames"
         case durationS = "duration_s"
+        case blurryKeyframes = "blurry_keyframes"
+        case medianBlurPx = "median_blur_px"
+        case medianExposureMs = "median_exposure_ms"
     }
 }
 
@@ -181,6 +187,9 @@ struct LidarKeyframe {
     let timestamp: TimeInterval
     let tracking: String
     var motionDegPerS: Float = 0
+    var linearMPerS: Float = 0
+    var exposureS: Double = 0
+    var blurPx: Float = 0
 }
 
 struct LidarDepthFrame {
@@ -258,6 +267,8 @@ final class LidarCaptureRecorder {
     private var roomMeshAnchorIds: Set<UUID> = []
     private var roomStartedAt: Date?
     private var roomStartFrames = 0
+    private var roomBlurs: [Float] = []
+    private var roomExposures: [Double] = []
     private var roomStartDepthOnly = 0
     private let writer = LidarCaptureWriter()
     let coverage = ScanCoverageTracker()
@@ -318,6 +329,8 @@ final class LidarCaptureRecorder {
         lastFrameTimestamp = nil
         poseFilter.reset()
         motion.reset()
+        roomBlurs = []
+        roomExposures = []
         roomFirstKeyframe = frameIndex + 1
         status.clear()
         lastStorageAt = .distantPast
@@ -631,11 +644,16 @@ final class LidarCaptureRecorder {
             report.configAtEnd = configAtEnd
             report.keyframes = frames
             report.depthOnlyFrames = depthOnly
+            if !roomBlurs.isEmpty {
+                report.blurryKeyframes = roomBlurs.filter { $0 > LidarMotionSpeed.blurryPx }.count
+                report.medianBlurPx = Double(LidarMotionSpeed.median(roomBlurs))
+                report.medianExposureMs = Double(LidarMotionSpeed.median(roomExposures.map { Float($0 * 1000) }))
+            }
             if let started { report.durationS = Date().timeIntervalSince(started) }
         }
         if let report = manifest?.roomReports?.last {
             DiagnosticsLog.shared.record(
-                "LiDAR room \(report.room): mesh \(report.configAtEnd?.sceneReconstruction ?? report.configAfter?.sceneReconstruction ?? "unknown"), \(report.newMeshAnchors) new mesh pieces, triangles \(report.meshFacesAtStart) to \(report.meshFacesMax), depth \(report.depthSeen ? "yes" : "no"), \(report.keyframes) keyframes",
+                "LiDAR room \(report.room): mesh \(report.configAtEnd?.sceneReconstruction ?? report.configAfter?.sceneReconstruction ?? "unknown"), \(report.newMeshAnchors) new mesh pieces, triangles \(report.meshFacesAtStart) to \(report.meshFacesMax), depth \(report.depthSeen ? "yes" : "no"), \(report.keyframes) keyframes, \(report.blurryKeyframes ?? 0) with blur above \(Int(LidarMotionSpeed.blurryPx)) px, median blur \(String(format: "%.1f", report.medianBlurPx ?? 0)) px, median exposure \(String(format: "%.1f", report.medianExposureMs ?? 0)) ms",
                 category: .state
             )
         }
@@ -678,6 +696,10 @@ final class LidarCaptureRecorder {
         let depth = (frame.sceneDepth ?? frame.smoothedSceneDepth).flatMap(Self.copyDepth)
         let resolution = frame.camera.imageResolution
         let intrinsics = frame.camera.intrinsics
+        let exposure = frame.camera.exposureDuration
+        let blur = LidarMotionSpeed.blurPixels(angularDegPerS: motion.angularDegPerS, linearMPerS: motion.linearMPerS, exposureS: exposure, focalPx: intrinsics[0][0], distanceM: depth.flatMap(LidarMotionSpeed.centerDepthM) ?? LidarMotionSpeed.assumedDistanceM)
+        roomBlurs.append(blur)
+        roomExposures.append(exposure)
         let keyframe = LidarKeyframe(
             index: frameIndex,
             image: CIImage(cvPixelBuffer: frame.capturedImage),
@@ -688,7 +710,10 @@ final class LidarCaptureRecorder {
             intrinsics: [intrinsics[0][0], intrinsics[1][1], intrinsics[2][0], intrinsics[2][1]],
             timestamp: now,
             tracking: "normal",
-            motionDegPerS: motion.angularDegPerS
+            motionDegPerS: motion.angularDegPerS,
+            linearMPerS: motion.linearMPerS,
+            exposureS: exposure,
+            blurPx: blur
         )
         frameWriteInFlight = true
         let writer = self.writer
@@ -1085,7 +1110,10 @@ actor LidarCaptureWriter {
                 "camera_transform": keyframe.transform.map(Double.init),
                 "intrinsics_fx_fy_cx_cy": keyframe.intrinsics.map(Double.init),
                 "tracking": keyframe.tracking,
-                "motion_deg_per_s": Double(keyframe.motionDegPerS)
+                "motion_deg_per_s": Double(keyframe.motionDegPerS),
+                "motion_m_per_s": Double(keyframe.linearMPerS),
+                "exposure_s": keyframe.exposureS,
+                "blur_px_estimate": Double(keyframe.blurPx)
             ]
             if let depth = keyframe.depth {
                 try depth.millimeters.write(to: framesDirectory.appendingPathComponent("\(stem).depth"), options: .atomic)
