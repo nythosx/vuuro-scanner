@@ -823,8 +823,14 @@ final class LidarCaptureRecorder {
         let now = Date()
         guard now.timeIntervalSince(lastHealthAt) >= Self.healthSampleIntervalS else { return }
         lastHealthAt = now
-        let thermal = ProcessInfo.processInfo.thermalState.rawValue
+        let thermalState = ProcessInfo.processInfo.thermalState
+        let thermal = thermalState.rawValue
         if thermal > (manifest?.stats.worstThermalState ?? 0) { manifest?.stats.worstThermalState = thermal }
+        let heat = LidarRecordingStatus.heatNote(thermalState)
+        if heat != nil, status.heatNote == nil {
+            recordAppEvent("phone hot, thermal state \(thermal)")
+        }
+        status.setHeatNote(heat)
         let freeMB = Int(os_proc_available_memory() / 1_048_576)
         if let lowest = manifest?.stats.lowestFreeMemoryMB, freeMB > 0, freeMB < lowest || lowest == 0 {
             manifest?.stats.lowestFreeMemoryMB = freeMB

@@ -1377,8 +1377,9 @@ body {
 }
 
 @media (max-width: 420px) {
-  .tour-model-bar { flex-wrap: nowrap; gap: 2px; }
-  .tour-model-btn { padding: 6px 8px; font-size: 12px; white-space: nowrap; }
+  .tour-model-bar { flex-wrap: nowrap; gap: 2px; justify-content: flex-start; max-width: calc(100% - 16px); overflow-x: auto; scrollbar-width: none; }
+  .tour-model-bar::-webkit-scrollbar { display: none; }
+  .tour-model-btn { flex: none; padding: 6px 7px; font-size: 12px; white-space: nowrap; }
 }
 
 @media (max-height: 480px) and (orientation: landscape) {
@@ -1404,9 +1405,12 @@ body {
   font-weight: 600;
   white-space: nowrap;
   will-change: transform;
+  transition: opacity 0.15s;
 }
 
-.tour-model-label[hidden] { display: none; }
+.tour-model-label.is-behind { opacity: 0; }
+.tour-model-label[hidden],
+.tour-model-labels[hidden] { display: none; }
 
 .tour-model-caption {
   position: absolute;

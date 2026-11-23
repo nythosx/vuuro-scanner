@@ -36,6 +36,10 @@ final class DollhouseCamera: NSObject {
     var onYawChange: ((Float) -> Void)?
     var followsNodePose = false
 
+    deinit {
+        inertiaLink?.invalidate()
+    }
+
     static let minimumPitch: Float = 5 * .pi / 180
     static let maximumPitch: Float = 85 * .pi / 180
     static let minimumDistanceM: Float = 0.5
@@ -291,7 +295,7 @@ final class DollhouseCamera: NSObject {
             return
         }
         lastInertiaTimestamp = 0
-        let link = CADisplayLink(target: self, selector: #selector(stepInertia(_:)))
+        let link = CADisplayLink(target: DollhouseInertiaTarget(owner: self), selector: #selector(DollhouseInertiaTarget.tick(_:)))
         link.add(to: .main, forMode: .common)
         inertiaLink = link
     }
@@ -304,7 +308,7 @@ final class DollhouseCamera: NSObject {
         panVelocity = .zero
     }
 
-    @objc private func stepInertia(_ link: CADisplayLink) {
+    fileprivate func stepInertia(_ link: CADisplayLink) {
         guard cameraNode != nil else {
             stopInertia()
             return
@@ -400,5 +404,22 @@ extension DollhouseCamera: UIGestureRecognizerDelegate {
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
         gestureRecognizer.name == "dollhouseCamera" && otherGestureRecognizer.name == "dollhouseCamera"
+    }
+}
+
+private final class DollhouseInertiaTarget: NSObject {
+    weak var owner: DollhouseCamera?
+
+    init(owner: DollhouseCamera) {
+        self.owner = owner
+        super.init()
+    }
+
+    @objc func tick(_ link: CADisplayLink) {
+        guard let owner else {
+            link.invalidate()
+            return
+        }
+        owner.stepInertia(link)
     }
 }

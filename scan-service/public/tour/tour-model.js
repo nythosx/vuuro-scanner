@@ -3,6 +3,10 @@ import { GLTFLoader } from './vendor/three/GLTFLoader.js';
 import { OrbitControls } from './vendor/three/OrbitControls.js';
 
 var CEILING_CLASS = 3;
+var WALL_CLASS = 1;
+var OCCLUSION_IDLE_MS = 250;
+var OCCLUSION_SLOW_MS = 60;
+var OCCLUSION_GAP_M = 0.15;
 var MODES = ['photo', 'clay', 'mesh'];
 var active = null;
 
@@ -230,6 +234,7 @@ function Viewer(viewport, gltf, info, rooms) {
   this.viewport = viewport;
   this.mode = 'photo';
   this.showCeiling = false;
+  this.showLabels = true;
   this.frameId = 0;
 
   clearNode(viewport);
@@ -295,9 +300,16 @@ function Viewer(viewport, gltf, info, rooms) {
     node.className = 'tour-model-label';
     node.textContent = label.text;
     self.labelLayer.appendChild(node);
-    return { node: node, position: label.position };
+    return { node: node, position: label.position, behind: false };
   });
   this.projected = new THREE.Vector3();
+  this.occlusionRay = new THREE.Raycaster();
+  this.occlusionOn = true;
+  this.cameraKey = '';
+  this.idleSince = 0;
+  this.labelsToCheck = 0;
+  this.nextLabel = 0;
+  this.hasWalls = this.parts.some(function (part) { return part.classId === WALL_CLASS; });
   this.atHome = true;
   this.onControlStart = function () { self.atHome = false; };
   this.controls.addEventListener('start', this.onControlStart);
@@ -366,6 +378,20 @@ Viewer.prototype.buildBar = function () {
     });
     this.bar.appendChild(ceiling);
   }
+  if (this.labels.length > 0) {
+    var names = document.createElement('button');
+    names.type = 'button';
+    names.className = 'tour-model-btn' + (this.showLabels ? ' is-active' : '');
+    names.textContent = t('model_labels');
+    names.setAttribute('aria-pressed', this.showLabels ? 'true' : 'false');
+    names.setAttribute('data-model-mode', 'labels');
+    names.addEventListener('click', function () {
+      self.showLabels = !self.showLabels;
+      self.labelLayer.hidden = !self.showLabels;
+      self.buildBar();
+    });
+    this.bar.appendChild(names);
+  }
   var reset = document.createElement('button');
   reset.type = 'button';
   reset.className = 'tour-model-btn';
@@ -399,10 +425,51 @@ Viewer.prototype.focusAt = function (clientX, clientY) {
   this.controls.update();
 };
 
-Viewer.prototype.placeLabels = function () {
-  if (this.labels.length === 0) {
+Viewer.prototype.checkOcclusion = function () {
+  var key = this.camera.position.toArray().concat(this.controls.target.toArray()).map(function (v) { return v.toFixed(3); }).join(',') + this.mode + this.showCeiling;
+  var now = performance.now();
+  if (key !== this.cameraKey) {
+    this.cameraKey = key;
+    this.idleSince = now;
+    this.labelsToCheck = this.labels.length;
     return;
   }
+  if (!this.occlusionOn || this.labelsToCheck === 0 || now - this.idleSince < OCCLUSION_IDLE_MS) {
+    return;
+  }
+  var label = this.labels[this.nextLabel % this.labels.length];
+  this.nextLabel = (this.nextLabel + 1) % this.labels.length;
+  this.labelsToCheck -= 1;
+  if (this.mode === 'mesh') {
+    label.behind = false;
+    return;
+  }
+  var hasWalls = this.hasWalls;
+  var occluders = this.parts.filter(function (part) {
+    return part.mesh.visible && (hasWalls ? part.classId === WALL_CLASS : true);
+  }).map(function (part) { return part.mesh; });
+  var direction = label.position.clone().sub(this.camera.position);
+  var distance = direction.length();
+  if (distance <= OCCLUSION_GAP_M * 2) {
+    label.behind = false;
+    return;
+  }
+  this.occlusionRay.set(this.camera.position, direction.divideScalar(distance));
+  this.occlusionRay.near = 0;
+  this.occlusionRay.far = distance - OCCLUSION_GAP_M;
+  var started = performance.now();
+  label.behind = this.occlusionRay.intersectObjects(occluders, false).length > 0;
+  if (performance.now() - started > OCCLUSION_SLOW_MS) {
+    this.occlusionOn = false;
+    this.labels.forEach(function (each) { each.behind = false; });
+  }
+};
+
+Viewer.prototype.placeLabels = function () {
+  if (this.labels.length === 0 || !this.showLabels) {
+    return;
+  }
+  this.checkOcclusion();
   var width = this.stage.clientWidth;
   var height = this.stage.clientHeight;
   var self = this;
@@ -410,6 +477,7 @@ Viewer.prototype.placeLabels = function () {
     self.projected.copy(label.position).project(self.camera);
     var visible = self.projected.z > -1 && self.projected.z < 1 && Math.abs(self.projected.x) <= 1 && Math.abs(self.projected.y) <= 1;
     label.node.hidden = !visible;
+    label.node.classList.toggle('is-behind', label.behind);
     if (visible) {
       var x = (self.projected.x + 1) / 2 * width;
       var y = (1 - self.projected.y) / 2 * height;

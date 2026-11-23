@@ -156,6 +156,7 @@ struct LidarPauseWatch {
 final class LidarRecordingStatus: ObservableObject {
     @Published private(set) var pausedReason: LidarSkipReason?
     @Published private(set) var storageNote: String?
+    @Published private(set) var heatNote: String?
     private var watch = LidarPauseWatch()
 
     @discardableResult
@@ -169,10 +170,28 @@ final class LidarRecordingStatus: ObservableObject {
     func clear() {
         watch.reset()
         if pausedReason != nil { pausedReason = nil }
+        if heatNote != nil { heatNote = nil }
     }
 
     func setStorageNote(_ note: String?) {
         if note != storageNote { storageNote = note }
+    }
+
+    func setHeatNote(_ note: String?) {
+        if note != heatNote { heatNote = note }
+    }
+
+    nonisolated static func heatNote(_ state: ProcessInfo.ThermalState) -> String? {
+        switch state {
+        case .serious:
+            return vuuroLocalized("The phone is getting hot. Finish this room, then let it cool down.")
+        case .critical:
+            return vuuroLocalized("The phone is too hot. Finish this room now and let it cool down.")
+        case .nominal, .fair:
+            return nil
+        @unknown default:
+            return nil
+        }
     }
 
     nonisolated static func warnsWhenStuck(_ reason: LidarSkipReason) -> Bool {
@@ -216,6 +235,10 @@ struct LidarRecordingPausedBanner: View {
             if let note = status.storageNote, status.pausedReason != .lowStorage {
                 line(note, icon: "internaldrive")
                     .accessibilityIdentifier("capture.lidarStorage")
+            }
+            if let note = status.heatNote {
+                line(note, icon: "thermometer")
+                    .accessibilityIdentifier("capture.lidarHeat")
             }
         }
         .padding(.horizontal, 16)

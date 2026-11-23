@@ -10,6 +10,14 @@ final class LidarPauseReasonTests: XCTestCase {
         XCTAssertTrue(LidarRecordingStatus.warnsWhenStuck(.noDepth))
         XCTAssertTrue(LidarRecordingStatus.warnsWhenStuck(.lowStorage))
     }
+
+    func testHeatNoteOnlyWhenSeriousOrCritical() {
+        XCTAssertNil(LidarRecordingStatus.heatNote(.nominal))
+        XCTAssertNil(LidarRecordingStatus.heatNote(.fair))
+        XCTAssertNotNil(LidarRecordingStatus.heatNote(.serious))
+        XCTAssertNotNil(LidarRecordingStatus.heatNote(.critical))
+        XCTAssertNotEqual(LidarRecordingStatus.heatNote(.serious), LidarRecordingStatus.heatNote(.critical))
+    }
 }
 
 final class LidarTrackingStatusTests: XCTestCase {
