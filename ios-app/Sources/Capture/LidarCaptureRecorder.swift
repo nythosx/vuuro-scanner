@@ -98,6 +98,8 @@ struct LidarRoomRunReport: Codable, Equatable {
     var blurryKeyframes: Int? = nil
     var medianBlurPx: Double? = nil
     var medianExposureMs: Double? = nil
+    var heldKeyframes: Int? = nil
+    var heldStillBlurry: Int? = nil
 
     var meshGrew: Bool { newMeshAnchors > 0 || meshFacesMax > meshFacesAtStart }
 
@@ -116,6 +118,8 @@ struct LidarRoomRunReport: Codable, Equatable {
         case blurryKeyframes = "blurry_keyframes"
         case medianBlurPx = "median_blur_px"
         case medianExposureMs = "median_exposure_ms"
+        case heldKeyframes = "held_keyframes"
+        case heldStillBlurry = "held_still_blurry"
     }
 }
 
@@ -181,7 +185,7 @@ struct LidarKeyframe {
     let image: CIImage
     let imageWidth: Int
     let imageHeight: Int
-    let depth: LidarDepthCopy?
+    let depthData: ARDepthData?
     let transform: [Float]
     let intrinsics: [Float]
     let timestamp: TimeInterval
@@ -192,11 +196,16 @@ struct LidarKeyframe {
     var blurPx: Float = 0
 }
 
+struct LidarKeyframeWrite {
+    let bytes: Int64
+    let hadDepth: Bool
+}
+
 struct LidarDepthFrame {
     let index: Int
     let imageWidth: Int
     let imageHeight: Int
-    let depth: LidarDepthCopy
+    let depthData: ARDepthData
     let transform: [Float]
     let intrinsics: [Float]
     let timestamp: TimeInterval
@@ -218,6 +227,8 @@ final class LidarCaptureRecorder {
     static let keyframeMinDistanceM: Float = 0.3
     static let keyframeMinTurnDeg: Float = 15
     static let keyframeMinIntervalS: TimeInterval = 0.25
+    static let keyframeHoldMaxDistanceM: Float = 0.6
+    static let keyframeHoldMaxTurnDeg: Float = 30
     static let meshSnapshotIntervalS: TimeInterval = 10
     static let healthSampleIntervalS: TimeInterval = 1
     static let pollIntervalNanoseconds: UInt64 = 100_000_000
@@ -259,6 +270,7 @@ final class LidarCaptureRecorder {
     private var poseFilter = LidarPoseJumpFilter()
     private var motion = LidarMotionSpeed()
     private var roomFirstKeyframe = 1
+    private var roomFirstDepthFrame = 1
     private var storageLevel = LidarStorageBudget.Level.ok
     private var lastStorageAt = Date.distantPast
     private var storageReadFailed = false
@@ -269,6 +281,9 @@ final class LidarCaptureRecorder {
     private var roomStartFrames = 0
     private var roomBlurs: [Float] = []
     private var roomExposures: [Double] = []
+    private var keyframeHeld = false
+    private var roomHeldKeyframes = 0
+    private var roomHeldStillBlurry = 0
     private var roomStartDepthOnly = 0
     private let writer = LidarCaptureWriter()
     let coverage = ScanCoverageTracker()
@@ -331,7 +346,11 @@ final class LidarCaptureRecorder {
         motion.reset()
         roomBlurs = []
         roomExposures = []
+        keyframeHeld = false
+        roomHeldKeyframes = 0
+        roomHeldStillBlurry = 0
         roomFirstKeyframe = frameIndex + 1
+        roomFirstDepthFrame = depthIndex + 1
         status.clear()
         lastStorageAt = .distantPast
         if startedAt == nil { startedAt = Date() }
@@ -519,7 +538,7 @@ final class LidarCaptureRecorder {
             manifest?.stats.poseResets = resets
             let elapsed = startedAt.map { Date().timeIntervalSince($0) } ?? 0
             var events = manifest?.stats.poseResetEvents ?? []
-            events.append(LidarPoseReset(room: manifest?.roomRuns ?? 0, atS: elapsed, roomFirstKeyframe: roomFirstKeyframe, firstKeyframeAfter: frameIndex + 1))
+            events.append(LidarPoseReset(room: manifest?.roomRuns ?? 0, atS: elapsed, roomFirstKeyframe: roomFirstKeyframe, firstKeyframeAfter: frameIndex + 1, roomFirstDepthFrame: roomFirstDepthFrame, firstDepthFrameAfter: depthIndex + 1))
             manifest?.stats.poseResetEvents = events
             DiagnosticsLog.shared.record(String(format: "LiDAR position reset accepted at %.1f s after %ld jumped frames", elapsed, jumpsBefore), category: .state)
         }
@@ -648,12 +667,14 @@ final class LidarCaptureRecorder {
                 report.blurryKeyframes = roomBlurs.filter { $0 > LidarMotionSpeed.blurryPx }.count
                 report.medianBlurPx = Double(LidarMotionSpeed.median(roomBlurs))
                 report.medianExposureMs = Double(LidarMotionSpeed.median(roomExposures.map { Float($0 * 1000) }))
+                report.heldKeyframes = roomHeldKeyframes
+                report.heldStillBlurry = roomHeldStillBlurry
             }
             if let started { report.durationS = Date().timeIntervalSince(started) }
         }
         if let report = manifest?.roomReports?.last {
             DiagnosticsLog.shared.record(
-                "LiDAR room \(report.room): mesh \(report.configAtEnd?.sceneReconstruction ?? report.configAfter?.sceneReconstruction ?? "unknown"), \(report.newMeshAnchors) new mesh pieces, triangles \(report.meshFacesAtStart) to \(report.meshFacesMax), depth \(report.depthSeen ? "yes" : "no"), \(report.keyframes) keyframes, \(report.blurryKeyframes ?? 0) with blur above \(Int(LidarMotionSpeed.blurryPx)) px, median blur \(String(format: "%.1f", report.medianBlurPx ?? 0)) px, median exposure \(String(format: "%.1f", report.medianExposureMs ?? 0)) ms",
+                "LiDAR room \(report.room): mesh \(report.configAtEnd?.sceneReconstruction ?? report.configAfter?.sceneReconstruction ?? "unknown"), \(report.newMeshAnchors) new mesh pieces, triangles \(report.meshFacesAtStart) to \(report.meshFacesMax), depth \(report.depthSeen ? "yes" : "no"), \(report.keyframes) keyframes, \(report.blurryKeyframes ?? 0) with blur above \(Int(LidarMotionSpeed.blurryPx)) px, median blur \(String(format: "%.1f", report.medianBlurPx ?? 0)) px, median exposure \(String(format: "%.1f", report.medianExposureMs ?? 0)) ms, \(report.heldKeyframes ?? 0) waited for a steadier moment, \(report.heldStillBlurry ?? 0) still blurry when the wait ended",
                 category: .state
             )
         }
@@ -685,7 +706,15 @@ final class LidarCaptureRecorder {
         guard now - lastKeyframeAt >= Self.keyframeMinIntervalS else { return .waiting }
         let pose = frame.camera.transform
         if let lastPose, !Self.movedEnough(from: lastPose, to: pose, distance: Self.keyframeMinDistanceM, turnDeg: Self.keyframeMinTurnDeg) { return .notMoved }
-        if LidarMotionSpeed.holdsKeyframe(steady: motion.steady, secondsSinceLastKeyframe: now - lastKeyframeAt) { return .waiting }
+        let depthData = Self.usableDepth(frame)
+        let intrinsics = frame.camera.intrinsics
+        let exposure = frame.camera.exposureDuration
+        let blur = LidarMotionSpeed.blurPixels(angularDegPerS: motion.angularDegPerS, linearMPerS: motion.linearMPerS, exposureS: exposure, focalPx: intrinsics[0][0], distanceM: depthData.flatMap { Self.centerDepthM($0.depthMap) } ?? LidarMotionSpeed.assumedDistanceM)
+        let movedFar = lastPose.map { Self.movedEnough(from: $0, to: pose, distance: Self.keyframeHoldMaxDistanceM, turnDeg: Self.keyframeHoldMaxTurnDeg) } ?? true
+        if LidarMotionSpeed.holdsKeyframe(steady: motion.steady, blurPx: blur, secondsSinceLastKeyframe: now - lastKeyframeAt, movedFar: movedFar) {
+            keyframeHeld = true
+            return .waiting
+        }
         guard !frameWriteInFlight else {
             manifest?.stats.skippedBusyFrames += 1
             return .writerBusy
@@ -693,11 +722,12 @@ final class LidarCaptureRecorder {
         lastPose = pose
         lastKeyframeAt = now
         frameIndex += 1
-        let depth = (frame.sceneDepth ?? frame.smoothedSceneDepth).flatMap(Self.copyDepth)
+        if keyframeHeld {
+            roomHeldKeyframes += 1
+            if !motion.steady || blur > LidarMotionSpeed.holdBlurPx { roomHeldStillBlurry += 1 }
+            keyframeHeld = false
+        }
         let resolution = frame.camera.imageResolution
-        let intrinsics = frame.camera.intrinsics
-        let exposure = frame.camera.exposureDuration
-        let blur = LidarMotionSpeed.blurPixels(angularDegPerS: motion.angularDegPerS, linearMPerS: motion.linearMPerS, exposureS: exposure, focalPx: intrinsics[0][0], distanceM: depth.flatMap(LidarMotionSpeed.centerDepthM) ?? LidarMotionSpeed.assumedDistanceM)
         roomBlurs.append(blur)
         roomExposures.append(exposure)
         let keyframe = LidarKeyframe(
@@ -705,7 +735,7 @@ final class LidarCaptureRecorder {
             image: CIImage(cvPixelBuffer: frame.capturedImage),
             imageWidth: Int(resolution.width),
             imageHeight: Int(resolution.height),
-            depth: depth,
+            depthData: depthData,
             transform: Self.flatten(pose),
             intrinsics: [intrinsics[0][0], intrinsics[1][1], intrinsics[2][0], intrinsics[2][1]],
             timestamp: now,
@@ -719,7 +749,7 @@ final class LidarCaptureRecorder {
         let writer = self.writer
         Task { [weak self] in
             let result = await writer.writeKeyframe(keyframe, to: directory.appendingPathComponent(Self.framesFolder, isDirectory: true))
-            self?.frameWriteFinished(result, hadDepth: depth != nil, mark: mark)
+            self?.frameWriteFinished(result, mark: mark)
         }
         return nil
     }
@@ -729,7 +759,7 @@ final class LidarCaptureRecorder {
         guard !depthWriteInFlight else { return .writerBusy }
         let pose = frame.camera.transform
         if let lastDepthPose, !Self.movedEnough(from: lastDepthPose, to: pose, distance: Self.depthOnlyMinDistanceM, turnDeg: Self.depthOnlyMinTurnDeg) { return .notMoved }
-        guard let depth = (frame.sceneDepth ?? frame.smoothedSceneDepth).flatMap(Self.copyDepth) else { return .noDepth }
+        guard let depthData = Self.usableDepth(frame) else { return .noDepth }
         lastDepthPose = pose
         lastDepthAt = now
         depthIndex += 1
@@ -739,7 +769,7 @@ final class LidarCaptureRecorder {
             index: depthIndex,
             imageWidth: Int(resolution.width),
             imageHeight: Int(resolution.height),
-            depth: depth,
+            depthData: depthData,
             transform: Self.flatten(pose),
             intrinsics: [intrinsics[0][0], intrinsics[1][1], intrinsics[2][0], intrinsics[2][1]],
             timestamp: now
@@ -770,13 +800,13 @@ final class LidarCaptureRecorder {
         }
     }
 
-    private func frameWriteFinished(_ result: Result<Int64, Error>, hadDepth: Bool, mark: GapMark) {
+    private func frameWriteFinished(_ result: Result<LidarKeyframeWrite, Error>, mark: GapMark) {
         frameWriteInFlight = false
         switch result {
-        case .success(let bytes):
+        case .success(let write):
             manifest?.stats.frames += 1
-            if hadDepth { manifest?.stats.depthFrames += 1 }
-            manifest?.stats.frameBytes += bytes
+            if write.hadDepth { manifest?.stats.depthFrames += 1 }
+            manifest?.stats.frameBytes += write.bytes
             if (manifest?.stats.frames ?? 0) % 25 == 0 { persistManifest() }
             frameSaved(mark)
         case .failure(let error):
@@ -925,7 +955,29 @@ final class LidarCaptureRecorder {
         [m.columns.0, m.columns.1, m.columns.2, m.columns.3].flatMap { [$0.x, $0.y, $0.z, $0.w] }
     }
 
-    static func copyDepth(_ depthData: ARDepthData) -> LidarDepthCopy? {
+    static func usableDepth(_ frame: ARFrame) -> ARDepthData? {
+        guard let depthData = frame.sceneDepth ?? frame.smoothedSceneDepth else { return nil }
+        let depthMap = depthData.depthMap
+        guard CVPixelBufferGetPixelFormatType(depthMap) == kCVPixelFormatType_DepthFloat32,
+              CVPixelBufferGetWidth(depthMap) > 0,
+              CVPixelBufferGetHeight(depthMap) > 0 else { return nil }
+        return depthData
+    }
+
+    nonisolated static func centerDepthM(_ depthMap: CVPixelBuffer) -> Float? {
+        guard CVPixelBufferGetPixelFormatType(depthMap) == kCVPixelFormatType_DepthFloat32 else { return nil }
+        let width = CVPixelBufferGetWidth(depthMap)
+        let height = CVPixelBufferGetHeight(depthMap)
+        guard width > 0, height > 0 else { return nil }
+        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(depthMap) else { return nil }
+        let row = base.advanced(by: (height / 2) * CVPixelBufferGetBytesPerRow(depthMap)).assumingMemoryBound(to: Float32.self)
+        let meters = row[width / 2]
+        return meters.isFinite && meters > 0 ? meters : nil
+    }
+
+    nonisolated static func copyDepth(_ depthData: ARDepthData) -> LidarDepthCopy? {
         let depthMap = depthData.depthMap
         guard CVPixelBufferGetPixelFormatType(depthMap) == kCVPixelFormatType_DepthFloat32 else { return nil }
         let width = CVPixelBufferGetWidth(depthMap)
@@ -1063,10 +1115,13 @@ actor LidarCaptureWriter {
 
     func writeDepthFrame(_ record: LidarDepthFrame, to folder: URL) -> Result<Int64, Error> {
         let stem = String(format: "%06d", record.index)
+        guard let depth = LidarCaptureRecorder.copyDepth(record.depthData) else {
+            return .failure(PlainError(message: "Could not read depth frame \(stem)"))
+        }
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            var bytes = Int64(record.depth.millimeters.count)
-            try record.depth.millimeters.write(to: folder.appendingPathComponent("\(stem).depth"), options: .atomic)
+            var bytes = Int64(depth.millimeters.count)
+            try depth.millimeters.write(to: folder.appendingPathComponent("\(stem).depth"), options: .atomic)
             var meta: [String: Any] = [
                 "index": record.index,
                 "timestamp": record.timestamp,
@@ -1078,10 +1133,10 @@ actor LidarCaptureWriter {
                 "tracking": "normal",
                 "depth": "\(stem).depth",
                 "depth_format": "uint16_le_millimeters",
-                "depth_width": record.depth.width,
-                "depth_height": record.depth.height
+                "depth_width": depth.width,
+                "depth_height": depth.height
             ]
-            if let confidence = record.depth.confidence {
+            if let confidence = depth.confidence {
                 try confidence.write(to: folder.appendingPathComponent("\(stem).conf"), options: .atomic)
                 bytes += Int64(confidence.count)
                 meta["confidence"] = "\(stem).conf"
@@ -1095,7 +1150,7 @@ actor LidarCaptureWriter {
         }
     }
 
-    func writeKeyframe(_ keyframe: LidarKeyframe, to framesDirectory: URL) -> Result<Int64, Error> {
+    func writeKeyframe(_ keyframe: LidarKeyframe, to framesDirectory: URL) -> Result<LidarKeyframeWrite, Error> {
         let stem = String(format: "%06d", keyframe.index)
         let options: [CIImageRepresentationOption: Any] = [
             CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String): 0.8
@@ -1121,7 +1176,8 @@ actor LidarCaptureWriter {
                 "exposure_s": keyframe.exposureS,
                 "blur_px_estimate": Double(keyframe.blurPx)
             ]
-            if let depth = keyframe.depth {
+            let depth = keyframe.depthData.flatMap(LidarCaptureRecorder.copyDepth)
+            if let depth {
                 try depth.millimeters.write(to: framesDirectory.appendingPathComponent("\(stem).depth"), options: .atomic)
                 bytes += Int64(depth.millimeters.count)
                 meta["depth"] = "\(stem).depth"
@@ -1138,7 +1194,7 @@ actor LidarCaptureWriter {
             let json = try JSONSerialization.data(withJSONObject: meta, options: [.sortedKeys])
             try json.write(to: framesDirectory.appendingPathComponent("\(stem).json"), options: .atomic)
             bytes += Int64(json.count)
-            return .success(bytes)
+            return .success(LidarKeyframeWrite(bytes: bytes, hadDepth: depth != nil))
         } catch {
             return .failure(error)
         }

@@ -66,6 +66,16 @@ final class DepthMeshFusionTests: XCTestCase {
         [UInt8](try Data(contentsOf: root.appendingPathComponent("mesh/anchor_0000.classes")))
     }
 
+    func testNearHighConfidenceDepthCountsMoreThanFarOrUnsureDepth() {
+        XCTAssertEqual(DepthMeshFusion.sampleWeight(depth: 0.5, confidence: 2), 1, accuracy: 1e-5)
+        XCTAssertEqual(DepthMeshFusion.sampleWeight(depth: 2, confidence: 2), 0.25, accuracy: 1e-5)
+        XCTAssertEqual(DepthMeshFusion.sampleWeight(depth: 2, confidence: 1), 0.125, accuracy: 1e-5)
+        XCTAssertEqual(DepthMeshFusion.sampleWeight(depth: 1, confidence: nil), 1, accuracy: 1e-5)
+        XCTAssertEqual(DepthMeshFusion.behindSurfaceFactor(step: 2), 1, accuracy: 1e-5)
+        XCTAssertEqual(DepthMeshFusion.behindSurfaceFactor(step: -1), 0.75, accuracy: 1e-5)
+        XCTAssertGreaterThan(DepthMeshFusion.behindSurfaceFactor(step: -DepthMeshFusion.truncationVoxels), 0)
+    }
+
     func testFlatWallInFrontOfTheCameraBecomesAWallMesh() throws {
         try writeWall()
 

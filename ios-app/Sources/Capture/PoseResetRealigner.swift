@@ -265,6 +265,22 @@ enum PoseResetRealigner {
         return Outcome(frames: all, dropped: usable.dropped - recovered.count, realigned: recovered.count)
     }
 
+    static func depthTargetPoints(_ frames: [MeshFrame]) -> [SIMD3<Float>] {
+        let withDepth = frames.filter { $0.depthURL != nil && $0.depthWidth > 0 && $0.depthHeight > 0 }
+        guard !withDepth.isEmpty else { return [] }
+        let perFrame = max(1, (withDepth.first.map { ($0.depthWidth / depthStride) * ($0.depthHeight / depthStride) } ?? 1))
+        let step = max(1, withDepth.count * perFrame / maxMeshPoints)
+        var points: [SIMD3<Float>] = []
+        var index = 0
+        while index < withDepth.count, points.count < maxMeshPoints {
+            if let depth = loadDepth(withDepth[index]) {
+                points.append(contentsOf: depthPoints(withDepth[index], depth: depth))
+            }
+            index += step
+        }
+        return points
+    }
+
     private static func loadDepth(_ frame: MeshFrame) -> [UInt16]? {
         guard let url = frame.depthURL else { return nil }
         let count = frame.depthWidth * frame.depthHeight
@@ -292,7 +308,9 @@ extension MeshFrame {
             confidenceURL: confidenceURL,
             depthWidth: depthWidth,
             depthHeight: depthHeight,
-            motionDegPerS: motionDegPerS
+            motionDegPerS: motionDegPerS,
+            blurPx: blurPx,
+            timestamp: timestamp
         )
     }
 }

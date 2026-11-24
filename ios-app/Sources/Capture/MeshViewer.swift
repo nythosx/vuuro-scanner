@@ -726,6 +726,8 @@ struct MeshFrame {
     let depthWidth: Int
     let depthHeight: Int
     var motionDegPerS: Float = 0
+    var blurPx: Float? = nil
+    var timestamp: Double? = nil
 
     var portraitPose: simd_float4x4 {
         cameraTransform * simd_float4x4(simd_quatf(angle: .pi / 2, axis: SIMD3<Float>(0, 0, 1)))
@@ -752,6 +754,9 @@ enum MeshFrameIndex {
         let depthWidth: Int?
         let depthHeight: Int?
         let motionDegPerS: Float?
+        let blurPx: Float?
+        let exposureS: Double?
+        let timestamp: Double?
 
         enum CodingKeys: String, CodingKey {
             case index
@@ -765,6 +770,9 @@ enum MeshFrameIndex {
             case depthWidth = "depth_width"
             case depthHeight = "depth_height"
             case motionDegPerS = "motion_deg_per_s"
+            case blurPx = "blur_px_estimate"
+            case exposureS = "exposure_s"
+            case timestamp
         }
     }
 
@@ -831,7 +839,9 @@ enum MeshFrameIndex {
             confidenceURL: meta.confidence.map { folder.appendingPathComponent($0) },
             depthWidth: meta.depthWidth ?? 0,
             depthHeight: meta.depthHeight ?? 0,
-            motionDegPerS: meta.motionDegPerS ?? 0
+            motionDegPerS: meta.motionDegPerS ?? 0,
+            blurPx: (meta.exposureS ?? 0) > 0 ? meta.blurPx.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil } : nil,
+            timestamp: meta.timestamp.flatMap { $0.isFinite ? $0 : nil }
         )
     }
 }

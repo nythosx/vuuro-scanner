@@ -192,6 +192,18 @@ struct LiDARProofView: View {
                         .font(.system(size: 14))
                         .foregroundStyle(.orange)
                 }
+                if let leftOut = depthMesh.resetFramesLeftOut {
+                    Text("\(leftOut) depth frames from before a position reset did not line up with the rest and are left out of the mesh\(depthMesh.resetFramesRealigned.map { ", \($0) were lined up again and used" } ?? "").")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.orange)
+                } else if let realigned = depthMesh.resetFramesRealigned {
+                    row("Frames lined up after a position reset", "\(realigned)")
+                }
+                if depthMesh.resetsUnreadable == true {
+                    Text("The position resets could not be read, so every depth frame went into the mesh.")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.orange)
+                }
                 row("Depth mesh detail", String(format: "%.0f mm cells, built in %.1f s", depthMesh.voxelM * 1000, depthMesh.seconds))
                 row("Mesh footprint from above", String(format: "%.1f m²", depthMesh.footprintM2))
                 row("Floor seen by the camera (not the room area)", String(format: "%.1f m²", depthMesh.floorSeenM2))

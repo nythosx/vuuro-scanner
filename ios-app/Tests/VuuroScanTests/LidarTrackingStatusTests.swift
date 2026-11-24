@@ -90,6 +90,36 @@ final class LidarTrackingStatusTests: XCTestCase {
         XCTAssertEqual(result.dropped, 2)
     }
 
+    private func timedFrame(_ index: Int, at time: Double) -> MeshFrame {
+        var result = frame(index)
+        result.timestamp = time
+        return result
+    }
+
+    func testDepthOnlyFramesBeforeAResetAreDroppedByTheirOwnIndex() {
+        let depthFrames = (1...10).map { timedFrame($0, at: Double($0)) }
+        let resets = [LidarPoseReset(room: 1, atS: 20, roomFirstKeyframe: 1, firstKeyframeAfter: 4, roomFirstDepthFrame: 2, firstDepthFrameAfter: 6)]
+        let result = LidarPoseReset.usableDepthFrames(depthFrames, resets: resets, keyframes: [])
+        XCTAssertEqual(result.frames.map(\.index), [1, 6, 7, 8, 9, 10])
+        XCTAssertEqual(result.dropped, 4)
+    }
+
+    func testOlderCapturesDropDepthOnlyFramesByKeyframeTime() {
+        let keyframes = [timedFrame(1, at: 10), timedFrame(2, at: 12), timedFrame(3, at: 20), timedFrame(4, at: 25)]
+        let depthFrames = [timedFrame(1, at: 9), timedFrame(2, at: 11), timedFrame(3, at: 19.9), timedFrame(4, at: 20), timedFrame(5, at: 30)]
+        let resets = [LidarPoseReset(room: 1, atS: 20, roomFirstKeyframe: 1, firstKeyframeAfter: 3)]
+        let result = LidarPoseReset.usableDepthFrames(depthFrames, resets: resets, keyframes: keyframes)
+        XCTAssertEqual(result.frames.map(\.index), [1, 4, 5])
+        XCTAssertEqual(result.dropped, 2)
+    }
+
+    func testDepthOnlyFramesStayWhenTheResetTimeIsUnknown() {
+        let depthFrames = [timedFrame(1, at: 5), frame(2)]
+        let resets = [LidarPoseReset(room: 1, atS: 20, roomFirstKeyframe: 1, firstKeyframeAfter: 3)]
+        let result = LidarPoseReset.usableDepthFrames(depthFrames, resets: resets, keyframes: [frame(1), frame(3)])
+        XCTAssertEqual(result.dropped, 0)
+    }
+
     func testNoResetsKeepsEveryFrame() {
         let frames = (1...3).map(frame)
         let result = LidarPoseReset.usable(frames, resets: [])
@@ -138,6 +168,13 @@ final class LidarTrackingStatusTests: XCTestCase {
         XCTAssertFalse(LidarMotionSpeed.holdsKeyframe(steady: false, secondsSinceLastKeyframe: 1.6))
         XCTAssertFalse(LidarMotionSpeed.holdsKeyframe(steady: true, secondsSinceLastKeyframe: 0.5))
         XCTAssertFalse(LidarMotionSpeed.holdsKeyframe(steady: false, secondsSinceLastKeyframe: .infinity))
+    }
+
+    func testSteadyFrameIsStillHeldWhenItsBlurIsHigh() {
+        XCTAssertTrue(LidarMotionSpeed.holdsKeyframe(steady: true, blurPx: 9, secondsSinceLastKeyframe: 0.5))
+        XCTAssertFalse(LidarMotionSpeed.holdsKeyframe(steady: true, blurPx: 2, secondsSinceLastKeyframe: 0.5))
+        XCTAssertFalse(LidarMotionSpeed.holdsKeyframe(steady: true, blurPx: 9, secondsSinceLastKeyframe: 1.6))
+        XCTAssertFalse(LidarMotionSpeed.holdsKeyframe(steady: false, blurPx: 9, secondsSinceLastKeyframe: 0.5, movedFar: true))
     }
 
     func testWarnsOnlyWhenMoreThanHalfTheFramesAreLeftOut() {

@@ -68,8 +68,10 @@ struct LidarMotionSpeed {
         angularDegPerS <= Self.steadyAngularDegPerS && linearMPerS <= Self.steadyLinearMPerS
     }
 
-    static func holdsKeyframe(steady: Bool, secondsSinceLastKeyframe: TimeInterval) -> Bool {
-        !steady && secondsSinceLastKeyframe < steadyWaitLimitS
+    static let holdBlurPx: Float = 6
+
+    static func holdsKeyframe(steady: Bool, blurPx: Float = 0, secondsSinceLastKeyframe: TimeInterval, movedFar: Bool = false) -> Bool {
+        (!steady || blurPx > holdBlurPx) && secondsSinceLastKeyframe < steadyWaitLimitS && !movedFar
     }
 
     static let blurryPx: Float = 3
@@ -105,12 +107,16 @@ struct LidarPoseReset: Codable, Equatable, Sendable {
     var atS: Double
     var roomFirstKeyframe: Int
     var firstKeyframeAfter: Int
+    var roomFirstDepthFrame: Int? = nil
+    var firstDepthFrameAfter: Int? = nil
 
     enum CodingKeys: String, CodingKey {
         case room
         case atS = "at_s"
         case roomFirstKeyframe = "room_first_keyframe"
         case firstKeyframeAfter = "first_keyframe_after"
+        case roomFirstDepthFrame = "room_first_depth_frame"
+        case firstDepthFrameAfter = "first_depth_frame_after"
     }
 
     static let mostlyLeftOutText = "Most of the photos were taken before the phone lost its position, so they are left out. Scan this room again for a full photo view."
@@ -129,6 +135,31 @@ struct LidarPoseReset: Codable, Equatable, Sendable {
             !cutoffs.values.contains { frame.index >= $0.first && frame.index < $0.before }
         }
         return (kept, frames.count - kept.count)
+    }
+
+    static func usableDepthFrames(_ depthFrames: [MeshFrame], resets: [LidarPoseReset], keyframes: [MeshFrame]) -> (frames: [MeshFrame], dropped: Int) {
+        var latest: [Int: LidarPoseReset] = [:]
+        for reset in resets {
+            if let known = latest[reset.room], known.firstKeyframeAfter >= reset.firstKeyframeAfter { continue }
+            latest[reset.room] = reset
+        }
+        var indexRanges: [Range<Int>] = []
+        var timeRanges: [Range<Double>] = []
+        for reset in latest.values {
+            if let first = reset.roomFirstDepthFrame, let after = reset.firstDepthFrameAfter {
+                if after > first { indexRanges.append(first..<after) }
+                continue
+            }
+            let start = keyframes.filter { $0.index >= reset.roomFirstKeyframe }.compactMap(\.timestamp).min()
+            let end = keyframes.filter { $0.index >= reset.firstKeyframeAfter }.compactMap(\.timestamp).min()
+            if let start, let end, end > start { timeRanges.append(start..<end) }
+        }
+        let kept = depthFrames.filter { frame in
+            if indexRanges.contains(where: { $0.contains(frame.index) }) { return false }
+            if let time = frame.timestamp, timeRanges.contains(where: { $0.contains(time) }) { return false }
+            return true
+        }
+        return (kept, depthFrames.count - kept.count)
     }
 }
 

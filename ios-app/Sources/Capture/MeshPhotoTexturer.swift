@@ -59,6 +59,7 @@ enum MeshPhotoTexturer {
         let depth: [UInt16]?
         let depthWidth: Int
         let depthHeight: Int
+        var blurPenalty: Float = 1
     }
 
     final class Monitor: @unchecked Sendable {
@@ -180,7 +181,7 @@ enum MeshPhotoTexturer {
         var visible = visibility(corners: corners, faceTotal: faceTotal, words: words, cameras: cameras, monitor: monitor)
         monitor.endStage("visibility")
         if stopped() { return .failure(CancellationError()) }
-        let kept = coverCameras(visible: visible, cameras: cameras.count, words: words, limit: maxTextures, steadiness: candidates.map { steadiness(motionDegPerS: $0.motionDegPerS) })
+        let kept = coverCameras(visible: visible, cameras: cameras.count, words: words, limit: maxTextures, steadiness: candidates.map { steadiness(motionDegPerS: $0.motionDegPerS, blurPx: $0.blurPx) })
         guard !kept.isEmpty else {
             return .failure(PlainError(message: "No triangle of the mesh is seen clearly in a photo."))
         }
@@ -327,8 +328,9 @@ enum MeshPhotoTexturer {
         available > 0 && available < minAvailableMemoryBytes
     }
 
-    static func steadiness(motionDegPerS: Float) -> Float {
-        1 / (1 + max(0, motionDegPerS) / LidarMotionSpeed.steadyAngularDegPerS)
+    static func steadiness(motionDegPerS: Float, blurPx: Float? = nil) -> Float {
+        if let blurPx, blurPx.isFinite { return 1 / (1 + max(0, blurPx) / LidarMotionSpeed.holdBlurPx) }
+        return 1 / (1 + max(0, motionDegPerS) / LidarMotionSpeed.steadyAngularDegPerS)
     }
 
     static func coverCameras(visible: [UInt64], cameras: Int, words: Int, limit: Int, steadiness: [Float] = []) -> [Int] {
@@ -449,7 +451,12 @@ enum MeshPhotoTexturer {
         let halfWidth = camera.width / 2
         let halfHeight = camera.height / 2
         let offCenter = max(abs(center.x - halfWidth) / halfWidth, abs(center.y - halfHeight) / halfHeight)
-        return distance * (1 + offCenter) / facing
+        return distance * (1 + offCenter) * camera.blurPenalty / facing
+    }
+
+    static func blurPenalty(_ blurPx: Float?) -> Float {
+        guard let blurPx, blurPx.isFinite else { return 1 }
+        return 1 + max(0, blurPx) / (2 * LidarMotionSpeed.holdBlurPx)
     }
 
     static func facesByVertex(_ input: PartInput, vertexCount: Int, valid: [Bool]) -> [[Int32]] {
@@ -618,7 +625,8 @@ enum MeshPhotoTexturer {
             cy: frame.cy,
             depth: depth,
             depthWidth: depth == nil ? 0 : frame.depthWidth,
-            depthHeight: depth == nil ? 0 : frame.depthHeight
+            depthHeight: depth == nil ? 0 : frame.depthHeight,
+            blurPenalty: blurPenalty(frame.blurPx)
         )
     }
 

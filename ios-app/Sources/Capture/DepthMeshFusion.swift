@@ -21,6 +21,9 @@ struct LidarDepthMeshReport: Codable, Equatable {
     var openingFaces: Int
     var objectFaces: Int
     var failedFrameNames: [String]?
+    var resetFramesLeftOut: Int? = nil
+    var resetFramesRealigned: Int? = nil
+    var resetsUnreadable: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case vertices
@@ -41,6 +44,9 @@ struct LidarDepthMeshReport: Codable, Equatable {
         case failedFrameNames = "failed_frames"
         case openingFaces = "door_window_faces"
         case objectFaces = "object_faces"
+        case resetFramesLeftOut = "reset_frames_left_out"
+        case resetFramesRealigned = "reset_frames_realigned"
+        case resetsUnreadable = "resets_unreadable"
     }
 }
 
@@ -78,7 +84,22 @@ enum DepthMeshFusion {
 
     private struct Cloud {
         let points: [SIMD3<Float>]
+        let weights: [Float]
         let origin: SIMD3<Float>
+    }
+
+    static let fullWeightDepth: Float = 1
+    static let mediumConfidenceWeight: Float = 0.5
+
+    static func sampleWeight(depth: Float, confidence: UInt8?) -> Float {
+        let far = max(depth, fullWeightDepth)
+        let trust: Float = confidence.map { $0 >= 2 ? 1 : mediumConfidenceWeight } ?? 1
+        return trust * (fullWeightDepth * fullWeightDepth) / (far * far)
+    }
+
+    static func behindSurfaceFactor(step: Int) -> Float {
+        guard step < 0 else { return 1 }
+        return Float(truncationVoxels + 1 + step) / Float(truncationVoxels + 1)
     }
 
     private struct Mesh {
@@ -122,15 +143,32 @@ enum DepthMeshFusion {
 
     static func run(captureURL: URL, progress: (@Sendable (Double) -> Void)? = nil) -> Result<LidarDepthMeshReport, Error> {
         let started = Date()
-        var frames: [MeshFrame] = []
+        var keyframes: [MeshFrame] = []
+        var depthOnly: [MeshFrame] = []
         for folder in [framesFolder, depthFramesFolder] {
             switch MeshFrameIndex.load(captureURL: captureURL, folder: folder) {
             case .success(let loaded):
-                frames.append(contentsOf: loaded.frames.filter { $0.depthURL != nil })
+                if folder == framesFolder {
+                    keyframes = loaded.frames
+                } else {
+                    depthOnly = loaded.frames.filter { $0.depthURL != nil }
+                }
             case .failure(let error):
                 return .failure(error)
             }
         }
+        let resets = loadResets(captureURL: captureURL)
+        let depthKeyframes = keyframes.filter { $0.depthURL != nil }
+        let plainKeyframes = LidarPoseReset.usable(depthKeyframes, resets: resets.events)
+        let keptDepthOnly = LidarPoseReset.usableDepthFrames(depthOnly, resets: resets.events, keyframes: keyframes)
+        var keptKeyframes = PoseResetRealigner.Outcome(frames: plainKeyframes.frames, dropped: plainKeyframes.dropped, realigned: 0)
+        if plainKeyframes.dropped > 0 {
+            if Task.isCancelled { return .failure(CancellationError()) }
+            let target = PoseResetRealigner.depthTargetPoints(plainKeyframes.frames + keptDepthOnly.frames)
+            keptKeyframes = PoseResetRealigner.realign(frames: depthKeyframes, resets: resets.events, meshPoints: target, isCancelled: { Task.isCancelled })
+        }
+        let leftOut = keptKeyframes.dropped + keptDepthOnly.dropped
+        let frames = keptKeyframes.frames + keptDepthOnly.frames
         var lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
         var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         var usable: [MeshFrame] = []
@@ -184,7 +222,10 @@ enum DepthMeshFusion {
             roomBoxesUnreadable: loadedBoxes.unreadable,
             openingFaces: mesh.openingFaces,
             objectFaces: mesh.objectFaces,
-            failedFrameNames: failedNames.isEmpty ? nil : failedNames
+            failedFrameNames: failedNames.isEmpty ? nil : failedNames,
+            resetFramesLeftOut: leftOut > 0 ? leftOut : nil,
+            resetFramesRealigned: keptKeyframes.realigned > 0 ? keptKeyframes.realigned : nil,
+            resetsUnreadable: resets.unreadable ? true : nil
         )
         do {
             try write(mesh, report: report, to: captureURL)
@@ -192,6 +233,17 @@ enum DepthMeshFusion {
             return .success(report)
         } catch {
             return .failure(error)
+        }
+    }
+
+    static func loadResets(captureURL: URL) -> (events: [LidarPoseReset], unreadable: Bool) {
+        let url = captureURL.appendingPathComponent(LidarCaptureLibrary.manifestName)
+        guard FileManager.default.fileExists(atPath: url.path) else { return ([], false) }
+        do {
+            return (try LidarCaptureLibrary.manifest(at: captureURL).stats.poseResetEvents ?? [], false)
+        } catch {
+            DiagnosticsLog.shared.record("Depth mesh: could not read the position resets from capture.json, so every frame is used: \(error.localizedDescription)", category: .error)
+            return ([], true)
         }
     }
 
@@ -219,7 +271,9 @@ enum DepthMeshFusion {
         let cy = frame.cy * scaleY
         let transform = frame.cameraTransform
         var points: [SIMD3<Float>] = []
+        var weights: [Float] = []
         points.reserveCapacity(count / (pixelStep * pixelStep))
+        weights.reserveCapacity(count / (pixelStep * pixelStep))
         for v in Swift.stride(from: 0, to: frame.depthHeight, by: pixelStep) {
             for u in Swift.stride(from: 0, to: frame.depthWidth, by: pixelStep) {
                 let index = v * frame.depthWidth + u
@@ -230,11 +284,12 @@ enum DepthMeshFusion {
                 let y = -(Float(v) + 0.5 - cy) * d / fy
                 let world = transform * SIMD4<Float>(x, y, -d, 1)
                 points.append(SIMD3<Float>(world.x, world.y, world.z))
+                weights.append(sampleWeight(depth: d, confidence: confidence?[index]))
             }
         }
         guard !points.isEmpty else { return nil }
         let origin = SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
-        return Cloud(points: points, origin: origin)
+        return Cloud(points: points, weights: weights, origin: origin)
     }
 
     private static func fuse(_ frames: [MeshFrame], lower rawLower: SIMD3<Float>, upper rawUpper: SIMD3<Float>, boxes: [LidarRoomBox], progress: (@Sendable (Double) -> Void)?) -> Result<(Mesh, Float), Error> {
@@ -279,8 +334,9 @@ enum DepthMeshFusion {
                         readError = error
                         return
                     }
-                    for point in cloud.points {
+                    for (pointIndex, point) in cloud.points.enumerated() {
                         let ray = simd_normalize(point - cloud.origin)
+                        let sample = cloud.weights[pointIndex]
                         for step in -truncationVoxels...truncationVoxels {
                             let offset = Float(step) * voxel
                             let grid = (point - ray * offset - lower) / voxel
@@ -290,8 +346,9 @@ enum DepthMeshFusion {
                             if ix < 0 || iy < 0 || iz < 0 || ix >= nx || iy >= ny || iz >= nz { continue }
                             let index = (ix * ny + iy) * nz + iz
                             let current = w[index]
-                            t[index] = (t[index] * current + offset / truncation) / (current + 1)
-                            w[index] = min(current + 1, maxWeight)
+                            let added = sample * behindSurfaceFactor(step: step)
+                            t[index] = (t[index] * current + offset / truncation * added) / (current + added)
+                            w[index] = min(current + added, maxWeight)
                         }
                     }
                     progress?(0.8 * Double(number + 1) / Double(frames.count))

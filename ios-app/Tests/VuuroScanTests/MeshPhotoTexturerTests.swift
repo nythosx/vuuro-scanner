@@ -68,6 +68,11 @@ final class MeshPhotoTexturerTests: XCTestCase {
         XCTAssertFalse(MeshPhotoTexturer.lowMemory(available: 400 * 1_048_576))
         XCTAssertFalse(MeshPhotoTexturer.lowMemory(available: 0))
         XCTAssertEqual(MeshPhotoTexturer.steadiness(motionDegPerS: 40), 0.5, accuracy: 0.001)
+        XCTAssertEqual(MeshPhotoTexturer.steadiness(motionDegPerS: 40, blurPx: 0), 1, accuracy: 0.001)
+        XCTAssertEqual(MeshPhotoTexturer.steadiness(motionDegPerS: 0, blurPx: 6), 0.5, accuracy: 0.001)
+        XCTAssertEqual(MeshPhotoTexturer.blurPenalty(nil), 1, accuracy: 0.001)
+        XCTAssertEqual(MeshPhotoTexturer.blurPenalty(0), 1, accuracy: 0.001)
+        XCTAssertEqual(MeshPhotoTexturer.blurPenalty(12), 2, accuracy: 0.001)
     }
 
     func testGainsEvenOutABrighterPhoto() {
