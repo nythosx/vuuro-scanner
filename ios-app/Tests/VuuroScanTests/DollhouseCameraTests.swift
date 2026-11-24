@@ -333,4 +333,23 @@ final class DollhouseCameraTests: XCTestCase {
             XCTAssertNotNil(recognizer.delegate, "pan/pinch/two-finger-pan must have a delegate so they can recognize simultaneously — otherwise a one-finger drag that grows into a pinch drops one of them")
         }
     }
+
+    func testDoubleTapSkipsMeshThatIsHiddenByItsMaterialOrNode() {
+        let shown = SCNMaterial()
+        let hidden = SCNMaterial()
+        hidden.colorBufferWriteMask = []
+        let geometry = SCNBox(width: 1, height: 1, length: 1, chamferRadius: 0)
+        geometry.materials = [shown, hidden]
+        let node = SCNNode(geometry: geometry)
+        XCTAssertTrue(DollhouseCamera.isVisible(node, geometryIndex: 0))
+        XCTAssertFalse(DollhouseCamera.isVisible(node, geometryIndex: 1))
+        XCTAssertTrue(DollhouseCamera.isVisible(node, geometryIndex: 2))
+        let parent = SCNNode()
+        parent.addChildNode(node)
+        parent.opacity = 0
+        XCTAssertFalse(DollhouseCamera.isVisible(node, geometryIndex: 0))
+        let clear = SCNMaterial()
+        clear.transparency = 0
+        XCTAssertFalse(DollhouseCamera.shows(clear))
+    }
 }

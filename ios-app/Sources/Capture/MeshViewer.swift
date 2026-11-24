@@ -38,6 +38,7 @@ struct MeshViewer: View {
     @State private var sendError: String?
     @State private var usableCache: PoseResetRealigner.Outcome?
     @State private var sentModelURL: URL?
+    @State private var orbitCamera = DollhouseCamera()
 
     enum Mode: String, CaseIterable, Identifiable {
         case clay = "Clay"
@@ -57,9 +58,27 @@ struct MeshViewer: View {
                     boundsMin: built.boundsMin,
                     boundsMax: built.boundsMax,
                     background: mode == .wireframe ? .black : UIColor(white: 0.93, alpha: 1),
-                    interactive: frameIndex == nil
+                    interactive: frameIndex == nil,
+                    camera: orbitCamera
                 )
                 .ignoresSafeArea(edges: .bottom)
+                .overlay(alignment: .topTrailing) {
+                    if frameIndex == nil, !isLoading {
+                        Button {
+                            orbitCamera.fitAll()
+                        } label: {
+                            Label("Reset view", systemImage: "arrow.counterclockwise")
+                                .font(.system(size: 14, weight: .semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(.ultraThinMaterial, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 12)
+                        .padding(.top, hasFilledFloor ? 52 : 12)
+                        .accessibilityIdentifier("meshViewer.resetView")
+                    }
+                }
             } else {
                 Color(white: 0.93).ignoresSafeArea(edges: .bottom)
             }
@@ -853,14 +872,19 @@ struct MeshSceneView: UIViewRepresentable {
     let boundsMax: SIMD3<Float>
     let background: UIColor
     let interactive: Bool
+    var camera: DollhouseCamera? = nil
 
     final class Coordinator {
-        let camera = DollhouseCamera()
+        let camera: DollhouseCamera
         var lastSize: CGSize = .zero
+
+        init(camera: DollhouseCamera?) {
+            self.camera = camera ?? DollhouseCamera()
+        }
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(camera: camera)
     }
 
     func makeUIView(context: Context) -> SCNView {

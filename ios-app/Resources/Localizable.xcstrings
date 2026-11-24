@@ -8209,6 +8209,22 @@
                 }
             }
         },
+        "Reset view": {
+            "localizations": {
+                "en": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Reset view"
+                    }
+                },
+                "nl": {
+                    "stringUnit": {
+                        "state": "translated",
+                        "value": "Weergave herstellen"
+                    }
+                }
+            }
+        },
         "Go to the next room": {
             "localizations": {
                 "en": {

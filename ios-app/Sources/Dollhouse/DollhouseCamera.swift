@@ -265,10 +265,10 @@ final class DollhouseCamera: NSObject {
 
     private func surfacePoint(at location: CGPoint, in view: SCNView) -> SIMD3<Float>? {
         let options: [SCNHitTestOption: Any] = [
-            .searchMode: SCNHitTestSearchMode.closest.rawValue,
+            .searchMode: SCNHitTestSearchMode.all.rawValue,
             .ignoreHiddenNodes: true
         ]
-        if let hit = view.hitTest(location, options: options).first {
+        for hit in view.hitTest(location, options: options) where Self.isVisible(hit.node, geometryIndex: hit.geometryIndex) {
             let point = hit.worldCoordinates
             let focus = SIMD3<Float>(Float(point.x), Float(point.y), Float(point.z))
             if focus.x.isFinite, focus.y.isFinite, focus.z.isFinite {
@@ -276,6 +276,23 @@ final class DollhouseCamera: NSObject {
             }
         }
         return nil
+    }
+
+    static func isVisible(_ node: SCNNode, geometryIndex: Int) -> Bool {
+        var current: SCNNode? = node
+        while let link = current {
+            if link.isHidden || link.opacity < 0.01 { return false }
+            current = link.parent
+        }
+        guard let geometry = node.geometry else { return true }
+        let materials = geometry.materials
+        guard !materials.isEmpty else { return true }
+        let material = materials[max(0, geometryIndex) % materials.count]
+        return shows(material)
+    }
+
+    static func shows(_ material: SCNMaterial) -> Bool {
+        !material.colorBufferWriteMask.isEmpty && material.transparency > 0.01
     }
 
     static func clampedDistance(_ value: Float) -> Float {

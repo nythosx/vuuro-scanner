@@ -11,7 +11,7 @@ struct DollhouseCameraButtons: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            button("arrow.up.left.and.arrow.down.right", label: "Fit the whole plan", id: "dollhouse.fit", action: onFit)
+            button("arrow.counterclockwise", label: "Reset view", id: "dollhouse.fit", action: onFit)
             if canEnterRoom {
                 button("door.left.hand.open", label: "Go to the next room", id: "dollhouse.enterRoom", action: onEnterRoom)
             }
