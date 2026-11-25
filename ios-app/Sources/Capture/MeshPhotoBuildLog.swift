@@ -15,6 +15,10 @@ enum MeshPhotoBuildLog {
         let triangles: Int
         let photosUsed: Int
         let stages: [Stage]
+        var photosLinedUp: Int? = nil
+        var photosChecked: Int? = nil
+        var photoLimit: Int? = nil
+        var photosInTexture: Int? = nil
     }
 
     enum Outcome: String, Codable {
@@ -62,11 +66,21 @@ enum MeshPhotoBuildLog {
     static func text(_ entry: Entry) -> String {
         var parts = [duration(entry.seconds), entry.debugBuild ? "Debug build" : "Release build"]
         switch entry.outcome {
-        case .done: parts.append("\(entry.photosUsed) photos, \(entry.triangles) triangles")
+        case .done:
+            if let linedUp = entry.photosLinedUp, let checked = entry.photosChecked, let limit = entry.photoLimit, let inTexture = entry.photosInTexture {
+                parts.append(countsText(linedUp: linedUp, checked: checked, chosen: entry.photosUsed, limit: limit, inTexture: inTexture))
+                parts.append("\(entry.triangles) triangles")
+            } else {
+                parts.append("\(entry.photosUsed) photos, \(entry.triangles) triangles")
+            }
         case .cancelled: parts.append("cancelled at \(entry.percentDone)%")
         case .failed: parts.append("failed at \(entry.percentDone)%")
         }
         return parts.joined(separator: ", ")
+    }
+
+    static func countsText(linedUp: Int, checked: Int, chosen: Int, limit: Int, inTexture: Int) -> String {
+        "\(inTexture) of \(linedUp) lined up \(linedUp == 1 ? "photo" : "photos") really in the texture (\(checked) checked, \(chosen) chosen, limit \(limit) for this mesh and memory)"
     }
 
     static func stagesText(_ entry: Entry) -> String {

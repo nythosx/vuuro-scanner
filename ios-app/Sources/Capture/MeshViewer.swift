@@ -496,7 +496,8 @@ struct MeshViewer: View {
             photoNote = Self.photoTextureNote(output, seconds: seconds, dropped: usable.dropped, total: frames.count, realigned: usable.realigned)
             applyMode()
             let stages = monitor.stages + [MeshPhotoBuildLog.Stage(name: "3D scene", seconds: Date().timeIntervalSince(sceneStarted))]
-            logPhotoBuild(.done, started: started, monitor: monitor, stages: stages, triangles: output.totalFaces, photosUsed: output.photosUsed)
+            logPhotoBuild(.done, started: started, monitor: monitor, stages: stages, triangles: output.totalFaces, photosUsed: output.photosUsed, counts: output)
+            DiagnosticsLog.shared.record("Photo texture: " + Self.photoCountsText(output), category: .state)
         case .failure(let error):
             if error is CancellationError {
                 logPhotoBuild(.cancelled, started: started, monitor: monitor, stages: monitor.stages, triangles: built.triangles, photosUsed: 0)
@@ -514,16 +515,16 @@ struct MeshViewer: View {
     static func photoTextureNote(_ output: MeshPhotoTexturer.Output, seconds: Int, dropped: Int, total: Int, realigned: Int = 0) -> String {
         let percent = output.totalFaces > 0 ? output.facesInPhoto * 100 / output.totalFaces : 0
         let filledPercent = output.totalFaces > 0 ? output.facesFilled * 100 / output.totalFaces : 0
-        var note = "Photo texture from \(photos(output.photosUsed, kind: "keyframe")) at \(MeshPhotoTexturer.textureSize) px with brightness evened out, \(percent)% of the mesh"
+        var note = "Photo texture from \(photos(output.photosInTexture, kind: "keyframe")) at \(output.photoLongSide > 0 ? output.photoLongSide : MeshPhotoTexturer.textureSize) px with brightness evened out, \(percent)% of the mesh"
         if output.facesFilled > 0 {
-            note += ", \(filledPercent < 1 ? "under 1" : String(filledPercent))% more filled in from a nearby photo"
+            note += ", \(filledPercent < 1 ? "under 1" : String(filledPercent))% more filled in from a nearby photo whose depth sees the spot"
         }
-        note += ", built in \(seconds) s."
+        note += ", built in \(seconds) s. \(photoCountsText(output))."
         if output.facesInPhoto + output.facesFilled < output.totalFaces {
             note += " Grey parts are not in any photo."
         }
         if realigned > 0 {
-            note += " \(photos(realigned)) from before a position reset lined up with the mesh again and \(realigned == 1 ? "was" : "were") used."
+            note += " \(photos(realigned)) from before a position reset lined up with the mesh again and \(realigned == 1 ? "is" : "are") among the lined up photos."
         }
         if dropped > 0 {
             note += " \(photos(dropped)) from before a position reset \(dropped == 1 ? "was" : "were") left out."
@@ -537,7 +538,11 @@ struct MeshViewer: View {
         return note
     }
 
-    private func logPhotoBuild(_ outcome: MeshPhotoBuildLog.Outcome, started: Date, monitor: MeshPhotoTexturer.Monitor, stages: [MeshPhotoBuildLog.Stage], triangles: Int, photosUsed: Int) {
+    static func photoCountsText(_ output: MeshPhotoTexturer.Output) -> String {
+        MeshPhotoBuildLog.countsText(linedUp: output.photosLinedUp, checked: output.photosChecked, chosen: output.photosUsed, limit: output.photoLimit, inTexture: output.photosInTexture)
+    }
+
+    private func logPhotoBuild(_ outcome: MeshPhotoBuildLog.Outcome, started: Date, monitor: MeshPhotoTexturer.Monitor, stages: [MeshPhotoBuildLog.Stage], triangles: Int, photosUsed: Int, counts: MeshPhotoTexturer.Output? = nil) {
         let entry = MeshPhotoBuildLog.Entry(
             finishedAt: Date(),
             seconds: Date().timeIntervalSince(started),
@@ -546,7 +551,11 @@ struct MeshViewer: View {
             debugBuild: MeshPhotoBuildLog.isDebugBuild,
             triangles: triangles,
             photosUsed: photosUsed,
-            stages: stages
+            stages: stages,
+            photosLinedUp: counts?.photosLinedUp,
+            photosChecked: counts?.photosChecked,
+            photoLimit: counts?.photoLimit,
+            photosInTexture: counts?.photosInTexture
         )
         if case .failure(let error) = MeshPhotoBuildLog.save(entry, capture: captureURL) {
             DiagnosticsLog.shared.record("Photo texture build time not saved: \(error.localizedDescription)", category: .error)

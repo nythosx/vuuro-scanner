@@ -6,8 +6,9 @@ import simd
 
 enum LidarModelGlb {
     static let skippedClasses: Set<UInt8> = [9]
-    static let jpegQuality: CGFloat = 0.8
+    static let jpegQuality: CGFloat = 0.9
     static let maxBytes = 120 * 1_048_576
+    static let webPixelBudget = 52 * 1024 * 768
 
     struct Part {
         let output: MeshPhotoTexturer.PartOutput
@@ -80,6 +81,12 @@ enum LidarModelGlb {
         var imageEntries: [[String: Any]] = []
         var primitives: [[String: Any]] = []
         var triangles = 0
+        let photoSlots = Set(parts.flatMap { part in part.output.groups.filter { !skippedClasses.contains($0.classId) && $0.count >= 3 && $0.slot >= 0 }.map(\.slot) })
+        let photoPixels = photoSlots.reduce(0) { total, slot in
+            guard images.indices.contains(slot), let image = images[slot] else { return total }
+            return total + image.width * image.height
+        }
+        let scale = webScale(totalPixels: photoPixels)
 
         for part in parts {
             let positions = floats(part.output.positions)
@@ -146,7 +153,7 @@ enum LidarModelGlb {
                     var pbr: [String: Any] = ["metallicFactor": 0, "roughnessFactor": 1]
                     if group.slot >= 0, images.indices.contains(group.slot), let image = images[group.slot] {
                         if textureIndex[group.slot] == nil {
-                            guard let jpeg = jpeg(image) else {
+                            guard let jpeg = jpeg(image, scale: scale) else {
                                 return .failure(PlainError(message: "Photo \(group.slot + 1) of the model could not be saved as JPEG."))
                             }
                             imageEntries.append(["bufferView": builder.view(jpeg, target: nil), "mimeType": "image/jpeg"])
@@ -290,10 +297,29 @@ enum LidarModelGlb {
         return out
     }
 
-    static func jpeg(_ image: CGImage) -> Data? {
+    static func webScale(totalPixels: Int) -> CGFloat {
+        guard totalPixels > webPixelBudget else { return 1 }
+        return CGFloat((Double(webPixelBudget) / Double(totalPixels)).squareRoot())
+    }
+
+    static func resized(_ image: CGImage, scale: CGFloat) -> CGImage? {
+        let width = max(1, Int((CGFloat(image.width) * scale).rounded()))
+        let height = max(1, Int((CGFloat(image.height) * scale).rounded()))
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        context.interpolationQuality = .high
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
+    }
+
+    static func jpeg(_ image: CGImage, scale: CGFloat = 1) -> Data? {
+        var source = image
+        if scale < 1 {
+            guard let smaller = resized(image, scale: scale) else { return nil }
+            source = smaller
+        }
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
-        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: jpegQuality] as CFDictionary)
+        CGImageDestinationAddImage(destination, source, [kCGImageDestinationLossyCompressionQuality: jpegQuality] as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { return nil }
         return data as Data
     }

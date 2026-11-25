@@ -3,7 +3,7 @@ import simd
 @testable import VuuroScan
 
 final class MeshPhotoTexturerTests: XCTestCase {
-    private func camera(at position: SIMD3<Float> = .zero, depth: [UInt16]? = nil) -> MeshPhotoTexturer.Camera {
+    private func camera(at position: SIMD3<Float> = .zero, depth: [UInt16]? = nil, confidence: [UInt8]? = nil) -> MeshPhotoTexturer.Camera {
         var transform = matrix_identity_float4x4
         transform.columns.3 = SIMD4<Float>(position, 1)
         return MeshPhotoTexturer.Camera(
@@ -17,7 +17,8 @@ final class MeshPhotoTexturerTests: XCTestCase {
             cy: 720,
             depth: depth,
             depthWidth: depth == nil ? 0 : 2,
-            depthHeight: depth == nil ? 0 : 2
+            depthHeight: depth == nil ? 0 : 2,
+            confidence: confidence
         )
     }
 
@@ -92,8 +93,73 @@ final class MeshPhotoTexturerTests: XCTestCase {
         let b = SIMD3<Float>(0, 0.05, -2)
         let c = SIMD3<Float>(0.01, 0, -2.1)
         XCTAssertNil(MeshPhotoTexturer.score(a, b, c, camera()))
-        XCTAssertNotNil(MeshPhotoTexturer.score(a, b, c, camera(), relaxed: true))
+        XCTAssertNotNil(MeshPhotoTexturer.score(a, b, c, camera(depth: [2000, 2000, 2000, 2000]), relaxed: true))
         XCTAssertNil(MeshPhotoTexturer.score(a, b, c, camera(depth: [800, 800, 800, 800]), relaxed: true))
+    }
+
+    func testFillNeedsTheDepthOfThePhotoToSeeTheSpot() {
+        let a = SIMD3<Float>(0, -0.05, -2)
+        let b = SIMD3<Float>(0, 0.05, -2)
+        let c = SIMD3<Float>(0.01, 0, -2.1)
+        XCTAssertNil(MeshPhotoTexturer.score(a, b, c, camera(), relaxed: true))
+        XCTAssertNil(MeshPhotoTexturer.score(a, b, c, camera(depth: [0, 0, 0, 0]), relaxed: true))
+        XCTAssertTrue(MeshPhotoTexturer.seesSpot(a, b, c, camera(depth: [2000, 2000, 2000, 2000])))
+        XCTAssertFalse(MeshPhotoTexturer.seesSpot(a, b, c, camera()))
+        XCTAssertFalse(MeshPhotoTexturer.seesSpot(a, b, c, camera(depth: [800, 800, 800, 800])))
+        XCTAssertFalse(MeshPhotoTexturer.seesSpot(a, b, c, camera(depth: [2000])))
+        XCTAssertFalse(MeshPhotoTexturer.seesSpot(SIMD3(5, 0, -2), SIMD3(5.1, 0, -2), SIMD3(5, 0.1, -2), camera(depth: [2000, 2000, 2000, 2000])))
+    }
+
+    func testSomethingInFrontOfACornerHidesTheTriangle() {
+        let a = SIMD3<Float>(-0.5, -0.3, -2)
+        let b = SIMD3<Float>(0.5, -0.3, -2)
+        let c = SIMD3<Float>(0, 0.4, -2)
+        XCTAssertNotNil(MeshPhotoTexturer.score(a, b, c, camera(depth: [2000, 2000, 2000, 2000])))
+        XCTAssertNil(MeshPhotoTexturer.score(a, b, c, camera(depth: [2000, 800, 2000, 2000])))
+        XCTAssertNotNil(MeshPhotoTexturer.score(a, b, c, camera(depth: [2000, 5000, 2000, 2000])))
+        XCTAssertFalse(MeshPhotoTexturer.seesSpot(a, b, c, camera(depth: [2000, 800, 2000, 2000])))
+        XCTAssertTrue(MeshPhotoTexturer.seesSpot(a, b, c, camera(depth: [2000, 2000, 2000, 2000])))
+    }
+
+    func testLowConfidenceDepthDoesNotCountForAFill() {
+        let a = SIMD3<Float>(-0.05, -0.05, -2)
+        let b = SIMD3<Float>(0.05, -0.05, -2)
+        let c = SIMD3<Float>(0, 0.05, -2)
+        XCTAssertNil(MeshPhotoTexturer.score(a, b, c, camera(depth: [2000, 2000, 2000, 2000], confidence: [0, 0, 0, 0]), relaxed: true))
+        XCTAssertNotNil(MeshPhotoTexturer.score(a, b, c, camera(depth: [2000, 2000, 2000, 2000], confidence: [2, 2, 2, 2]), relaxed: true))
+        XCTAssertFalse(MeshPhotoTexturer.seesSpot(a, b, c, camera(depth: [2000, 2000, 2000, 2000], confidence: [0, 0, 0, 0])))
+        XCTAssertNil(MeshPhotoTexturer.score(a, b, c, camera(depth: [800, 800, 800, 800], confidence: [0, 0, 0, 0])))
+        XCTAssertNil(MeshPhotoTexturer.confidenceValues(nil, count: 4))
+        XCTAssertNil(MeshPhotoTexturer.confidenceValues(Data([1, 2]), count: 4))
+        XCTAssertEqual(MeshPhotoTexturer.confidenceValues(Data([0, 1, 2, 2, 9]), count: 4), [0, 1, 2, 2])
+    }
+
+    func testScoreFollowsThePhotoPixelsOnTheTriangle() throws {
+        let a = SIMD3<Float>(-0.05, -0.05, -2)
+        let b = SIMD3<Float>(0.05, -0.05, -2)
+        let c = SIMD3<Float>(0, 0.05, -2)
+        let far = try XCTUnwrap(MeshPhotoTexturer.score(a, b, c, camera()))
+        let near = try XCTUnwrap(MeshPhotoTexturer.score(a, b, c, camera(at: SIMD3(0, 0, -1))))
+        XCTAssertEqual(far / near, 4, accuracy: 0.1)
+    }
+
+    func testPhotoLimitFollowsTheMeshAndTheMemory() {
+        XCTAssertEqual(MeshPhotoTexturer.textureLimit(faces: 1000, available: 0), MeshPhotoTexturer.minTextures)
+        XCTAssertEqual(MeshPhotoTexturer.textureLimit(faces: 400_000, available: 0), 80)
+        XCTAssertEqual(MeshPhotoTexturer.textureLimit(faces: 5_000_000, available: 0), MeshPhotoTexturer.maxTextures)
+        XCTAssertEqual(MeshPhotoTexturer.textureLimit(faces: 400_000, available: 4_000 * 1_048_576), 80)
+        XCTAssertEqual(MeshPhotoTexturer.textureLimit(faces: 400_000, available: 1360 * 1_048_576), 40)
+        XCTAssertEqual(MeshPhotoTexturer.textureLimit(faces: 400_000, available: 300 * 1_048_576), 1)
+    }
+
+    func testPhotosBestForManyTrianglesJoinAfterCoverage() {
+        let visible: [UInt64] = [0b1111, 0b1111, 0b1111]
+        let best: [Int32] = [1, 1, 1, 2]
+        XCTAssertEqual(MeshPhotoTexturer.choosePhotos(visible: visible, cameras: 3, words: 1, limit: 3, bestCamera: best, minBest: 2), [0, 1])
+        XCTAssertEqual(MeshPhotoTexturer.choosePhotos(visible: visible, cameras: 3, words: 1, limit: 3, bestCamera: best, minBest: 1), [0, 1, 2])
+        XCTAssertEqual(MeshPhotoTexturer.choosePhotos(visible: visible, cameras: 3, words: 1, limit: 2, bestCamera: best, minBest: 1), [0, 1])
+        XCTAssertEqual(MeshPhotoTexturer.choosePhotos(visible: visible, cameras: 3, words: 1, limit: 1, bestCamera: best, minBest: 1), [0])
+        XCTAssertEqual(MeshPhotoTexturer.choosePhotos(visible: [0, 0], cameras: 2, words: 1, limit: 3, bestCamera: [], minBest: 1), [])
     }
 
     func testCornerOutsideThePhotoTakesTheEdgeOfIt() throws {
@@ -118,10 +184,17 @@ final class MeshPhotoTexturerTests: XCTestCase {
         let world = stride(from: 0, to: vertices.count, by: 3).map { SIMD3<Float>(vertices[$0], vertices[$0 + 1], vertices[$0 + 2]) }
         var slots = [0, -1, -1]
         var uvs = [Float](repeating: 0, count: 18)
-        let filled = MeshPhotoTexturer.fillFromNeighbours(part, world: world, valid: [true, true, true], slots: &slots, uvs: &uvs, cameras: [camera()])
+        let filled = MeshPhotoTexturer.fillFromNeighbours(part, world: world, valid: [true, true, true], slots: &slots, uvs: &uvs, cameras: [camera(depth: [2000, 2000, 2000, 2000])])
         XCTAssertEqual(filled, 2)
         XCTAssertEqual(slots, [0, 0, 0])
         XCTAssertEqual(uvs[6], 0.5 + 0.1 * 1337 / 2 / 1920, accuracy: 0.001)
+        var blindSlots = [0, -1, -1]
+        var blindUVs = [Float](repeating: 0, count: 18)
+        XCTAssertEqual(MeshPhotoTexturer.fillFromNeighbours(part, world: world, valid: [true, true, true], slots: &blindSlots, uvs: &blindUVs, cameras: [camera()]), 0)
+        XCTAssertEqual(blindSlots, [0, -1, -1])
+        var blockedSlots = [0, -1, -1]
+        XCTAssertEqual(MeshPhotoTexturer.fillFromNeighbours(part, world: world, valid: [true, true, true], slots: &blockedSlots, uvs: &blindUVs, cameras: [camera(depth: [800, 800, 800, 800])]), 0)
+        XCTAssertEqual(blockedSlots, [0, -1, -1])
     }
 
     func testTriangleWithNoNeighbourInAPhotoStaysGrey() {
@@ -147,10 +220,13 @@ final class MeshPhotoTexturerTests: XCTestCase {
         XCTAssertEqual(MeshViewer.photos(1), "1 photo")
         XCTAssertEqual(MeshViewer.photos(3), "3 photos")
         XCTAssertEqual(MeshViewer.photos(1, kind: "keyframe"), "1 keyframe photo")
-        let output = MeshPhotoTexturer.Output(parts: [], images: [], photosUnreadable: 1, facesInPhoto: 80, facesFilled: 15, totalFaces: 100, photosUsed: 1, gains: [])
-        let note = MeshViewer.photoTextureNote(output, seconds: 4, dropped: 1, total: 10)
+        let output = MeshPhotoTexturer.Output(parts: [], images: [], photosUnreadable: 1, facesInPhoto: 80, facesFilled: 15, totalFaces: 100, photosUsed: 2, gains: [], photosLinedUp: 236, photosChecked: 236, photoLimit: 80, photosInTexture: 1)
+        let note = MeshViewer.photoTextureNote(output, seconds: 4, dropped: 1, total: 10, realigned: 3)
         XCTAssertTrue(note.hasPrefix("Photo texture from 1 keyframe photo at"))
-        XCTAssertTrue(note.contains("80% of the mesh, 15% more filled in from a nearby photo"))
+        XCTAssertTrue(note.contains("80% of the mesh, 15% more filled in from a nearby photo whose depth sees the spot"))
+        XCTAssertTrue(note.contains("built in 4 s. 1 of 236 lined up photos really in the texture (236 checked, 2 chosen, limit 80 for this mesh and memory)."))
+        XCTAssertTrue(note.contains("3 photos from before a position reset lined up with the mesh again and are among the lined up photos."))
+        XCTAssertEqual(MeshViewer.photoCountsText(output), MeshPhotoBuildLog.countsText(linedUp: 236, checked: 236, chosen: 2, limit: 80, inTexture: 1))
         XCTAssertTrue(note.contains("Grey parts are not in any photo."))
         XCTAssertTrue(note.contains("1 photo from before a position reset was left out."))
         XCTAssertTrue(note.contains("1 photo could not be opened, so its parts are grey too."))
@@ -326,6 +402,22 @@ final class LidarStorageBudgetTests: XCTestCase {
         XCTAssertEqual(MeshPhotoBuildLog.stagesText(entry), "visibility 2 min 30 s, 3D scene 4 s")
         let cancelled = MeshPhotoBuildLog.Entry(finishedAt: Date(), seconds: 20, outcome: .cancelled, percentDone: 37, debugBuild: false, triangles: 1, photosUsed: 0, stages: [])
         XCTAssertEqual(MeshPhotoBuildLog.text(cancelled), "20 s, Release build, cancelled at 37%")
+    }
+
+    func testPhotoBuildSaysLinedUpAndReallyUsedPhotos() throws {
+        let suite = "vuuro-photo-build-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let capture = URL(fileURLWithPath: "/tmp/20261125-101010-AAAA")
+        let entry = MeshPhotoBuildLog.Entry(finishedAt: Date(timeIntervalSince1970: 0), seconds: 30, outcome: .done, percentDone: 100, debugBuild: false, triangles: 400000, photosUsed: 74, stages: [], photosLinedUp: 374, photosChecked: 240, photoLimit: 80, photosInTexture: 71)
+        try MeshPhotoBuildLog.save(entry, capture: capture, defaults: defaults).get()
+        XCTAssertEqual(try MeshPhotoBuildLog.load(capture: capture, defaults: defaults).get(), entry)
+        XCTAssertEqual(MeshPhotoBuildLog.text(entry), "30 s, Release build, 71 of 374 lined up photos really in the texture (240 checked, 74 chosen, limit 80 for this mesh and memory), 400000 triangles")
+        let older = Data(#"{"finishedAt":0,"seconds":5,"outcome":"done","percentDone":100,"debugBuild":true,"triangles":10,"photosUsed":3,"stages":[]}"#.utf8)
+        defaults.set(older, forKey: MeshPhotoBuildLog.key(capture))
+        let loaded = try XCTUnwrap(try MeshPhotoBuildLog.load(capture: capture, defaults: defaults).get())
+        XCTAssertNil(loaded.photosLinedUp)
+        XCTAssertEqual(MeshPhotoBuildLog.text(loaded), "5 s, Debug build, 3 photos, 10 triangles")
     }
 
     func testCorruptPhotoBuildTimeIsAnErrorNotNothing() throws {

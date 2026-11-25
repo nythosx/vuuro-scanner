@@ -39,6 +39,11 @@ enum MeshPhotoTexturer {
         let totalFaces: Int
         let photosUsed: Int
         let gains: [Float]
+        var photosLinedUp = 0
+        var photosChecked = 0
+        var photoLimit = 0
+        var photosInTexture = 0
+        var photoLongSide = 0
     }
 
     struct PartState {
@@ -60,6 +65,7 @@ enum MeshPhotoTexturer {
         let depthWidth: Int
         let depthHeight: Int
         var blurPenalty: Float = 1
+        var confidence: [UInt8]? = nil
     }
 
     final class Monitor: @unchecked Sendable {
@@ -125,8 +131,13 @@ enum MeshPhotoTexturer {
 
     static let maxCandidates = 240
     static let minAvailableMemoryBytes = 200 * 1_048_576
-    static let maxTextures = 52
-    static let textureSize = 1024
+    static let minTextures = 24
+    static let maxTextures = 160
+    static let facesPerTexture = 5000
+    static let bytesPerTexture = 24 * 1_048_576
+    static let cornerInset: Float = 0.25
+    static let minBestFaces = 150
+    static let textureSize = 2048
     static let gainSampleSize = 160
     static let maxGain: Float = 1.6
     static let chunkFaces = 4096
@@ -178,10 +189,12 @@ enum MeshPhotoTexturer {
         }
         let faceTotal = corners.count / 3
         let words = (faceTotal + 63) / 64
-        var visible = visibility(corners: corners, faceTotal: faceTotal, words: words, cameras: cameras, monitor: monitor)
+        var (visible, bestCamera) = visibility(corners: corners, faceTotal: faceTotal, words: words, cameras: cameras, monitor: monitor)
         monitor.endStage("visibility")
         if stopped() { return .failure(CancellationError()) }
-        let kept = coverCameras(visible: visible, cameras: cameras.count, words: words, limit: maxTextures, steadiness: candidates.map { steadiness(motionDegPerS: $0.motionDegPerS, blurPx: $0.blurPx) })
+        let limit = textureLimit(faces: faceTotal, available: Int(os_proc_available_memory()))
+        let kept = choosePhotos(visible: visible, cameras: cameras.count, words: words, limit: limit, steadiness: candidates.map { steadiness(motionDegPerS: $0.motionDegPerS, blurPx: $0.blurPx) }, bestCamera: bestCamera, minBest: max(minBestFaces, faceTotal / 2000))
+        bestCamera = []
         guard !kept.isEmpty else {
             return .failure(PlainError(message: "No triangle of the mesh is seen clearly in a photo."))
         }
@@ -256,6 +269,7 @@ enum MeshPhotoTexturer {
         corners = []
         centroids = []
         visible = []
+        let slotsInUse = Set(states.flatMap(\.slots).filter { $0 >= 0 })
 
         var outputs: [PartOutput] = []
         monitor.beginStage()
@@ -321,7 +335,30 @@ enum MeshPhotoTexturer {
         guard unreadable < images.count else {
             return .failure(PlainError(message: "None of the chosen frame photos could be opened for the texture."))
         }
-        return .success(Output(parts: outputs, images: images, photosUnreadable: unreadable, facesInPhoto: inPhoto, facesFilled: filled, totalFaces: totalFaces, photosUsed: kept.count, gains: gains))
+        let inTexture = slotsInUse.filter { images.indices.contains($0) && images[$0] != nil }.count
+        return .success(Output(parts: outputs, images: images, photosUnreadable: unreadable, facesInPhoto: inPhoto, facesFilled: filled, totalFaces: totalFaces, photosUsed: kept.count, gains: gains, photosLinedUp: usable.count, photosChecked: candidates.count, photoLimit: limit, photosInTexture: inTexture, photoLongSide: images.compactMap { image in image.map { max($0.width, $0.height) } }.max() ?? 0))
+    }
+
+    static func textureLimit(faces: Int, available: Int) -> Int {
+        let byMesh = min(max(faces / facesPerTexture, minTextures), maxTextures)
+        guard available > 0 else { return byMesh }
+        let byMemory = max(0, available - 2 * minAvailableMemoryBytes) / bytesPerTexture
+        return max(1, min(byMesh, byMemory))
+    }
+
+    static func choosePhotos(visible: [UInt64], cameras: Int, words: Int, limit: Int, steadiness: [Float] = [], bestCamera: [Int32], minBest: Int) -> [Int] {
+        let covering = coverCameras(visible: visible, cameras: cameras, words: words, limit: limit, steadiness: steadiness)
+        guard !covering.isEmpty, covering.count < limit else { return covering }
+        var counts = [Int](repeating: 0, count: cameras)
+        for camera in bestCamera where camera >= 0 && Int(camera) < cameras {
+            counts[Int(camera)] += 1
+        }
+        let chosen = Set(covering)
+        let extra = (0..<cameras)
+            .filter { !chosen.contains($0) && counts[$0] >= minBest }
+            .sorted { counts[$0] > counts[$1] || (counts[$0] == counts[$1] && $0 < $1) }
+            .prefix(limit - covering.count)
+        return (covering + extra).sorted()
     }
 
     static func lowMemory(available: Int) -> Bool {
@@ -437,21 +474,64 @@ enum MeshPhotoTexturer {
         let area = simd_length(cross)
         let facing = area > 0 ? abs(simd_dot(cross / area, toCamera / distance)) : 1
         guard facing >= (relaxed ? relaxedMinFacing : minFacing) else { return nil }
-        if let depth = camera.depth, camera.depthWidth > 0, camera.depthHeight > 0 {
-            let du = min(Int(center.x * Float(camera.depthWidth) / camera.width), camera.depthWidth - 1)
-            let dv = min(Int(center.y * Float(camera.depthHeight) / camera.height), camera.depthHeight - 1)
-            let millimeters = depth[dv * camera.depthWidth + du]
-            if millimeters > 0 {
-                let along = -(camera.view * SIMD4<Float>(centroid, 1)).z
-                let measured = Float(millimeters) / 1000
-                let tolerance: Float = relaxed ? 0.2 + 0.06 * along : 0.08 + 0.03 * along
-                if abs(measured - along) > tolerance { return nil }
-            }
+        switch depthAgrees(centroid, at: center, camera, relaxed: relaxed) {
+        case .some(false):
+            return nil
+        case .none:
+            if relaxed { return nil }
+        case .some(true):
+            break
         }
+        if cornersHidden(a, b, c, camera, relaxed: relaxed) { return nil }
         let halfWidth = camera.width / 2
         let halfHeight = camera.height / 2
         let offCenter = max(abs(center.x - halfWidth) / halfWidth, abs(center.y - halfHeight) / halfHeight)
-        return distance * (1 + offCenter) * camera.blurPenalty / facing
+        let pixelsPerSquareMeter = camera.fx * camera.fy * facing / (distance * distance)
+        guard pixelsPerSquareMeter > 0 else { return nil }
+        return 1_000_000 * (1 + offCenter) * camera.blurPenalty / pixelsPerSquareMeter
+    }
+
+    static func depthAt(_ pixel: SIMD2<Float>, _ camera: Camera, trustedOnly: Bool) -> Float? {
+        guard let depth = camera.depth, camera.depthWidth > 0, camera.depthHeight > 0, depth.count >= camera.depthWidth * camera.depthHeight else { return nil }
+        let du = min(max(Int(pixel.x * Float(camera.depthWidth) / camera.width), 0), camera.depthWidth - 1)
+        let dv = min(max(Int(pixel.y * Float(camera.depthHeight) / camera.height), 0), camera.depthHeight - 1)
+        let index = dv * camera.depthWidth + du
+        if trustedOnly, let confidence = camera.confidence, confidence.count == depth.count, confidence[index] == 0 { return nil }
+        let millimeters = depth[index]
+        guard millimeters > 0 else { return nil }
+        return Float(millimeters) / 1000
+    }
+
+    static func depthTolerance(_ along: Float, relaxed: Bool) -> Float {
+        relaxed ? 0.2 + 0.06 * along : 0.08 + 0.03 * along
+    }
+
+    static func depthAgrees(_ point: SIMD3<Float>, at pixel: SIMD2<Float>, _ camera: Camera, relaxed: Bool) -> Bool? {
+        guard let measured = depthAt(pixel, camera, trustedOnly: relaxed) else { return nil }
+        let along = -(camera.view * SIMD4<Float>(point, 1)).z
+        return abs(measured - along) <= depthTolerance(along, relaxed: relaxed)
+    }
+
+    static func cornersHidden(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, _ camera: Camera, relaxed: Bool) -> Bool {
+        let centroid = (a + b + c) / 3
+        for corner in [a, b, c] {
+            let point = corner + (centroid - corner) * cornerInset
+            guard let pixel = project(point, camera), let measured = depthAt(pixel, camera, trustedOnly: relaxed) else { continue }
+            let along = -(camera.view * SIMD4<Float>(point, 1)).z
+            if along - measured > depthTolerance(along, relaxed: relaxed) { return true }
+        }
+        return false
+    }
+
+    static func seesSpot(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, _ camera: Camera) -> Bool {
+        let centroid = (a + b + c) / 3
+        guard let center = project(centroid, camera) else { return false }
+        return depthAgrees(centroid, at: center, camera, relaxed: true) == true && !cornersHidden(a, b, c, camera, relaxed: true)
+    }
+
+    static func confidenceValues(_ data: Data?, count: Int) -> [UInt8]? {
+        guard let data, count > 0, data.count >= count else { return nil }
+        return [UInt8](data.prefix(count))
     }
 
     static func blurPenalty(_ blurPx: Float?) -> Float {
@@ -524,7 +604,7 @@ enum MeshPhotoTexturer {
                 search: for corner in 0..<3 {
                     for neighbour in facesOf[Int(faceIndex(input, face, corner))] where slots[Int(neighbour)] >= 0 {
                         let slot = slots[Int(neighbour)]
-                        guard let coords = clampedUVs(a, b, c, cameras[slot]) else { continue }
+                        guard seesSpot(a, b, c, cameras[slot]), let coords = clampedUVs(a, b, c, cameras[slot]) else { continue }
                         found.append((face: face, slot: slot, coords: coords))
                         break search
                     }
@@ -626,34 +706,44 @@ enum MeshPhotoTexturer {
             depth: depth,
             depthWidth: depth == nil ? 0 : frame.depthWidth,
             depthHeight: depth == nil ? 0 : frame.depthHeight,
-            blurPenalty: blurPenalty(frame.blurPx)
+            blurPenalty: blurPenalty(frame.blurPx),
+            confidence: depth == nil ? nil : loadConfidence(frame)
         )
     }
 
-    private static func visibility(corners: [SIMD3<Float>], faceTotal: Int, words: Int, cameras: [Camera], monitor: Monitor) -> [UInt64] {
+    private static func visibility(corners: [SIMD3<Float>], faceTotal: Int, words: Int, cameras: [Camera], monitor: Monitor) -> ([UInt64], [Int32]) {
         var visible = [UInt64](repeating: 0, count: cameras.count * words)
+        var bestCamera = [Int32](repeating: -1, count: faceTotal)
         let chunks = (faceTotal + chunkFaces - 1) / chunkFaces
         visible.withUnsafeMutableBufferPointer { bits in
-            corners.withUnsafeBufferPointer { points in
-                monitor.beginStage()
-                DispatchQueue.concurrentPerform(iterations: chunks) { chunk in
-                    guard !monitor.isCancelled else { return }
-                    let start = chunk * chunkFaces
-                    let end = min(start + chunkFaces, faceTotal)
-                    for face in start..<end {
-                        if face % 256 == 0, monitor.isCancelled { return }
-                        let a = points[face * 3]
-                        let b = points[face * 3 + 1]
-                        let c = points[face * 3 + 2]
-                        for (index, camera) in cameras.enumerated() where score(a, b, c, camera) != nil {
-                            bits[index * words + face / 64] |= UInt64(1) << UInt64(face % 64)
+            bestCamera.withUnsafeMutableBufferPointer { best in
+                corners.withUnsafeBufferPointer { points in
+                    monitor.beginStage()
+                    DispatchQueue.concurrentPerform(iterations: chunks) { chunk in
+                        guard !monitor.isCancelled else { return }
+                        let start = chunk * chunkFaces
+                        let end = min(start + chunkFaces, faceTotal)
+                        for face in start..<end {
+                            if face % 256 == 0, monitor.isCancelled { return }
+                            let a = points[face * 3]
+                            let b = points[face * 3 + 1]
+                            let c = points[face * 3 + 2]
+                            var bestScore = Float.greatestFiniteMagnitude
+                            for (index, camera) in cameras.enumerated() {
+                                guard let value = score(a, b, c, camera) else { continue }
+                                bits[index * words + face / 64] |= UInt64(1) << UInt64(face % 64)
+                                if value < bestScore {
+                                    bestScore = value
+                                    best[face] = Int32(index)
+                                }
+                            }
                         }
+                        monitor.tick(of: chunks, from: 0.15, to: 0.7)
                     }
-                    monitor.tick(of: chunks, from: 0.15, to: 0.7)
                 }
             }
         }
-        return visible
+        return (visible, bestCamera)
     }
 
     private static func isVisible(_ visible: [UInt64], camera: Int, face: Int, words: Int) -> Bool {
@@ -792,5 +882,10 @@ enum MeshPhotoTexturer {
         var values = [UInt16](repeating: 0, count: count)
         _ = values.withUnsafeMutableBytes { data.copyBytes(to: $0) }
         return values
+    }
+
+    private static func loadConfidence(_ frame: MeshFrame) -> [UInt8]? {
+        guard let url = frame.confidenceURL else { return nil }
+        return confidenceValues(FileManager.default.contents(atPath: url.path), count: frame.depthWidth * frame.depthHeight)
     }
 }

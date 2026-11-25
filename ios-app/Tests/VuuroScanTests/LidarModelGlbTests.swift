@@ -200,6 +200,17 @@ final class LidarModelGlbTests: XCTestCase {
         XCTAssertNil(ScanServiceClient.receivedBytes(inErrorBody: "{\"error\":\"x\"}"))
     }
 
+    func testWebModelPhotosShrinkWhenThereAreMoreThanThePhoneBudget() throws {
+        XCTAssertEqual(LidarModelGlb.webScale(totalPixels: LidarModelGlb.webPixelBudget), 1)
+        XCTAssertEqual(LidarModelGlb.webScale(totalPixels: 1000), 1)
+        XCTAssertEqual(LidarModelGlb.webScale(totalPixels: LidarModelGlb.webPixelBudget * 4), 0.5, accuracy: 0.0001)
+        let source = try XCTUnwrap(image())
+        let smaller = try XCTUnwrap(LidarModelGlb.resized(source, scale: 0.5))
+        XCTAssertEqual(smaller.width, 4)
+        XCTAssertEqual(smaller.height, 4)
+        XCTAssertNotNil(LidarModelGlb.jpeg(source, scale: 0.5))
+    }
+
     func testSentNoteIsSingularForOnePhoto() {
         XCTAssertEqual(MeshViewer.sentNote(bytes: 1_048_576 * 3, triangles: 1200, photos: 1), "Sent to the web tour: 3.0 MB, \(1200.formatted()) triangles, 1 photo. Open the tour link and tap 3D scan.")
     }
