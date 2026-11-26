@@ -1,5 +1,6 @@
 import * as THREE from './vendor/three/three.module.min.js';
 import { GLTFLoader } from './vendor/three/GLTFLoader.js';
+import { KTX2Loader } from './vendor/three/KTX2Loader.js';
 import { OrbitControls } from './vendor/three/OrbitControls.js';
 
 var CEILING_CLASS = 3;
@@ -61,9 +62,39 @@ function prepare(root) {
 var PHONE_TEXTURE_PIXELS = 12000000;
 var DESKTOP_TEXTURE_PIXELS = 48000000;
 
+function isPhone() {
+  return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+}
+
 function textureBudget() {
-  var coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-  return coarse ? PHONE_TEXTURE_PIXELS : DESKTOP_TEXTURE_PIXELS;
+  return isPhone() ? PHONE_TEXTURE_PIXELS : DESKTOP_TEXTURE_PIXELS;
+}
+
+var KTX2_PARSE_TIMEOUT_MS = 45000;
+var TRANSCODER_PATH = new URL('./vendor/three/basis/', import.meta.url).href;
+var WORKER_PATH = new URL('./vendor/three/basis/ktx2_worker.js', import.meta.url).href;
+
+function compressedLoader() {
+  if (typeof WebAssembly !== 'object' || typeof Worker !== 'function') {
+    return null;
+  }
+  var canvas = document.createElement('canvas');
+  var gl = canvas.getContext('webgl2');
+  if (!gl) {
+    return null;
+  }
+  var probe = { extensions: { has: function (name) { return !!gl.getExtension(name); } } };
+  var loader = new KTX2Loader().setTranscoderPath(TRANSCODER_PATH).setWorkerPath(WORKER_PATH).detectSupport(probe);
+  var config = loader.workerConfig || {};
+  var lose = gl.getExtension('WEBGL_lose_context');
+  if (lose) {
+    lose.loseContext();
+  }
+  if (!config.astcSupported && !config.etc2Supported && !config.dxtSupported && !config.bptcSupported) {
+    loader.dispose();
+    return null;
+  }
+  return loader;
 }
 
 function fitTextures(root, budget) {
@@ -73,6 +104,9 @@ function fitTextures(root, budget) {
       return;
     }
     var map = object.material.map;
+    if (map.isCompressedTexture) {
+      return;
+    }
     if (textures.indexOf(map) === -1 && map.image && map.image.width > 0 && map.image.height > 0) {
       textures.push(map);
     }
@@ -554,7 +588,53 @@ function render(viewport, model, buildUrl, rooms) {
   var loading = status(viewport, t('loading_3d'), false);
   var token = {};
   active = { dispose: function () { token.cancelled = true; } };
-  fetch(buildUrl(model.url), { credentials: 'omit' })
+  var ktx2 = typeof model.ktx2_url === 'string' && isPhone() ? compressedLoader() : null;
+  var load = function (url, loader) {
+    return download(url, loading, token).then(function (buffer) {
+      return new Promise(function (resolve, reject) {
+        var gltfLoader = new GLTFLoader();
+        var timer = null;
+        if (loader) {
+          gltfLoader.setKTX2Loader(loader);
+          timer = setTimeout(function () { reject(new Error('compressed photos took too long')); }, KTX2_PARSE_TIMEOUT_MS);
+        }
+        gltfLoader.parse(buffer, '', function (gltf) {
+          clearTimeout(timer);
+          resolve(gltf);
+        }, function (err) {
+          clearTimeout(timer);
+          reject(err);
+        });
+      });
+    });
+  };
+  var loaded = ktx2
+    ? load(buildUrl(model.ktx2_url), ktx2).then(function (gltf) {
+      ktx2.dispose();
+      return gltf;
+    }, function () {
+      ktx2.dispose();
+      return token.cancelled ? Promise.reject(new Error('cancelled')) : load(buildUrl(model.url), null);
+    })
+    : load(buildUrl(model.url), null);
+  loaded
+    .then(function (gltf) {
+      if (token.cancelled) {
+        return;
+      }
+      fitTextures(gltf.scene, textureBudget());
+      active = new Viewer(viewport, gltf, caption(model), rooms);
+    })
+    .catch(function (err) {
+      if (token.cancelled) {
+        return;
+      }
+      status(viewport, t('model_load_failed', { reason: err && err.message ? err.message : 'unknown error' }), true);
+    });
+}
+
+function download(url, loading, token) {
+  return fetch(url, { credentials: 'omit' })
     .then(function (res) {
       if (!res.ok) {
         throw new Error('HTTP ' + res.status);
@@ -583,24 +663,6 @@ function render(viewport, model, buildUrl, rooms) {
         });
       };
       return pump();
-    })
-    .then(function (buffer) {
-      return new Promise(function (resolve, reject) {
-        new GLTFLoader().parse(buffer, '', resolve, reject);
-      });
-    })
-    .then(function (gltf) {
-      if (token.cancelled) {
-        return;
-      }
-      fitTextures(gltf.scene, textureBudget());
-      active = new Viewer(viewport, gltf, caption(model), rooms);
-    })
-    .catch(function (err) {
-      if (token.cancelled) {
-        return;
-      }
-      status(viewport, t('model_load_failed', { reason: err && err.message ? err.message : 'unknown error' }), true);
     });
 }
 

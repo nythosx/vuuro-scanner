@@ -173,6 +173,14 @@ final class LidarRecordingGapTests: XCTestCase {
             "Room 2, at 2:10, 45 s, moved 4.5 m, up 1.5 m, until the room ended: tracking limited, moving too fast 80%, no depth in the frame 20%"
         )
     }
+
+    func testNumbersUseOneStyleWhateverThePhoneLanguage() {
+        XCTAssertEqual(LiDARProofView.count(890_728), "890,728")
+        XCTAssertEqual(LiDARProofView.count(12), "12")
+        XCTAssertEqual(LiDARProofView.size(339_100_000), "339.1 MB")
+        XCTAssertEqual(LiDARProofView.size(2_500_000_000), "2.50 GB")
+        XCTAssertEqual(LiDARProofView.size(4_200), "4 KB")
+    }
 }
 
 final class LidarRoomRunReportTests: XCTestCase {
@@ -186,7 +194,7 @@ final class LidarRoomRunReportTests: XCTestCase {
         report.keyframes = 40
         report.depthOnlyFrames = 90
         XCTAssertTrue(report.meshGrew)
-        XCTAssertEqual(LiDARProofView.roomReportText(report), "mesh_with_classification, 7 new mesh pieces, 1000 to 5000 triangles, depth yes, 40 keyframes + 90 depth-only")
+        XCTAssertEqual(LiDARProofView.roomReportText(report), "mesh_with_classification, 7 new mesh pieces, grew from 1,000 to 5,000 triangles, depth yes, 40 keyframes + 90 depth-only")
     }
 
     func testRoomWithoutNewMeshSaysSo() {

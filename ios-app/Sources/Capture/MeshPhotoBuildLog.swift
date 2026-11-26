@@ -69,9 +69,9 @@ enum MeshPhotoBuildLog {
         case .done:
             if let linedUp = entry.photosLinedUp, let checked = entry.photosChecked, let limit = entry.photoLimit, let inTexture = entry.photosInTexture {
                 parts.append(countsText(linedUp: linedUp, checked: checked, chosen: entry.photosUsed, limit: limit, inTexture: inTexture))
-                parts.append("\(entry.triangles) triangles")
+                parts.append("\(LiDARProofView.count(entry.triangles)) triangles")
             } else {
-                parts.append("\(entry.photosUsed) photos, \(entry.triangles) triangles")
+                parts.append("\(entry.photosUsed) photos, \(LiDARProofView.count(entry.triangles)) triangles")
             }
         case .cancelled: parts.append("cancelled at \(entry.percentDone)%")
         case .failed: parts.append("failed at \(entry.percentDone)%")

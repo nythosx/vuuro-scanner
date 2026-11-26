@@ -187,13 +187,42 @@ function lidarModelInfo(string $sessionId): ?array
     if ($meta === null) {
         return null;
     }
-    return [
+    $info = [
         'url' => publicBaseUrl() . "/scan-sessions/{$sessionId}/export/lidar-model.glb",
         'bytes' => (int) ($meta['bytes'] ?? 0),
         'uploaded_at' => (string) ($meta['uploaded_at'] ?? ''),
         'triangles' => $meta['triangles'] ?? null,
         'photos' => $meta['photos'] ?? null,
     ];
+    $ktx2 = lidarModelStore()->ktx2Path($sessionId);
+    if ($ktx2 !== null) {
+        $info['ktx2_url'] = publicBaseUrl() . "/scan-sessions/{$sessionId}/export/lidar-model.ktx2.glb";
+        $info['ktx2_bytes'] = (int) filesize($ktx2);
+    }
+    return $info;
+}
+
+function startLidarModelKtx2(string $sessionId): string
+{
+    if (\VuuroScan\Export\LidarModelKtx2::encoder() === null) {
+        return 'no_encoder';
+    }
+    if (DIRECTORY_SEPARATOR !== '/' || !function_exists('exec')) {
+        return 'no_background';
+    }
+    $configured = getenv('SCAN_SERVICE_PHP_CLI');
+    $php = is_string($configured) && $configured !== '' ? $configured : (is_executable('/usr/local/bin/php') ? '/usr/local/bin/php' : 'php');
+    $script = realpath(__DIR__ . '/../tools/encode-lidar-ktx2.php');
+    $logDir = __DIR__ . '/../data/lidar-model';
+    if ($script === false || !is_dir($logDir)) {
+        return 'no_script';
+    }
+    $command = 'nohup ' . escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg($sessionId)
+        . ' >> ' . escapeshellarg($logDir . '/ktx2.log') . ' 2>&1 &';
+    $output = [];
+    $code = 0;
+    exec($command, $output, $code);
+    return $code === 0 ? 'started' : 'start_failed';
 }
 
 function deleteSessionPhotoDir(string $sessionId): void
@@ -801,11 +830,15 @@ if ($method === 'GET' && ($path === '/tour' || str_starts_with($path, '/tour/'))
             'jpeg' => 'image/jpeg',
             'ico' => 'image/x-icon',
             'json' => 'application/json; charset=utf-8',
+            'wasm' => 'application/wasm',
         ];
         header('Content-Type: ' . ($mimeMap[$extension] ?? 'application/octet-stream'));
         header('Cache-Control: public, max-age=300');
+        if ($relative === 'vendor/three/basis/ktx2_worker.js') {
+            header("Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self';");
+        }
         if ($extension === 'html') {
-            header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob:; object-src 'none'; base-uri 'none';");
+            header("Content-Security-Policy: default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob:; object-src 'none'; base-uri 'none';");
         }
         readfile($target);
         return;
@@ -819,7 +852,7 @@ if ($method === 'GET' && ($path === '/tour' || str_starts_with($path, '/tour/'))
     }
     header('Content-Type: text/html; charset=utf-8');
     header('Cache-Control: no-store');
-    header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob:; object-src 'none'; base-uri 'none';");
+    header("Content-Security-Policy: default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' blob:; object-src 'none'; base-uri 'none';");
     $tourLang = $settings->exportLanguage();
     if (isset($_GET['lang']) && is_string($_GET['lang']) && ExportLanguage::isSupported($_GET['lang'])) {
         $tourLang = $_GET['lang'];
@@ -2654,6 +2687,7 @@ if ($method === 'POST' && preg_match('#^/scan-sessions/([^/]+)/lidar-model/compl
         return;
     }
     $repo->logAccess($session['id'], 'upload_lidar_model', 'stored');
+    $repo->logAccess($session['id'], 'compress_lidar_model', startLidarModelKtx2($session['id']));
     respond(201, ['lidar_model' => lidarModelInfo($session['id'])]);
     return;
 }
@@ -2671,7 +2705,7 @@ if ($method === 'DELETE' && preg_match('#^/scan-sessions/([^/]+)/lidar-model$#',
     return;
 }
 
-if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/lidar-model\.glb$#', $path, $m)) {
+if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/lidar-model(\.ktx2)?\.glb$#', $path, $m)) {
     $session = authorizeSession($repo, $m[1], 'export_lidar_model', true);
     if ($session === null) {
         return;
@@ -2680,13 +2714,18 @@ if ($method === 'GET' && preg_match('#^/scan-sessions/([^/]+)/export/lidar-model
         return;
     }
     $store = lidarModelStore();
-    $modelPath = $store->modelPath($session['id']);
+    $compressed = ($m[2] ?? '') === '.ktx2';
+    $modelPath = $compressed ? $store->ktx2Path($session['id']) : $store->modelPath($session['id']);
     if ($modelPath === null) {
+        if ($compressed && $store->modelPath($session['id']) !== null) {
+            respondError(404, 'no_lidar_model_ktx2', 'The compressed photos of this 3D scan model are not ready. Use the normal model instead.');
+            return;
+        }
         respondError(404, 'no_lidar_model', 'No 3D scan model has been uploaded for this session yet.');
         return;
     }
     $meta = $store->meta($session['id']) ?? [];
-    $modelEtag = '"' . (string) ($meta['sha256'] ?? md5_file($modelPath)) . '"';
+    $modelEtag = '"' . (string) ($meta['sha256'] ?? md5_file($modelPath)) . ($compressed ? '-ktx2' : '') . '"';
     $clientEtag = $_SERVER['HTTP_IF_NONE_MATCH'] ?? '';
     if (is_string($clientEtag) && trim($clientEtag) === $modelEtag) {
         http_response_code(304);

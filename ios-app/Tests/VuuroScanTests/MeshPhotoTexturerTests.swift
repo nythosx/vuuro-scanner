@@ -42,6 +42,42 @@ final class MeshPhotoTexturerTests: XCTestCase {
         XCTAssertLessThan(near, far)
     }
 
+    func testABlownOutOrBlackSpotInAPhotoScoresWorse() throws {
+        let a = SIMD3<Float>(-0.05, -0.05, -2)
+        let b = SIMD3<Float>(0.05, -0.05, -2)
+        let c = SIMD3<Float>(0, 0.05, -2)
+        let plain = try XCTUnwrap(MeshPhotoTexturer.score(a, b, c, camera()))
+        var normal = camera()
+        normal.brightness = MeshPhotoTexturer.Luminance(width: 2, height: 2, values: [120, 120, 120, 120])
+        var blownOut = camera()
+        blownOut.brightness = MeshPhotoTexturer.Luminance(width: 2, height: 2, values: [255, 255, 255, 255])
+        var black = camera()
+        black.brightness = MeshPhotoTexturer.Luminance(width: 2, height: 2, values: [0, 0, 0, 0])
+        XCTAssertEqual(try XCTUnwrap(MeshPhotoTexturer.score(a, b, c, normal)), plain, accuracy: plain * 0.001)
+        XCTAssertEqual(try XCTUnwrap(MeshPhotoTexturer.score(a, b, c, blownOut)) / plain, MeshPhotoTexturer.badExposurePenalty, accuracy: 0.01)
+        XCTAssertEqual(try XCTUnwrap(MeshPhotoTexturer.score(a, b, c, black)) / plain, MeshPhotoTexturer.badExposurePenalty, accuracy: 0.01)
+    }
+
+    func testATiltedViewScoresWorseThanTheSameAreaSeenStraight() throws {
+        let a = SIMD3<Float>(-0.05, -0.05, -2)
+        let b = SIMD3<Float>(0.05, -0.05, -2)
+        let c = SIMD3<Float>(0, 0.05, -2)
+        let straight = try XCTUnwrap(MeshPhotoTexturer.score(a, b, c, camera()))
+        let angle: Float = .pi / 3
+        let position = SIMD3<Float>(2 * sin(angle), 0, -2 + 2 * cos(angle))
+        let look = simd_normalize(SIMD3<Float>(0, 0, -2) - position)
+        let right = simd_normalize(simd_cross(look, SIMD3<Float>(0, 1, 0)))
+        let up = simd_cross(right, look)
+        var transform = matrix_identity_float4x4
+        transform.columns.0 = SIMD4<Float>(right, 0)
+        transform.columns.1 = SIMD4<Float>(up, 0)
+        transform.columns.2 = SIMD4<Float>(-look, 0)
+        transform.columns.3 = SIMD4<Float>(position, 1)
+        let tilted = MeshPhotoTexturer.Camera(view: transform.inverse, position: position, width: 1920, height: 1440, fx: 1337, fy: 1337, cx: 960, cy: 720, depth: nil, depthWidth: 0, depthHeight: 0)
+        let side = try XCTUnwrap(MeshPhotoTexturer.score(a, b, c, tilted))
+        XCTAssertEqual(side / straight, 4, accuracy: 0.1)
+    }
+
     func testTriangleSeenEdgeOnIsSkipped() {
         let a = SIMD3<Float>(0, -0.05, -2)
         let b = SIMD3<Float>(0, 0.05, -2)
@@ -315,6 +351,27 @@ final class MeshPhotoTexturerTests: XCTestCase {
         let noSamples = MeshPhotoTexturer.seamShades(part, world: world, valid: valid, slots: slots, cameras: [camera(), camera()], samples: [nil, nil], gains: [1, 1])
         XCTAssertEqual(noSamples, [Float](repeating: 1, count: 12))
     }
+
+    func testSeamEvensOutAColourTintBetweenPhotos() {
+        let (part, world) = fan()
+        let valid = [true, true, true, true]
+        let slots = [0, 1, 1, 1]
+        let warm = MeshPhotoTexturer.Luminance(width: 2, height: 2, values: [160, 160, 160, 160], rgb: Array([UInt8]([200, 150, 100]).repeated(4)))
+        let neutral = MeshPhotoTexturer.Luminance(width: 2, height: 2, values: [150, 150, 150, 150], rgb: Array([UInt8]([150, 150, 150]).repeated(4)))
+        let tints = MeshPhotoTexturer.seamTints(part, world: world, valid: valid, slots: slots, cameras: [camera(), camera()], samples: [warm, neutral], gains: [1, 1])
+        XCTAssertEqual(tints.count, 12)
+        XCTAssertEqual(tints[0].x, 0.75, accuracy: 0.01)
+        XCTAssertEqual(tints[0].y, 1, accuracy: 0.01)
+        XCTAssertEqual(tints[0].z, 1, accuracy: 0.01)
+        XCTAssertEqual(tints[3].z, 100.0 / 150.0, accuracy: 0.01)
+        XCTAssertEqual(tints[3].x, 1, accuracy: 0.01)
+    }
+}
+
+private extension Array {
+    func repeated(_ times: Int) -> [Element] {
+        (0..<times).flatMap { _ in self }
+    }
 }
 
 final class LidarStorageBudgetTests: XCTestCase {
@@ -398,7 +455,7 @@ final class LidarStorageBudgetTests: XCTestCase {
         try MeshPhotoBuildLog.save(entry, capture: capture, defaults: defaults).get()
         XCTAssertEqual(try MeshPhotoBuildLog.load(capture: capture, defaults: defaults).get(), entry)
         XCTAssertNil(try MeshPhotoBuildLog.load(capture: URL(fileURLWithPath: "/tmp/other"), defaults: defaults).get())
-        XCTAssertEqual(MeshPhotoBuildLog.text(entry), "3 min 12 s, Debug build, 40 photos, 830283 triangles")
+        XCTAssertEqual(MeshPhotoBuildLog.text(entry), "3 min 12 s, Debug build, 40 photos, 830,283 triangles")
         XCTAssertEqual(MeshPhotoBuildLog.stagesText(entry), "visibility 2 min 30 s, 3D scene 4 s")
         let cancelled = MeshPhotoBuildLog.Entry(finishedAt: Date(), seconds: 20, outcome: .cancelled, percentDone: 37, debugBuild: false, triangles: 1, photosUsed: 0, stages: [])
         XCTAssertEqual(MeshPhotoBuildLog.text(cancelled), "20 s, Release build, cancelled at 37%")
@@ -412,7 +469,7 @@ final class LidarStorageBudgetTests: XCTestCase {
         let entry = MeshPhotoBuildLog.Entry(finishedAt: Date(timeIntervalSince1970: 0), seconds: 30, outcome: .done, percentDone: 100, debugBuild: false, triangles: 400000, photosUsed: 74, stages: [], photosLinedUp: 374, photosChecked: 240, photoLimit: 80, photosInTexture: 71)
         try MeshPhotoBuildLog.save(entry, capture: capture, defaults: defaults).get()
         XCTAssertEqual(try MeshPhotoBuildLog.load(capture: capture, defaults: defaults).get(), entry)
-        XCTAssertEqual(MeshPhotoBuildLog.text(entry), "30 s, Release build, 71 of 374 lined up photos really in the texture (240 checked, 74 chosen, limit 80 for this mesh and memory), 400000 triangles")
+        XCTAssertEqual(MeshPhotoBuildLog.text(entry), "30 s, Release build, 71 of 374 lined up photos really in the texture (240 checked, 74 chosen, limit 80 for this mesh and memory), 400,000 triangles")
         let older = Data(#"{"finishedAt":0,"seconds":5,"outcome":"done","percentDone":100,"debugBuild":true,"triangles":10,"photosUsed":3,"stages":[]}"#.utf8)
         defaults.set(older, forKey: MeshPhotoBuildLog.key(capture))
         let loaded = try XCTUnwrap(try MeshPhotoBuildLog.load(capture: capture, defaults: defaults).get())

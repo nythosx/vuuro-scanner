@@ -44,6 +44,7 @@ enum MeshPhotoTexturer {
         var photoLimit = 0
         var photosInTexture = 0
         var photoLongSide = 0
+        var photosNudged = 0
     }
 
     struct PartState {
@@ -66,6 +67,7 @@ enum MeshPhotoTexturer {
         let depthHeight: Int
         var blurPenalty: Float = 1
         var confidence: [UInt8]? = nil
+        var brightness: Luminance? = nil
     }
 
     final class Monitor: @unchecked Sendable {
@@ -146,11 +148,15 @@ enum MeshPhotoTexturer {
     static let minFacing: Float = 0.2
     static let relaxedMinFacing: Float = 0.05
     static let fillRings = 12
-    static let smoothRounds = 2
+    static let smoothRounds = 4
     static let smoothSlack: Float = 1.2
     static let seamRounds = 30
     static let seamMinShade: Float = 0.6
     static let hiddenClasses: Set<UInt8> = [3, 9]
+    static let blownOutLevel: UInt8 = 250
+    static let tooDarkLevel: UInt8 = 6
+    static let badExposurePenalty: Float = 4
+    static let gainSampleCeiling: Float = 0.96
     static let invalidPoint = SIMD3<Float>(repeating: 1e9)
 
     static func texture(parts: [PartInput], frames: [MeshFrame], monitor: Monitor = Monitor()) -> Result<Output, Error> {
@@ -163,10 +169,22 @@ enum MeshPhotoTexturer {
         let candidates = stride(from: 0, to: usable.count, by: step).map { usable[$0] }
         var cameras: [Camera] = []
         cameras.reserveCapacity(candidates.count)
+        let meshGrid = PoseResetRealigner.Grid(points: PoseResetRealigner.meshPoints(parts), cell: PoseResetRealigner.cellM)
+        var nudged = 0
         monitor.beginStage()
         for frame in candidates {
             if stopped() { return .failure(CancellationError()) }
-            cameras.append(camera(frame))
+            var built: Camera
+            if let corrected = PoseResetRealigner.correctDrift(frame, grid: meshGrid) {
+                built = camera(corrected)
+                nudged += 1
+            } else {
+                built = camera(frame)
+            }
+            if let url = frame.imageURL, let sample = loadLuminance(url) {
+                built.brightness = Luminance(width: sample.width, height: sample.height, values: sample.values)
+            }
+            cameras.append(built)
             monitor.tick(of: candidates.count, from: 0, to: 0.15)
         }
         monitor.endStage("photo depth")
@@ -276,7 +294,7 @@ enum MeshPhotoTexturer {
         for (part, input) in parts.enumerated() {
             if stopped() { return .failure(CancellationError()) }
             let state = states[part]
-            let shades = seamShades(input, world: world[part], valid: state.valid, slots: state.slots, cameras: keptCameras, samples: samples, gains: gains, isCancelled: stopped)
+            let tints = seamTints(input, world: world[part], valid: state.valid, slots: state.slots, cameras: keptCameras, samples: samples, gains: gains, isCancelled: stopped)
             let local = localFloats(input)
             var positionsBy: [Int: [Float]] = [:]
             var uvsBy: [Int: [Float]] = [:]
@@ -286,8 +304,8 @@ enum MeshPhotoTexturer {
                 for corner in 0..<3 {
                     let index = Int(faceIndex(input, face, corner))
                     positionsBy[key, default: []].append(contentsOf: local[(index * 3)..<(index * 3 + 3)])
-                    let shade = shades[face * 3 + corner]
-                    colorsBy[key, default: []].append(contentsOf: [shade, shade, shade])
+                    let tint = tints[face * 3 + corner]
+                    colorsBy[key, default: []].append(contentsOf: [tint.x, tint.y, tint.z])
                 }
                 uvsBy[key, default: []].append(contentsOf: state.uvs[(face * 6)..<(face * 6 + 6)])
             }
@@ -336,7 +354,7 @@ enum MeshPhotoTexturer {
             return .failure(PlainError(message: "None of the chosen frame photos could be opened for the texture."))
         }
         let inTexture = slotsInUse.filter { images.indices.contains($0) && images[$0] != nil }.count
-        return .success(Output(parts: outputs, images: images, photosUnreadable: unreadable, facesInPhoto: inPhoto, facesFilled: filled, totalFaces: totalFaces, photosUsed: kept.count, gains: gains, photosLinedUp: usable.count, photosChecked: candidates.count, photoLimit: limit, photosInTexture: inTexture, photoLongSide: images.compactMap { image in image.map { max($0.width, $0.height) } }.max() ?? 0))
+        return .success(Output(parts: outputs, images: images, photosUnreadable: unreadable, facesInPhoto: inPhoto, facesFilled: filled, totalFaces: totalFaces, photosUsed: kept.count, gains: gains, photosLinedUp: usable.count, photosChecked: candidates.count, photoLimit: limit, photosInTexture: inTexture, photoLongSide: images.compactMap { image in image.map { max($0.width, $0.height) } }.max() ?? 0, photosNudged: nudged))
     }
 
     static func textureLimit(faces: Int, available: Int) -> Int {
@@ -486,9 +504,17 @@ enum MeshPhotoTexturer {
         let halfWidth = camera.width / 2
         let halfHeight = camera.height / 2
         let offCenter = max(abs(center.x - halfWidth) / halfWidth, abs(center.y - halfHeight) / halfHeight)
-        let pixelsPerSquareMeter = camera.fx * camera.fy * facing / (distance * distance)
+        let pixelsPerSquareMeter = camera.fx * camera.fy * facing * facing / (distance * distance)
         guard pixelsPerSquareMeter > 0 else { return nil }
-        return 1_000_000 * (1 + offCenter) * camera.blurPenalty / pixelsPerSquareMeter
+        return 1_000_000 * (1 + offCenter) * camera.blurPenalty * exposurePenalty(center, camera) / pixelsPerSquareMeter
+    }
+
+    static func exposurePenalty(_ pixel: SIMD2<Float>, _ camera: Camera) -> Float {
+        guard let sample = camera.brightness, sample.width > 0, sample.height > 0, sample.values.count >= sample.width * sample.height, camera.width > 0, camera.height > 0 else { return 1 }
+        let x = min(max(Int(pixel.x * Float(sample.width) / camera.width), 0), sample.width - 1)
+        let y = min(max(Int(pixel.y * Float(sample.height) / camera.height), 0), sample.height - 1)
+        let value = sample.values[y * sample.width + x]
+        return value >= blownOutLevel || value <= tooDarkLevel ? badExposurePenalty : 1
     }
 
     static func depthAt(_ pixel: SIMD2<Float>, _ camera: Camera, trustedOnly: Bool) -> Float? {
@@ -623,7 +649,11 @@ enum MeshPhotoTexturer {
     }
 
     static func seamShades(_ input: PartInput, world: [SIMD3<Float>], valid: [Bool], slots: [Int], cameras: [Camera], samples: [Luminance?], gains: [Float], isCancelled: () -> Bool = { false }) -> [Float] {
-        var shades = [Float](repeating: 1, count: input.faceCount * 3)
+        seamTints(input, world: world, valid: valid, slots: slots, cameras: cameras, samples: samples, gains: gains, isCancelled: isCancelled).map { ($0.x + $0.y + $0.z) / 3 }
+    }
+
+    static func seamTints(_ input: PartInput, world: [SIMD3<Float>], valid: [Bool], slots: [Int], cameras: [Camera], samples: [Luminance?], gains: [Float], isCancelled: () -> Bool = { false }) -> [SIMD3<Float>] {
+        var shades = [SIMD3<Float>](repeating: SIMD3<Float>(repeating: 1), count: input.faceCount * 3)
         let slotSpan = cameras.count + 1
         var nodeOf: [Int: Int] = [:]
         var nodeVertex: [Int] = []
@@ -648,19 +678,21 @@ enum MeshPhotoTexturer {
         for node in nodeVertex.indices {
             nodesAt[nodeVertex[node], default: []].append(node)
         }
-        var value = [Float](repeating: 1, count: nodeVertex.count)
+        var value = [SIMD3<Float>](repeating: SIMD3<Float>(repeating: 1), count: nodeVertex.count)
         var fixed = [Bool](repeating: false, count: nodeVertex.count)
+        let lowest = SIMD3<Float>(repeating: 0.03)
         for (vertex, nodes) in nodesAt where nodes.count > 1 {
-            var levels: [(node: Int, level: Float)] = []
+            var levels: [(node: Int, level: SIMD3<Float>)] = []
             for node in nodes {
                 let slot = nodeSlot[node]
-                guard slot < samples.count, let sample = samples[slot], let raw = luminance(world[vertex], cameras[slot], sample) else { continue }
+                guard slot < samples.count, let sample = samples[slot], let raw = colour(world[vertex], cameras[slot], sample) else { continue }
                 let level = raw * (slot < gains.count ? gains[slot] : 1)
-                if level > 0.03 { levels.append((node: node, level: level)) }
+                if all(level .> lowest) { levels.append((node: node, level: level)) }
             }
-            guard levels.count > 1, let target = levels.map(\.level).min() else { continue }
+            guard levels.count > 1 else { continue }
+            let target = levels.dropFirst().reduce(levels[0].level) { simd_min($0, $1.level) }
             for item in levels {
-                value[item.node] = max(seamMinShade, min(1, target / item.level))
+                value[item.node] = simd_clamp(target / item.level, SIMD3<Float>(repeating: seamMinShade), SIMD3<Float>(repeating: 1))
                 fixed[item.node] = true
             }
         }
@@ -677,7 +709,7 @@ enum MeshPhotoTexturer {
             if isCancelled() { break }
             var next = value
             for node in value.indices where !fixed[node] && !neighbours[node].isEmpty {
-                var sum: Float = 0
+                var sum = SIMD3<Float>(repeating: 0)
                 for neighbour in neighbours[node] {
                     sum += value[Int(neighbour)]
                 }
@@ -754,6 +786,7 @@ enum MeshPhotoTexturer {
         let width: Int
         let height: Int
         let values: [UInt8]
+        var rgb: [UInt8]? = nil
     }
 
     private static func gainPairs(kept: [Int], visible: [UInt64], words: Int, centroids: [SIMD3<Float>], cameras: [Camera], samples: [Luminance?]) -> [(Int, Int, Float)] {
@@ -775,7 +808,7 @@ enum MeshPhotoTexturer {
                 var ratios: [Float] = []
                 for position in stride(from: 0, to: shared.count, by: step) {
                     let point = centroids[shared[position]]
-                    guard let la = luminance(point, cameras[kept[a]], first), let lb = luminance(point, cameras[kept[b]], second), la > 0.03, lb > 0.03 else { continue }
+                    guard let la = luminance(point, cameras[kept[a]], first), let lb = luminance(point, cameras[kept[b]], second), la > 0.03, lb > 0.03, la < gainSampleCeiling, lb < gainSampleCeiling else { continue }
                     ratios.append(log(lb / la))
                 }
                 guard ratios.count >= 100 else { continue }
@@ -793,17 +826,38 @@ enum MeshPhotoTexturer {
         return Float(sample.values[y * sample.width + x]) / 255
     }
 
+    private static func colour(_ point: SIMD3<Float>, _ camera: Camera, _ sample: Luminance) -> SIMD3<Float>? {
+        guard let pixel = project(point, camera) else { return nil }
+        let x = min(Int(pixel.x * Float(sample.width) / camera.width), sample.width - 1)
+        let y = min(Int(pixel.y * Float(sample.height) / camera.height), sample.height - 1)
+        let index = y * sample.width + x
+        if let rgb = sample.rgb, rgb.count == sample.width * sample.height * 3 {
+            return SIMD3<Float>(Float(rgb[index * 3]), Float(rgb[index * 3 + 1]), Float(rgb[index * 3 + 2])) / 255
+        }
+        return SIMD3<Float>(repeating: Float(sample.values[index]) / 255)
+    }
+
     private static func loadLuminance(_ url: URL) -> Luminance? {
         guard let image = thumbnail(url, size: gainSampleSize) else { return nil }
         let width = image.width
         let height = image.height
-        var values = [UInt8](repeating: 0, count: width * height)
-        let drawn = values.withUnsafeMutableBytes { buffer -> Bool in
-            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return false }
             context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
             return true
         }
-        return drawn ? Luminance(width: width, height: height, values: values) : nil
+        guard drawn else { return nil }
+        var values = [UInt8](repeating: 0, count: width * height)
+        var rgb = [UInt8](repeating: 0, count: width * height * 3)
+        for index in 0..<(width * height) {
+            let r = pixels[index * 4], g = pixels[index * 4 + 1], b = pixels[index * 4 + 2]
+            rgb[index * 3] = r
+            rgb[index * 3 + 1] = g
+            rgb[index * 3 + 2] = b
+            values[index] = UInt8(min(255, (299 * Int(r) + 587 * Int(g) + 114 * Int(b)) / 1000))
+        }
+        return Luminance(width: width, height: height, values: values, rgb: rgb)
     }
 
     private static func applyGain(_ gain: Float, to image: CGImage, context: CIContext) -> CGImage {

@@ -15,10 +15,9 @@ final class LidarModelGlbTests: XCTestCase {
         return context?.makeImage()
     }
 
-    private func part(shift: SIMD3<Float>) -> LidarModelGlb.Part {
+    private func part(shift: SIMD3<Float>, colors: [Float] = [0.5, 0.5, 0.5, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1]) -> LidarModelGlb.Part {
         let positions: [Float] = [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 2, 0, 0, 0, 2, 0]
         let uvs: [Float] = [0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]
-        let colors: [Float] = [0.5, 0.5, 0.5, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1]
         let output = MeshPhotoTexturer.PartOutput(
             positions: data(positions),
             uvs: data(uvs),
@@ -49,6 +48,20 @@ final class LidarModelGlbTests: XCTestCase {
         let binLength = Int(word(binStart))
         XCTAssertEqual(word(binStart + 4), 0x004E4942)
         return (json, glb.subdata(in: (binStart + 8)..<(binStart + 8 + binLength)))
+    }
+
+    func testKeepsTheColourOfTheSeamTint() throws {
+        let tinted = part(shift: .zero, colors: [0.75, 1, 0.5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+        let encoded = try LidarModelGlb.encode(parts: [tinted], images: [image()]).get()
+        let (json, bin) = try parse(encoded.data)
+        let meshes = try XCTUnwrap(json["meshes"] as? [[String: Any]])
+        let primitives = try XCTUnwrap(meshes.first?["primitives"] as? [[String: Any]])
+        let attributes = try XCTUnwrap(primitives[0]["attributes"] as? [String: Int])
+        let accessors = try XCTUnwrap(json["accessors"] as? [[String: Any]])
+        let color = accessors[try XCTUnwrap(attributes["COLOR_0"])]
+        let views = try XCTUnwrap(json["bufferViews"] as? [[String: Any]])
+        let colorOffset = try XCTUnwrap(views[try XCTUnwrap(color["bufferView"] as? Int)]["byteOffset"] as? Int)
+        XCTAssertEqual(Array(bin.subdata(in: colorOffset..<(colorOffset + 4))), [191, 255, 128, 255])
     }
 
     func testWritesAValidGlbWithWorldPositionsAndOnePhoto() throws {
@@ -212,6 +225,6 @@ final class LidarModelGlbTests: XCTestCase {
     }
 
     func testSentNoteIsSingularForOnePhoto() {
-        XCTAssertEqual(MeshViewer.sentNote(bytes: 1_048_576 * 3, triangles: 1200, photos: 1), "Sent to the web tour: 3.0 MB, \(1200.formatted()) triangles, 1 photo. Open the tour link and tap 3D scan.")
+        XCTAssertEqual(MeshViewer.sentNote(bytes: 1_048_576 * 3, triangles: 1200, photos: 1), "Sent to the web tour: 3.0 MB, 1,200 triangles, 1 photo. Open the tour link and tap 3D scan.")
     }
 }

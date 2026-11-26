@@ -157,7 +157,7 @@ struct LiDARProofView: View {
             }
             row("Duration", String(format: "%.0f s", manifest.durationS))
             row("Keyframes", "\(stats.frames) (\(stats.depthFrames) with depth)")
-            row("Extra depth-only frames", "\(stats.depthOnlyFrames ?? 0)")
+            row("Extra depth-only frames", "\(stats.depthOnlyFrames ?? 0)" + (stats.smoothedDepthOnlyFrames.map { ", \($0) from smoothed depth" } ?? ""))
             let coverageRooms = manifest.liveCoverageRooms ?? manifest.liveCoverage.map { [$0] } ?? []
             ForEach(Array(coverageRooms.enumerated()), id: \.offset) { index, coverage in
                 let prefix = coverageRooms.count > 1 ? "Room \(index + 1): " : ""
@@ -170,7 +170,7 @@ struct LiDARProofView: View {
                     row(prefix + "Room corners the mesh reached", "\(coverage.cornersSeen ?? 0) of \(total)")
                 }
             }
-            row("Mesh", "\(stats.meshAnchors) pieces, \(stats.meshVertices) points, \(stats.meshFaces) triangles")
+            row("Mesh", "\(stats.meshAnchors) pieces, \(Self.count(stats.meshVertices)) points, \(Self.count(stats.meshFaces)) triangles")
             if let photoBuild {
                 row("Last photo texture build", MeshPhotoBuildLog.text(photoBuild))
                 if !photoBuild.stages.isEmpty {
@@ -185,7 +185,7 @@ struct LiDARProofView: View {
                     .foregroundStyle(.orange)
             }
             if let depthMesh = depthReport {
-                row("Depth mesh", "\(depthMesh.vertices) points, \(depthMesh.faces) triangles")
+                row("Depth mesh", "\(Self.count(depthMesh.vertices)) points, \(Self.count(depthMesh.faces)) triangles")
                 row("Depth mesh frames", "\(depthMesh.framesUsed) used (\(depthMesh.depthOnlyFramesUsed) depth-only), \(depthMesh.framesFailed) unreadable")
                 if depthMesh.framesFailed > 0 {
                     Text("\(depthMesh.framesFailed) depth frames could not be read, so the mesh may have holes where only they saw. \(depthMesh.failedFrameNames?.first ?? "")")
@@ -211,7 +211,7 @@ struct LiDARProofView: View {
                 row("RoomPlan doors, windows, objects", depthMesh.roomBoxesUnreadable ? "file unreadable" : "\(depthMesh.roomBoxes)")
                 row("Labelled from RoomPlan", "\(depthMesh.openingFaces) door/window, \(depthMesh.objectFaces) furniture triangles")
             }
-            row("Data on phone", ByteCountFormatter.string(fromByteCount: stats.totalBytes, countStyle: .file) + (stats.depthOnlyBytes == nil && (stats.depthOnlyFrames ?? 0) > 0 ? ", depth-only frames not counted in this older capture, MB per minute not measured" : LidarStorageBudget.mbPerMinute(bytes: stats.totalBytes, durationS: manifest.durationS).map { String(format: ", %.0f MB per minute", $0) } ?? ""))
+            row("Data on phone", Self.size(stats.totalBytes) + (stats.depthOnlyBytes == nil && (stats.depthOnlyFrames ?? 0) > 0 ? ", depth-only frames not counted in this older capture, MB per minute not measured" : LidarStorageBudget.mbPerMinute(bytes: stats.totalBytes, durationS: manifest.durationS).map { String(format: ", %.0f MB per minute", $0) } ?? ""))
             if let lowestFree = stats.lowestFreeDiskMB {
                 row("Lowest free phone storage", "\(lowestFree) MB")
             }
@@ -248,8 +248,23 @@ struct LiDARProofView: View {
 
     static func roomReportText(_ report: LidarRoomRunReport) -> String {
         let mesh = report.configAtEnd?.sceneReconstruction ?? report.configAfter?.sceneReconstruction ?? report.roomPlanConfig?.sceneReconstruction ?? "mesh setting unknown"
-        let growth = report.meshGrew ? "\(report.newMeshAnchors) new mesh pieces, \(report.meshFacesAtStart) to \(report.meshFacesMax) triangles" : "no new mesh"
+        let growth = report.meshGrew ? "\(report.newMeshAnchors) new mesh pieces, grew from \(count(report.meshFacesAtStart)) to \(count(report.meshFacesMax)) triangles" : "no new mesh"
         return "\(mesh), \(growth), depth \(report.depthSeen ? "yes" : "no"), \(report.keyframes) keyframes + \(report.depthOnlyFrames) depth-only"
+    }
+
+    static func count<Number: BinaryInteger>(_ number: Number) -> String {
+        Int(number).formatted(.number.locale(Locale(identifier: "en_US")))
+    }
+
+    static func size(_ bytes: Int64) -> String {
+        let value = Double(bytes)
+        if value >= 1_000_000_000 {
+            return String(format: "%.2f GB", value / 1_000_000_000)
+        }
+        if value >= 1_000_000 {
+            return String(format: "%.1f MB", value / 1_000_000)
+        }
+        return String(format: "%.0f KB", value / 1_000)
     }
 
     static let gapRowsShown = 5
@@ -346,7 +361,7 @@ struct LiDARProofView: View {
 
     private func depthMeshText(_ manifest: LidarCaptureManifest) -> String {
         if let depthMesh = depthReport {
-            return "yes, \(depthMesh.faces) triangles"
+            return "yes, \(Self.count(depthMesh.faces)) triangles"
         }
         if isFusing { return "building" }
         if manifest.stats.meshSeen { return "not needed" }

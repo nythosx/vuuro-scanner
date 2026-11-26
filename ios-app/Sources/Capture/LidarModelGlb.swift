@@ -42,7 +42,9 @@ enum LidarModelGlb {
         let z: UInt32
         let u: UInt32
         let v: UInt32
-        let shade: UInt8
+        let red: UInt8
+        let green: UInt8
+        let blue: UInt8
     }
 
     private struct Builder {
@@ -123,9 +125,10 @@ enum LidarModelGlb {
                     let rawV = uvs[vertex * 2 + 1]
                     let u: Float = rawU.isFinite ? rawU : 0
                     let v: Float = rawV.isFinite ? rawV : 0
-                    let shade = shades.isEmpty ? 1 : shades[vertex * 3]
-                    let byte = UInt8((min(max(shade.isFinite ? shade : 1, 0), 1) * 255).rounded())
-                    let key = VertexKey(x: point.x.bitPattern, y: point.y.bitPattern, z: point.z.bitPattern, u: u.bitPattern, v: v.bitPattern, shade: byte)
+                    let red = shadeByte(shades.isEmpty ? 1 : shades[vertex * 3])
+                    let green = shadeByte(shades.isEmpty ? 1 : shades[vertex * 3 + 1])
+                    let blue = shadeByte(shades.isEmpty ? 1 : shades[vertex * 3 + 2])
+                    let key = VertexKey(x: point.x.bitPattern, y: point.y.bitPattern, z: point.z.bitPattern, u: u.bitPattern, v: v.bitPattern, red: red, green: green, blue: blue)
                     if let existing = lookup[key] {
                         indices.append(existing)
                         continue
@@ -138,7 +141,7 @@ enum LidarModelGlb {
                     world.append(contentsOf: [point.x, point.y, point.z])
                     groupUVs.append(u)
                     groupUVs.append(v)
-                    colors.append(contentsOf: [byte, byte, byte, 255])
+                    colors.append(contentsOf: [red, green, blue, 255])
                 }
                 let vertexCount = world.count / 3
                 let position = builder.accessor(bytes(world), componentType: 5126, count: vertexCount, type: "VEC3", min: [Double(lower.x), Double(lower.y), Double(lower.z)], max: [Double(upper.x), Double(upper.y), Double(upper.z)])
@@ -295,6 +298,10 @@ enum LidarModelGlb {
         append(&out, 0x004E4942)
         out.append(binChunk)
         return out
+    }
+
+    static func shadeByte(_ shade: Float) -> UInt8 {
+        UInt8((min(max(shade.isFinite ? shade : 1, 0), 1) * 255).rounded())
     }
 
     static func webScale(totalPixels: Int) -> CGFloat {

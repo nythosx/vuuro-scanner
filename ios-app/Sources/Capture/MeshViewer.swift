@@ -151,7 +151,7 @@ struct MeshViewer: View {
                 pathControls
             }
         }
-        .navigationTitle((built?.triangles ?? 0) > 0 ? "\((built?.triangles ?? 0).formatted()) triangles" : "3D mesh")
+        .navigationTitle((built?.triangles ?? 0) > 0 ? "\(LiDARProofView.count(built?.triangles ?? 0)) triangles" : "3D mesh")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -515,13 +515,16 @@ struct MeshViewer: View {
     static func photoTextureNote(_ output: MeshPhotoTexturer.Output, seconds: Int, dropped: Int, total: Int, realigned: Int = 0) -> String {
         let percent = output.totalFaces > 0 ? output.facesInPhoto * 100 / output.totalFaces : 0
         let filledPercent = output.totalFaces > 0 ? output.facesFilled * 100 / output.totalFaces : 0
-        var note = "Photo texture from \(photos(output.photosInTexture, kind: "keyframe")) at \(output.photoLongSide > 0 ? output.photoLongSide : MeshPhotoTexturer.textureSize) px with brightness evened out, \(percent)% of the mesh"
+        var note = "Photo texture from \(photos(output.photosInTexture, kind: "keyframe")) at \(output.photoLongSide > 0 ? output.photoLongSide : MeshPhotoTexturer.textureSize) px with brightness and colour evened out at the seams, \(percent)% of the mesh"
         if output.facesFilled > 0 {
             note += ", \(filledPercent < 1 ? "under 1" : String(filledPercent))% more filled in from a nearby photo whose depth sees the spot"
         }
         note += ", built in \(seconds) s. \(photoCountsText(output))."
         if output.facesInPhoto + output.facesFilled < output.totalFaces {
             note += " Grey parts are not in any photo."
+        }
+        if output.photosNudged > 0 {
+            note += " \(photos(output.photosNudged)) moved a little to sit on the mesh where the phone position had drifted."
         }
         if realigned > 0 {
             note += " \(photos(realigned)) from before a position reset lined up with the mesh again and \(realigned == 1 ? "is" : "are") among the lined up photos."
@@ -596,7 +599,7 @@ struct MeshViewer: View {
 
     static func sentNote(bytes: Int, triangles: Int, photos: Int) -> String {
         let megabytes = Double(bytes) / 1_048_576
-        return "Sent to the web tour: \(String(format: "%.1f", megabytes)) MB, \(triangles.formatted()) triangles, \(Self.photos(photos)). Open the tour link and tap 3D scan."
+        return "Sent to the web tour: \(String(format: "%.1f", megabytes)) MB, \(LiDARProofView.count(triangles)) triangles, \(Self.photos(photos)). Open the tour link and tap 3D scan."
     }
 
     private func sendToWebTour() {

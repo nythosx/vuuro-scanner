@@ -29,6 +29,15 @@ enum PoseResetRealigner {
     static let maxShiftM: Float = 1.5
     static let minDepthM: Float = 0.3
     static let maxDepthM: Float = 5
+    static let driftStartSearchM: Float = 0.1
+    static let driftEndSearchM: Float = 0.03
+    static let driftInlierM: Float = 0.03
+    static let driftMinInlierShare: Float = 0.7
+    static let driftMaxShiftM: Float = 0.08
+    static let driftMaxRotationDeg: Float = 3
+    static let driftMinShiftM: Float = 0.005
+    static let driftMinImprovement: Float = 0.8
+    static let driftMaxSourcePoints = 400
 
     final class Grid {
         let cell: Float
@@ -183,13 +192,13 @@ enum PoseResetRealigner {
         return transform
     }
 
-    static func fit(source: [SIMD3<Float>], grid: Grid) -> Fit? {
+    static func fit(source: [SIMD3<Float>], grid: Grid, startSearch: Float = PoseResetRealigner.startSearchM, endSearch: Float = PoseResetRealigner.endSearchM, inlier: Float = PoseResetRealigner.inlierM) -> Fit? {
         guard source.count >= 50, !grid.isEmpty else { return nil }
         var total = matrix_identity_float4x4
         var moved = source
         for step in 0..<iterations {
             let share = Float(step) / Float(max(iterations - 1, 1))
-            let radius = startSearchM + (endSearchM - startSearchM) * share
+            let radius = startSearch + (endSearch - startSearch) * share
             var from: [SIMD3<Float>] = []
             var to: [SIMD3<Float>] = []
             for point in moved {
@@ -205,19 +214,52 @@ enum PoseResetRealigner {
                 return SIMD3<Float>(world.x, world.y, world.z)
             }
         }
+        let measured = closeness(moved, grid: grid, inlier: inlier)
+        return Fit(transform: total, inlierShare: measured.inlierShare, medianErrorM: measured.medianErrorM)
+    }
+
+    static func closeness(_ points: [SIMD3<Float>], grid: Grid, inlier: Float) -> (inlierShare: Float, medianErrorM: Float) {
+        guard !points.isEmpty else { return (0, .infinity) }
         var errors: [Float] = []
-        errors.reserveCapacity(moved.count)
-        for point in moved {
-            if let match = grid.nearest(point, within: inlierM * 2) {
+        errors.reserveCapacity(points.count)
+        for point in points {
+            if let match = grid.nearest(point, within: inlier * 2) {
                 errors.append(simd_distance(point, match))
             } else {
                 errors.append(.infinity)
             }
         }
-        let inliers = errors.filter { $0 <= inlierM }.count
+        let inliers = errors.filter { $0 <= inlier }.count
         let sorted = errors.sorted()
-        let median = sorted[sorted.count / 2]
-        return Fit(transform: total, inlierShare: Float(inliers) / Float(errors.count), medianErrorM: median)
+        return (Float(inliers) / Float(errors.count), sorted[sorted.count / 2])
+    }
+
+    static func driftCorrection(source: [SIMD3<Float>], grid: Grid) -> simd_float4x4? {
+        guard let fit = fit(source: source, grid: grid, startSearch: driftStartSearchM, endSearch: driftEndSearchM, inlier: driftInlierM) else { return nil }
+        guard fit.inlierShare >= driftMinInlierShare, fit.medianErrorM.isFinite else { return nil }
+        let rotation = simd_quatf(fit.transform)
+        let degrees = abs(rotation.angle * 180 / .pi)
+        let turned = min(degrees, 360 - degrees)
+        let shift = simd_length(SIMD3<Float>(fit.transform.columns.3.x, fit.transform.columns.3.y, fit.transform.columns.3.z))
+        guard turned <= driftMaxRotationDeg, shift <= driftMaxShiftM else { return nil }
+        let before = closeness(source, grid: grid, inlier: driftInlierM)
+        let largestMove = source.reduce(Float(0)) { far, point in
+            let world = fit.transform * SIMD4<Float>(point, 1)
+            return max(far, simd_distance(SIMD3<Float>(world.x, world.y, world.z), point))
+        }
+        guard largestMove >= driftMinShiftM else { return nil }
+        guard before.medianErrorM.isInfinite || fit.medianErrorM <= before.medianErrorM * driftMinImprovement else { return nil }
+        return fit.transform
+    }
+
+    static func correctDrift(_ frame: MeshFrame, grid: Grid) -> MeshFrame? {
+        guard frame.depthURL != nil, frame.depthWidth > 0, frame.depthHeight > 0, let depth = loadDepth(frame) else { return nil }
+        var source = depthPoints(frame, depth: depth)
+        if source.count > driftMaxSourcePoints {
+            let thin = source.count / driftMaxSourcePoints + 1
+            source = stride(from: 0, to: source.count, by: thin).map { source[$0] }
+        }
+        return driftCorrection(source: source, grid: grid).map { frame.moved(by: $0) }
     }
 
     static func accepts(_ fit: Fit) -> Bool {

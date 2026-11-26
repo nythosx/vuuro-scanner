@@ -11,6 +11,10 @@ final class LidarModelStore
     private const MODEL = 'model.glb';
     private const PART = 'model.part';
     private const META = 'model.json';
+    private const KTX2 = 'model-ktx2.glb';
+    private const KTX2_PART = 'model-ktx2.part';
+    private const KTX2_STATUS = 'model-ktx2.json';
+    private const KTX2_LOCK = 'model-ktx2.lock';
 
     public function __construct(private readonly string $root)
     {
@@ -67,6 +71,7 @@ final class LidarModelStore
             return ['ok' => false, 'status' => 422, 'code' => 'invalid_glb', 'message' => 'The uploaded file is not a usable 3D model: ' . $problem . '.'];
         }
         $model = $this->dir($sessionId) . '/' . self::MODEL;
+        $this->forgetKtx2($sessionId);
         if (!rename($part, $model)) {
             return ['ok' => false, 'status' => 500, 'code' => 'internal_error', 'message' => 'Could not store the 3D model.'];
         }
@@ -98,6 +103,85 @@ final class LidarModelStore
         $raw = @file_get_contents($this->dir($sessionId) . '/' . self::META);
         $meta = is_string($raw) ? json_decode($raw, true) : null;
         return is_array($meta) ? $meta : null;
+    }
+
+    public function ktx2Path(string $sessionId): ?string
+    {
+        $path = $this->dir($sessionId) . '/' . self::KTX2;
+        clearstatcache(true, $path);
+        return is_file($path) && $this->modelPath($sessionId) !== null ? $path : null;
+    }
+
+    public function ktx2Status(string $sessionId): ?array
+    {
+        $raw = @file_get_contents($this->dir($sessionId) . '/' . self::KTX2_STATUS);
+        $status = is_string($raw) ? json_decode($raw, true) : null;
+        return is_array($status) ? $status : null;
+    }
+
+    public function buildKtx2(string $sessionId, string $toktx, ?callable $encode = null): array
+    {
+        $dir = $this->dir($sessionId);
+        $model = $this->modelPath($sessionId);
+        if ($model === null) {
+            return ['ok' => false, 'message' => 'no 3D model is stored for this session'];
+        }
+        $lock = @fopen($dir . '/' . self::KTX2_LOCK, 'c');
+        if ($lock === false) {
+            return ['ok' => false, 'message' => 'the compression lock could not be opened'];
+        }
+        if (!flock($lock, LOCK_EX)) {
+            fclose($lock);
+            return ['ok' => false, 'message' => 'the compression lock could not be taken'];
+        }
+        $started = microtime(true);
+        $sha = hash_file('sha256', $model);
+        $previous = $this->ktx2Status($sessionId);
+        if ($this->ktx2Path($sessionId) !== null && ($previous['state'] ?? '') === 'done' && ($previous['source_sha256'] ?? '') === $sha) {
+            flock($lock, LOCK_UN);
+            fclose($lock);
+            return ['ok' => true, 'bytes' => (int) ($previous['bytes'] ?? 0), 'photos' => (int) ($previous['photos'] ?? 0), 'seconds' => 0.0];
+        }
+        $this->writeKtx2Status($sessionId, ['state' => 'running', 'source_sha256' => $sha, 'started_at' => gmdate('c')]);
+        $glb = @file_get_contents($model);
+        $result = is_string($glb)
+            ? LidarModelKtx2::rewrite($glb, $encode ?? fn (string $bytes): array => LidarModelKtx2::encodeImage($toktx, $bytes, $dir))
+            : ['ok' => false, 'message' => 'the stored 3D model could not be read'];
+        if ($result['ok'] && strlen($result['data']) > self::MAX_BYTES) {
+            $result = ['ok' => false, 'message' => 'the compressed model is larger than ' . intdiv(self::MAX_BYTES, 1024 * 1024) . ' MB'];
+        }
+        if ($result['ok'] && hash_file('sha256', $model) !== $sha) {
+            $result = ['ok' => false, 'message' => 'a newer 3D model arrived while compressing'];
+        }
+        if ($result['ok']) {
+            $part = $dir . '/' . self::KTX2_PART;
+            if (file_put_contents($part, $result['data'], LOCK_EX) !== strlen($result['data']) || !rename($part, $dir . '/' . self::KTX2)) {
+                @unlink($part);
+                $result = ['ok' => false, 'message' => 'the compressed model could not be saved'];
+            }
+        }
+        $seconds = round(microtime(true) - $started, 1);
+        $this->writeKtx2Status($sessionId, $result['ok']
+            ? ['state' => 'done', 'source_sha256' => $sha, 'bytes' => strlen($result['data']), 'photos' => $result['images'], 'seconds' => $seconds, 'finished_at' => gmdate('c')]
+            : ['state' => 'failed', 'source_sha256' => $sha, 'message' => $result['message'], 'seconds' => $seconds, 'finished_at' => gmdate('c')]);
+        flock($lock, LOCK_UN);
+        fclose($lock);
+        return $result['ok'] ? ['ok' => true, 'bytes' => strlen($result['data']), 'photos' => $result['images'], 'seconds' => $seconds] : ['ok' => false, 'message' => $result['message']];
+    }
+
+    private function forgetKtx2(string $sessionId): void
+    {
+        foreach ([self::KTX2, self::KTX2_PART, self::KTX2_STATUS] as $name) {
+            $path = $this->dir($sessionId) . '/' . $name;
+            if (is_file($path)) {
+                @unlink($path);
+            }
+        }
+    }
+
+    private function writeKtx2Status(string $sessionId, array $status): void
+    {
+        file_put_contents($this->dir($sessionId) . '/' . self::KTX2_STATUS, json_encode($status, JSON_UNESCAPED_SLASHES), LOCK_EX);
     }
 
     public function deleteSession(string $sessionId): void

@@ -59,6 +59,18 @@ final class PoseResetRealignerTests: XCTestCase {
         XCTAssertLessThan(error, 0.05)
     }
 
+    func testASmallDriftIsCorrectedAndNoDriftOrABigOneIsLeftAlone() throws {
+        let room = roomPoints()
+        let grid = PoseResetRealigner.Grid(points: room, cell: PoseResetRealigner.cellM)
+        let sample = stride(from: 0, to: room.count, by: 41).map { room[$0] }
+        let drifted = moved(sample, by: offset(degrees: 1, shift: SIMD3(0.03, 0.01, -0.02)))
+        let correction = try XCTUnwrap(PoseResetRealigner.driftCorrection(source: drifted, grid: grid))
+        let error = zip(moved(drifted, by: correction), sample).map { simd_distance($0, $1) }.max() ?? 1
+        XCTAssertLessThan(error, 0.03)
+        XCTAssertNil(PoseResetRealigner.driftCorrection(source: sample, grid: grid))
+        XCTAssertNil(PoseResetRealigner.driftCorrection(source: moved(sample, by: offset(degrees: 0, shift: SIMD3(0.3, 0, 0.3))), grid: grid))
+    }
+
     func testPointsThatMatchNothingAreNotAccepted() {
         let room = roomPoints()
         let grid = PoseResetRealigner.Grid(points: room, cell: PoseResetRealigner.cellM)

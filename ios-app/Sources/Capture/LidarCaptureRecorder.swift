@@ -32,6 +32,7 @@ struct LidarCaptureStats: Codable, Equatable {
     var skippedBusyFrames = 0
     var depthOnlyFrames: Int?
     var depthOnlyBytes: Int64?
+    var smoothedDepthOnlyFrames: Int?
     var lowestFreeDiskMB: Int?
     var poseResets: Int?
     var poseResetEvents: [LidarPoseReset]?
@@ -55,6 +56,7 @@ struct LidarCaptureStats: Codable, Equatable {
         case skippedBusyFrames = "skipped_busy_frames"
         case depthOnlyFrames = "depth_only_frames"
         case depthOnlyBytes = "depth_only_bytes"
+        case smoothedDepthOnlyFrames = "smoothed_depth_only_frames"
         case lowestFreeDiskMB = "lowest_free_disk_mb"
         case poseResets = "pose_resets"
         case poseResetEvents = "pose_reset_events"
@@ -206,6 +208,7 @@ struct LidarDepthFrame {
     let imageWidth: Int
     let imageHeight: Int
     let depthData: ARDepthData
+    let smoothed: Bool
     let transform: [Float]
     let intrinsics: [Float]
     let timestamp: TimeInterval
@@ -759,7 +762,7 @@ final class LidarCaptureRecorder {
         guard !depthWriteInFlight else { return .writerBusy }
         let pose = frame.camera.transform
         if let lastDepthPose, !Self.movedEnough(from: lastDepthPose, to: pose, distance: Self.depthOnlyMinDistanceM, turnDeg: Self.depthOnlyMinTurnDeg) { return .notMoved }
-        guard let depthData = Self.usableDepth(frame) else { return .noDepth }
+        guard let meshDepth = Self.meshDepth(frame) else { return .noDepth }
         lastDepthPose = pose
         lastDepthAt = now
         depthIndex += 1
@@ -769,27 +772,30 @@ final class LidarCaptureRecorder {
             index: depthIndex,
             imageWidth: Int(resolution.width),
             imageHeight: Int(resolution.height),
-            depthData: depthData,
+            depthData: meshDepth.data,
+            smoothed: meshDepth.smoothed,
             transform: Self.flatten(pose),
             intrinsics: [intrinsics[0][0], intrinsics[1][1], intrinsics[2][0], intrinsics[2][1]],
             timestamp: now
         )
+        let smoothed = meshDepth.smoothed
         depthWriteInFlight = true
         let writer = self.writer
         Task { [weak self] in
             let result = await writer.writeDepthFrame(record, to: directory.appendingPathComponent(Self.depthFramesFolder, isDirectory: true))
-            self?.depthWriteFinished(result, mark: mark)
+            self?.depthWriteFinished(result, smoothed: smoothed, mark: mark)
         }
         return nil
     }
 
-    private func depthWriteFinished(_ result: Result<Int64, Error>, mark: GapMark) {
+    private func depthWriteFinished(_ result: Result<Int64, Error>, smoothed: Bool, mark: GapMark) {
         depthWriteInFlight = false
         switch result {
         case .success(let bytes):
             if var stats = manifest?.stats {
                 stats.depthOnlyFrames = (stats.depthOnlyFrames ?? 0) + 1
                 stats.depthOnlyBytes = (stats.depthOnlyBytes ?? 0) + bytes
+                if smoothed { stats.smoothedDepthOnlyFrames = (stats.smoothedDepthOnlyFrames ?? 0) + 1 }
                 manifest?.stats = stats
             }
             frameSaved(mark)
@@ -956,12 +962,21 @@ final class LidarCaptureRecorder {
     }
 
     static func usableDepth(_ frame: ARFrame) -> ARDepthData? {
-        guard let depthData = frame.sceneDepth ?? frame.smoothedSceneDepth else { return nil }
-        let depthMap = depthData.depthMap
-        guard CVPixelBufferGetPixelFormatType(depthMap) == kCVPixelFormatType_DepthFloat32,
-              CVPixelBufferGetWidth(depthMap) > 0,
-              CVPixelBufferGetHeight(depthMap) > 0 else { return nil }
+        guard let depthData = frame.sceneDepth ?? frame.smoothedSceneDepth, readable(depthData) else { return nil }
         return depthData
+    }
+
+    static func meshDepth(_ frame: ARFrame) -> (data: ARDepthData, smoothed: Bool)? {
+        if let smoothed = frame.smoothedSceneDepth, readable(smoothed) { return (smoothed, true) }
+        guard let raw = usableDepth(frame) else { return nil }
+        return (raw, false)
+    }
+
+    private static func readable(_ depthData: ARDepthData) -> Bool {
+        let depthMap = depthData.depthMap
+        return CVPixelBufferGetPixelFormatType(depthMap) == kCVPixelFormatType_DepthFloat32
+            && CVPixelBufferGetWidth(depthMap) > 0
+            && CVPixelBufferGetHeight(depthMap) > 0
     }
 
     nonisolated static func centerDepthM(_ depthMap: CVPixelBuffer) -> Float? {
@@ -1133,6 +1148,7 @@ actor LidarCaptureWriter {
                 "tracking": "normal",
                 "depth": "\(stem).depth",
                 "depth_format": "uint16_le_millimeters",
+                "depth_kind": record.smoothed ? "smoothed" : "raw",
                 "depth_width": depth.width,
                 "depth_height": depth.height
             ]
