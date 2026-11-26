@@ -3,11 +3,10 @@ import simd
 @testable import VuuroScan
 
 final class PoseResetRealignerTests: XCTestCase {
-    private func roomPoints() -> [SIMD3<Float>] {
+    private func roomPoints(step: Float = 0.04) -> [SIMD3<Float>] {
         var points: [SIMD3<Float>] = []
-        let step: Float = 0.04
-        for i in 0...100 {
-            for j in 0...62 {
+        for i in 0...Int((4 / step).rounded()) {
+            for j in 0...Int((2.48 / step).rounded()) {
                 let a = Float(i) * step
                 let b = Float(j) * step
                 points.append(SIMD3(a, 0, b * 1.6))
@@ -61,7 +60,7 @@ final class PoseResetRealignerTests: XCTestCase {
 
     func testASmallDriftIsCorrectedAndNoDriftOrABigOneIsLeftAlone() throws {
         let room = roomPoints()
-        let grid = PoseResetRealigner.Grid(points: room, cell: PoseResetRealigner.cellM)
+        let grid = PoseResetRealigner.Grid(points: roomPoints(step: 0.02), cell: PoseResetRealigner.cellM)
         let sample = stride(from: 0, to: room.count, by: 41).map { room[$0] }
         let drifted = moved(sample, by: offset(degrees: 1, shift: SIMD3(0.03, 0.01, -0.02)))
         let correction = try XCTUnwrap(PoseResetRealigner.driftCorrection(source: drifted, grid: grid))
