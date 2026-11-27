@@ -41,7 +41,7 @@ headroom for concurrent photo uploads and PDF rendering.
 2. Log in as root and run:
    - `apt-get update && apt-get install -y git`
    - `git clone --branch feature/vuuro-scan https://github.com/nythosx/vuuro-scanner.git /opt/vuuro-scan`
-   - `sh /opt/vuuro-scan/scan-service/scripts/server-setup.sh --domain scan.vuuro.nl --backup-remote r2:vuuro-scan-backups`
+   - `sh /opt/vuuro-scan/scan-service/scripts/server-setup.sh --domain scan.vuuro.com --backup-remote r2:vuuro-scan-backups`
 3. What the script does (safe to run again; a second run never changes the secrets):
    - installs Docker (official apt repository), rclone, ufw and fail2ban
    - firewall: only 22, 80 and 443 open
@@ -52,15 +52,15 @@ headroom for concurrent photo uploads and PDF rendering.
    - `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
    - cron `/etc/cron.d/vuuro-scan`: every night at 03:00 UTC `scripts/nightly.sh` (retention via `POST /admin/run-retention`, a fresh database snapshot, then the off-box copy), log in `/var/log/vuuro-scan-nightly.log`, rotated weekly
    - prints the exact DNS records to add, then checks `https://<domain>/health` for up to 5 minutes and says either "HTTPS is up" or "STILL WAITING FOR DNS"
-4. Add the DNS records it printed (A, and AAAA if it printed one) for `scan.vuuro.nl`. When they are live, run the same command again: it ends with "HTTPS is up" and checks that starting a scan without the app key gets 401.
+4. Add the DNS records it printed (A, and AAAA if it printed one) for `scan.vuuro.com`. When they are live, run the same command again: it ends with "HTTPS is up" and checks that starting a scan without the app key gets 401.
 5. Off-box backup:
    - Create a Cloudflare R2 bucket (10 GB free) or Backblaze B2 (10 GB free), see `scan-service/README.md`
    - As root: `rclone config`, with the remote name used in `--backup-remote` (e.g. `r2`)
    - Test once by hand: `sh /opt/vuuro-scan/scan-service/scripts/nightly.sh`, then check the bucket has `daily/`, `weekly/` and `photos/`
 6. Alerts:
    - Backup did not run: create a free check on healthchecks.io (period 1 day, grace 2 hours, email alert), put its ping URL in `SCAN_SERVICE_HEALTHCHECK_URL` in `scan-service/.env`. `nightly.sh` pings it at the start, on success and on failure; a failing ping never stops the backup. The URL is never logged; keep it out of chat and tickets
-   - Service is down: a free uptime monitor (e.g. UptimeRobot) on `https://scan.vuuro.nl/health`, every 5 minutes, alert by email
-7. Point the iOS app at `https://scan.vuuro.nl`:
+   - Service is down: a free uptime monitor (e.g. UptimeRobot) on `https://scan.vuuro.com/health`, every 5 minutes, alert by email
+7. Point the iOS app at `https://scan.vuuro.com`:
    - Change `SCAN_SERVICE_BASE_URL` in `ios-app/project.yml`
    - The Release/TestFlight build needs the same app key as the server. Read it on the server with `grep '^SCAN_SERVICE_APP_KEY=' /opt/vuuro-scan/scan-service/.env` and pass it as the build setting `SCAN_SERVICE_APP_KEY` at archive time (from a CI secret, never committed). The app sends it as `X-Scan-App-Key` when it starts a scan
    - Do not upload a build that contains the key as a workflow artifact on the public GitHub mirror; anyone can download those
@@ -72,7 +72,7 @@ headroom for concurrent photo uploads and PDF rendering.
    - `IOS_DEVELOPMENT_TEAM`: the Apple team ID
    - `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8_BASE64`: an App Store Connect API key (App Manager role) and its .p8 file (base64)
    - `SCAN_SERVICE_APP_KEY`: the same value as on the server
-   - The build points at `https://scan.vuuro.nl`. The build number is the workflow run number unless one is typed in. The workflow uploads straight to TestFlight and never keeps the .ipa or archive as a workflow artifact, because the mirror is public and the build contains the app key
+   - The build points at `https://scan.vuuro.com`. The build number is the workflow run number unless one is typed in. The workflow uploads straight to TestFlight and never keeps the .ipa or archive as a workflow artifact, because the mirror is public and the build contains the app key
 
 Notes:
 
@@ -128,4 +128,4 @@ The photos on the remote are a mirror of the current set, not one copy per day. 
 
 ## Decision needed
 
-Mark: send the Hetzner invite and add the DNS records the setup script prints for `scan.vuuro.nl`. Also confirm the retention days per purpose, and R2 or B2 for the off-box copy.
+Mark: send the Hetzner invite and add the DNS records the setup script prints for `scan.vuuro.com`. Also confirm the retention days per purpose, and R2 or B2 for the off-box copy.

@@ -19,7 +19,7 @@ jobs:
   testflight:
     runs-on: macos-15
     env:
-      SCAN_SERVICE_BASE_URL: https://scan.vuuro.nl
+      SCAN_SERVICE_BASE_URL: https://scan.vuuro.com
     steps:
       - name: Check the signing and upload secrets
         env:
@@ -135,8 +135,8 @@ jobs:
             echo "::error::the archive points at '$baked_url', expected $SCAN_SERVICE_BASE_URL"
             exit 1
           fi
-          if [ "$baked_key_length" -lt 24 ]; then
-            echo "::error::the archive has no usable app key (length $baked_key_length)"
+          if [ "$baked_key_length" -ne 64 ]; then
+            echo "::error::the archive app key has length $baked_key_length, expected 64"
             exit 1
           fi
           echo "archive points at $baked_url with an app key of $baked_key_length characters"
