@@ -1,5 +1,6 @@
 stages:
   - test
+  - release
 
 scan-service-net:
   stage: test
@@ -84,3 +85,15 @@ debug-flags-safe-defaults:
         }
       }
       if ($failed) { exit 1 }
+
+ios-testflight:
+  stage: release
+  tags:
+    - macos
+  variables:
+    SCAN_SERVICE_BASE_URL: https://scan.vuuro.com
+  script:
+    - bash ios-app/scripts/testflight.sh
+  rules:
+    - when: manual
+      allow_failure: true

@@ -61,18 +61,20 @@ headroom for concurrent photo uploads and PDF rendering.
    - Backup did not run: create a free check on healthchecks.io (period 1 day, grace 2 hours, email alert), put its ping URL in `SCAN_SERVICE_HEALTHCHECK_URL` in `scan-service/.env`. `nightly.sh` pings it at the start, on success and on failure; a failing ping never stops the backup. The URL is never logged; keep it out of chat and tickets
    - Service is down: a free uptime monitor (e.g. UptimeRobot) on `https://scan.vuuro.com/health`, every 5 minutes, alert by email
 7. Point the iOS app at `https://scan.vuuro.com`:
-   - Change `SCAN_SERVICE_BASE_URL` in `ios-app/project.yml`
-   - The Release/TestFlight build needs the same app key as the server. Read it on the server with `grep '^SCAN_SERVICE_APP_KEY=' /opt/vuuro-scan/scan-service/.env` and pass it as the build setting `SCAN_SERVICE_APP_KEY` at archive time (from a CI secret, never committed). The app sends it as `X-Scan-App-Key` when it starts a scan
+   - Release builds read `ios-app/Config/Release.xcconfig`, which already points at `https:/$()/scan.vuuro.com` (`//` starts a comment in an xcconfig). Debug builds keep `http://127.0.0.1:8089` from `ios-app/project.yml`
+   - The Release/TestFlight build needs the same app key as the server. Copy `ios-app/Config/Release.local.xcconfig.example` to `ios-app/Config/Release.local.xcconfig` (git ignores it) and put the key there, or pass it as the build setting `SCAN_SERVICE_APP_KEY` at archive time from a CI secret. It is never committed. The app sends it as `X-Scan-App-Key` when it starts a scan
+   - Check the archive: `ScanServiceBaseURL` in the app's Info.plist is exactly `https://scan.vuuro.com` and `ScanServiceAppKey` is 64 characters long, for example `/usr/libexec/PlistBuddy -c 'Print :ScanServiceAppKey' Info.plist | tr -d '
+' | wc -c`. Never print the key itself
    - Do not upload a build that contains the key as a workflow artifact on the public GitHub mirror; anyone can download those
    - Rebuild and distribute
    - The key ships inside the app and can be extracted. With the per-IP rate limit it stops casual abuse of a public URL; it is not user authentication
-8. TestFlight build (`.github/workflows/ios-testflight.yml`, started by hand from the Actions tab, never on push). Not run yet: it needs App Store Connect access from Mark. Add these repository secrets on the GitHub mirror first; the workflow stops at its first step and names any that are missing:
+8. TestFlight build: the GitLab job `ios-testflight` (stage `release`, started by hand, never on push) runs `ios-app/scripts/testflight.sh` on a GitLab runner tagged `macos`. GitLab has no free macOS runner for this project, so this needs a runner on a Mac with Xcode (register it on `vuuro/scanner` with the tag `macos`, shell executor). Until then, Mark can archive the Release in his own Xcode with `Release.local.xcconfig` in place. The GitHub mirror is a test mirror; the signing secrets and the app key do not go there. Add these as masked, protected CI/CD variables on `vuuro/scanner`; the script stops at its first step naming any that are missing, and `BUILD_NUMBER` (optional) overrides the pipeline number as the build number:
    - `IOS_CERTIFICATE_P12_BASE64`, `IOS_CERTIFICATE_PASSWORD`: the Apple Distribution certificate (.p12, base64) and its password
    - `IOS_APPSTORE_PROFILE_BASE64`: an App Store distribution provisioning profile for `com.vuuro.scan` (base64); an ad-hoc profile is refused
    - `IOS_DEVELOPMENT_TEAM`: the Apple team ID
    - `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8_BASE64`: an App Store Connect API key (App Manager role) and its .p8 file (base64)
    - `SCAN_SERVICE_APP_KEY`: the same value as on the server
-   - The build points at `https://scan.vuuro.com`. The build number is the workflow run number unless one is typed in. The workflow uploads straight to TestFlight and never keeps the .ipa or archive as a workflow artifact, because the mirror is public and the build contains the app key
+   - The build points at `https://scan.vuuro.com`. The script uploads straight to TestFlight, keeps no .ipa or archive as a job artifact because the build contains the app key, and removes the keychain, profile and build afterwards
 
 Notes:
 

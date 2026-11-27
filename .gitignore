@@ -23,6 +23,7 @@ build/
 .build/
 DerivedData/
 *.xcuserstate
+ios-app/Config/Release.local.xcconfig
 xcuserdata/
 __pycache__/
 *.pyc

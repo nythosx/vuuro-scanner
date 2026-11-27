@@ -12,6 +12,8 @@ targets:
   VuuroScan:
     type: application
     platform: iOS
+    configFiles:
+      Release: Config/Release.xcconfig
     sources:
       - path: Sources
     resources:
@@ -50,10 +52,12 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.vuuro.scan
         TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        SCAN_SERVICE_BASE_URL: http://127.0.0.1:8089
-        SCAN_SERVICE_APP_KEY: ""
         CODE_SIGN_STYLE: Manual
         DEVELOPMENT_TEAM: ""
+      configs:
+        Debug:
+          SCAN_SERVICE_BASE_URL: http://127.0.0.1:8089
+          SCAN_SERVICE_APP_KEY: ""
     scheme:
       testTargets:
         - VuuroScanTests

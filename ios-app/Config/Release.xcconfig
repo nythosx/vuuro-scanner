@@ -1,0 +1,4 @@
+SCAN_SERVICE_BASE_URL = https:/$()/scan.vuuro.com
+SCAN_SERVICE_APP_KEY =
+
+#include? "Release.local.xcconfig"
