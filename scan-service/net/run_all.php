@@ -91,6 +91,13 @@ $groups = [
     ],
 ];
 
+function inheritedEnv(): array
+{
+    $env = getenv();
+    unset($env['SCAN_SERVICE_APP_KEY'], $env['SCAN_SERVICE_ADMIN_API_KEY']);
+    return $env;
+}
+
 function startServer(string $root, int $port, array $env): array
 {
     $dbDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'vuuro-net-' . $port . '-' . bin2hex(random_bytes(4));
@@ -101,7 +108,7 @@ function startServer(string $root, int $port, array $env): array
         [0 => ['pipe', 'r'], 1 => ['file', $dbDir . DIRECTORY_SEPARATOR . 'server.log', 'a'], 2 => ['file', $dbDir . DIRECTORY_SEPARATOR . 'server.log', 'a']],
         $pipes,
         $root,
-        array_merge(getenv(), $env)
+        array_merge(inheritedEnv(), $env)
     );
     if (!is_resource($process)) {
         fwrite(STDERR, "Could not start the Scan Service on port $port\n");
@@ -135,7 +142,7 @@ foreach ($groups as $group) {
         $name = array_shift($script);
         echo "\n## $name\n";
         $command = array_merge([PHP_BINARY, __DIR__ . DIRECTORY_SEPARATOR . $name, "http://127.0.0.1:{$group['port']}"], $script);
-        $child = proc_open($command, [1 => STDOUT, 2 => STDERR], $childPipes, $root, array_merge(getenv(), $serverEnv));
+        $child = proc_open($command, [1 => STDOUT, 2 => STDERR], $childPipes, $root, array_merge(inheritedEnv(), $serverEnv));
         $results[$name] = is_resource($child) ? proc_close($child) : 1;
     }
     proc_terminate($server);

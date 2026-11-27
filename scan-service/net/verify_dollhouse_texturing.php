@@ -57,10 +57,10 @@ function dollhouse_tex_photo_360_upload(
 
 function dollhouse_tex_glb_json(string $glb): ?array
 {
-    if (strlen($glb) < 12) {
+    if (strlen($glb) < 12 || substr($glb, 0, 4) !== 'glTF') {
         return null;
     }
-    $totalLen = unpack('V', substr($glb, 8, 4))[1];
+    $totalLen = min(strlen($glb), unpack('V', substr($glb, 8, 4))[1]);
     $offset = 12;
     while ($offset + 8 <= $totalLen) {
         $len = unpack('V', substr($glb, $offset, 4))[1];
