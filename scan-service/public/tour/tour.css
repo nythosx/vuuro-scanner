@@ -1421,3 +1421,39 @@ body {
   color: #555;
   pointer-events: none;
 }
+
+.tour-model-start {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  padding: 20px;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.tour-model-start-button {
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  padding: 14px 24px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  cursor: pointer;
+}
+
+.tour-model-start-button:hover,
+.tour-model-start-button:focus-visible {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.tour-model-start-note {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  margin: 0;
+  max-width: 320px;
+}

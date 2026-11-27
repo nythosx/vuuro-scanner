@@ -274,7 +274,11 @@ const cases = [
   ['all', true, { walkthrough: true, hasStand: false, hasDollhouse: false, hasPhotos: true }, 'photos'],
   ['all', true, allFalse, 'plan'],
   ['all', false, allTrue, 'plan'],
-  ['dollhouse', false, allFalse, 'plan']
+  ['dollhouse', false, allFalse, 'plan'],
+  ['all', true, Object.assign({ hasModel: true }, allTrue), 'model'],
+  ['all', false, Object.assign({ hasModel: true }, allTrue), 'plan'],
+  ['model', false, Object.assign({ hasModel: true }, allFalse), 'model'],
+  ['model', true, allTrue, 'plan']
 ];
 let bad = 0;
 for (const c of cases) {

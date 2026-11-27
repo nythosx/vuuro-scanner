@@ -141,7 +141,7 @@ enum DepthMeshFusion {
         }
     }
 
-    static func run(captureURL: URL, progress: (@Sendable (Double) -> Void)? = nil) -> Result<LidarDepthMeshReport, Error> {
+    static func run(captureURL: URL, folder: String = meshFolder, progress: (@Sendable (Double) -> Void)? = nil) -> Result<LidarDepthMeshReport, Error> {
         let started = Date()
         var keyframes: [MeshFrame] = []
         var depthOnly: [MeshFrame] = []
@@ -228,7 +228,7 @@ enum DepthMeshFusion {
             resetsUnreadable: resets.unreadable ? true : nil
         )
         do {
-            try write(mesh, report: report, to: captureURL)
+            try write(mesh, report: report, to: captureURL, folder: folder)
             progress?(1)
             return .success(report)
         } catch {
@@ -764,10 +764,10 @@ enum DepthMeshFusion {
         return outside.map { !$0 }
     }
 
-    private static func write(_ mesh: Mesh, report: LidarDepthMeshReport, to captureURL: URL) throws {
+    private static func write(_ mesh: Mesh, report: LidarDepthMeshReport, to captureURL: URL, folder: String) throws {
         let fileManager = FileManager.default
-        let target = captureURL.appendingPathComponent(meshFolder, isDirectory: true)
-        let staging = captureURL.appendingPathComponent(meshFolder + ".tmp", isDirectory: true)
+        let target = captureURL.appendingPathComponent(folder, isDirectory: true)
+        let staging = captureURL.appendingPathComponent(folder + ".tmp", isDirectory: true)
         if fileManager.fileExists(atPath: staging.path) {
             try fileManager.removeItem(at: staging)
         }

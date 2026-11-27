@@ -14,6 +14,7 @@
     roomsWithPhotos: [],
     roomSequenceIndex: 0,
     isEmbed: false,
+    modelStarted: false,
     features: null,
     walkthroughMode: 'photos',
     standId: null,
@@ -96,7 +97,7 @@
 
   function readStartView() {
     var view = new URLSearchParams(window.location.search).get('view');
-    return view === 'plan' || view === 'photos' || view === 'walkthrough' || view === 'dollhouse' ? view : 'all';
+    return view === 'plan' || view === 'photos' || view === 'walkthrough' || view === 'dollhouse' || view === 'model' ? view : 'all';
   }
 
   function applyStartView() {
@@ -107,9 +108,14 @@
       walkthrough: state.features && state.features.walkthrough === true,
       hasStand: target !== null,
       hasDollhouse: state.hasDollhouse,
-      hasPhotos: state.hasPhotos
+      hasPhotos: state.hasPhotos,
+      hasModel: state.hasModel
     };
     var chosen = window.TourStartView.pick(view, state.isEmbed, flags);
+    if (chosen === 'model') {
+      state.mode = 'model';
+      return;
+    }
     if (chosen === 'dollhouse') {
       state.mode = 'dollhouse';
       return;
@@ -611,7 +617,30 @@
     }
   }
 
+  function renderModelStart() {
+    var card = document.createElement('div');
+    card.className = 'tour-model-start';
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'tour-model-start-button';
+    button.textContent = window.TourStrings.t('model_start');
+    button.addEventListener('click', function () {
+      state.modelStarted = true;
+      renderViewport();
+    });
+    var note = document.createElement('p');
+    note.className = 'tour-model-start-note';
+    note.textContent = window.TourStrings.t('model_start_note');
+    card.appendChild(button);
+    card.appendChild(note);
+    els.viewport.appendChild(card);
+  }
+
   function renderModel() {
+    if (state.isEmbed && !state.modelStarted) {
+      renderModelStart();
+      return;
+    }
     if (window.TourModel) {
       window.TourModel.render(els.viewport, state.data.lidar_model, withToken, state.data.rooms);
       return;

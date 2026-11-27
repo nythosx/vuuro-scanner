@@ -3,6 +3,9 @@
 
   function pickStartView(view, embed, flags) {
     var f = flags || {};
+    if (view === 'model') {
+      return f.hasModel ? 'model' : 'plan';
+    }
     if (view === 'dollhouse') {
       return f.hasDollhouse ? 'dollhouse' : 'plan';
     }
@@ -16,6 +19,9 @@
       return 'plan';
     }
     if (embed === true) {
+      if (f.hasModel) {
+        return 'model';
+      }
       if (f.walkthrough === true && f.hasStand === true) {
         return 'walkthrough';
       }

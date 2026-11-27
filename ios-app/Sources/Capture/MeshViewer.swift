@@ -39,6 +39,9 @@ struct MeshViewer: View {
     @State private var usableCache: PoseResetRealigner.Outcome?
     @State private var sentModelURL: URL?
     @State private var orbitCamera = DollhouseCamera()
+    @State private var fillingHoles = false
+    @State private var fillProgress: Double = 0
+    @State private var holeFillNote: String?
 
     enum Mode: String, CaseIterable, Identifiable {
         case clay = "Clay"
@@ -85,7 +88,16 @@ struct MeshViewer: View {
             if frameIndex != nil, showPhoto {
                 photoLayer
             }
-            if isLoading {
+            if fillingHoles {
+                ProgressView(value: fillProgress) {
+                    Text("Filling holes in the mesh from the LiDAR depth")
+                } currentValueLabel: {
+                    Text("\(Int((fillProgress * 100).rounded()))%")
+                        .monospacedDigit()
+                }
+                .frame(width: 260)
+                .accessibilityIdentifier("meshViewer.holeFillProgress")
+            } else if isLoading {
                 ProgressView("Loading mesh")
             } else if texturing {
                 VStack(spacing: 12) {
@@ -229,6 +241,12 @@ struct MeshViewer: View {
     @ViewBuilder
     private var pathControls: some View {
         VStack(spacing: 10) {
+            if let holeFillNote, frameIndex == nil {
+                Text(holeFillNote)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("meshViewer.holeFillNote")
+            }
             if let textureNote, mode == .texture {
                 Text(textureNote)
                     .font(.system(size: 13))
@@ -707,13 +725,77 @@ struct MeshViewer: View {
         }
     }
 
+    private func fillHolesIfNeeded(_ url: URL) async -> String? {
+        let manifest: LidarCaptureManifest
+        do {
+            manifest = try LidarCaptureLibrary.manifest(at: url)
+        } catch {
+            DiagnosticsLog.shared.record("Mesh holes not filled, capture.json could not be read: \(error.localizedDescription)", category: .error)
+            return "capture.json could not be read"
+        }
+        guard MeshHoleFill.needsRun(captureURL: url, manifest: manifest) else { return nil }
+        fillingHoles = true
+        fillProgress = 0
+        let work = Task.detached(priority: .userInitiated) {
+            DepthMeshFusion.run(captureURL: url, folder: MeshHoleFill.folder) { value in
+                Task { @MainActor in
+                    fillProgress = value
+                }
+            }
+        }
+        let result = await withTaskCancellationHandler {
+            await work.value
+        } onCancel: {
+            work.cancel()
+        }
+        fillingHoles = false
+        switch result {
+        case .success(let report):
+            DiagnosticsLog.shared.record("Mesh holes: depth mesh of \(LiDARProofView.count(report.faces)) triangles built in \(Int(report.seconds.rounded())) s from \(report.framesUsed) depth frames", category: .state)
+            do {
+                try MeshHoleFill.markBuilt(captureURL: url)
+            } catch {
+                DiagnosticsLog.shared.record("Mesh holes: the fill version could not be saved, so it is built again next time: \(error.localizedDescription)", category: .error)
+            }
+            return nil
+        case .failure(let error):
+            if error is CancellationError { return nil }
+            DiagnosticsLog.shared.record("Mesh holes not filled: \(error.localizedDescription)", category: .error)
+            return error.localizedDescription
+        }
+    }
+
+    static func holeFillText(faces: Int, error: String?, looseFaces: Int = 0, loosePieces: Int = 0) -> String? {
+        var parts: [String] = []
+        if let error {
+            parts.append("Holes in the mesh were not filled from depth: \(error)")
+        } else if faces > 0 {
+            parts.append("\(LiDARProofView.count(faces)) triangles filled in from the LiDAR depth where the mesh had holes.")
+        }
+        if looseFaces > 0 {
+            parts.append("\(LiDARProofView.count(looseFaces)) triangles in \(loosePieces == 1 ? "1 loose piece" : "\(LiDARProofView.count(loosePieces)) loose pieces") away from the room left out.")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " ")
+    }
+
     private func load() async {
         let url = captureURL
+        let fillFailure = await fillHolesIfNeeded(url)
+        if Task.isCancelled { return }
         let result = await Task.detached(priority: .userInitiated) {
             MeshSceneBuilder.build(captureURL: url)
         }.value
         switch result {
         case .success(let loaded):
+            holeFillNote = Self.holeFillText(faces: loaded.holeFillFaces, error: fillFailure ?? loaded.holeFillError, looseFaces: loaded.looseFacesRemoved, loosePieces: loaded.loosePiecesRemoved)
+            if loaded.looseFacesRemoved > 0 {
+                DiagnosticsLog.shared.record("Mesh: \(loaded.looseFacesRemoved) triangles in \(loaded.loosePiecesRemoved) loose pieces left out", category: .state)
+            }
+            if let error = loaded.holeFillError {
+                DiagnosticsLog.shared.record("Mesh holes: the depth mesh could not be added: \(error)", category: .error)
+            } else if loaded.holeFillFaces > 0 {
+                DiagnosticsLog.shared.record("Mesh holes: \(loaded.holeFillFaces) triangles filled in from depth", category: .state)
+            }
             MeshSceneBuilder.apply(mode, showCeiling: false, showFilledFloor: showFilledFloor, parts: loaded.parts)
             hasFilledFloor = loaded.parts.contains { part in
                 part.plain.materials.contains { $0.name == String(MeshSceneBuilder.filledFloorClass) }
@@ -980,6 +1062,10 @@ enum MeshSceneBuilder {
         let boundsMin: SIMD3<Float>
         let boundsMax: SIMD3<Float>
         let parts: [MeshPart]
+        var holeFillFaces = 0
+        var holeFillError: String?
+        var looseFacesRemoved = 0
+        var loosePiecesRemoved = 0
     }
 
     struct AnchorEntry: Decodable {
@@ -1002,55 +1088,91 @@ enum MeshSceneBuilder {
 
     struct AnchorIndex: Decodable {
         let anchors: [AnchorEntry]
+        var source: String?
     }
 
     static func build(captureURL: URL) -> Result<Built, Error> {
         let meshURL = captureURL.appendingPathComponent("mesh", isDirectory: true)
         do {
             let index = try JSONDecoder().decode(AnchorIndex.self, from: Data(contentsOf: meshURL.appendingPathComponent("anchors.json")))
-            let scene = SCNScene()
-            var triangles = 0
-            var parts: [MeshPart] = []
-            var lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
-            var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
-            var boxes: [WeightedBox] = []
+            var raw: [MeshRawPart] = []
             for entry in index.anchors {
                 guard entry.transform.count == 16, entry.vertexCount > 0, entry.faceCount > 0 else { continue }
                 let vertices = try Data(contentsOf: meshURL.appendingPathComponent("\(entry.fileStem).vertices"))
                 let faces = try Data(contentsOf: meshURL.appendingPathComponent("\(entry.fileStem).faces"))
                 guard vertices.count == entry.vertexCount * 12, faces.count == entry.faceCount * 12 else { continue }
-                var sources = [SCNGeometrySource(data: vertices, semantic: .vertex, vectorCount: entry.vertexCount, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: 4, dataOffset: 0, dataStride: 12)]
+                var normals: Data?
                 if entry.normalsFormat != nil {
-                    let normals = try Data(contentsOf: meshURL.appendingPathComponent("\(entry.fileStem).normals"))
-                    if normals.count == vertices.count {
-                        sources.append(SCNGeometrySource(data: normals, semantic: .normal, vectorCount: entry.vertexCount, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: 4, dataOffset: 0, dataStride: 12))
-                    }
+                    let loaded = try Data(contentsOf: meshURL.appendingPathComponent("\(entry.fileStem).normals"))
+                    if loaded.count == vertices.count { normals = loaded }
                 }
                 var classes: Data?
                 if entry.classesFormat != nil {
                     let loaded = try Data(contentsOf: meshURL.appendingPathComponent("\(entry.fileStem).classes"))
                     if loaded.count == entry.faceCount { classes = loaded }
                 }
-                let (elements, materials) = elementsByClass(faces: faces, faceCount: entry.faceCount, classes: classes)
+                raw.append(MeshRawPart(vertices: vertices, vertexCount: entry.vertexCount, normals: normals, faces: faces, faceCount: entry.faceCount, classes: classes, transform: matrix(entry.transform)))
+            }
+            var holeFillFaces = 0
+            var holeFillError: String?
+            if index.source != DepthMeshFusion.identifier, !raw.isEmpty {
+                do {
+                    let existing = raw.map { (vertices: $0.vertices, vertexCount: $0.vertexCount, faces: $0.faces, faceCount: $0.faceCount, transform: $0.transform) }
+                    if let piece = try MeshHoleFill.load(captureURL: captureURL, existing: existing) {
+                        raw.append(MeshRawPart(
+                            vertices: piece.vertices.withUnsafeBufferPointer { Data(buffer: $0) },
+                            vertexCount: piece.vertexCount,
+                            normals: piece.normals.count == piece.vertices.count ? piece.normals.withUnsafeBufferPointer { Data(buffer: $0) } : nil,
+                            faces: piece.faces.withUnsafeBufferPointer { Data(buffer: $0) },
+                            faceCount: piece.faceCount,
+                            classes: Data(piece.classes),
+                            transform: matrix_identity_float4x4
+                        ))
+                        holeFillFaces = piece.faceCount
+                    }
+                } catch {
+                    holeFillError = error.localizedDescription
+                }
+            }
+            let fillIndex = holeFillFaces > 0 ? raw.count - 1 : nil
+            let centroids = raw.map(MeshLoosePieces.worldCentroids)
+            let loose = MeshLoosePieces.keptFaces(centroids: centroids)
+            let scene = SCNScene()
+            var triangles = 0
+            var parts: [MeshPart] = []
+            var lower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+            var upper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+            var boxes: [WeightedBox] = []
+            var looseFaces = 0
+            for (position, (whole, kept)) in zip(raw, loose.kept).enumerated() {
+                looseFaces += whole.faceCount - kept.count
+                if position == fillIndex { holeFillFaces = kept.count }
+                guard !kept.isEmpty else { continue }
+                let part = MeshLoosePieces.compact(whole, kept: kept)
+                var sources = [SCNGeometrySource(data: part.vertices, semantic: .vertex, vectorCount: part.vertexCount, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: 4, dataOffset: 0, dataStride: 12)]
+                if let normals = part.normals, normals.count == part.vertices.count {
+                    sources.append(SCNGeometrySource(data: normals, semantic: .normal, vectorCount: part.vertexCount, usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: 4, dataOffset: 0, dataStride: 12))
+                }
+                let (elements, materials) = elementsByClass(faces: part.faces, faceCount: part.faceCount, classes: part.classes)
                 let geometry = SCNGeometry(sources: sources, elements: elements)
                 geometry.materials = materials
                 let node = SCNNode(geometry: geometry)
-                node.simdTransform = matrix(entry.transform)
+                node.simdTransform = part.transform
                 scene.rootNode.addChildNode(node)
-                parts.append(MeshPart(node: node, plain: geometry, vertices: vertices, vertexCount: entry.vertexCount, faces: faces, faceCount: entry.faceCount, classes: classes, transform: node.simdTransform))
-                triangles += entry.faceCount
+                parts.append(MeshPart(node: node, plain: geometry, vertices: part.vertices, vertexCount: part.vertexCount, faces: part.faces, faceCount: part.faceCount, classes: part.classes, transform: part.transform))
+                triangles += part.faceCount
                 let (boxMin, boxMax) = node.boundingBox
                 var boxLower = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
                 var boxUpper = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
                 for corner in corners(SIMD3<Float>(boxMin), SIMD3<Float>(boxMax)) {
-                    let world = node.simdTransform * SIMD4<Float>(corner, 1)
+                    let world = part.transform * SIMD4<Float>(corner, 1)
                     let point = SIMD3<Float>(world.x, world.y, world.z)
                     boxLower = simd_min(boxLower, point)
                     boxUpper = simd_max(boxUpper, point)
                 }
                 lower = simd_min(lower, boxLower)
                 upper = simd_max(upper, boxUpper)
-                boxes.append(WeightedBox(lower: boxLower, upper: boxUpper, weight: entry.faceCount))
+                boxes.append(WeightedBox(lower: boxLower, upper: boxUpper, weight: part.faceCount))
             }
             guard triangles > 0 else {
                 return .failure(PlainError(message: "The capture has no mesh triangles."))
@@ -1068,7 +1190,7 @@ enum MeshSceneBuilder {
             cameraNode.simdPosition = center + SIMD3<Float>(0, size * 0.8, size * 0.7)
             cameraNode.simdLook(at: center, up: SIMD3<Float>(0, 1, 0), localFront: SIMD3<Float>(0, 0, -1))
             scene.rootNode.addChildNode(cameraNode)
-            return .success(Built(scene: scene, triangles: triangles, cameraNode: cameraNode, center: SCNVector3(center), boundsMin: lower, boundsMax: upper, parts: parts))
+            return .success(Built(scene: scene, triangles: triangles, cameraNode: cameraNode, center: SCNVector3(center), boundsMin: lower, boundsMax: upper, parts: parts, holeFillFaces: holeFillFaces, holeFillError: holeFillError, looseFacesRemoved: looseFaces, loosePiecesRemoved: loose.removedPieces))
         } catch {
             return .failure(error)
         }
